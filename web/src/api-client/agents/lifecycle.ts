@@ -4,6 +4,7 @@ import type { OperationOptions } from '../http.js';
 import { ProtocolError } from '../errors.js';
 import { command, identity, input, read, segment, type CommandOptions } from '../resources.js';
 import { agent } from './types.js';
+import { sandboxQuotaUsage } from '../instances/capacity.js';
 import {
   array,
   boolean,
@@ -88,6 +89,7 @@ export const agentLifecycleFailure = object({
   code: enumeration('sandbox_limit_reached'),
   limit: integer,
   live: integer,
+  quota_usage: optional(sandboxQuotaUsage),
 });
 export type AgentLifecycleFailure = Output<typeof agentLifecycleFailure>;
 

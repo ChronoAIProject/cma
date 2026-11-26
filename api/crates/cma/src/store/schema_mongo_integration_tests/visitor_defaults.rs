@@ -245,6 +245,7 @@ async fn production_startup_injects_the_same_default_into_admin_and_sandbox_poli
                 Err(SandboxStoreError::LimitReached {
                     limit: actual,
                     live,
+                    ..
                 }) => {
                     assert_eq!((actual, live), (limit, limit));
                     refused += 1;

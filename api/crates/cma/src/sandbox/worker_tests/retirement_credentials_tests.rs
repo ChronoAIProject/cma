@@ -149,7 +149,10 @@ async fn unavailable_or_untrusted_retirement_census_retains_authority_and_paces_
 }
 
 #[tokio::test]
-async fn permanent_revocation_outage_remains_retiring_beyond_retry_budget() {
+async fn permanent_revocation_outage_finishes_retry_budget_and_retains_custody() {
+    use layer2_core::sandbox::work_retry::WORK_RETRY_BUDGET;
+    use layer2_core::sandbox::{SandboxRetirement, StoredSandboxRetirement};
+
     let h = Harness::new(Vec::new(), 0, Duration::ZERO).await;
     let created = h.create().await;
     let mut now = start_time(&created);
@@ -160,7 +163,7 @@ async fn permanent_revocation_outage_remains_retiring_beyond_retry_budget() {
         .await
         .unwrap();
     h.run(&active.id, now).await;
-    for _ in 0..40 {
+    for _ in 0..WORK_RETRY_BUDGET {
         h.run(&active.id, now).await;
         let blocked = h.stored(&active.id).await;
         assert_eq!(blocked.status, SandboxStatus::Retiring);
@@ -174,6 +177,35 @@ async fn permanent_revocation_outage_remains_retiring_beyond_retry_budget() {
         assert!(!h.worker.run_one(&active.id, now).await.unwrap());
         now = stamp_time(&blocked.work.ready_at);
     }
+    h.run(&active.id, now).await;
+    let terminal = h.stored(&active.id).await;
+    assert!(terminal.retirement_retry_exhausted());
+    assert_eq!(terminal.work.attempts, WORK_RETRY_BUDGET + 1);
+    assert_eq!(terminal.credential.revoke_debt.len(), 1);
+    assert_eq!(terminal.runtime, active.runtime);
+    assert!(terminal.purge_after.is_none());
+    let restarted = h.worker_with(
+        "retirement-successor",
+        h.credentials.clone(),
+        Duration::from_secs(60),
+    );
+    assert!(!restarted
+        .run_one(&active.id, now + Duration::from_secs(3600))
+        .await
+        .unwrap());
+    h.credentials.fail_revokes(0);
+    let retry_at = now + Duration::from_secs(3600);
+    let resumed = StoredSandboxRetirement::new(h.store.clone())
+        .retire(&active.id, rfc3339_at(retry_at), Some(terminal.revision))
+        .await
+        .unwrap();
+    assert!(resumed.changed);
+    assert!(restarted.run_one(&active.id, retry_at).await.unwrap());
+    let settled = h.stored(&active.id).await;
+    assert_eq!(settled.work.step, SandboxWorkStep::TeardownRuntime);
+    assert!(settled.credential.revoke_debt.is_empty());
+    assert_eq!(settled.runtime, active.runtime);
+    assert!(!settled.retirement_released_owner_slot());
 }
 
 #[tokio::test]

@@ -154,11 +154,13 @@ export function DeletionDialog({
     let events: DeletionObservation['events'] = [];
     let agentEvents: DeletionObservation['agentEvents'] = [];
     let reading = false;
+    let retirementFailed = false;
     const startedAt = Date.now();
     const settled = () => completed.current || deletionWasSettled(client, latestRequest.current);
     const poll = () => {
       if (
         reading ||
+        retirementFailed ||
         controller.signal.aborted ||
         document.hidden ||
         settled() ||
@@ -199,8 +201,9 @@ export function DeletionDialog({
           events = next.events;
           agentEvents = next.agentEvents;
           setObservation(next);
+          retirementFailed = next.retirementFailed === true;
           setReadError(undefined);
-          if (next.inProgress && !request.accepted && !settled()) {
+          if ((next.inProgress || retirementFailed) && !request.accepted && !settled()) {
             const accepted = { ...request, accepted: true };
             persist(accepted);
             setStarted(true);
@@ -213,7 +216,7 @@ export function DeletionDialog({
             forgetDeletion(identity.viewerId, request.key);
             requestChanged.current?.(undefined);
             changed.current();
-          } else
+          } else if (!retirementFailed)
             timer = setTimeout(poll, request.accepted ? transitionRefreshDelay(startedAt) : 1500);
         })
         .catch((error: unknown) => {
@@ -458,7 +461,13 @@ export function DeletionDialog({
   return (
     <Modal
       open
-      title={complete ? `${target} deleted` : `Deleting ${target}`}
+      title={
+        complete
+          ? `${target} deleted`
+          : observation?.retirementFailed
+            ? `${target} deletion stopped`
+            : `Deleting ${target}`
+      }
       description={name}
       dismissible={!sending}
       onClose={close}
@@ -481,9 +490,9 @@ export function DeletionDialog({
           {request.stop?.phase === 'blocked' && !request.accepted && !complete ? (
             <Button onClick={abandon}>End this request</Button>
           ) : null}
-          {readError === undefined || complete ? null : (
+          {(readError !== undefined || observation?.retirementFailed) && !complete ? (
             <Button onClick={() => setRevision((value) => value + 1)}>Refresh status</Button>
-          )}
+          ) : null}
         </>
       }
     >

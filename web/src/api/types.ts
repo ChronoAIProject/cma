@@ -66,6 +66,8 @@ export interface SandboxLifecycle {
     readonly continuing: boolean;
     readonly actions: readonly ('observe' | 'retire')[];
     readonly retryAfterSeconds?: number;
+    readonly ownerSlotReleased?: boolean;
+    readonly blockedRetirementStep?: string;
   };
   readonly pause: SandboxLifecycleEligibility;
   readonly revive: SandboxLifecycleEligibility;

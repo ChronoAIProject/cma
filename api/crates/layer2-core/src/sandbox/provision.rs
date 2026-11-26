@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use super::SandboxModelError;
 
+// A stopped retirement keeps the failing step for a revision-fenced operator
+// retry. A distant due time also keeps older workers from claiming the row.
+pub(crate) const RETIREMENT_STOPPED: &str = "9999-12-31T23:59:59Z";
+
 /// One durable sandbox lifecycle step. Each worker claim executes at most one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "index", rename_all = "snake_case")]
@@ -31,6 +35,16 @@ pub enum SandboxWorkStep {
 impl SandboxWorkStep {
     pub const fn is_pending(self) -> bool {
         !matches!(self, Self::None)
+    }
+
+    pub const fn is_retirement(self) -> bool {
+        matches!(
+            self,
+            Self::StopAgents
+                | Self::RevokeRetirementCredentials
+                | Self::TeardownRuntime
+                | Self::MarkRetired
+        )
     }
 }
 
@@ -80,6 +94,7 @@ impl SandboxWorkState {
 
     pub fn is_due(&self, now: &str) -> bool {
         self.step.is_pending()
+            && self.ready_at != RETIREMENT_STOPPED
             && self.ready_at.as_str() <= now
             && self
                 .lease
@@ -150,6 +165,16 @@ impl SandboxWorkState {
             .ok_or_else(|| SandboxModelError::invalid_value("sandbox.work.attempts"))?;
         self.ready_at = ready_at;
         self.lease = None;
+        Ok(())
+    }
+
+    pub fn stop_retirement(&mut self, holder: &str, fence: u64) -> Result<(), SandboxModelError> {
+        if !self.step.is_retirement() || !self.owns(holder, fence) {
+            return Err(SandboxModelError::invalid_value("sandbox.work.retirement"));
+        }
+        self.attempts = self.attempts.saturating_add(1);
+        self.lease = None;
+        self.ready_at = RETIREMENT_STOPPED.into();
         Ok(())
     }
 }

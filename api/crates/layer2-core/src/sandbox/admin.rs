@@ -192,10 +192,13 @@ impl SandboxRetirement for StoredSandboxRetirement {
                 "sandbox retirement revision changed".into(),
             ));
         }
-        if matches!(
-            sandbox.status,
-            SandboxStatus::Retiring | SandboxStatus::Retired
-        ) {
+        let resume = expected_revision.is_some() && sandbox.retirement_retry_exhausted();
+        if !resume
+            && matches!(
+                sandbox.status,
+                SandboxStatus::Retiring | SandboxStatus::Retired
+            )
+        {
             return Ok(SandboxRetirementResult {
                 sandbox,
                 changed: false,
@@ -203,9 +206,12 @@ impl SandboxRetirement for StoredSandboxRetirement {
         }
         let expected_revision = sandbox.revision;
         let previous = sandbox.status;
-        sandbox
-            .begin_retirement(requested_at.clone())
-            .map_err(|error| OperatorError::InvalidState(error.to_string()))?;
+        if resume {
+            sandbox.resume_retirement(requested_at.clone())
+        } else {
+            sandbox.begin_retirement(requested_at.clone())
+        }
+        .map_err(|error| OperatorError::InvalidState(error.to_string()))?;
         self.store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,

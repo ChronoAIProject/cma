@@ -73,7 +73,7 @@ it('keeps ten parents counted with eight Agents and browses every owner inventor
     'href',
     '/sandboxes/empty-paused',
   );
-  expect(within(dialog).getByText(/Deleting — still uses one Sandbox slot/)).toBeVisible();
+  expect(within(dialog).getByText('Deleting · Sandbox slot in use')).toBeVisible();
   expect(list).toHaveBeenCalledTimes(2);
   expect(list.mock.calls.every(([options]) => options?.excludeRetired === true)).toBe(true);
   expect(create).not.toHaveBeenCalled();
