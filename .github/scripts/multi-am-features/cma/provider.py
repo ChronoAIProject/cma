@@ -29,7 +29,7 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def arm(case_id, marker, access_request=None, suggestions=False, configuration=None, skill=None):
+def arm(case_id, marker, access_request=None, suggestions=False, configuration=None, skill=None, title=False):
     global ACTIVE
     if not isinstance(case_id, str) or not 1 <= len(case_id) <= 128:
         raise ValueError('case_id_invalid')
@@ -55,6 +55,9 @@ def arm(case_id, marker, access_request=None, suggestions=False, configuration=N
                 or skill['id'] not in ('two-am-before-restart', 'two-am-after-restart')
                 or type(skill['present']) is not bool):
             raise ValueError('fixture_skill_invalid')
+    if type(title) is not bool or (title and (suggestions or access_request is not None
+            or configuration is not None or skill is not None or not re.fullmatch(r'WS4_TITLE_[a-f0-9]{32}', marker))):
+        raise ValueError('fixture_title_invalid')
     with LOCK:
         if case_id in CASES:
             raise ValueError('case_already_exists')
@@ -64,6 +67,8 @@ def arm(case_id, marker, access_request=None, suggestions=False, configuration=N
                          'suggestions': suggestions, 'suggestion_release': threading.Event(),
                          'configuration': configuration, 'configuration_matches': 0,
                          'skill': skill, 'skill_matches': 0,
+                         'title': title, 'title_release': threading.Event(), 'title_requests': 0,
+                         'title_responses': 0, 'title_request_sha256': None,
                          'suggestion_requests': 0, 'suggestion_responses': 0,
                          'request_count': 0, 'completed_effect_count': 0,
                          'disconnect_count': 0, 'active_streams': 0,
@@ -82,6 +87,8 @@ def snapshot(case_id):
                 'suggestion_released': case['suggestion_release'].is_set(),
                 'configuration_matches': case['configuration_matches'],
                 'skill_matches': case['skill_matches'],
+                'title_requests': case['title_requests'], 'title_responses': case['title_responses'],
+                'title_request_sha256': case['title_request_sha256'],
                 'released': case['release'].is_set(),
                 'synthetic_effect': 'one_consent_proposal' if case['access_request'] else 'one_text_completion'}
 
@@ -243,7 +250,9 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get('Content-Length', '0'))
         if not 0 < length <= 4 * 1024 * 1024:
             raise ValueError('body_limit')
-        return json.loads(self.rfile.read(length))
+        raw = self.rfile.read(length)
+        self.body_sha256 = hashlib.sha256(raw).hexdigest()
+        return json.loads(raw)
 
     def do_GET(self):
         parts = urlsplit(self.path)
@@ -279,10 +288,11 @@ class Handler(BaseHTTPRequestHandler):
                 case_id = body['case_id']
                 if path == '/__ws4/arm':
                     arm(case_id, body['marker'], body.get('access_request'), body.get('suggestions', False),
-                        body.get('configuration'), body.get('skill'))
-                elif path in ('/__ws4/release', '/__ws4/release-suggestion'):
+                        body.get('configuration'), body.get('skill'), body.get('title', False))
+                elif path in ('/__ws4/release', '/__ws4/release-suggestion', '/__ws4/release-title'):
                     with LOCK:
-                        gate = 'release' if path == '/__ws4/release' else 'suggestion_release'
+                        gate = {'/__ws4/release': 'release', '/__ws4/release-suggestion': 'suggestion_release',
+                                '/__ws4/release-title': 'title_release'}[path]
                         CASES[case_id][gate].set()
                 else:
                     return self.reply(404, {'error': 'route_unknown'})
@@ -298,6 +308,8 @@ class Handler(BaseHTTPRequestHandler):
         if (body.get('stream') is False and isinstance(format_spec, dict)
                 and format_spec.get('name') == 'contextual_suggestions'):
             return self.suggestion(body)
+        if body.get('stream') is False and body.get('store') is False:
+            return self.title(body)
         if body.get('stream') is not True:
             return self.reply(400, {'error': 'stream_required'})
         encoded = json.dumps(body.get('input'), sort_keys=True)
@@ -384,6 +396,32 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 case['active_streams'] -= 1
             self.close_connection = True
+
+    def title(self, body):
+        inputs = body.get('input')
+        if (body.get('instructions') != 'Create a 3-6 word conversation title. Return only the title, with no quotes or ornament.'
+                or not isinstance(inputs, list) or len(inputs) != 2
+                or any(not isinstance(item, dict) or not isinstance(item.get('content'), str) for item in inputs)
+                or [item.get('role') for item in inputs] != ['user', 'assistant']):
+            return self.reply(404, {'error': 'unsupported_title_request'})
+        marker = re.search(r'\bWS4_TITLE_[a-f0-9]{32}\b', inputs[0]['content'])
+        with LOCK:
+            case = next((item for item in CASES.values() if item['title'] and marker
+                         and item['marker'] == marker[0]), None)
+            if case:
+                case['title_requests'] += 1
+                duplicate = case['title_requests'] != 1
+                if not duplicate:
+                    case['title_request_sha256'] = self.body_sha256
+        if not case:
+            return self.reply(404, {'error': 'title_case_not_armed'})
+        if duplicate:
+            return self.reply(409, {'error': 'duplicate_title_generation'})
+        if not case['title_release'].wait(8):
+            return self.reply(504, {'error': 'title_barrier_timeout'})
+        self.reply(200, {'output_text': 'Generated Fixture Conversation'})
+        with LOCK:
+            case['title_responses'] += 1
 
     def suggestion(self, body):
         messages = body.get('input')

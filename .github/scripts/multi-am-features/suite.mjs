@@ -24,6 +24,7 @@ import {retirementRetention} from './features/retirement_retention.mjs';
 import {triggerAlwaysOn} from './features/trigger_always_on.mjs';
 import {suggestionsCase} from './features/suggestions.mjs';
 import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
+import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_custody.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -80,11 +81,11 @@ const matrix = new ExtendedAdminMatrix({fixture,
 const result = {schema: 'multi-am-features-v1', verdict: 'RUNNING', source: config.expected_api_source,
   production_acceptance: false, image: config.expected_api_image, started_at: new Date().toISOString()};
 
-async function heldCases(context, exercise) {
+async function heldCases(context, exercise, repetitions = 3) {
   const previousRecorder = context.api.router.record;
   context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
   try {
-    for (let iteration = 1; iteration <= 3; iteration++) {
+    for (let iteration = 1; iteration <= repetitions; iteration++) {
       let activeRow;
       await exercise({...context, recordState: async (stage, state) => activeRow.states.push({stage, state}),
         runCase: async (name, operation) => {
@@ -122,6 +123,10 @@ try {
     await held.runCase('writer.queued_edit_cancel', () => queuedCommandCase(held));
   }), heldTurnHook: context => heldCases(context, heldConfigurationCases), featureHook: async context => {
     phase = context.phase;
+    await heldCases(context, value => value.runCase('writer.automatic_title_custody', () =>
+      phase === 'before_restart' ? generatedTitleCustody({...value,
+        recordFailure: (stage, error) => retainFailure(config.matrix_output, stage, error, {case: 'writer.automatic_title_custody', phase})})
+        : titleCustodyAfterRestart(value)), 1);
     // The same admin groups run before and after actual owner loss. Their public
     // mutations use CAS, peer readback, stale-revision refusal and restoration.
     Object.assign(normal.ams, context.config.ams);

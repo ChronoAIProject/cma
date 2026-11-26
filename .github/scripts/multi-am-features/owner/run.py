@@ -28,6 +28,7 @@ from login import login
 from readiness_scaling import observe_never_ready, observe_scale
 from retirement_purge import retirement_purge
 from runtime_loss import remove_runtime_pod
+from title_evidence import title_effects, title_intent
 
 ROOT=Path(__file__).resolve().parent
 PROVIDER=ROOT.parent/'cma'/'provider.py'
@@ -46,6 +47,8 @@ class Fixture:
     configurationDispatch = configuration_dispatch
     retirementPurge = retirement_purge
     removeRuntimePod = remove_runtime_pod
+    titleEffects = title_effects
+    titleIntent = title_intent
 
     def __init__(self, ready, output):
         self.ready=ready
@@ -328,16 +331,16 @@ class Fixture:
     def prepareTurn(self, caseId=None, marker=None, **extra):
         self.provider_observation('prepare_turn',input={'case_id':caseId,'marker':marker,**extra})
         value=self.provider('POST','/__ws4/arm',{'case_id':caseId,'marker':marker,
-            **{key: extra[key] for key in ('suggestions', 'configuration', 'skill') if key in extra},
+            **{key: extra[key] for key in ('suggestions', 'configuration', 'skill', 'title') if key in extra},
             **({'access_request': extra['accessRequest']} if 'accessRequest' in extra else {})})
         self.provider_observation('prepare_turn_result',snapshot=value)
         return value
 
-    def releaseTurn(self, caseId=None, suggestion=False):
-        if type(suggestion) is not bool:
+    def releaseTurn(self, caseId=None, suggestion=False, title=False):
+        if type(suggestion) is not bool or type(title) is not bool or (suggestion and title):
             raise ValueError('release_gate_required')
-        self.provider_observation('release_turn',case_id=caseId,suggestion=suggestion)
-        route = '/__ws4/release-suggestion' if suggestion else '/__ws4/release'
+        self.provider_observation('release_turn',case_id=caseId,suggestion=suggestion,title=title)
+        route = '/__ws4/release-title' if title else '/__ws4/release-suggestion' if suggestion else '/__ws4/release'
         value=self.provider('POST',route,{'case_id':caseId})
         self.provider_observation('release_turn_result',snapshot=value)
         return value
@@ -346,17 +349,6 @@ class Fixture:
         value=self.provider('GET','/__ws4/state?'+urllib.parse.urlencode({'case_id':caseId}))
         self.provider_observation('oracle',snapshot=value)
         return value
-
-    def titleEffects(self, agentId=None, title=None):
-        if not isinstance(agentId, str) or not 1 <= len(agentId) <= 200:
-            raise ValueError('agent_id_required')
-        if not isinstance(title, str) or not 1 <= len(title) <= 256:
-            raise ValueError('fixture_title_required')
-        query = json.dumps({'agent_id': agentId, 'record.kind.type': 'title_set',
-                            'record.kind.title': title}, separators=(',', ':'))
-        return self.mongo(
-            "const rows=d.agent_log.find(" + query + ",{_id:0,seq:1}).limit(2).toArray();"
-            "print(JSON.stringify(rows.map(row=>Number(row.seq))));")
 
     def skillEffects(self, agentId=None, skillId=None):
         if not isinstance(agentId, str) or not 1 <= len(agentId) <= 200:
@@ -412,7 +404,7 @@ class Fixture:
                     body=json.loads(self.rfile.read(size))
                     name=self.path.strip('/')
                     allowed=['topology','runtimeFor','ownerOf','killAm','restoreAm','prepareTurn',
-                             'releaseTurn','oracle','captureFailure','titleEffects','skillEffects',
+                             'releaseTurn','oracle','captureFailure','titleEffects','titleIntent','skillEffects',
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
                              'organizationMembership','configurationLog','configurationDispatch',

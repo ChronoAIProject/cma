@@ -10,7 +10,7 @@ export function createAdapter(config) {
     return value;
   }
   return Object.fromEntries(['topology','runtimeFor','prepareTurn','ownerOf','killAm',
-    'releaseTurn','oracle','restoreAm','captureFailure','titleEffects','skillEffects',
+    'releaseTurn','oracle','restoreAm','captureFailure','titleEffects','titleIntent','skillEffects',
     'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence','observeScale',
     'observeNeverReady','liveOwnerLease','lifecycleSnapshot','organizationMembership',
     'configurationLog','configurationDispatch','retirementPurge','removeRuntimePod']
