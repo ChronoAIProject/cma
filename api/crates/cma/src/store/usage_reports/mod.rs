@@ -2,6 +2,7 @@
 mod admission;
 mod aggregate_projections;
 mod allocation_deadline;
+mod projection_authority;
 pub(super) use allocation_deadline::{allocation_operation, ALLOCATION_DB_DEADLINE};
 mod budget;
 mod controlled_updates;

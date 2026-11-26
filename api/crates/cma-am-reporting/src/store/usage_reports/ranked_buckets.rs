@@ -76,6 +76,7 @@ impl PrefixFloat {
 #[derive(Default)]
 struct ResidualBucket {
     active: usize,
+    zero_prefix: usize,
     from_to: [(u64, u64); MAX_TOP],
     integral: PrefixFloat,
     display: PrefixFloat,
@@ -100,12 +101,24 @@ impl ResidualBucket {
             self.from_to[self.active..count].fill((value.from, value.to));
             self.active = count;
         }
-        self.integral.add(count, value.integral);
-        self.display.add(count, value.display_integral);
-        self.capacity_usage
-            .add(count, value.capacity_usage_integral);
-        self.capacity.add(count, value.capacity_integral);
-        self.covered.add(count, value.covered_seconds);
+        let measurement_bits = value.integral.to_bits()
+            | value.display_integral.to_bits()
+            | value.capacity_usage_integral.to_bits()
+            | value.capacity_integral.to_bits()
+            | value.covered_seconds.to_bits();
+        if measurement_bits == 0 {
+            // The same missing measurement contributes +0 to all five sums.
+            // Track that prefix once. A +0 anywhere in an otherwise negative
+            // zero sum makes its result +0, independent of its position.
+            self.zero_prefix = self.zero_prefix.max(count);
+        } else {
+            self.integral.add(count, value.integral);
+            self.display.add(count, value.display_integral);
+            self.capacity_usage
+                .add(count, value.capacity_usage_integral);
+            self.capacity.add(count, value.capacity_integral);
+            self.covered.add(count, value.covered_seconds);
+        }
         self.expected.add(count, value.expected_seconds);
         self.unknown.add(count, value.unknown_mapping_seconds);
         if let Some(mean) = value.mean {
@@ -125,14 +138,22 @@ impl ResidualBucket {
 
     fn finish(&self, cutoff: usize) -> Bucket {
         let (from, to) = self.from_to[cutoff];
+        let measured = |sum: &PrefixFloat| {
+            let result = sum.value(cutoff).unwrap_or_default();
+            if result == 0. && cutoff < self.zero_prefix {
+                0.
+            } else {
+                result
+            }
+        };
         Bucket {
             from,
             to,
-            integral: self.integral.value(cutoff).unwrap_or_default(),
-            display_integral: self.display.value(cutoff).unwrap_or_default(),
-            capacity_usage_integral: self.capacity_usage.value(cutoff).unwrap_or_default(),
-            capacity_integral: self.capacity.value(cutoff).unwrap_or_default(),
-            covered_seconds: self.covered.value(cutoff).unwrap_or_default(),
+            integral: measured(&self.integral),
+            display_integral: measured(&self.display),
+            capacity_usage_integral: measured(&self.capacity_usage),
+            capacity_integral: measured(&self.capacity),
+            covered_seconds: measured(&self.covered),
             expected_seconds: self.expected.value(cutoff).unwrap_or_default(),
             unknown_mapping_seconds: self.unknown.value(cutoff).unwrap_or_default(),
             mean: self.mean.value(cutoff),
@@ -228,6 +249,35 @@ mod tests {
                     prefix.value(index).map(f64::to_bits),
                     value.map(f64::to_bits)
                 );
+            }
+        }
+    }
+
+    #[test]
+    fn missing_measurements_preserve_signed_zero_per_cutoff() {
+        let mut residual = ResidualBucket::default();
+        let signed = Bucket {
+            integral: -0.,
+            display_integral: -0.,
+            capacity_usage_integral: -0.,
+            capacity_integral: -0.,
+            covered_seconds: -0.,
+            ..Bucket::default()
+        };
+        residual.add(1, &Bucket::default()).unwrap();
+        residual.add(4, &signed).unwrap();
+        residual.add(2, &Bucket::default()).unwrap();
+        for cutoff in 0..4 {
+            let expected = if cutoff < 2 { 0_f64 } else { -0_f64 };
+            let bucket = residual.finish(cutoff);
+            for value in [
+                bucket.integral,
+                bucket.display_integral,
+                bucket.capacity_usage_integral,
+                bucket.capacity_integral,
+                bucket.covered_seconds,
+            ] {
+                assert_eq!(value.to_bits(), expected.to_bits(), "cutoff={cutoff}");
             }
         }
     }

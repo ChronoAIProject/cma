@@ -171,6 +171,19 @@ async fn optional_chart_query_timeout_retains_completed_totals() {
         .await
         .unwrap()
         .is_none());
+    for group_by in [GroupBy::Sandbox, GroupBy::Owner] {
+        let ranked = SeriesQuery {
+            metric: Metric::Cpu,
+            group_by,
+            series_id: None,
+            top: Some(1),
+        };
+        assert!(matches!(
+            store.series(&report, ranked.clone()).await,
+            Err(MetricsError::Busy)
+        ));
+        f.store.series(&report, ranked).await.unwrap();
+    }
     let query = SeriesQuery {
         metric: Metric::Cpu,
         group_by: GroupBy::Total,

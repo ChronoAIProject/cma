@@ -154,9 +154,19 @@ impl MetricsStore for ReportingStore {
                 return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
             }
         };
-        let Some(manifest) = self.projected_family(report, family).await? else {
+        let Some(manifest) = self.projected_manifest(report).await? else {
             return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
         };
+        if !manifest.has_family(family) {
+            if matches!(family, "chart_owner" | "chart_sandbox") {
+                // Repeating a full-cohort fold on the request path defeats the
+                // generation budget, which can decline an incomplete family.
+                tracing::info!(target: "cma::store::usage_reports::budget",
+                    stage = "ranked_projection_read", family, result = "family_missing");
+                return Err(MetricsError::Busy);
+            }
+            return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
+        }
         cma_am_reporting::read_chart_projection(
             &self.collection(aggregate_projections::COLLECTION),
             charts,

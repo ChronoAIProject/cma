@@ -136,7 +136,7 @@ async fn legacy_reference(
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 3)]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
     let _ = tracing_subscriber::fmt()
@@ -350,6 +350,13 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
                 .collect();
             eprintln!("projection_scale families window={window} members={members} dense={dense} published={families:?}");
             eprintln!("projection_scale build window={window} members={members} dense={dense} projected={projected} generation_ms={generation_ms} commands={generation_commands} projection_bytes={} outcome={projection:?}", after.get_i64("bytes").unwrap()-before.get_i64("bytes").unwrap());
+            for kind in ["chart_owner", "chart_sandbox"] {
+                if !families.contains(&kind) {
+                    failures.push(format!(
+                        "missing ranked projection window={window} members={members} dense={dense} kind={kind}"
+                    ));
+                }
+            }
             projection.unwrap();
             store.finish_report(&lease, report, true).await.unwrap();
             let report = store

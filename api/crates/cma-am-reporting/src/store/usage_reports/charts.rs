@@ -156,9 +156,10 @@ async fn read_series_with_budget(
         filter.insert(field, id);
     }
     let cursor = collection
+        .clone_with_type::<mongodb::bson::RawDocumentBuf>()
         .find(filter)
         .sort(doc! {"sandbox_id":1,"chunk":1})
-        .batch_size(100)
+        .batch_size(1000)
         .max_time(db_deadline)
         .await
         .map_err(unavailable)?;
@@ -183,7 +184,7 @@ async fn read_series_with_budget(
             } else {
                 "other"
             };
-            merge_buckets(grouped.entry(group.into()).or_default(), &points);
+            merge_buckets(grouped.entry(group.into()).or_default(), points);
             Ok(())
         },
     )
@@ -222,12 +223,7 @@ pub(super) async fn ranked_series(
     map_query_error: fn(mongodb::error::Error) -> MetricsError,
 ) -> Result<Vec<String>> {
     let mut cursor = collection
-        .aggregate([
-            doc! {"$match":{"report_id":&report.report_id,"metric":metric.index() as i64,"chunk":0_i64}},
-            doc! {"$group":{"_id":format!("${field}"),"rank":{"$sum":"$rank"}}},
-            doc! {"$sort":{"rank":-1,"_id":1}},
-            doc! {"$limit":top as i64},
-        ])
+        .aggregate(std::iter::once(rank_filter(report, metric)).chain(rank_stages(field, top)))
         .max_time(db_deadline)
         .await
         .map_err(map_query_error)?;
@@ -236,6 +232,75 @@ pub(super) async fn ranked_series(
         ids.push(doc.get_str("_id").map_err(unavailable)?.into());
     }
     Ok(ids)
+}
+
+fn rank_filter(report: &Report, metric: Metric) -> Document {
+    doc! {"$match":{"report_id":&report.report_id,"metric":metric.index() as i64,"chunk":0_i64}}
+}
+
+fn rank_stages(field: &str, top: usize) -> [Document; 3] {
+    [
+        doc! {"$group":{"_id":format!("${field}"),"rank":{"$sum":"$rank"}}},
+        doc! {"$sort":{"rank":-1,"_id":1}},
+        doc! {"$limit":top as i64},
+    ]
+}
+
+pub(super) async fn ranked_cohorts(
+    collection: &Collection<Document>,
+    report: &Report,
+    metric: Metric,
+    top: usize,
+    db_deadline: Duration,
+) -> Result<(Vec<String>, Vec<String>)> {
+    if !report.scope.admin {
+        let sandboxes = ranked_series(
+            collection,
+            report,
+            metric,
+            "sandbox_id",
+            top,
+            db_deadline,
+            optional_query_error,
+        )
+        .await?;
+        return Ok((sandboxes, Vec::new()));
+    }
+    // Share the indexed source scan and pass only the ranking keys and scores
+    // through the facet. Both groups keep the legacy Mongo sum and tie-break.
+    let mut cursor = collection
+        .aggregate([
+            rank_filter(report, metric),
+            doc! {"$project":{"_id":0,"sandbox_id":1,"owner":1,"rank":1}},
+            doc! {"$facet":{
+                "sandboxes":rank_stages("sandbox_id", top).to_vec(),
+                "owners":rank_stages("owner", top).to_vec(),
+            }},
+        ])
+        .max_time(db_deadline)
+        .await
+        .map_err(optional_query_error)?;
+    let result = cursor
+        .try_next()
+        .await
+        .map_err(optional_query_error)?
+        .ok_or(MetricsError::Unavailable)?;
+    let ids = |group: &str| -> Result<Vec<String>> {
+        result
+            .get_array(group)
+            .map_err(unavailable)?
+            .iter()
+            .map(|value| {
+                value
+                    .as_document()
+                    .ok_or(MetricsError::Unavailable)?
+                    .get_str("_id")
+                    .map(str::to_owned)
+                    .map_err(unavailable)
+            })
+            .collect()
+    };
+    Ok((ids("sandboxes")?, ids("owners")?))
 }
 
 pub(super) trait ChartRow: DeserializeOwned {
@@ -278,14 +343,18 @@ pub(super) async fn fold_sandbox_series<T: ChartRow>(
     metric: Metric,
     deadline: std::time::Instant,
     map_query_error: fn(mongodb::error::Error) -> MetricsError,
-    mut consume: impl FnMut(&str, &str, Vec<Bucket>) -> Result<()>,
+    mut consume: impl FnMut(&str, &str, &[Bucket]) -> Result<()>,
 ) -> Result<()> {
     let mut sandbox = String::new();
     let mut owner = String::new();
     let mut sparse = BTreeMap::new();
     let mut expectations = Vec::new();
-    let complete = |sparse: &BTreeMap<u64, Bucket>, expectations: &[Expectation]| {
-        series::complete(
+    let mut buckets = Vec::new();
+    let complete = |buckets: &mut Vec<Bucket>,
+                    sparse: &BTreeMap<u64, Bucket>,
+                    expectations: &[Expectation]| {
+        series::complete_into(
+            buckets,
             sparse,
             expectations,
             metric,
@@ -299,7 +368,8 @@ pub(super) async fn fold_sandbox_series<T: ChartRow>(
         }
         let next = doc.sandbox()?;
         if !sandbox.is_empty() && sandbox != next {
-            consume(&sandbox, &owner, complete(&sparse, &expectations))?;
+            complete(&mut buckets, &sparse, &expectations);
+            consume(&sandbox, &owner, &buckets)?;
             sparse.clear();
             expectations.clear();
         }
@@ -314,7 +384,8 @@ pub(super) async fn fold_sandbox_series<T: ChartRow>(
         }
     }
     if !sandbox.is_empty() {
-        consume(&sandbox, &owner, complete(&sparse, &expectations))?;
+        complete(&mut buckets, &sparse, &expectations);
+        consume(&sandbox, &owner, &buckets)?;
     }
     Ok(())
 }

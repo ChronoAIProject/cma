@@ -137,23 +137,45 @@ pub fn complete(
     range: Range,
     step: u64,
 ) -> Vec<Bucket> {
-    // Completion has no minute inputs to group. Construct the ordered
-    // bucket boundaries directly instead of allocating a temporary map.
     let mut out = Vec::new();
-    let mut at = range.from / step * step;
-    while at < range.to && range.seconds() > 0 {
-        out.push(Bucket {
-            from: at.max(range.from),
-            to: (at + step).min(range.to),
-            ..Default::default()
-        });
-        at += step;
+    complete_into(&mut out, sparse, expectations, metric, range, step);
+    out
+}
+
+/// Reuse the caller's allocation when folding multiple Sandboxes on one grid.
+pub fn complete_into(
+    out: &mut Vec<Bucket>,
+    sparse: &BTreeMap<u64, Bucket>,
+    expectations: &[allocation::Expectation],
+    metric: Metric,
+    range: Range,
+    step: u64,
+) {
+    out.clear();
+    if range.seconds() == 0 {
+        return;
     }
+    let mut sparse = sparse.iter();
+    let mut measured = sparse.next();
+    let mut at = range.from / step * step;
     let mut first = 0;
-    for b in &mut out {
-        if let Some(value) = sparse.get(&b.from) {
-            *b = value.clone();
+    while at < range.to {
+        let from = at.max(range.from);
+        let to = (at + step).min(range.to);
+        while measured.is_some_and(|(key, _)| *key < from) {
+            measured = sparse.next();
         }
+        let mut b = match measured {
+            Some((&key, value)) if key == from => {
+                measured = sparse.next();
+                value.clone()
+            }
+            _ => Bucket {
+                from,
+                to,
+                ..Default::default()
+            },
+        };
         while first < expectations.len() && expectations[first].to <= b.from {
             first += 1;
         }
@@ -174,6 +196,7 @@ pub fn complete(
         b.unknown_mapping_seconds = (expected - b.expected_seconds).max(0.) + unknown;
         b.expected_seconds = b.expected_seconds.max(expected);
         b.finish_time();
+        out.push(b);
+        at += step;
     }
-    out
 }

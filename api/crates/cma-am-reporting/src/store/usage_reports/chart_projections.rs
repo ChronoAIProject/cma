@@ -1,4 +1,4 @@
-use super::charts::{fold_sandbox_series, merge_buckets, ranked_series};
+use super::charts::{fold_sandbox_series, merge_buckets, ranked_cohorts};
 use super::projection_codec::encode_points;
 use super::*;
 use layer2_core::sandbox_metrics::{series::Bucket, Metric, Point, Report};
@@ -96,7 +96,7 @@ pub async fn build_chart_totals(
             deadline,
             optional_query_error,
             |_, _, points| {
-                merge_buckets(total.get_or_insert_with(Vec::new), &points);
+                merge_buckets(total.get_or_insert_with(Vec::new), points);
                 Ok(())
             },
         )
@@ -150,79 +150,102 @@ async fn build_ranked_with_batch(
     deadline: Instant,
     batch_size: u32,
 ) -> Result<()> {
+    // Limit fan-out to the three fixed metrics. Each task preserves Sandbox
+    // order, and dropping the family deadline aborts all unfinished cursors.
+    let mut tasks = tokio::task::JoinSet::new();
     for metric in [Metric::Cpu, Metric::Memory, Metric::Disk] {
-        let rank_started = Instant::now();
-        let top_sandboxes = ranked_series(
-            collection,
-            report,
+        tasks.spawn(fold_ranked_metric(
+            collection.clone(),
+            report.clone(),
             metric,
-            "sandbox_id",
-            MAX_TOP,
             db_deadline,
-            optional_query_error,
-        )
-        .await?;
-        let top_owners = if report.scope.admin {
-            ranked_series(
-                collection,
-                report,
-                metric,
-                "owner",
-                MAX_TOP,
-                db_deadline,
-                optional_query_error,
-            )
-            .await?
-        } else {
-            Vec::new()
-        };
-        let rank_ms = rank_started.elapsed().as_millis() as u64;
-        tracing::info!(target: "cma::store::usage_reports::budget", stage = "ranked_projection_rank",
-            metric = ?metric, batch_size, rank_ms);
-        let fold_started = Instant::now();
-        let mut sandbox_remaining = RankedBuckets::new(top_sandboxes.clone());
-        let mut owner_remaining = RankedBuckets::new(top_owners.clone());
-        let cursor = collection
-            .clone_with_type::<RawDocumentBuf>()
-            .find(doc! {"report_id":&report.report_id,"metric":metric.index() as i64})
-            .sort(doc! {"sandbox_id":1,"chunk":1})
-            .batch_size(batch_size)
-            .max_time(db_deadline)
-            .await
-            .map_err(optional_query_error)?;
-        let result = fold_sandbox_series(
-            cursor,
-            report,
-            metric,
             deadline,
-            optional_query_error,
-            |sandbox, owner, points| {
-                sandbox_remaining.add_sandbox(sandbox, &points)?;
-                if report.scope.admin {
-                    owner_remaining.add_sandbox(owner, &points)?;
-                }
-                Ok(())
-            },
-        )
-        .await;
-        tracing::info!(target: "cma::store::usage_reports::budget", stage = "ranked_projection_fold",
-            metric = ?metric, batch_size, rank_ms, fold_ms = fold_started.elapsed().as_millis() as u64,
-            result = ?result);
-        result?;
+            batch_size,
+        ));
+    }
+    while let Some(result) = tasks.join_next().await {
+        let ranked = result.map_err(unavailable)??;
         let mut base = base.clone();
-        base.insert("metric", metric.index() as i64);
+        base.insert("metric", ranked.metric.index() as i64);
         append_ranked(
             batch,
             &base,
             "chart_sandbox",
-            &top_sandboxes,
-            sandbox_remaining,
+            &ranked.sandboxes,
+            ranked.sandbox_buckets,
         )?;
         if report.scope.admin {
-            append_ranked(batch, &base, "chart_owner", &top_owners, owner_remaining)?;
+            append_ranked(
+                batch,
+                &base,
+                "chart_owner",
+                &ranked.owners,
+                ranked.owner_buckets,
+            )?;
         }
     }
     Ok(())
+}
+
+struct RankedMetric {
+    metric: Metric,
+    sandboxes: Vec<String>,
+    owners: Vec<String>,
+    sandbox_buckets: RankedBuckets,
+    owner_buckets: RankedBuckets,
+}
+
+async fn fold_ranked_metric(
+    collection: Collection<Document>,
+    report: Report,
+    metric: Metric,
+    db_deadline: Duration,
+    deadline: Instant,
+    batch_size: u32,
+) -> Result<RankedMetric> {
+    let rank_started = Instant::now();
+    let (top_sandboxes, top_owners) =
+        ranked_cohorts(&collection, &report, metric, MAX_TOP, db_deadline).await?;
+    let rank_ms = rank_started.elapsed().as_millis() as u64;
+    tracing::info!(target: "cma::store::usage_reports::budget", stage = "ranked_projection_rank",
+        metric = ?metric, batch_size, rank_ms);
+    let fold_started = Instant::now();
+    let mut sandbox_remaining = RankedBuckets::new(top_sandboxes.clone());
+    let mut owner_remaining = RankedBuckets::new(top_owners.clone());
+    let cursor = collection
+        .clone_with_type::<RawDocumentBuf>()
+        .find(doc! {"report_id":&report.report_id,"metric":metric.index() as i64})
+        .sort(doc! {"sandbox_id":1,"chunk":1})
+        .batch_size(batch_size)
+        .max_time(db_deadline)
+        .await
+        .map_err(optional_query_error)?;
+    let result = fold_sandbox_series(
+        cursor,
+        &report,
+        metric,
+        deadline,
+        optional_query_error,
+        |sandbox, owner, points| {
+            sandbox_remaining.add_sandbox(sandbox, points)?;
+            if report.scope.admin {
+                owner_remaining.add_sandbox(owner, points)?;
+            }
+            Ok(())
+        },
+    )
+    .await;
+    tracing::info!(target: "cma::store::usage_reports::budget", stage = "ranked_projection_fold",
+        metric = ?metric, batch_size, rank_ms, fold_ms = fold_started.elapsed().as_millis() as u64,
+        result = ?result);
+    result?;
+    Ok(RankedMetric {
+        metric,
+        sandboxes: top_sandboxes,
+        owners: top_owners,
+        sandbox_buckets: sandbox_remaining,
+        owner_buckets: owner_remaining,
+    })
 }
 
 pub async fn build_owner_chart_projections(
@@ -264,7 +287,7 @@ pub async fn build_owner_chart_projections(
                 if previous.as_deref() != Some(owner) {
                     previous = Some(owner.to_owned());
                 }
-                merge_buckets(&mut points, &buckets);
+                merge_buckets(&mut points, buckets);
                 Ok(())
             },
         )

@@ -347,7 +347,7 @@ async fn read_ranked_owner_sources(
             if !ids.iter().any(|id| id == owner) {
                 return Err(MetricsError::Unavailable);
             }
-            merge_buckets(grouped.entry(owner.into()).or_default(), &points);
+            merge_buckets(grouped.entry(owner.into()).or_default(), points);
             Ok(())
         },
     )
@@ -393,7 +393,7 @@ async fn read_selected_sandboxes(
             if !ids.iter().any(|id| id == sandbox) {
                 return Err(MetricsError::Unavailable);
             }
-            let points = buckets.into_iter().map(Bucket::point).collect();
+            let points = buckets.iter().cloned().map(Bucket::point).collect();
             if lines.insert(sandbox.into(), points).is_some() {
                 return Err(MetricsError::Unavailable);
             }
