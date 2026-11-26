@@ -1,7 +1,10 @@
 //! A retained CRD must be deleted before paused Agents can settle retirement.
 use std::time::SystemTime;
 
-use layer2_core::sandbox::{RuntimeBinding, Sandbox, SandboxStoreError};
+use layer2_core::sandbox::{
+    store::{sandbox_content_matches, WorkAuthority},
+    RuntimeBinding, Sandbox, SandboxStatus, SandboxStoreError,
+};
 use layer3_adapter::{AdapterError, RuntimeHandle};
 
 use super::{
@@ -21,6 +24,8 @@ impl SandboxWorker {
             Err(error) => return Ok(Some(adapter_failure(error))),
         };
         if let Some(failure) = self.prepare_retirement_cleanup(sandbox, now).await? {
+            self.suspend_credential_blocked_retirement(sandbox, &failure)
+                .await?;
             return Ok(Some(failure));
         }
         let result = async {
@@ -42,6 +47,58 @@ impl SandboxWorker {
         sandbox.runtime = None;
         sandbox.lifecycle.suspended_runtime = None;
         Ok(None)
+    }
+
+    /// Call only after Agents stopped or the exact native runtime is already
+    /// stopped or proved empty. Suspending removes compute while retaining
+    /// the provider object, home and unfinished credential obligation.
+    pub(super) async fn suspend_credential_blocked_retirement(
+        &self,
+        sandbox: &mut Sandbox,
+        failure: &WorkerFailure,
+    ) -> Result<(), SandboxStoreError> {
+        if !failure.credential_issuance_pending
+            || sandbox.status != SandboxStatus::Retiring
+            || !self
+                .config
+                .retirement_finalizer
+                .as_ref()
+                .is_some_and(|finalizer| finalizer.admission_enabled())
+            || sandbox.lifecycle.suspended_runtime.is_some()
+            || sandbox.lifecycle.home.as_ref().is_none_or(|home| {
+                home.released || home.attachment().is_none() || home.validate(&sandbox.id).is_err()
+            })
+        {
+            return Ok(());
+        }
+        let Some(binding) = sandbox
+            .runtime
+            .as_ref()
+            .filter(|binding| binding.runtime_id.starts_with("agent-sandbox:"))
+        else {
+            return Ok(());
+        };
+        let request = match crate::sandbox::runtime_attachment::retained_runtime_request(
+            sandbox,
+            binding,
+            &self.config.deployment_id,
+        ) {
+            Ok(request) => request,
+            Err(_) => return Ok(()),
+        };
+        let current = self.dependencies.store.get_sandbox(&sandbox.id).await?;
+        if !sandbox_content_matches(current.as_ref(), sandbox) {
+            return Err(SandboxStoreError::Conflict);
+        }
+        WorkAuthority::current()?;
+        if let Err(error) = self.dependencies.adapter.suspend_runtime(&request).await {
+            tracing::debug!(error = %error, "retirement compute suspension remains unconfirmed");
+            return Ok(());
+        }
+        WorkAuthority::current()?;
+        sandbox.lifecycle.suspended_runtime = sandbox.runtime.take().map(Box::new);
+        tracing::info!("Retiring Sandbox compute stopped while credential settlement is pending");
+        Ok(())
     }
 
     async fn stopped_native_runtime(

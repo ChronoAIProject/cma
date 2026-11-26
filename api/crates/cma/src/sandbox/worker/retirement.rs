@@ -120,6 +120,8 @@ impl SandboxWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         if let Err(failure) = self.settle_retirement_credentials(&mut sandbox, now).await {
+            self.suspend_credential_blocked_retirement(&mut sandbox, &failure)
+                .await?;
             return self.retry_failure(sandbox, failure, now).await;
         }
         self.advance(
