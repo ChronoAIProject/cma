@@ -142,9 +142,9 @@
 }
 .agent-files__image {
   display: block;
-  max-width: 100%;
-  max-height: 240px;
-  object-fit: contain;
+  flex: none;
+  margin: auto;
+  user-select: none;
 }
 .agent-files__empty {
   margin: auto;
