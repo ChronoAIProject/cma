@@ -259,7 +259,7 @@ impl BindingService {
         if binding.existing_agent.is_some() {
             return Err(BindingError::Conflict);
         }
-        let expected = super::profile::map_profile(
+        let mut expected = super::profile::map_profile(
             profile,
             digest,
             self.policy.provider,
@@ -289,18 +289,24 @@ impl BindingService {
         {
             return Err(BindingError::Conflict);
         }
-        let Some(environment) = expected.environment.as_ref() else {
+        let Some(environment) = expected.environment.as_mut() else {
             return Ok(None);
         };
+        let policy = self
+            .policy
+            .sandbox
+            .current_sandbox_policy()
+            .await
+            .map_err(super::service::unavailable)?;
+        environment.include_baseline_services(policy.baseline_services);
         let drift = profile_drift(&agent, &expected.agent, digest);
-        let actual_services: BTreeSet<_> = sandbox.profile.content.nyxid_services.iter().collect();
-        let desired_services: BTreeSet<_> = environment.sandbox.nyxid_services.iter().collect();
         Ok(Some(DesiredProfileDrift {
             profile_digest: digest.to_owned(),
             prompt: drift.prompt,
             skills: drift.skills,
             model: drift.model,
-            service_scope: actual_services != desired_services,
+            service_scope: sandbox.credential.effective_reaches()
+                != environment.sandbox.nyxid_services,
         }))
     }
 }
