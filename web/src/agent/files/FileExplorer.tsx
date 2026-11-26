@@ -15,13 +15,12 @@ import {
   type AgentFileEntry,
   type AgentFilesClient,
 } from '../../api/agentFiles';
-import { Alert } from '../../ui/Alert';
-import { Button } from '../../ui/Button';
 import { FileCreateForm, fileNameIssue } from './FileCreateForm';
-import { FileExplorerFrame, FileLocation } from './FileExplorerFrame';
+import { FileExplorerAlerts, FileExplorerFrame, FileLocation } from './FileExplorerFrame';
 import { FileToolbar } from './FileToolbar';
 import { FileRail } from './FileRail';
-import { FilePreview, textContent } from './FilePreview';
+import { canPreviewFile, FilePreview, imageType, textContent } from './FilePreview';
+import { ImagePreview } from './ImagePreview';
 import { useDownloadInterruption } from './useDownloadInterruption';
 import './AgentFiles.css';
 
@@ -68,6 +67,8 @@ export function FileExplorer({
     useFileNavigation(initialDirectory, navigationMemory);
   const [selected, setSelected] = useState<AgentFileEntry>();
   const [content, setContent] = useState<AgentFileContent>();
+  const [largeImage, setLargeImage] = useState<Blob>();
+  const [imageView, setImageView] = useState<'inline' | 'expanded' | 'returned'>('inline');
   const [draft, setDraft] = useState<string>();
   const [reading, setReading] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -93,6 +94,11 @@ export function FileExplorer({
   const mutation = useRef(false);
   const dirty = draft !== undefined && content !== undefined && draft !== textContent(content);
   const blocked = readOnly || denied;
+  const imageMime = selected && imageType(selected.name);
+  const imageSource =
+    largeImage ??
+    (imageMime && content ? `data:${imageMime};base64,${content.content_base64}` : undefined);
+  const closeImage = () => setImageView('returned');
 
   const failure = useCallback(
     (cause: unknown, download = false) => {
@@ -116,6 +122,8 @@ export function FileExplorer({
         setBusy(false);
         setDirectories(new Map());
         setContent(undefined);
+        setLargeImage(undefined);
+        setImageView('inline');
         setDraft(undefined);
         setSelected(undefined);
         if (download) onAccessChanged?.(cause.message);
@@ -190,18 +198,26 @@ export function FileExplorer({
     readRequest.current = request;
     setSelected(file);
     setContent(undefined);
+    setLargeImage(undefined);
+    setImageView('inline');
     setDraft(undefined);
     setError(undefined);
-    if (file.size_bytes > PREVIEW_BYTES) {
+    if (!canPreviewFile(file)) {
       setReading(false);
       return;
     }
     setReading(true);
     try {
+      const mime = imageType(file.name);
+      if (mime && file.size_bytes > PREVIEW_BYTES) {
+        const blob = await client.download(agentId, file.path, { signal: request.signal });
+        if (!request.signal.aborted) setLargeImage(blob.slice(0, blob.size, mime));
+        return;
+      }
       const value = await client.read(agentId, file.path, { signal: request.signal });
       if (!request.signal.aborted) {
         setContent(value);
-        setDraft(textContent(value));
+        if (!mime) setDraft(textContent(value));
       }
     } catch (cause) {
       if (!request.signal.aborted) failure(cause);
@@ -355,6 +371,22 @@ export function FileExplorer({
       embedded={embedded}
       busy={busy}
       onClose={() => guardDraft(onClose)}
+      expanded={
+        imageView === 'expanded' && selected && imageSource
+          ? {
+              title: selected.name,
+              content: (
+                <ImagePreview
+                  expanded
+                  name={selected.name}
+                  source={imageSource}
+                  onToggle={closeImage}
+                />
+              ),
+              onClose: closeImage,
+            }
+          : undefined
+      }
     >
       <FileRoots directory={knownDirectory} />
       <ChangedFiles
@@ -385,56 +417,19 @@ export function FileExplorer({
         }
         onUpload={uploadFiles}
       />
-      {error ? (
-        <Alert
-          tone="error"
-          actions={
-            <Button size="sm" onClick={() => setError(undefined)}>
-              Dismiss
-            </Button>
-          }
-        >
-          {error}
-        </Alert>
-      ) : null}
-      {notice ? (
-        <Alert
-          tone="success"
-          actions={
-            <Button size="sm" onClick={() => setNotice(undefined)}>
-              Dismiss
-            </Button>
-          }
-        >
-          {notice}
-        </Alert>
-      ) : null}
-      {downloading ? <p role="status">Downloading file…</p> : null}
-      {confirm ? (
-        <Alert
-          tone="warning"
-          actions={
-            <>
-              <Button size="sm" onClick={() => setConfirm(undefined)}>
-                Cancel
-              </Button>
-              <Button
-                size="sm"
-                variant="danger"
-                onClick={() => {
-                  const action = confirm.action;
-                  setConfirm(undefined);
-                  action(selected);
-                }}
-              >
-                Confirm
-              </Button>
-            </>
-          }
-        >
-          {confirm.text}
-        </Alert>
-      ) : null}
+      <FileExplorerAlerts
+        error={error}
+        notice={notice}
+        downloading={downloading}
+        confirm={confirm?.text}
+        onDismissError={() => setError(undefined)}
+        onDismissNotice={() => setNotice(undefined)}
+        onCancel={() => setConfirm(undefined)}
+        onConfirm={() => {
+          setConfirm(undefined);
+          confirm?.action(selected);
+        }}
+      />
       {create ? (
         <FileCreateForm
           kind={create}
@@ -477,6 +472,9 @@ export function FileExplorer({
           loading={reading}
           busy={busy}
           readOnly={blocked}
+          imageSource={imageSource}
+          focusExpandImage={!panel && imageView === 'returned'}
+          onExpandImage={() => setImageView('expanded')}
           onDraft={setDraft}
           onSave={save}
           onReload={() => {
