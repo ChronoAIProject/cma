@@ -82,10 +82,12 @@ pub(super) async fn retire_claimed(
         // Settled retained homes can prevent definition deletion without
         // keeping spare capacity alive. Admission is fenced and all durable
         // allocation sources have been rechecked after the provider marker.
-        provider
-            .drain_pool(binding, &drain)
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?;
+        if target.machine {
+            provider.drain_pool(binding, &drain).await
+        } else {
+            provider.request_spare_drain(binding, &drain).await
+        }
+        .map_err(|_| WarmPoolError::Unavailable)?;
         Ok::<bool, WarmPoolError>(false)
     })
     .await;

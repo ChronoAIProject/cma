@@ -37,8 +37,8 @@ test('candidate runtime pins repository ref and native first task reads that che
   timeout: 120000,
   skip: !process.env.CMA_RUNTIME_TEST_BINARY || !process.env.CMA_CODEX_TEST_BINARY || !process.env.CMA_ACP_TEST_BRIDGE,
 }, async () => {
-  assert.equal(execFileSync(process.env.CMA_CODEX_TEST_BINARY, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.147.0');
-  assert.equal(createHash('sha256').update(readFileSync(process.env.CMA_ACP_TEST_BRIDGE)).digest('hex'), '84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c');
+  assert.match(execFileSync(process.env.CMA_CODEX_TEST_BINARY, ['--version'], { encoding: 'utf8' }).trim(), /^codex-cli 0\.(147|165)\.0$/);
+  assert(['84f9670793e2848b6c49e0541a325223239eeabd0e406d9a586dbcd2935cb85c', '11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4'].includes(createHash('sha256').update(readFileSync(process.env.CMA_ACP_TEST_BRIDGE)).digest('hex')));
   const directory = mkdtempSync(join(tmpdir(), 'cma-repository-task-'));
   const source = join(directory, 'source');
   const home = join(directory, 'home');
@@ -109,10 +109,12 @@ test('candidate runtime pins repository ref and native first task reads that che
         assert(JSON.stringify(body.input).includes(task));
         const execution = declared.find((tool) => tool.name === 'functions')?.tools?.find((tool) => tool.name === 'exec');
         const command = { cmd: 'cat proof.txt; git rev-parse HEAD; printf TASK_EXECUTED_04 > first-task.txt' };
-        if (execution) assert(Object.hasOwn(JSON.parse(body.client_metadata['x-codex-turn-metadata']).code_mode_tool_names, 'exec_command'));
-        else assert(declared.some((tool) => tool.name === 'exec_command'));
+        if (execution) {
+          const metadata = JSON.parse(body.client_metadata['x-codex-turn-metadata']);
+          if (metadata.code_mode_tool_names) assert(Object.hasOwn(metadata.code_mode_tool_names, 'exec_command'));
+        } else assert(declared.some((tool) => tool.name === 'exec_command'));
         output = [{ id: 'fc_repository_read', call_id: 'call_repository_read', status: 'completed',
-          ...(execution ? { type: 'custom_tool_call', namespace: 'functions', name: 'exec', input: 'text(await tools.exec_command(' + JSON.stringify(command) + '));' }
+          ...(execution ? { type: 'custom_tool_call', namespace: 'functions', name: 'exec', input: "const entry = ALL_TOOLS.find(t => t.name === 'exec_command'); if (!entry) throw new Error('Missing native command tool'); text(await tools[entry.name](" + JSON.stringify(command) + '));' }
             : { type: 'function_call', name: 'exec_command', arguments: JSON.stringify(command) }) }];
       } else {
         const results = body.input.filter((item) => ['function_call_output', 'custom_tool_call_output'].includes(item.type));

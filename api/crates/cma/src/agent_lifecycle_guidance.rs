@@ -50,6 +50,24 @@ fn managed_v5() -> &'static str {
     INSTRUCTIONS.get_or_init(|| format!("{GITHUB_PERMISSION_V1}\n\n{}", managed_v4()))
 }
 
+const CLARIFICATION_V1: &str = "CMA clarification (v1):\n\
+When an ambiguous or compound prompt leaves a costly action unresolved, ask a direct question in the first reply that lets the owner choose the intended action. If a standing instruction to file issues is followed by an unrelated question, ask whether the owner wants an answer, issue filing, or both. Ask even when you can answer a clearly authorized part in the same reply. Wait for the owner's answer before starting the unresolved substantial work or making the external write.";
+
+fn managed_v6() -> &'static str {
+    static INSTRUCTIONS: OnceLock<String> = OnceLock::new();
+    INSTRUCTIONS.get_or_init(|| format!("{CLARIFICATION_V1}\n\n{}", managed_v5()))
+}
+
+pub(crate) fn configured_admission_instructions(
+    flags: &crate::config::FeatureFlags,
+) -> &'static str {
+    if flags.session_guidance_v6 {
+        managed_v6()
+    } else {
+        admission_instructions(flags.session_guidance_v4, flags.session_guidance_v5)
+    }
+}
+
 pub(super) fn admission_instructions(v4_enabled: bool, v5_enabled: bool) -> &'static str {
     if v5_enabled {
         managed_v5()
@@ -64,6 +82,7 @@ pub(super) fn admission_instructions(v4_enabled: bool, v5_enabled: bool) -> &'st
 /// Similar owner-authored text is never treated as platform instructions.
 pub(crate) fn split_managed(prompt: &str) -> (Option<&'static str>, &str) {
     for managed in [
+        managed_v6(),
         managed_v5(),
         managed_v4(),
         managed_v3(),
@@ -109,7 +128,7 @@ impl layer2_core::sandbox::AgentInstructionPolicy for ManagedInstructionPolicy {
     fn pinned_managed_guidance(&self, agent: &layer2_core::sandbox::Agent) -> Option<&'static str> {
         split_managed(&agent.profile.content.system_prompt)
             .0
-            .filter(|managed| *managed == managed_v5() || *managed == managed_v4())
+            .filter(|managed| [managed_v4(), managed_v5(), managed_v6()].contains(managed))
     }
 }
 
