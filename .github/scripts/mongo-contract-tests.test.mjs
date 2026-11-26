@@ -24,7 +24,7 @@ for (const reuse of [false, true]) {
         const run = () => execFileSync('bash', [...f.args, '--prepared-startup'], {env: f.env, timeout: 15000, stdio: 'pipe'});
         const missing = scenario === 'prepared-startup-missing';
         if (scenario === 'prepared-startup-success') {
-          assert.match(run().toString(), /selected 5\/5 exact tests/);
+          assert.match(run().toString(), /selected 7\/7 exact tests/);
         } else {
           assert.throws(run, error => missing ? /inventory differs/.test(error.stderr) : error.status === 7);
         }
