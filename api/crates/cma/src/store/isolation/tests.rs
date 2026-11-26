@@ -492,10 +492,11 @@ fn activity_operation_authority_accepts_app_user_drop_index_in_shared_mode() {
         .into(),
     );
     let status = status(grants);
-    assert!(verify_activity_index_authority(
+    assert!(verify_index_operation_authority(
         &status,
         "cma",
         cma_service_auth::mongodb_authority::MongoAuthorityMode::SharedSchema,
+        &["activity"],
         true,
     )
     .is_ok());

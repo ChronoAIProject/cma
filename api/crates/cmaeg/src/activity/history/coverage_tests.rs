@@ -2,6 +2,44 @@ use super::{
     tests::{query, row, setup},
     *,
 };
+use std::cell::Cell;
+
+#[tokio::test]
+async fn coverage_reports_receipt_expiry_during_the_first_page() {
+    let (memory, service, opened_ms) = setup();
+    let oldest = opened_ms - service.config.retention_ms() + 1;
+    memory.capture.lock().unwrap().since_ms = Some(oldest);
+    service
+        .received("owner", "channel", row("retained", opened_ms - 1))
+        .await
+        .unwrap();
+    let query = HistoryQuery {
+        from: Some(paging::format_time(oldest).unwrap()),
+        until: Some(paging::format_time(opened_ms).unwrap()),
+        ..Default::default()
+    };
+    let retained = service
+        .page_with_clock("owner", "channel", query.clone(), || opened_ms)
+        .await
+        .unwrap();
+    assert!(retained.coverage.complete_event_enumeration);
+
+    // A TTL sweep can remove the oldest receipt before the snapshot observes
+    // it. The inclusive lower bound reaches its expiry as this page completes.
+    let clock = Cell::new(opened_ms);
+    let page = service
+        .page_with_clock("owner", "channel", query, || clock.replace(opened_ms + 1))
+        .await
+        .unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].activity.event_id, "retained");
+    assert!(!page.coverage.complete_event_enumeration);
+    assert_eq!(page.coverage.gaps, vec![CoverageGap::RetentionExpired]);
+    assert_eq!(
+        page.coverage.retained_from,
+        paging::format_time(oldest + 1).unwrap()
+    );
+}
 
 #[tokio::test]
 async fn longer_configuration_does_not_claim_expired_rows_or_extend_existing_receipts() {

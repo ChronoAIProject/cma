@@ -182,9 +182,17 @@ impl InlineAgentLifecycle {
         instance
     }
 
+    #[cfg(test)]
     pub(crate) fn with_session_guidance(self: Arc<Self>, v4: bool, v5: bool) -> Arc<Self> {
+        self.with_admission_guidance(guidance::admission_instructions(v4, v5))
+    }
+
+    pub(crate) fn with_admission_guidance(
+        self: Arc<Self>,
+        instructions: &'static str,
+    ) -> Arc<Self> {
         self.session_guidance
-            .set(guidance::admission_instructions(v4, v5))
+            .set(instructions)
             .expect("session guidance writer is configured once before use");
         self
     }
