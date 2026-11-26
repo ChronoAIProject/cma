@@ -1,70 +1,24 @@
-//! Shared transaction isolation, error classification and bounded commit retries.
+//! Agent Manager transaction authority and terminal operations.
 use crate::store::transaction_terminal::GuardedTerminal as _;
-use mongodb::error::{
-    Error, ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
+pub(in crate::store) use cma_am_mongo_primitives::transaction::is_transient;
+use cma_am_mongo_primitives::transaction::{
+    classify_commit_error, commit_with, CommitFailure, CommitOperation,
 };
+pub(crate) use cma_am_mongo_primitives::transaction::{
+    is_confirmed_body_retry, is_duplicate_key, CommitOutcome,
+};
+use mongodb::error::Error;
 use mongodb::options::{ReadConcern, WriteConcern};
 use mongodb::ClientSession;
 
-const COMMIT_ATTEMPTS: usize = 5;
-const DUPLICATE_KEY: i32 = 11_000;
-
-pub(crate) fn is_duplicate_key(error: &Error) -> bool {
-    match error.kind.as_ref() {
-        ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == DUPLICATE_KEY,
-        ErrorKind::Command(command) => command.code == DUPLICATE_KEY,
-        _ => false,
-    }
-}
-
-pub(in crate::store) fn is_transient(error: &Error) -> bool {
-    // Only a known abort permits a fresh mutation. Multiple labels do not
-    // erase uncertainty about an earlier transaction result.
-    !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
-        && error.contains_label(TRANSIENT_TRANSACTION_ERROR)
-}
-
-/// A body error with uncertain outcome never permits a new transaction.
-pub(crate) fn is_confirmed_body_retry(error: &Error) -> bool {
-    !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
-        && (is_transient(error) || is_duplicate_key(error))
-}
-
-pub(crate) enum CommitResolution<E> {
-    Committed,
-    Retry(E),
-    Unknown(E),
-    Failed(E),
-}
-
-pub(crate) type CommitOutcome = CommitResolution<Error>;
-
-enum CommitFailure<E> {
-    Unknown(E),
-    Transient(E),
-    Failed(E),
-}
+struct GuardedCommit<'a>(&'a mut ClientSession);
 
 #[async_trait::async_trait]
-trait CommitOperation: Send {
-    type Error: Send;
-    async fn commit(&mut self) -> Result<(), CommitFailure<Self::Error>>;
-}
-
-#[async_trait::async_trait]
-impl CommitOperation for ClientSession {
+impl CommitOperation for GuardedCommit<'_> {
     type Error = Error;
 
     async fn commit(&mut self) -> Result<(), CommitFailure<Error>> {
-        self.commit_guarded().await.map_err(|error| {
-            if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) {
-                CommitFailure::Unknown(error)
-            } else if is_transient(&error) {
-                CommitFailure::Transient(error)
-            } else {
-                CommitFailure::Failed(error)
-            }
-        })
+        self.0.commit_guarded().await.map_err(classify_commit_error)
     }
 }
 
@@ -97,7 +51,7 @@ pub(crate) async fn commit_transaction(session: &mut ClientSession) -> CommitOut
         }
         return CommitOutcome::Failed(Error::custom(error));
     }
-    commit_with(session).await
+    commit_with(&mut GuardedCommit(session)).await
 }
 
 /// Only an acknowledged abort before any commit send releases durable custody.
@@ -135,7 +89,7 @@ pub(in crate::store) async fn commit_transaction_with_refusal(
             Err(error) => PrecommitRefusal::AbortUnacknowledged(error),
         });
     }
-    Ok(commit_with(session).await)
+    Ok(commit_with(&mut GuardedCommit(session)).await)
 }
 
 fn acknowledged_abort_reply(reply: &mongodb::bson::Document) -> bool {
@@ -144,30 +98,6 @@ fn acknowledged_abort_reply(reply: &mongodb::bson::Document) -> bool {
         && !reply.contains_key("errorLabels")
         && (matches!(reply.get("ok"), Some(Bson::Int32(1) | Bson::Int64(1)))
             || matches!(reply.get("ok"), Some(Bson::Double(value)) if *value == 1.0))
-}
-
-async fn commit_with<C: CommitOperation>(commit: &mut C) -> CommitResolution<C::Error> {
-    let mut uncertain = false;
-    for attempt in 0..COMMIT_ATTEMPTS {
-        match commit.commit().await {
-            Ok(()) => return CommitResolution::Committed,
-            Err(CommitFailure::Unknown(error)) => {
-                uncertain = true;
-                if attempt + 1 == COMMIT_ATTEMPTS {
-                    return CommitResolution::Unknown(error);
-                }
-                tokio::task::yield_now().await;
-            }
-            // A later response cannot prove that an earlier uncertain commit
-            // aborted. Retain uncertainty instead of authorizing mutation replay.
-            Err(CommitFailure::Transient(error) | CommitFailure::Failed(error)) if uncertain => {
-                return CommitResolution::Unknown(error);
-            }
-            Err(CommitFailure::Transient(error)) => return CommitResolution::Retry(error),
-            Err(CommitFailure::Failed(error)) => return CommitResolution::Failed(error),
-        }
-    }
-    unreachable!("the bounded commit loop always returns")
 }
 
 #[cfg(test)]

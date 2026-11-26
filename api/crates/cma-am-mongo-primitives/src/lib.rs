@@ -1,7 +1,13 @@
-//! Shared BSON envelope and integer boundaries for Agent Manager MongoDB stores.
+//! Shared BSON, durability, and transaction primitives for Agent Manager stores.
 
 use bson::{Bson, Document};
 use serde::{de::DeserializeOwned, Serialize};
+
+pub mod topology;
+pub mod transaction;
+
+mod durability;
+pub use durability::majority_collection;
 
 pub fn record_bson<T: Serialize>(record: &T) -> Result<Bson, String> {
     bson::serialize_to_bson(record).map_err(|error| error.to_string())
