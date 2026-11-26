@@ -61,7 +61,8 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         && record.createToReadyMs < OLD_WORK_LEASE_MS, 'prepared_ready_work_lease_bound_unproven');
       const durable = await evidenceFor(record);
       check(ready.includes(record.sandboxId) && durable.consumed === true &&
-        durable.installation_bound === true && durable.agent_ready === true && !consumed.has(record.sandboxId),
+        durable.installation_bound === true && durable.reservation_bound === true &&
+        durable.agent_ready === true && !consumed.has(record.sandboxId),
       'prepared_admission_consumption_not_observed');
       consumed.add(record.sandboxId);
       const [sandbox, workspace, worktree] = durable.schemas ?? [];

@@ -8,7 +8,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
   schemas = [4, 3, 1], readyFences = [1, 1, 1, 1], startupReceipts = [1, 1, 1],
   starting = true, ready = true, effects = 1, changedOwner = false, changedIngress = false,
   admissionRequest = 'fixture-admission', repeatRequest = false, injected = 1, observed = 1,
-  failCreation = false, abortManager = 'b', createToReadyMs = 5000} = {}) {
+  failCreation = false, abortManager = 'b', createToReadyMs = 5000, reservationBound = true} = {}) {
   const actions = [];
   const records = [];
   let ownerReads = 0;
@@ -37,7 +37,8 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
       assert.equal(agentId, 'fixture-agent');
       assert.equal(operationId, 'fixture-operation');
       return {agent_ready: true, consumed: !sandboxId.startsWith('cold-') && consumed,
-        installation_bound: true, schemas, ready_fences: readyFences, startup_receipts: startupReceipts};
+        installation_bound: true, reservation_bound: reservationBound,
+        schemas, ready_fences: readyFences, startup_receipts: startupReceipts};
     },
     ownerOf: async () => ({agent_id: 'fixture-agent', am: 'b', epoch: ++ownerReads > 1 && changedOwner ? 2 : 1,
       instance_id: 'fixture-manager', pod_uid: 'fixture-pod'}),
@@ -153,7 +154,8 @@ test('the two ingresses must consume distinct reservations', async () => {
 });
 
 test('a ready reservation or a separately consumed reservation cannot count as a hit', async () => {
-  for (const context of [fixture({consumed: false}), fixture({readyIds: ['different-candidate']})]) {
+  for (const context of [fixture({consumed: false}), fixture({readyIds: ['different-candidate']}),
+    fixture({reservationBound: false})]) {
     await assert.rejects(preparedJourney(context), /prepared_admission_consumption_not_observed/);
     assert(!context.actions.includes('open-both'));
   }
@@ -176,14 +178,17 @@ test('the snapshot binds the reservation installation digest to the original boo
   const rows = {
     agents: {_id: lineage.agentId, sandbox_id: lineage.sandboxId, owner,
       workspace_id: 'fixture-workspace', worktree_id: 'fixture-worktree', status: 'ready',
-      record: {origin, work: {receipts}}},
+      record: {origin, work: {receipts}, conversation: {conversation_id: 'fixture-conversation'}}},
     sandboxes: {...fields, _id: lineage.sandboxId, status: 'active', record: {origin, runtime}},
     workspaces: {...fields, _id: 'fixture-workspace', sandbox_id: lineage.sandboxId, status: 'ready'},
     worktrees: {...fields, _id: 'fixture-worktree', workspace_id: 'fixture-workspace',
       sandbox_id: lineage.sandboxId, status: 'ready'},
     native_prepared_sandboxes: {...fields, _id: lineage.sandboxId, kind: 'reservation', state: 'claimed',
       record: {ownership: {owner, operation_id: lineage.operationId},
-        payload: {installed_request_sha256: installed, runtime: {...runtime}}}},
+        payload: {installed_request_sha256: installed, runtime: {...runtime}, workspaces: [
+          {id: 'fixture-workspace', agents: [{id: lineage.agentId,
+            worktree_id: 'fixture-worktree', conversation_id: 'fixture-conversation'}]},
+        ]}}},
   };
   const paths = (row, key) => key.split('.').reduce((current, field) => current?.[field], row);
   const read = async () => {
@@ -204,6 +209,7 @@ test('the snapshot binds the reservation installation digest to the original boo
   };
   const valid = await read();
   assert.equal(valid.installation_bound, true);
+  assert.equal(valid.reservation_bound, true);
   assert.deepEqual(valid.startup_receipts, [1, 1, 1]);
   assert.equal(JSON.stringify(valid).includes('fixture-boot'), false);
   receipts[2].operation_id = 'agent:another-agent:open:v1';
@@ -212,6 +218,12 @@ test('the snapshot binds the reservation installation digest to the original boo
   receipts.push({...receipts[2]});
   assert.deepEqual((await read()).startup_receipts, [1, 1, 2]);
   receipts.pop();
+  const prepared = rows.native_prepared_sandboxes.record.payload.workspaces[0].agents[0];
+  prepared.conversation_id = 'other-conversation';
+  assert.equal((await read()).reservation_bound, false);
+  prepared.conversation_id = 'fixture-conversation';
+  prepared.worktree_id = 'other-worktree';
+  assert.equal((await read()).reservation_bound, false);
   rows.native_prepared_sandboxes.record.payload.runtime.boot_id = 'other-boot';
   assert.equal((await read()).installation_bound, false);
   rows.native_prepared_sandboxes.record.payload.runtime.boot_id = runtime.boot_id;
