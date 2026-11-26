@@ -88,10 +88,12 @@ class PreparedAgentPage {
         && (status !== 'ready' || body.sandbox?.status === 'active');
     }, {timeout});
     const observed = waitForStatus('starting', 30000);
-    this.ready = waitForStatus('ready', 180000).then(() => ({observed: true}), error => ({error}));
-    await Promise.all([observed, this.page.goto(path, {waitUntil: 'domcontentloaded', timeout: 20000})]);
+    this.ready = waitForStatus('ready', 180000).then(response => ({response}), error => ({error}));
+    const [starting] = await Promise.all([
+      observed, this.page.goto(path, {waitUntil: 'domcontentloaded', timeout: 20000}),
+    ]);
     check(this.page.url() === this.origin + path, 'prepared_browser_open_changed_route');
-    return true;
+    return requestHash(starting);
   }
 
   async sendAndRead(agentId, adapter) {
@@ -102,7 +104,8 @@ class PreparedAgentPage {
     check(this.page.url() === this.origin + '/agents/' + agentId, 'prepared_browser_send_wrong_agent');
     const ready = await this.ready;
     if (ready?.error) throw ready.error;
-    check(ready?.observed === true, 'prepared_browser_ready_read_unproven');
+    check(ready?.response, 'prepared_browser_ready_read_unproven');
+    const readyRequest = await requestHash(ready.response);
     await adapter.prepareTurn({caseId, marker});
     await withRestoration(async () => {
       const composer = this.page.getByRole('textbox', {name: 'Message', exact: true});
@@ -114,6 +117,12 @@ class PreparedAgentPage {
         {timeout: 20000, code: 'prepared_browser_model_still_active'});
       assertOracle(settled, caseId, 1);
     }, () => adapter.releaseTurn({caseId}));
-    return {answer_sha256: hash(answer), effects: 1, ready_observed: true};
+    return {answer_sha256: hash(answer), effects: 1, ready_request_sha256: readyRequest};
   }
+}
+
+async function requestHash(response) {
+  const requestId = await response.headerValue('x-request-id');
+  check(typeof requestId === 'string' && requestId.trim().length > 0, 'prepared_browser_request_id_missing');
+  return hash(requestId);
 }

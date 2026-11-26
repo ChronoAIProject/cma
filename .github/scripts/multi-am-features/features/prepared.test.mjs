@@ -6,19 +6,29 @@ import {preparedJourney} from '../prepared_suite.mjs';
 
 function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], repeatReservation = false,
   schemas = [4, 3, 1], readyFences = [1, 1, 1, 1], startupReceipts = [1, 1, 1],
-  starting = true, ready = true, effects = 1} = {}) {
+  starting = true, ready = true, effects = 1, changedOwner = false, changedIngress = false,
+  admissionRequest = 'fixture-admission', repeatRequest = false} = {}) {
   const actions = [];
   const records = [];
+  let ownerReads = 0;
+  let topologyReads = 0;
   const create = async (am, desktop, overrides, onAgentId) => {
     assert.equal(desktop, false);
     const sandboxId = overrides?.profile ? 'cold-' + am : 'candidate-' + (repeatReservation ? 'a' : am);
-    const record = {agentId: 'fixture-agent', sandboxId, operationId: 'fixture-operation'};
+    const record = {agentId: 'fixture-agent', sandboxId, operationId: 'fixture-operation', am, admissionRequest};
     records.push(record);
     actions.push('create-' + am + '-' + sandboxId);
     onAgentId?.(record);
     return record;
   };
   const adapter = {
+    topology: async () => {
+      topologyReads += 1;
+      return {shared_database: true, coordination_enabled: true, ams: {
+        a: {ready: true, instance_id: 'fixture-a', pod_uid: changedIngress && topologyReads > 1 ? 'new-pod-a' : 'fixture-pod-a'},
+        b: {ready: true, instance_id: 'fixture-manager', pod_uid: 'fixture-pod'},
+      }};
+    },
     preparedReady: async () => readyIds,
     preparedEvidence: async ({agentId, sandboxId, operationId}) => {
       assert.equal(agentId, 'fixture-agent');
@@ -26,7 +36,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
       return {agent_ready: true, consumed: !sandboxId.startsWith('cold-') && consumed,
         installation_bound: true, schemas, ready_fences: readyFences, startup_receipts: startupReceipts};
     },
-    ownerOf: async () => ({agent_id: 'fixture-agent', am: 'b', epoch: 1,
+    ownerOf: async () => ({agent_id: 'fixture-agent', am: 'b', epoch: ++ownerReads > 1 && changedOwner ? 2 : 1,
       instance_id: 'fixture-manager', pod_uid: 'fixture-pod'}),
   };
   const results = [];
@@ -35,12 +45,13 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
     async openStarting(agentId) {
       assert.equal(agentId, 'fixture-agent');
       actions.push('starting-' + am);
-      return starting;
+      return starting ? 'b'.repeat(64) : null;
     },
     async sendAndRead(agentId) {
       assert.equal(agentId, 'fixture-agent');
       actions.push('reply-' + am);
-      return {effects, ready_observed: ready, answer_sha256: 'a'.repeat(64)};
+      return {effects, ready_request_sha256: ready ? (repeatRequest ? 'b' : 'c').repeat(64) : null,
+        answer_sha256: 'a'.repeat(64)};
     },
   })};
   return {adapter, create, step, results, actions, records, browser,
@@ -63,7 +74,20 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.equal(context.results[1].startup_receipt_count, 3);
   assert.equal(context.results[1].browser_starting_read, true);
   assert.equal(context.results[1].browser_ready_read, true);
+  assert.equal(context.results[1].ingress, 'a');
+  assert.equal(context.results[1].owner, 'b');
+  assert.equal(context.results[1].owner_epoch, 1);
+  assert.equal(context.results[1].request_sha256.browser_starting, 'b'.repeat(64));
+  assert.equal(context.results[1].request_sha256.browser_ready, 'c'.repeat(64));
+  assert.match(context.results[1].request_sha256.admission, /^[a-f0-9]{64}$/);
   assert.deepEqual(context.results[1].parent_schema_versions, [4, 3, 1]);
+});
+
+test('prepared coverage requires separate correlated requests and stable owner and ingress identities', async () => {
+  await assert.rejects(preparedJourney(fixture({admissionRequest: ''})), /prepared_admission_ingress_unbound/);
+  await assert.rejects(preparedJourney(fixture({repeatRequest: true})), /prepared_request_attribution_reused/);
+  await assert.rejects(preparedJourney(fixture({changedOwner: true})), /prepared_browser_owner_changed/);
+  await assert.rejects(preparedJourney(fixture({changedIngress: true})), /prepared_browser_ingress_changed/);
 });
 
 test('a real prepared hit still needs the Starting browser read and a single reply', async () => {

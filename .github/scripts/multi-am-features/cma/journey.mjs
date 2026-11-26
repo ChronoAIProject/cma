@@ -67,6 +67,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     const receipt = await api.request(am, 'POST', '/api/v1/agents', {
       body: record.createBody, key: record.key, allowed: [202]});
     check(id(receipt.body?.id), 'lifecycle_receipt_invalid'); record.operationId = receipt.body.id;
+    record.admissionRequest = receipt.timing.request_id;
     const op = await poll(async () => {
       const {body} = await api.request(other(am), 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
       check(body?.id === record.operationId, 'lifecycle_identity_mismatch');
