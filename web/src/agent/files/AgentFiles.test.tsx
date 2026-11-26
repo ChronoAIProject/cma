@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { FileExplorer } from './AgentFiles';
@@ -29,7 +29,11 @@ const original = {
   sha256: 'a'.repeat(64),
   content_base64: encode('hello'),
 };
-function fixture(readOnly = false, overrides: Partial<AgentFilesClient> = {}) {
+function fixture(
+  readOnly = false,
+  overrides: Partial<AgentFilesClient> = {},
+  beginDownload?: () => (message: string) => void,
+) {
   const client: AgentFilesClient = {
     list: vi.fn(async (_id, path) => (path === '' ? [file, hidden] : [])),
     read: vi.fn(async () => original),
@@ -44,16 +48,19 @@ function fixture(readOnly = false, overrides: Partial<AgentFilesClient> = {}) {
   };
   const onClose = vi.fn();
   const onAccessChanged = vi.fn();
-  render(
+  const explorer = (active: boolean, publish?: typeof beginDownload) => (
     <FileExplorer
       client={client}
       agentId="agent-one"
       readOnly={readOnly}
+      active={active}
       onClose={onClose}
       onAccessChanged={onAccessChanged}
-    />,
+      beginDownload={publish}
+    />
   );
-  return { client, onClose, onAccessChanged };
+  const view = render(explorer(true, beginDownload));
+  return { client, onClose, onAccessChanged, view, explorer };
 }
 it('loads only home root, reveals hidden folders on demand and opens text', async () => {
   const { client } = fixture();
@@ -108,6 +115,48 @@ it('view-only allows preview/download and exposes no mutations', async () => {
   expect(client.write).not.toHaveBeenCalled();
   expect(client.remove).not.toHaveBeenCalled();
 });
+it.each(['shared permission refresh', 'closed computer', 'standalone Files'] as const)(
+  'reports an abort during %s before the download promise settles',
+  async (scenario) => {
+    const publish = vi.fn();
+    const replacement = vi.fn(() => vi.fn());
+    const begin = vi.fn(() => publish);
+    const shared = scenario !== 'standalone Files';
+    const suspended = scenario === 'shared permission refresh';
+    let finish!: (blob: Blob) => void;
+    const pending = new Promise<Blob>((resolve) => {
+      finish = resolve;
+    });
+    const download = vi.fn<AgentFilesClient['download']>().mockReturnValue(pending);
+    const { view, explorer, onAccessChanged } = fixture(
+      true,
+      { download },
+      shared ? begin : undefined,
+    );
+    await userEvent.click(await screen.findByRole('button', { name: 'hello.txt' }));
+    await screen.findByRole('textbox', { name: 'Contents of hello.txt' });
+    await userEvent.click(screen.getByRole('button', { name: 'Download file' }));
+    expect(download).toHaveBeenCalledOnce();
+    const signal = download.mock.calls[0]?.[2]?.signal;
+    expect(signal?.aborted).toBe(false);
+    view.rerender(explorer(false, suspended ? replacement : undefined));
+    expect(signal?.aborted).toBe(true);
+    const message = 'Download was interrupted. Try downloading the file again.';
+    if (suspended) expect(publish).toHaveBeenCalledExactlyOnceWith(message);
+    else expect(publish).not.toHaveBeenCalled();
+    expect(replacement).not.toHaveBeenCalled();
+
+    view.rerender(explorer(true, shared ? begin : undefined));
+    if (!suspended) {
+      expect(screen.getByRole('alert')).toHaveTextContent(message);
+      await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    }
+    await act(async () => finish(new Blob(['hello'])));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(publish).toHaveBeenCalledTimes(suspended ? 1 : 0);
+    expect(onAccessChanged).not.toHaveBeenCalled();
+  },
+);
 it('copies the selected absolute path without writing file contents', async () => {
   const user = userEvent.setup();
   const clipboard = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
