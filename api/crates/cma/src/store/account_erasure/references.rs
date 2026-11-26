@@ -166,7 +166,11 @@ fn document_mentions(row: &Document, subjects: &BTreeSet<String>) -> bool {
     if array_mentions(row.get_array("recipient_subjects").ok(), subjects) {
         return true;
     }
-    let Some(record) = row.get_document("record").ok() else {
+    let Some(record) = row
+        .get_document("record")
+        .or_else(|_| row.get_document("audit"))
+        .ok()
+    else {
         return false;
     };
     for (field, subject_field) in [("shares", "subject"), ("comments", "author_subject")] {
@@ -200,8 +204,16 @@ async fn document(
     row: &Document,
     subjects: &BTreeSet<String>,
 ) -> Result<Redaction, Error> {
-    let mut record = crate::document_artifacts::decode_record(row)
+    let deleted = crate::document_artifacts::deletion::decode_audit(row)
         .map_err(|_| Error::InvalidRecord("cma_document_artifacts"))?;
+    let (tombstone, mut record) = match deleted {
+        Some((tombstone, audit)) => (Some(tombstone), audit),
+        None => (
+            None,
+            crate::document_artifacts::decode_record(row)
+                .map_err(|_| Error::InvalidRecord("cma_document_artifacts"))?,
+        ),
+    };
     let expected = record.metadata.revision;
     record.shares.retain(|s| !subjects.contains(&s.subject));
     record
@@ -217,6 +229,14 @@ async fn document(
             comment.author_subject = layer2_core::DELETED_ACCOUNT_SUBJECT.into();
             comment.body.clear();
         }
+    }
+    if let Some(tombstone) = tombstone {
+        let replacement = crate::document_artifacts::deletion::encode(&tombstone, &record)
+            .map_err(|_| Error::InvalidRecord("cma_document_artifacts"))?;
+        let result = majority_collection::<Document>(db, "cma_document_artifacts")
+            .replace_one(doc! {"_id": &row["_id"], "document_schema_version": &row["document_schema_version"], "deletion": &row["deletion"], "audit": &row["audit"]}, replacement)
+            .await?;
+        return Ok(outcome(result.matched_count == 1));
     }
     record.metadata.revision = expected
         .checked_add(1)

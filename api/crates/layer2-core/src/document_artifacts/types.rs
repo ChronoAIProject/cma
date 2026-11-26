@@ -254,6 +254,21 @@ impl DocumentListing {
 #[async_trait::async_trait]
 pub trait DocumentStore: Send + Sync {
     async fn get(&self, id: &str) -> Result<Option<StoredDocument>, DocumentError>;
+    /// Read the immutable owner-deletion receipt for this identity.
+    async fn tombstone(
+        &self,
+        _id: &str,
+    ) -> Result<Option<super::DocumentTombstone>, DocumentError> {
+        Ok(None)
+    }
+    /// Atomically fence the live owner/revision and retain the deletion receipt.
+    async fn delete(
+        &self,
+        _owner: &str,
+        _tombstone: &super::DocumentTombstone,
+    ) -> Result<bool, DocumentError> {
+        Err(DocumentError::Unavailable)
+    }
     /// Insert exactly once; false means the deterministic identity already exists.
     async fn insert(&self, record: &StoredDocument) -> Result<bool, DocumentError>;
     /// Publish a new Document with its reserved source on stores that track publication.
@@ -261,7 +276,7 @@ pub trait DocumentStore: Send + Sync {
     async fn insert_source(
         &self,
         record: &StoredDocument,
-        _source: &super::DocumentSourceReservation,
+        _source: &super::DocumentSourceWrite,
     ) -> Result<bool, DocumentError> {
         self.insert(record).await
     }
@@ -277,7 +292,7 @@ pub trait DocumentStore: Send + Sync {
         &self,
         expected_revision: u64,
         record: &StoredDocument,
-        _source: &super::DocumentSourceReservation,
+        _source: &super::DocumentSourceWrite,
         _receipt_key: &str,
     ) -> Result<bool, DocumentError> {
         self.compare_exchange(expected_revision, record).await
@@ -303,6 +318,16 @@ pub trait DocumentStore: Send + Sync {
 pub trait DocumentBlobStore: Send + Sync {
     /// Write immutable content at the server-generated content-addressed key.
     async fn put(&self, key: &str, bytes: Vec<u8>) -> Result<(), DocumentError>;
+    async fn put_source(
+        &self,
+        write: &super::DocumentSourceWrite,
+        bytes: Vec<u8>,
+    ) -> Result<(), DocumentError> {
+        if write.generation() != 1 {
+            return Err(DocumentError::Unavailable);
+        }
+        self.put(&write.source.object_key(), bytes).await
+    }
     /// Implementations must bound reads at MAX_DOCUMENT_BYTES and never follow caller URLs.
     async fn get(&self, key: &str) -> Result<Vec<u8>, DocumentError>;
 }
