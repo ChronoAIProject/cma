@@ -126,7 +126,12 @@ pub(in crate::store) async fn protects_pool(
         let mut count = 0;
         while let Some(row) = rows.try_next().await? {
             count += 1;
-            if count > MAX_ADMISSIONS || row.input.capacity.is_none_or(|pin| pin == capacity) {
+            if count > MAX_ADMISSIONS
+                || row
+                    .input
+                    .capacity
+                    .is_none_or(|pin| pin == capacity || pin.cpu_millis == 0 || pin.memory_mib == 0)
+            {
                 return Ok(true);
             }
         }

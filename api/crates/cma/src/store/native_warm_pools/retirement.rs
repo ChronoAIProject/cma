@@ -156,13 +156,13 @@ async fn authorized(
         return Ok(false);
     }
     let same_image = target.plan.spec.image.uri == image;
-    let exact_machine_retirement =
-        target.machine && same_image && target.activated_at == Some(latest);
+    let exact_machine_retirement = target.machine && same_image;
     let settle_from = if exact_machine_retirement {
         let Some(selected_at) = selected.machine_plan_activated_at else {
             return Ok(false);
         };
         if target.id == selected.id
+            || target.activated_at.is_some_and(|at| at != latest)
             || target
                 .machine_plan_activated_at
                 .is_some_and(|at| at >= selected_at)
