@@ -36,7 +36,9 @@ export async function cleanupFixture({record, config, api, killedAm, result}) {
       await cleanupRequest(am, 'POST', `/api/v1/agents/${record.agentId}/stop`, {body: {}, key: record.key + '-stop', allowed: [200, 202, 204]});
       await poll(() => cleanupDetail(), value => value.status === 'stopped', {timeout: 180000, code: 'agent_stop_timeout'});
     }
-    await cleanupRequest(am, 'DELETE', `/api/v1/agents/${record.agentId}`, {key: record.key + '-delete', allowed: [200, 202, 204]});
+    const deleteKey = record.key + '-delete';
+    const deleteReceipt = await cleanupRequest(am, 'DELETE', `/api/v1/agents/${record.agentId}`,
+      {key: deleteKey, allowed: [200, 202, 204]});
     const deleted = await poll(() => cleanupRequest(am, 'GET', `/api/v1/agents/${record.agentId}`, {allowed: [200, 404]}), value => value.status === 404 || value.body?.status === 'deleted', {timeout: 180000});
     if (record.sharedSandbox) {
       check(deleted.status === 200 && deleted.body?.id === record.agentId, 'shared_agent_deletion_unproven');
@@ -58,6 +60,7 @@ export async function cleanupFixture({record, config, api, killedAm, result}) {
     await cleanupRequest(am, 'DELETE', `/api/v1/sandboxes/${record.sandboxId}`, {key: record.key + '-retire', allowed: [200, 202, 204]});
     await poll(() => cleanupRequest(am, 'GET', `/api/v1/sandboxes/${record.sandboxId}`, {allowed: [200, 404]}), value => value.status === 404 || value.body?.status === 'retired', {timeout: 300000, code: 'sandbox_retire_timeout'});
     record.deleted = true; result.cleanup.push({agent_sha256: hash(record.agentId), sandbox_sha256: hash(record.sandboxId), public_stop_delete_retire: 'PASS', am});
+    return {deleteKey, deleteReceipt};
   } catch(error) {
     journal.failure = safeError(error); throw error;
   } finally {

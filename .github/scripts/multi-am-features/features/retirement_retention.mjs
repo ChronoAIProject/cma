@@ -48,16 +48,25 @@ export async function retirementRetention({adapter, user, outsider, record, clea
   const replayed = await snapshot();
   check(replayed?.children?.[0]?.revision === disposition.children[0].revision
     && replayed.children[0].last_seq === disposition.children[0].last_seq, 'stop_replay_mutated_terminal_agent');
-  await cleanup(record);
+  const cleanupProof = await cleanup(record);
+  const {deleteKey, deleteReceipt} = cleanupProof ?? {};
+  const deleteIngress = deleteReceipt?.timing?.am;
+  check(id(deleteKey) && ['a', 'b'].includes(deleteIngress) && deleteReceipt.status === 202,
+    'delete_original_receipt_unbound');
   const retained = await snapshot();
   check(retained?.status === 'retired' && retained.runtime_detached === true && retained.purge_deadline_future === true &&
     retained.children?.length === 1 && retained.children[0]?.status === 'deleted' &&
     retained.children[0].last_seq > before.children[0].last_seq, 'retirement_retained_state_or_deadline_missing');
-  const events = [];
+  const deleteReplay = await user.request(other(deleteIngress), 'DELETE', agentPath,
+    {key: deleteKey, allowed: [202]});
+  check(deleteReplay.status === deleteReceipt.status && deleteReplay.body === deleteReceipt.body,
+    'delete_peer_replay_changed_receipt');
+  const events = [], deletedEvents = [];
   for (const am of ['a', 'b']) {
-    const [agent, sandbox, history] = await Promise.all([
+    const [agent, sandbox, history, agentHistory] = await Promise.all([
       user.request(am, 'GET', agentPath), user.request(am, 'GET', sandboxPath),
       user.request(am, 'GET', `${sandboxPath}/events?limit=200`),
+      user.request(am, 'GET', agentPath + '/events?after=' + stoppedEvents[0]),
     ]);
     check(agent.body?.id === agentId && agent.body.status === 'deleted' && sandbox.body?.id === sandboxId &&
       sandbox.body.status === 'retired', 'retirement_exact_public_readback_missing');
@@ -67,9 +76,18 @@ export async function retirementRetention({adapter, user, outsider, record, clea
     const retired = history.body.filter(entry => entry.kind?.type === 'status_changed' && entry.kind?.to === 'retired');
     check(retired.length === 1, 'retirement_history_missing_or_duplicated');
     events.push(retired[0].seq);
+    check(Array.isArray(agentHistory.body?.items) && agentHistory.body.next === undefined,
+      'delete_event_tail_unbound');
+    const deleted = agentHistory.body.items.filter(entry => entry.kind?.type === 'deleted');
+    check(deleted.length === 1 && Number.isSafeInteger(deleted[0].seq), 'delete_event_missing_or_duplicated');
+    deletedEvents.push(deleted[0].seq);
   }
   check(events[0] === events[1], 'retirement_peer_history_mismatch');
+  check(deletedEvents[0] === deletedEvents[1], 'delete_event_peer_mismatch');
+  const terminal = await snapshot();
+  check(terminal?.revision === retained.revision && terminal.children?.[0]?.revision === retained.children[0].revision
+    && terminal.children[0].last_seq === retained.children[0].last_seq, 'delete_replay_mutated_terminal_lineage');
   return {agent_sha256: hash(agentId), sandbox_sha256: hash(sandboxId), terminal_event_count: 1,
-    stop_ingress: ingress, stop_owner: owner.am, stop_owner_epoch: owner.epoch, stop_events: 1,
+    stop_ingress: ingress, stop_owner: owner.am, stop_owner_epoch: owner.epoch, stop_events: 1, delete_events: 1,
     retained_history: true, observed_future_purge_deadline: true};
 }
