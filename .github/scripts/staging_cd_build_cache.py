@@ -6,7 +6,9 @@ import shutil
 import subprocess
 import tarfile
 import tempfile
+import time
 import uuid
+from contextlib import contextmanager, suppress
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -15,6 +17,7 @@ from staging_cd_build_cargo_keys import identity
 from staging_cd_common import require
 from staging_cd_cache_context import context
 from staging_cd_cargo_artifact import MAX_BUNDLE_BYTES, MAX_EXPANDED_BYTES
+from staging_cd_process import terminate
 from staging_cd_reservations import validate_reservation
 
 SCOPES = {"am": "cma-cd-am", "eg": "cma-cd-eg", "web": "cma-cd-web",
@@ -29,6 +32,7 @@ CI_SCOPES = frozenset({"cma-am", "cma-eg", "cma-web", "runtime", "runtime-omarch
 EXTRA_IMPORTS = {"am": ("cma-am",), "eg": ("cma-eg",), "web": ("cma-web",),
                  "runtime": ("runtime",), "runtime-omarchy": ("cma-runtime", "runtime")}
 RUNTIME_KEYS = ("ACTIONS_RUNTIME_TOKEN", "ACTIONS_RESULTS_URL")
+EXPORT_ERRORS = (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError)
 
 
 def bridge():
@@ -146,12 +150,43 @@ class BuildCache:
             return {}
         return {key: self.env[key] for key in RUNTIME_KEYS}
 
-    def export_mounts(self):
-        # Refresh after exact hits too. Restoring the first bundle of the day all
-        # day long made each build recompile everything merged since that seed.
+    def can_overlap_export(self, archive):
+        # The scan is complete. Leave room for the BuildKit stage copies, the
+        # local bundle, and another archive-sized copy during registry work.
+        try:
+            required = archive.stat().st_size + 3 * MAX_BUNDLE_BYTES
+            return shutil.disk_usage(self.root).free >= required
+        except OSError:
+            return False
+
+    def reset_export(self):
         self.export_reason = None
         self.export_headroom = None
         self.export_retained_groups = None
+
+    def accept_export(self, candidate):
+        require(candidate.is_dir() and not candidate.is_symlink(), "Cargo cache candidate is invalid")
+        tool = bridge()
+        compacted = candidate / "compacted"
+        if compacted.exists():
+            groups = int(compacted.read_text())
+            require(0 < groups <= tool.MAX_MEMBERS, "invalid compacted cache group count")
+            self.export_retained_groups = groups
+            compacted.unlink()
+        tool.seal(candidate, self.key.prefix, family=self.key.family,
+                  max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
+        size = sum((candidate / name).lstat().st_size for name in ("registry.tar.gz", "target.tar.gz"))
+        self.export_headroom = "low" if size > HEADROOM_WARNING * MAX_BUNDLE_BYTES else "ok"
+        if self.accepted.exists():
+            require(not self.accepted.is_symlink(), "Build cache accepted root is invalid")
+            shutil.rmtree(self.accepted)
+        candidate.rename(self.accepted)
+        return True
+
+    def export_mounts(self):
+        # Refresh after exact hits too. A single daily bundle makes later builds
+        # recompile everything merged since that seed.
+        self.reset_export()
         if self.key is None:
             return False
         require(not self.pending.exists(), "Cargo cache export must be fresh")
@@ -160,27 +195,47 @@ class BuildCache:
             tool.transfer("extract", self.pending, namespace=self.namespace,
                           timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES,
                           compact_registry=True, max_archive=MAX_BUNDLE_BYTES)
-            compacted = self.pending / "compacted"
-            if compacted.exists():
-                groups = int(compacted.read_text())
-                require(0 < groups <= tool.MAX_MEMBERS, "invalid compacted cache group count")
-                self.export_retained_groups = groups
-                compacted.unlink()
-            tool.seal(self.pending, self.key.prefix, family=self.key.family,
-                      max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
-            size = sum((self.pending / name).lstat().st_size for name in ("registry.tar.gz", "target.tar.gz"))
-            self.export_headroom = "low" if size > HEADROOM_WARNING * MAX_BUNDLE_BYTES else "ok"
-            if self.accepted.exists():
-                require(not self.accepted.is_symlink(), "Build cache accepted root is invalid")
-                shutil.rmtree(self.accepted)
-            self.pending.rename(self.accepted)
-            return True
-        except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError) as error:
+            return self.accept_export(self.pending)
+        except EXPORT_ERRORS as error:
             self.export_reason = withheld_reason(error)
             return False
         finally:
             if self.pending.exists() and not self.pending.is_symlink():
                 shutil.rmtree(self.pending)
+
+    @contextmanager
+    def background_export(self, directory):
+        if self.key is None:
+            yield None
+            return
+        self.reset_export()
+        candidate = directory / "cargo-candidate"
+        deadline = time.monotonic() + TRANSFER_SECONDS
+        try:
+            process = bridge().start_extract(candidate, directory / "cargo-context", namespace=self.namespace,
+                                             max_content=MAX_EXPANDED_BYTES, max_archive=MAX_BUNDLE_BYTES)
+        except EXPORT_ERRORS as error:
+            self.export_reason = withheld_reason(error)
+            yield lambda: False
+            return
+
+        def finish():
+            try:
+                status = process.wait(timeout=max(0, deadline - time.monotonic()))
+                if status:
+                    self.export_reason = "transfer-failed"
+                    return False
+                return self.accept_export(candidate)
+            except EXPORT_ERRORS as error:
+                self.export_reason = withheld_reason(error)
+                return False
+
+        try:
+            yield finish
+        finally:
+            if process.poll() is None:
+                with suppress(OSError, subprocess.SubprocessError):
+                    terminate(process, grace_seconds=0)
 
 
 # Fixed vocabulary only: exception text, paths and sizes never reach the log.
