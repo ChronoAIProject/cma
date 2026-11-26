@@ -1,7 +1,7 @@
 //! Publish the early writer before configuring or draining any native pool.
 use super::*;
-use crate::warm_pools::WarmPoolError;
 use crate::warm_pools::{deployment_image, startup::WarmPoolStartup};
+use layer1_public::rest::admin::warm_pools::WarmPoolError;
 
 impl RuntimePointerController {
     pub(crate) async fn register_boot(&self) -> Result<(), String> {

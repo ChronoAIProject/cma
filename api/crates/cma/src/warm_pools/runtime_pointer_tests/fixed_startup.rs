@@ -3,8 +3,9 @@ use crate::{
     auth::test_resources,
     startup::fixed_pool_startup,
     store::{runtime_routing::MongoRuntimeRouting, MongoSandboxStore},
-    warm_pools::{startup::WarmPoolStartup, WarmPoolError},
+    warm_pools::startup::WarmPoolStartup,
 };
+use layer1_public::rest::admin::warm_pools::WarmPoolError;
 use layer2_core::sandbox::{RuntimeBinding, SandboxRuntimeUpdateService};
 use layer3_adapter::{
     hosted::{HostedDeployment, RuntimeBackends, RuntimeRoutingStore},
