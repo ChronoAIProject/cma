@@ -12,6 +12,40 @@ from staging_cd_cache_compaction import export_script
 
 
 class CargoCompactionTests(unittest.TestCase):
+    def test_counts_members_without_reopening_the_archive(self):
+        with tempfile.TemporaryDirectory(prefix="cma-cargo-member-count-") as directory:
+            root = Path(directory)
+            registry, target, output, refused = (root / name for name in ("registry", "target", "export", "refused"))
+            registry.mkdir()
+            target.mkdir()
+            (registry / "package.crate").write_bytes(b"package")
+            os.link(registry / "package.crate", registry / "package-copy.crate")
+            (target / ".rustc_info.json").write_text("{}")
+
+            tar = root / "tar"
+            tar.write_text('''#!/bin/bash
+if [ "$3" != "-cvf" ]; then exit 9; fi
+exec "$REAL_TAR" "$@"
+''')
+            tar.chmod(0o755)
+            environment = {**os.environ, "COPYFILE_DISABLE": "1", "PATH": f"{root}:{os.environ['PATH']}",
+                           "REAL_TAR": shutil.which("tar")}
+
+            def run_export(destination, members):
+                script = export_script(1024 * 1024, 1024 * 1024, members)
+                subprocess.run(["bash", "-c", script, "export", str(registry), str(target), str(destination)],
+                               env=environment, check=True, timeout=10)
+
+            run_export(output, 5)
+            counts = []
+            for archive_name in ("registry.tar.gz", "target.tar.gz"):
+                with tarfile.open(output / archive_name) as archive:
+                    counts.append(len(archive.getmembers()))
+            self.assertEqual(counts, [3, 2])
+
+            run_export(refused, 2)
+            self.assertEqual({path.name for path in refused.iterdir()}, {"oversize"})
+
     def test_newest_executable_and_distinct_dependencies_win_under_pressure(self):
         with tempfile.TemporaryDirectory(prefix="cma-cargo-priority-") as directory:
             root = Path(directory)
