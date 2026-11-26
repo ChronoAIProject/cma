@@ -1,6 +1,6 @@
 use super::*;
 use layer2_core::resource_access::{ResourceOwner, ResourceTarget};
-use mongodb::bson::{self, Bson};
+use mongodb::bson;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
@@ -43,15 +43,22 @@ impl ErasureKeys {
         if self.share_id.as_ref() != basis.family().map(|family| &family.share_id) {
             return Err(ExecutionError::Corrupt);
         }
+        use wire::ExecutionBasisV1::{Independent, IndependentOwner, Share};
         let owner = match basis {
-            wire::ExecutionBasisV1::Share { .. } => return Ok(()),
-            wire::ExecutionBasisV1::IndependentOwner { owner, .. } => {
-                if self.actor_subject.is_none() || self.owner_subject.is_none() {
+            IndependentOwner { owner, .. } => {
+                if self.actor_subject.is_none() || self.actor_subject != self.owner_subject {
                     return Err(ExecutionError::Corrupt);
                 }
                 owner
             }
-            wire::ExecutionBasisV1::Independent { owner, .. } => owner,
+            Independent {
+                authority: wire::IndependentAuthorityV1::ExternalBinding { .. },
+                owner,
+                ..
+            } => owner,
+            _ if self.actor_subject.is_none() => return Err(ExecutionError::Corrupt),
+            Share { .. } => return Ok(()),
+            Independent { owner, .. } => owner,
         };
         if let Some(subject) = &self.owner_subject {
             let person = ResourceOwner::Person {
@@ -66,29 +73,26 @@ impl ErasureKeys {
 }
 
 fn read_keys(document: &Document, mut expected: Document) -> ExecutionResult<Option<ErasureKeys>> {
-    let keys = if let Some(value) = document.get(ERASURE_KEYS) {
+    let mut keys = None;
+    if let Some(value) = document.get(ERASURE_KEYS) {
         let fields = value.as_document().ok_or(ExecutionError::Corrupt)?;
-        // Four scalar identifiers of at most 128 bytes each, plus BSON framing.
-        // Reject explicit nulls and large values before copying the extension.
-        if fields.iter().any(|(name, value)| {
-            !matches!(
-                name.as_str(),
-                "sandbox_id" | "actor_subject" | "owner_subject" | "share_id"
-            ) || !matches!(value, Bson::String(text) if text.len() <= 128)
-        }) {
+        // Bound the four scalar fields before decoding the extension.
+        if fields.len() > 4
+            || fields.iter().any(|(name, value)| {
+                name.len() > 13 || value.as_str().is_none_or(|text| text.len() > 128)
+            })
+        {
             return Err(ExecutionError::Corrupt);
         }
-        let keys =
-            bson::deserialize_from_document(fields.clone()).map_err(|_| ExecutionError::Corrupt)?;
+        keys = Some(
+            bson::deserialize_from_document(fields.clone()).map_err(|_| ExecutionError::Corrupt)?,
+        );
         expected.insert(ERASURE_KEYS, value.clone());
-        Some(keys)
-    } else {
-        None
-    };
-    if expected != *document {
-        return Err(ExecutionError::Corrupt);
     }
-    Ok(keys)
+    expected
+        .eq(document)
+        .then_some(keys)
+        .ok_or(ExecutionError::Corrupt)
 }
 
 pub(super) fn grant_document(value: &GrantControlV1) -> ExecutionResult<Document> {
