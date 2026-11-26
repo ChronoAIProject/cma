@@ -1,3 +1,4 @@
+import { useChannelWriteGuard } from './useChannelWriteGuard';
 import { useRef, useState } from 'react';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
@@ -8,6 +9,9 @@ import { selectionKey, type ChannelSelection } from './channelTopology';
 type Result = {
   text: string;
   uncertain?: boolean;
+  completed?: boolean;
+  providerText?: string;
+  acceptedAfterMs?: number;
   checks?: readonly Check[];
   requestedVersion?: number;
 };
@@ -19,15 +23,18 @@ interface Check {
 }
 export function ChannelNodeTests({
   channelId,
+  writable = true,
   channelVersion,
   selection,
   denied,
 }: {
   readonly channelId: string;
+  readonly writable?: boolean;
   readonly channelVersion?: number;
   readonly selection: ChannelSelection;
   readonly denied: Denied;
 }) {
+  const canWrite = useChannelWriteGuard(writable);
   const key = selectionKey(selection);
   const [results, setResults] = useState<Record<string, Result>>({});
   const [pending, setPending] = useState<ReadonlySet<string>>(new Set());
@@ -36,7 +43,7 @@ export function ChannelNodeTests({
   const result = results[key];
   const busy = pending.has(key);
   async function test() {
-    if (running.current.has(key)) return;
+    if (!canWrite() || running.current.has(key)) return;
     running.current.add(key);
     setPending(new Set(running.current));
     setResults((values) => ({ ...values, [key]: { text: '', requestedVersion: channelVersion } }));
@@ -48,11 +55,14 @@ export function ChannelNodeTests({
           ? `/consumers/${segment(selection.id)}/test`
           : '/test');
     try {
-      const value = await serviceRequest<{ first_text?: string; checks?: readonly Check[] }>(
-        'event-gateway',
-        path,
-        { method: 'POST', signal: AbortSignal.timeout(125_000) },
-      );
+      const value = await serviceRequest<{
+        first_text?: string;
+        accepted_after_ms?: number;
+        checks?: readonly Check[];
+      }>('event-gateway', path, { method: 'POST', signal: AbortSignal.timeout(125_000) });
+      if (!source && typeof value?.first_text !== 'string') {
+        throw new Error('Invalid channel test response');
+      }
       setResults((values) => ({
         ...values,
         [key]: source
@@ -63,7 +73,10 @@ export function ChannelNodeTests({
             }
           : {
               requestedVersion: channelVersion,
-              text: value.first_text ?? 'The provider returned no text.',
+              completed: true,
+              text: 'Test turn completed',
+              providerText: value.first_text?.trim(),
+              acceptedAfterMs: value.accepted_after_ms,
             },
       }));
     } catch (error) {
@@ -98,7 +111,7 @@ export function ChannelNodeTests({
             ? 'Starts a short test turn with this consumer’s saved settings. It does not send a message to the external platform.'
             : 'Starts a short test turn with the default consumer. It does not test platform ingress or external message delivery.'}
       </p>
-      <Button disabled={busy} onClick={() => void test()}>
+      <Button disabled={!writable || busy} onClick={() => void test()}>
         {busy
           ? source
             ? 'Checking configuration…'
@@ -109,8 +122,29 @@ export function ChannelNodeTests({
       </Button>
       <Presence>
         {result?.text ? (
-          <Alert tone={result.uncertain ? 'warning' : 'info'} title="Test result">
-            <p>{result.text}</p>
+          <Alert
+            tone={result.uncertain ? 'warning' : result.completed ? 'success' : 'info'}
+            title={result.completed ? result.text : 'Test result'}
+          >
+            {result.completed ? (
+              <>
+                {typeof result.acceptedAfterMs === 'number' &&
+                Number.isFinite(result.acceptedAfterMs) &&
+                result.acceptedAfterMs >= 0 ? (
+                  <p>Accepted after {result.acceptedAfterMs} ms.</p>
+                ) : null}
+                {result.providerText ? (
+                  <>
+                    <p>Provider response</p>
+                    <p>{result.providerText}</p>
+                  </>
+                ) : (
+                  <p>The provider returned no text.</p>
+                )}
+              </>
+            ) : (
+              <p>{result.text}</p>
+            )}
             {result.requestedVersion !== channelVersion ? (
               <p>
                 Configuration changed since this test was requested. Run a new test for the current

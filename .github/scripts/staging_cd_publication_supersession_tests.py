@@ -100,7 +100,9 @@ class SupersededPublicationTests(unittest.TestCase):
                 pending.append(later)
                 raise ImageCommandRefusal(args, b"")
 
-        def exists(*_):
+        def exists(*_, settle=False):
+            # Verification after the copy reads with the settle window.
+            assert settle is True
             trace.append("verify")
             arrive("after-verify")
             return True

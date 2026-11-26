@@ -5,29 +5,52 @@ use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, unsigned, CommitOutcome,
     TRANSACTION_ATTEMPTS,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
+use layer2_core::released_runtime::ReleasedLane;
+use layer3_adapter::ReleasedRuntime;
 
 pub(in crate::store) async fn save(
     store: &MongoSandboxStore,
     expected: u64,
     sandbox: &Sandbox,
     acquisition: Option<&Document>,
+    release: Option<(&ReleasedRuntime, ReleasedLane)>,
 ) -> Result<(), SandboxStoreError> {
     let at = sandbox.updated_at.clone();
     for _ in 0..TRANSACTION_ATTEMPTS {
-        let mut session = store.client.start_session().await.map_err(unavailable)?;
-        start_transaction(&mut session).await.map_err(unavailable)?;
-        match apply(store, &mut session, expected, sandbox, &at, acquisition).await {
+        let mut session = match store.client.start_session().await {
+            Ok(session) => session,
+            Err(error) if is_transient(&error) => continue,
+            Err(error) => return Err(unavailable(error)),
+        };
+        if let Err(error) = start_transaction(&mut session).await {
+            if is_transient(&error) {
+                continue;
+            }
+            return Err(unavailable(error));
+        }
+        match apply(
+            store,
+            &mut session,
+            expected,
+            sandbox,
+            &at,
+            acquisition,
+            release,
+        )
+        .await
+        {
             Ok(()) => {}
             Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(TransactionEventError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(unavailable(error));
             }
             Err(TransactionEventError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
         }
@@ -51,11 +74,15 @@ async fn apply(
     sandbox: &Sandbox,
     at: &str,
     acquisition: Option<&Document>,
+    release: Option<(&ReleasedRuntime, ReleasedLane)>,
 ) -> Result<(), TransactionEventError> {
     use TransactionEventError::{Domain, Driver};
-    crate::store::work_publication::fence(store, session)
+    crate::store::work_publication::fence_transaction(store, session)
         .await
-        .map_err(Domain)?;
+        .map_err(|error| match error {
+            crate::store::work_publication::FenceError::Domain(error) => Domain(error),
+            crate::store::work_publication::FenceError::Driver(error) => Driver(error),
+        })?;
     if acquisition.is_some() && sandbox.work.authority_protocol.is_some() {
         crate::store::work_schema::floor::retain(store, session)
             .await
@@ -68,19 +95,27 @@ async fn apply(
         .await
         .map_err(Driver)?
         .ok_or(Domain(SandboxStoreError::NotFound))?;
-    crate::store::sandboxes::read_sandbox(&current)
-        .map_err(Domain)?
+    let parent = crate::store::sandboxes::read_sandbox(&current).map_err(Domain)?;
+    if parent.lifecycle.runtime_image_origin != sandbox.lifecycle.runtime_image_origin {
+        super::super::managed_machine_origin::fence(store, &parent, sandbox, session).await?;
+    }
+    crate::store::native_retirement_action::preserve_custody(&current, &parent, sandbox)
+        .map_err(Domain)?;
+    parent
         .validate_retirement_archive_successor(sandbox)
         .map_err(|_| Domain(SandboxStoreError::Conflict))?;
     if acquisition.is_some() {
         crate::store::sandbox_credentials::issuance::legacy::preserve(
-            store,
-            &crate::store::sandboxes::read_sandbox(&current).map_err(Domain)?,
-            sandbox,
-            session,
+            store, &parent, sandbox, session,
         )
         .await
         .map_err(Driver)?;
+    }
+    if let Some((release, lane)) = release {
+        store
+            .fence_released_admission(release, lane, session)
+            .await
+            .map_err(Domain)?;
     }
     let previous_revision = expected;
     let expected = signed(expected, "sandbox revision")
@@ -109,18 +144,33 @@ async fn apply(
     }
     let filter =
         crate::store::work_publication::sandbox(filter, sandbox.id.as_str()).map_err(Domain)?;
+    let mut replacement =
+        crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?;
+    if acquisition.is_some() {
+        crate::store::released_runtimes::pin_first_dispatch(
+            store,
+            &current,
+            &parent,
+            &mut replacement,
+        )
+        .map_err(Domain)?;
+    } else {
+        crate::store::released_runtimes::pin_replacement_dispatch(
+            store,
+            &parent,
+            sandbox,
+            &mut replacement,
+        )
+        .map_err(Domain)?;
+    }
     let updated = store
         .sandboxes
         .update_one(
             crate::store::work_schema::query(filter),
             if acquisition.is_some() {
-                crate::store::work_lease_update::acquisition(
-                    crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?,
-                )
+                crate::store::work_lease_update::acquisition(replacement)
             } else {
-                crate::store::work_lease_update::replacement(
-                    crate::store::sandboxes::sandbox_replacement_fields(sandbox).map_err(Domain)?,
-                )
+                crate::store::work_lease_update::replacement(replacement)
             },
         )
         .session(&mut *session)

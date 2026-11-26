@@ -3,7 +3,10 @@
 from pathlib import Path, PurePosixPath
 import re
 
+# cma-journey-probe is a standalone public-journey runner. It is in no image, and
+# its tests reuse Agent Manager wire fixtures, so the AM track owns it.
 AM = frozenset({"cma", "cma-image-manager", "cma-allocator-qualification"})
+AM_OPTIONAL = frozenset({"cma-journey-probe"})
 EG = frozenset({"cmaeg"})
 SHARED = frozenset({"layer1-public", "layer2-core", "layer3-adapter",
                     "layer4-runtime", "cma-service-auth", "cmaeg-core"})
@@ -40,6 +43,7 @@ class Workspace:
         if any(not re.fullmatch(r"[A-Za-z0-9_-]+", name) for name in self.names):
             raise ValueError("invalid package name")
         self.directories = {}
+        self.build_scripts = {}
         for p in packages:
             manifest = Path(p["manifest_path"]).resolve()
             if manifest.name != "Cargo.toml":
@@ -48,6 +52,10 @@ class Workspace:
             if not relative.startswith("api/") or relative in self.directories:
                 raise ValueError("ambiguous package directory")
             self.directories[relative] = p["name"]
+            self.build_scripts[relative] = {
+                Path(target["src_path"]).resolve().relative_to(root).as_posix()
+                for target in p.get("targets", []) if "custom-build" in target["kind"]
+            }
         by_path = {str((root / path).resolve()): name
                    for path, name in self.directories.items()}
         self.dependencies = {name: set() for name in self.names}
@@ -66,8 +74,9 @@ class Workspace:
                 if dep.get("kind") != "dev":
                     self.production[p["name"]].add(target)
                 self.reverse[target].add(p["name"])
+        am_roots = AM | SHARED | (AM_OPTIONAL & self.names)
         self.owned = {
-            "am": closure(AM | SHARED, self.dependencies) - EG,
+            "am": closure(am_roots, self.dependencies) - EG,
             "eg": closure(EG, self.dependencies) | {"cmaeg-core", "cma-service-auth", "cma-allocator-qualification"},
         }
         if self.owned["am"] | self.owned["eg"] != self.names:

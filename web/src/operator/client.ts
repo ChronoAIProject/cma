@@ -20,6 +20,7 @@ export interface OperatorClient {
   readonly admin: Pick<
     Administration,
     | 'listSandboxes'
+    | 'bindingHolds'
     | 'readSandbox'
     | 'sandboxEvents'
     | 'retireSandbox'
@@ -27,11 +28,14 @@ export interface OperatorClient {
     | 'retireProfile'
     | 'readSettings'
     | 'replaceSettings'
+    | 'readSpend'
+    | 'recordSpendObservation'
     | 'previewAutoPause'
     | 'pauseIdleNow'
     | 'setSandboxAlwaysOn'
     | 'listActivity'
     | 'listActivitySummary'
+    | 'searchActivityActors'
     | 'listWarmPools'
     | 'configureWarmPool'
     | 'resizeWarmPool'

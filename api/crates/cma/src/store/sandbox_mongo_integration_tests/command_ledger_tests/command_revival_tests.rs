@@ -75,6 +75,7 @@ impl Fixture {
             .unwrap();
         SandboxTransaction::SaveSandboxAndAppend {
             command_revival: Some(proof),
+            released_runtime: None,
             expected_revision: self.parent.revision,
             sandbox: Box::new(next),
             event_at,
@@ -335,3 +336,58 @@ async fn revival_transaction_refuses_claim_rejection_policy_and_unrelated_candid
 
 #[path = "command_revival_tests/commit_outcomes.rs"]
 mod commit_outcomes;
+
+pub(in crate::store::sandbox_mongo_integration_tests) async fn revive_managed_sandbox(
+    source: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
+) -> (Sandbox, Sandbox) {
+    use crate::store::sandbox_unpublished_recovery::mongo_integration_tests::home;
+
+    let (client, name) = database("command_revival_release").await;
+    let fixture = Fixture::new(&client, &name).await;
+    let mut original = fixture.parent.clone();
+    let home = home(&original.id);
+    let runtime_version = home
+        .native_pool
+        .as_ref()
+        .unwrap()
+        .request
+        .pool
+        .spec
+        .image
+        .uri
+        .clone();
+    original.lifecycle.home = Some(Box::new(home));
+    original.lifecycle.suspended_runtime = Some(Box::new(RuntimeBinding {
+        runtime_id: "agent-sandbox:member:sandbox-uid".into(),
+        runtime_version,
+        provision_generation: Some(1),
+        boot_id: Some("b".repeat(32)),
+        bound_at: NOW.into(),
+    }));
+    original.revision += 1;
+    original.validate().unwrap();
+    assert!(original.supports_retained_runtime_update());
+    fixture
+        .store
+        .save_sandbox(fixture.parent.revision, original.clone())
+        .await
+        .unwrap();
+    let proof = fixture.proof(MAX_MEMBERSHIP_AGE).await;
+    let store = MongoSandboxStore::open(&client, &name)
+        .await
+        .unwrap()
+        .with_released_runtime(source);
+    let result = store.schedule_command_revival(proof).await;
+    let persisted = store.get_sandbox(&original.id).await.unwrap().unwrap();
+    client.database(&name).drop().await.unwrap();
+    let SandboxLifecycleCommandResult::Accepted(outcome) = result.unwrap() else {
+        panic!("managed command revival must be admitted");
+    };
+    assert_eq!(
+        outcome.disposition,
+        SandboxLifecycleCommandDisposition::Scheduled
+    );
+    assert_eq!(persisted, outcome.sandbox);
+    assert_eq!(persisted.status, SandboxStatus::Reviving);
+    (persisted, original)
+}

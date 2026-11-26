@@ -115,23 +115,31 @@ pub(super) async fn cleanup_custodied(
     id: &str,
     release: bool,
 ) -> Result<(), CleanupError> {
-    let (mut record, version) = store(state).connection(id).await?;
+    let (mut record, version) = store(state)
+        .connection(id)
+        .await
+        .map_err(CleanupError::before_send)?;
     if !record.webhook_retiring {
-        return Err(Error::Conflict.into());
+        return Err(CleanupError::before_send(Error::Conflict));
     }
     if record.webhook_lease.is_some() {
-        return Err(Error::Conflict.into());
+        return Err(CleanupError::before_send(Error::Conflict));
     }
     let Some(channel_id) = record.channel_id.clone() else {
         if release {
             record.channel_record = None;
             record.webhook_lease = None;
             record.webhook_retiring = false;
-            store(state).save_connection(&record, Some(version)).await?;
+            store(state)
+                .save_connection(&record, Some(version))
+                .await
+                .map_err(CleanupError::before_send)?;
         }
         return Ok(());
     };
-    let (record, lease) = claim(state, record, version, WebhookOperation::Retire).await?;
+    let (record, lease) = claim(state, record, version, WebhookOperation::Retire)
+        .await
+        .map_err(CleanupError::before_send)?;
     let mut mutation_started = false;
     let mut terminal_refusal = false;
     let result: Result<(), Error> = async {
@@ -163,7 +171,9 @@ pub(super) async fn cleanup_custodied(
         if !mutation_started || terminal_refusal {
             // Read/validation failures have not sent a platform mutation. Only
             // the exact claimant may release that known-unissued reservation.
-            finish_activation(state, id, &lease, true).await?;
+            finish_activation(state, id, &lease, true)
+                .await
+                .map_err(CleanupError::before_send)?;
         } else {
             tracing::warn!("webhook deletion outcome unknown; retaining operation custody");
         }
@@ -172,10 +182,14 @@ pub(super) async fn cleanup_custodied(
             unconfirmed: mutation_started && !terminal_refusal,
         });
     }
+    let unsettled = |error| CleanupError {
+        error,
+        unconfirmed: mutation_started,
+    };
     for _ in 0..3 {
-        let (mut current, version) = store(state).connection(id).await?;
+        let (mut current, version) = store(state).connection(id).await.map_err(unsettled)?;
         if !holds(&current, &lease) || !current.webhook_retiring {
-            return Err(Error::Conflict.into());
+            return Err(unsettled(Error::Conflict));
         }
         current.webhook_lease = None;
         if release {
@@ -186,10 +200,10 @@ pub(super) async fn cleanup_custodied(
         match store(state).save_connection(&current, Some(version)).await {
             Ok(_) => return Ok(()),
             Err(Error::Conflict) => continue,
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(unsettled(error)),
         }
     }
-    Err(Error::Conflict.into())
+    Err(unsettled(Error::Conflict))
 }
 
 pub(super) fn failure(error: crate::telegram::WebhookError) -> Error {
@@ -206,11 +220,11 @@ pub(super) struct CleanupError {
     pub(super) error: Error,
     pub(super) unconfirmed: bool,
 }
-impl From<Error> for CleanupError {
-    fn from(error: Error) -> Self {
+impl CleanupError {
+    fn before_send(error: Error) -> Self {
         Self {
             error,
-            unconfirmed: true,
+            unconfirmed: false,
         }
     }
 }

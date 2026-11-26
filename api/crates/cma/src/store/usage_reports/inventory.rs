@@ -156,7 +156,31 @@ impl Inventory {
                     .is_some_and(|r| &r.runtime_version == v)
             })
             && (filters.search.is_empty()
-                || self.state.name.to_lowercase().starts_with(&filters.search)
-                || self.state.sandbox_id.as_str().starts_with(&filters.search))
+                || self
+                    .state
+                    .name
+                    .trim_start()
+                    .to_lowercase()
+                    .starts_with(&filters.search)
+                || matches_sandbox_id_search(self.state.sandbox_id.as_str(), &filters.search))
     }
+}
+
+fn matches_sandbox_id_search(id: &str, search: &str) -> bool {
+    if id.starts_with(search) {
+        return true;
+    }
+    let Some(opaque_id) = id.strip_prefix("sbx_").filter(|opaque_id| {
+        opaque_id.len() == 32 && opaque_id.bytes().all(|byte| byte.is_ascii_hexdigit())
+    }) else {
+        return false;
+    };
+    if opaque_id.starts_with(search) {
+        return true;
+    }
+    // Usage renders long IDs with a literal ellipsis. Require both displayed
+    // ends so an abbreviated value selects exactly the visible identity.
+    search.split_once('…').is_some_and(|(prefix, suffix)| {
+        prefix.len() == 14 && suffix.len() == 8 && id.starts_with(prefix) && id.ends_with(suffix)
+    })
 }

@@ -93,7 +93,7 @@ async fn prepared_connection_contention_releases_only_new_lease_and_preserves_in
             .unwrap();
         let result = fixture
             .worker
-            .finish_connection_publication(agent.clone(), &attachment, now)
+            .finish_connection_publication(agent.clone(), &attachment, None, now)
             .await;
         disable(&admin).await;
         result.unwrap();
@@ -146,7 +146,7 @@ async fn prepared_connection_unknown_commit_never_releases_as_aborted_contention
         .unwrap();
     let result = fixture
         .worker
-        .finish_connection_publication(agent.clone(), &attachment, now)
+        .finish_connection_publication(agent.clone(), &attachment, None, now)
         .await;
     disable(&admin).await;
     assert!(matches!(result, Err(SandboxStoreError::Unavailable(_))));
@@ -175,7 +175,7 @@ async fn prepared_connection_stale_publication_cannot_release_successor_claim() 
         .unwrap();
     let result = fixture
         .worker
-        .finish_connection_publication(original, &attachment, later)
+        .finish_connection_publication(original, &attachment, None, later)
         .await;
     assert_eq!(result, Err(SandboxStoreError::Conflict));
     assert_eq!(

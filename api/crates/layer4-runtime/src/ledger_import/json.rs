@@ -4,7 +4,7 @@ use serde::de::{DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use super::{capacity_at_least, invalid};
 use crate::failure::Result;
 
-pub(super) fn check(bytes: &[u8]) -> Result<()> {
+pub(crate) fn check(bytes: &[u8]) -> Result<()> {
     let mut nodes = 4096usize;
     let mut exceeded = false;
     let mut decoder = serde_json::Deserializer::from_slice(bytes);

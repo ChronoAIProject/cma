@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
+import { RelayCapabilitiesContext } from '../RelayCapabilities';
 import { ChannelEditor, type Channel } from '../ChannelEditor';
 import { ChannelPolicyFields } from './ChannelPolicyFields';
 import { defaultSource, type Fields } from './model';
@@ -70,7 +71,11 @@ it('updates the displayed reference and neutral guidance when the channel change
 });
 
 it('keeps the existing Telegram connection selector in new-channel setup', () => {
-  render(<ChannelEditor onDone={vi.fn()} denied={vi.fn()} />);
+  render(
+    <RelayCapabilitiesContext value={{ status: 'ready', managedTelegramSetup: true }}>
+      <ChannelEditor onDone={vi.fn()} denied={vi.fn()} />
+    </RelayCapabilitiesContext>,
+  );
   expect(screen.queryByLabelText('Connection reference')).not.toBeInTheDocument();
   expect(screen.getByLabelText('Use an existing CMA-managed Telegram connection')).toBeVisible();
   expect(

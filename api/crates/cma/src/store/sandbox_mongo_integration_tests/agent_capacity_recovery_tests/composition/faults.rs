@@ -64,6 +64,9 @@ async fn capacity_composition_claim_abort_and_uncertainty_never_attach() {
         }
         assert_eq!(native.attaches.load(Ordering::SeqCst), 0);
         assert_eq!(native.acknowledges.load(Ordering::SeqCst), 0);
+        if mode == "committed" {
+            crate::store::test_visibility::majority_barrier(&admin, &name).await;
+        }
         let after = snapshot(&store, &request).await;
         if mode == "committed" {
             let RecoveryLookup::Recorded(work) = service.lookup(&caller, &request).await.unwrap()

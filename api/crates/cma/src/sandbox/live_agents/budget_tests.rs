@@ -58,8 +58,10 @@ async fn budget_cancel_requires_current_attachment_and_rechecked_turn_before_wri
             authority_fence: 1,
             manager_authority: None,
             capabilities: layer2_core::RuntimeCapabilities::default(),
-            input: input.clone(),
-            activation: None,
+            input: super::super::AttachmentInput::Connected {
+                input: input.clone(),
+                activation: None,
+            },
             published: true,
             nonce: 1,
             task: task.abort_handle(),
@@ -129,4 +131,50 @@ async fn budget_cancel_requires_current_attachment_and_rechecked_turn_before_wri
         assert!(received.try_recv().is_err());
     }
     task.abort();
+}
+
+#[tokio::test(start_paused = true)]
+async fn exhausted_recovery_waits_for_publication_before_interrupting() {
+    let registry = Arc::new(LiveAgentRegistry::default());
+    let target = super::super::LiveAgentTarget {
+        agent_id: AgentId("budget-recovery".into()),
+        conversation_id: "retained".into(),
+        runtime_generation: 1,
+    };
+    let stop = BudgetStop {
+        agent_id: target.agent_id.clone(),
+        runtime_generation: 1,
+        turn_sequence: 3,
+        reason: BudgetError::TurnExhausted,
+    };
+    let recorder = Arc::new(Recorder(Mutex::new(Ok(Some(stop)))));
+    let (_send, received) = tokio::sync::mpsc::channel(1);
+    let recovery = registry
+        .begin_recovery(
+            &target,
+            2,
+            layer2_core::RuntimeCapabilities::default(),
+            received,
+            recorder,
+        )
+        .unwrap();
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    let (cancel, mut cancelled) = tokio::sync::mpsc::channel(1);
+    let input = ConversationInputSender::spawn(1, move |input| {
+        let cancel = cancel.clone();
+        async move {
+            assert!(matches!(input, ConversationInput::Cancel));
+            cancel.send(()).await.unwrap();
+            Ok(())
+        }
+    });
+    let attachment = recovery.finish(input).unwrap();
+    registry.publish_and_activate(&attachment).unwrap();
+    tokio::time::timeout(Duration::from_secs(3), cancelled.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    registry.fence(&target.agent_id, Some(1), 2);
 }

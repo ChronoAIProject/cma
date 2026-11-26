@@ -49,15 +49,41 @@ export function registerShardTests({fixture, ...isolated}) {
       } finally { f.close(); }
     }
     assert.deepEqual(partitions.sort(), Array.from({length: 9}, (_, i) => `count:${i + 1}/9`).sort());
-    assert.equal(selected.length, 328);
-    assert.equal(new Set(selected).size, 328);
+    assert.equal(selected.length, 329);
+    assert.equal(new Set(selected).size, 329);
     for (const name of Object.values(isolated)) assert.ok(selected.includes(name));
   });
 
   test('archive: a failed shard still completes its remaining partitions and cleans up', () => {
     const f = fixture('shard-error', true);
     try {
-      assert.throws(() => execFileSync('bash', [...f.args, '--shard', '1/8'], {env: f.env, timeout: 30000, stdio: 'pipe'}), error => error.status === 1);
+      assert.throws(() => execFileSync('bash', [...f.args, '--shard', '1/8'], {env: f.env, timeout: 30000, stdio: 'pipe'}), error => {
+        assert.equal(error.status, 1);
+        const prefix = 'Mongo fixture ';
+        const receipts = error.stdout.toString().split('\n').filter(line => line.startsWith(prefix))
+          .map(line => JSON.parse(line.slice(prefix.length)));
+        const starts = receipts.filter(receipt => receipt.event === 'started');
+        const finishes = receipts.filter(receipt => receipt.event === 'finished');
+        assert.equal(starts.length, 2);
+        assert.equal(finishes.length, 2);
+        assert.equal(new Set(starts.map(receipt => receipt.fixture)).size, 2);
+        assert.equal(new Set(starts.map(receipt => receipt.mongo_process)).size, 2);
+        for (const start of starts) {
+          assert.equal(start.shard, '1/8');
+          assert.match(start.fixture, /^[a-f0-9]{24}$/);
+          assert.match(start.mongo_process, /^[a-f0-9]{24}$/);
+          assert.match(start.archive_metadata_sha256, /^[a-f0-9]{64}$/);
+          assert.ok(Number.isSafeInteger(start.mongo_unix_ms));
+          assert.ok(Number.isSafeInteger(start.host_unix_ms));
+          assert.ok(start.host_load === null || start.host_load.length === 3);
+          const [finish] = finishes.filter(item => item.fixture === start.fixture);
+          assert.equal(finish.partition, start.partition);
+          assert.equal(finish.status === 0, start.partition !== 'count:1/9');
+          assert.ok(Number.isInteger(finish.elapsed_seconds) && finish.elapsed_seconds >= 0);
+        }
+        assert.ok(receipts.every(item => !JSON.stringify(item).includes('mongodb://')));
+        return true;
+      });
       assert.deepEqual(f.calls().filter(row => row.command === 'cargo' && row.args[1] === 'run')
         .map(row => row.args[row.args.indexOf('--partition') + 1]).sort(), ['count:1/9', 'count:9/9']);
       assert.equal(f.containers().length, 0);

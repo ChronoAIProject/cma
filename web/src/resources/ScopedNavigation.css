@@ -9,6 +9,17 @@
   color: var(--dsw-alias-label-primary);
   overflow-wrap: anywhere;
 }
+.scoped-navigation__access {
+  display: grid;
+  gap: var(--space-2);
+  padding: var(--space-2);
+  font-size: var(--text-note);
+  color: var(--dsw-alias-label-secondary);
+}
+.manager-navigation__environments {
+  justify-content: flex-start;
+  width: 100%;
+}
 .scoped-navigation > p,
 .scoped-navigation__tree > p {
   margin: 4px 0;

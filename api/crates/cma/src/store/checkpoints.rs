@@ -1,5 +1,6 @@
 //! Atomic schema-v1 checkpoint metadata publication.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::SandboxId;
 use layer2_core::sandbox::store::{SandboxCheckpointMutation, SandboxStoreError};
 use layer2_core::sandbox::{
@@ -152,7 +153,7 @@ pub(super) async fn publish_checkpoint(
         let receipt = match transaction::attempt(store, &mutation, &mut session).await {
             Ok(receipt) => receipt,
             Err(PublishError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if (error == SandboxStoreError::Duplicate
                     || (mutation.nonblocking && error == SandboxStoreError::Conflict))
                     && reconcile_publication(store, &mutation).await?
@@ -162,12 +163,12 @@ pub(super) async fn publish_checkpoint(
                 return Err(error);
             }
             Err(PublishError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 last_transient = Some(error.to_string());
                 continue;
             }
             Err(PublishError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         };

@@ -51,7 +51,9 @@ impl SandboxLimitClass {
 
 #[derive(Debug, Clone)]
 pub struct SandboxAdmission {
+    pub creation_fence: Option<CreationFence>,
     pub binding: Option<crate::sandbox::binding::BindingAdmissionFence>,
+    lifecycle_lease: Option<LifecycleAdmissionLease>,
     pub sandbox: Sandbox,
     pub name: SandboxAdmissionName,
     pub admission_fingerprint: String,
@@ -60,7 +62,38 @@ pub struct SandboxAdmission {
     pub event_at: String,
 }
 
+/// One accepted creation and, for lifecycle work, its current execution lease.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreationFence {
+    pub record_id: String,
+    pub generation: String,
+    pub epoch: String,
+    pub lifecycle_lease: Option<(String, String)>,
+}
+
+#[derive(Clone)]
+struct LifecycleAdmissionLease(String);
+
+impl std::fmt::Debug for LifecycleAdmissionLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("LifecycleAdmissionLease(..)")
+    }
+}
+
 impl SandboxAdmission {
+    /// The initiating worker's in-memory claim. It is excluded from the
+    /// replay fingerprint so a new worker can recover a committed admission.
+    #[must_use]
+    pub fn with_lifecycle_lease(mut self, token: &str) -> Self {
+        self.lifecycle_lease = Some(LifecycleAdmissionLease(token.to_owned()));
+        self
+    }
+
+    pub fn lifecycle_lease(&self) -> Option<&str> {
+        self.lifecycle_lease.as_ref().map(|lease| lease.0.as_str())
+    }
+
     pub fn new(
         sandbox: Sandbox,
         name: SandboxAdmissionName,
@@ -69,7 +102,9 @@ impl SandboxAdmission {
     ) -> Result<Self, SandboxStoreError> {
         let admission_fingerprint = fingerprint(&sandbox, &name)?;
         let admission = Self {
+            creation_fence: None,
             binding: None,
+            lifecycle_lease: None,
             sandbox,
             name,
             admission_fingerprint,
@@ -281,7 +316,7 @@ struct AdmissionIdentity<'a> {
     name: &'a SandboxAdmissionName,
     profile: &'a SandboxProfileSnapshot,
     reaches: &'a [crate::ids::ServiceId],
-    #[serde(skip_serializing_if = "crate::sandbox::SandboxCredentialSource::is_managed")]
+    #[serde(skip_serializing_if = "crate::sandbox::SandboxCredentialSource::is_default_managed")]
     credential_source: &'a crate::sandbox::SandboxCredentialSource,
     sign_in: AdmissionSignInMode,
     limits: SandboxLimits,

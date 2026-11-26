@@ -41,13 +41,13 @@
     "secret_scan": "PASS"
   },
   "logs": {
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/python-custody-final.log": "37b2ac2fba98181731a122d84805d74182712ef20d556a89b35f022a9bc91b2d",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/javascript-custody-r1.log": "5a88a13f1ce8092821a53db77edb9fbdeee8ada71cd6c0d9dcb7c589a70b7762",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/lint-custody-final.log": "2eb1753aa1953e3a86877c2aa01886bd2410fd0ace7ce90cde3f1323f71cd2a3",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/scan-custody-final.log": "7ff51c2f206de09bfc80def6bd90989803b963c2e1c539fc41c3f467d3b7f140"
+    "tech-lead.staff/developer-17/evidence/final/python-custody-final.log": "37b2ac2fba98181731a122d84805d74182712ef20d556a89b35f022a9bc91b2d",
+    "tech-lead.staff/developer-17/evidence/final/javascript-custody-r1.log": "5a88a13f1ce8092821a53db77edb9fbdeee8ada71cd6c0d9dcb7c589a70b7762",
+    "tech-lead.staff/developer-17/evidence/final/lint-custody-final.log": "2eb1753aa1953e3a86877c2aa01886bd2410fd0ace7ce90cde3f1323f71cd2a3",
+    "tech-lead.staff/developer-17/evidence/final/scan-custody-final.log": "7ff51c2f206de09bfc80def6bd90989803b963c2e1c539fc41c3f467d3b7f140"
   },
   "previous_failure": {
-    "path": "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/python-custody-r1.log",
+    "path": "tech-lead.staff/developer-17/evidence/final/python-custody-r1.log",
     "sha256": "bc6165c93f2004c1595680fe2f1edac60c9cea531b80e25a62382f2feb72524e",
     "outcome": "3 failed assertions across2 tests; Darwin zombie getpgid invalidated liveness check; exclusive unreaped-child reservation corrected"
   },

@@ -7,9 +7,9 @@ use mongodb::{
     Database,
 };
 use std::collections::{BTreeMap, BTreeSet};
-
 #[path = "history.rs"]
 mod history;
+pub(super) use history::discover_usage_projections;
 #[path = "context_inventory.rs"]
 mod inventory;
 const PAGE: i64 = 500;
@@ -29,6 +29,14 @@ pub(super) struct Context {
     // The cursor stores resource IDs, never stale lease/key authority snapshots.
     #[serde(skip)]
     pub sandboxes: Vec<Document>,
+    /// Share IDs on personal Sandboxes, re-read on every refresh and never
+    /// persisted. Resource-execution evidence names shares only by ID (#3296).
+    #[serde(skip)]
+    pub shares: BTreeSet<String>,
+    /// Deterministic execution digests naming the subject, recomputed with the
+    /// shares on every refresh and never persisted (#3296).
+    #[serde(skip)]
+    pub execution_digests: BTreeSet<String>,
 }
 impl Context {
     pub fn ids(&self, set: Set) -> Vec<String> {
@@ -136,7 +144,10 @@ impl Context {
                 continue;
             }
             for row in rows(db, name, doc! {"_id":{"$in":ids}}, &self.subject).await? {
-                let owner = super::selectors::strings(&row, owner_path);
+                let mut owner = super::selectors::strings(&row, owner_path);
+                if set == Set::Documents {
+                    owner.extend(super::selectors::strings(&row, "audit_owner_subject"));
+                }
                 let foreign = owner.iter().any(|owner| *owner != self.subject);
                 if foreign || (owner.is_empty() && matches!(set, Set::Launches | Set::Bindings)) {
                     if let Ok(id) = row.get_str("_id") {
@@ -279,6 +290,27 @@ impl Context {
             self.sandboxes.clear();
         }
         self.exclude_protected();
+        let launches: Vec<_> = self
+            .ids(Set::Launches)
+            .into_iter()
+            .map(layer2_core::LaunchId)
+            .collect();
+        let subject = layer2_core::SubjectId::new(self.subject.clone());
+        self.execution_digests =
+            layer2_core::resource_access::execution::subject_execution_digests(&subject, &launches)
+                .map_err(|_| Error::InvalidRecord("resource execution identity digest"))?
+                .into_iter()
+                .collect();
+        self.shares.clear();
+        let personal = self.ids(Set::Sandboxes);
+        if !personal.is_empty() {
+            let filter = doc! {"sandbox_id":{"$in":personal}};
+            for row in rows(db, "resource_shares", filter, &self.subject).await? {
+                if let Ok(id) = row.get_str("_id") {
+                    self.shares.insert(id.to_owned());
+                }
+            }
+        }
         self.bounds()
     }
 }
@@ -333,7 +365,7 @@ pub(super) async fn load_cohort_with_receipt(
     if contexts.is_empty() {
         return Ok(contexts);
     }
-    history::discover(db, &mut contexts).await?;
+    history::discover(db, &mut contexts, !receipt.usage_projections_absent).await?;
     for context in &mut contexts {
         context
             .refresh(db)
@@ -396,7 +428,7 @@ async fn rows(
     // _id sort or hint that could scan other tenants on every refresh.
     let query = collection.find(filter).batch_size(PAGE as u32)
         .projection(doc! {"_id":1,"sandbox_id":1,"workspace_id":1,"worktree_id":1,
-            "owner":1,"owner_kind":1,"owner_subject":1,"record.owner":1,"record.sandbox_id":1,
+            "owner":1,"owner_kind":1,"owner_subject":1,"audit_owner_subject":1,"record.owner":1,"record.sandbox_id":1,
             "binding_id":1,"record.binding_id":1,"record.agent_id":1,"record.workspace_id":1,"record.worktree_id":1});
     let mut cursor = query.await?;
     let mut result = Vec::new();

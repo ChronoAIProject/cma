@@ -98,17 +98,14 @@ for (const target of ['new', 'contextual'] as const) {
     ).toBeEnabled();
     await page.setViewportSize({ width: 1440, height: 900 });
     await open();
-    await expect(dialog.getByLabel('Your task')).toHaveValue(
+    const original = dialog.getByRole('region', { name: 'Original request', exact: true });
+    await expect(original).toBeVisible();
+    expect(await original.locator('p').textContent()).toBe(
       '  Inspect the selected source\nKeep this exact task.  ',
     );
     await dialog.getByRole('button', { name: 'Recover original task', exact: true }).click();
     await expect(
-      dialog.getByText(
-        target === 'contextual'
-          ? 'Preparing your Agent…'
-          : 'Preparing a cloud computer for your Agent…',
-        { exact: true },
-      ),
+      dialog.getByRole('heading', { name: 'Getting its cloud computer ready', exact: true }),
     ).toBeVisible();
     await expect(page).not.toHaveURL(/\/agents\/agt_contract$/);
     expect(writes).toHaveLength(2);

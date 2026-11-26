@@ -24,6 +24,17 @@ pub enum SseError {
     Truncated,
 }
 
+impl SseError {
+    pub(super) fn kind(&self) -> &'static str {
+        match self {
+            Self::FrameTooLarge => "frame_too_large",
+            Self::InvalidUtf8 => "invalid_utf8",
+            Self::Stream(_) => "transport",
+            Self::Truncated => "truncated",
+        }
+    }
+}
+
 impl fmt::Display for SseError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -62,13 +73,16 @@ where
                     return None;
                 }
                 match state.stream.next().await {
-                    Some(Ok(chunk)) => match state.decoder.feed(chunk.as_ref()) {
-                        Ok(frames) => state.pending.extend(frames.into_iter().map(Ok)),
-                        Err(error) => {
+                    Some(Ok(chunk)) => {
+                        let mut frames = Vec::new();
+                        let result = state.decoder.feed(chunk.as_ref(), &mut frames);
+                        // A transport chunk can contain complete frames before a framing error.
+                        state.pending.extend(frames.into_iter().map(Ok));
+                        if let Err(error) = result {
                             state.pending.push_back(Err(error));
                             state.ended = true;
                         }
-                    },
+                    }
                     Some(Err(error)) => {
                         state
                             .pending
@@ -107,8 +121,7 @@ struct Decoder {
 }
 
 impl Decoder {
-    fn feed(&mut self, bytes: &[u8]) -> Result<Vec<SseFrame>, SseError> {
-        let mut frames = Vec::new();
+    fn feed(&mut self, bytes: &[u8], frames: &mut Vec<SseFrame>) -> Result<(), SseError> {
         for byte in bytes {
             self.bytes.push(*byte);
             if self.bytes.len() > MAX_SSE_FRAME_BYTES {
@@ -118,10 +131,10 @@ impl Decoder {
                 let line = std::mem::take(&mut self.bytes);
                 let line = line.strip_suffix(b"\n").unwrap_or(&line);
                 let line = line.strip_suffix(b"\r").unwrap_or(line);
-                self.process_line(line, &mut frames)?;
+                self.process_line(line, frames)?;
             }
         }
-        Ok(frames)
+        Ok(())
     }
 
     fn finish(&mut self) -> Result<Vec<SseFrame>, SseError> {
@@ -268,5 +281,38 @@ mod tests {
             .await;
         assert_eq!(frames.len(), 3);
         assert!(frames.iter().all(Result::is_ok));
+    }
+
+    #[tokio::test]
+    async fn reports_a_malformed_suffix_after_completed_frames_independent_of_chunking() {
+        let accepted = b"event: response.created\ndata: {}\n\n".to_vec();
+        let completed = b"event: response.completed\ndata: {}\n\n".to_vec();
+        let bad = b"data: \xff\n\n".to_vec();
+        let expected = vec![
+            Ok(SseFrame {
+                event: Some("response.created".into()),
+                data: "{}".into(),
+                id: None,
+                retry: None,
+            }),
+            Ok(SseFrame {
+                event: Some("response.completed".into()),
+                data: "{}".into(),
+                id: None,
+                retry: None,
+            }),
+            Err(SseError::InvalidUtf8),
+        ];
+        for chunks in [
+            vec![accepted.clone(), completed.clone(), bad.clone()],
+            vec![[accepted, completed, bad].concat()],
+        ] {
+            let frames = parse_sse(stream::iter(
+                chunks.into_iter().map(Ok::<_, std::convert::Infallible>),
+            ))
+            .collect::<Vec<_>>()
+            .await;
+            assert_eq!(frames, expected);
+        }
     }
 }

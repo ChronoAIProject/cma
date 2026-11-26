@@ -26,14 +26,14 @@ fn shared_compilation_vectors() {
             let mut fields = input.fields.clone();
             fields.remove(key);
             assert_eq!(
-                compile_task_template(&input.id, 1, &fields)
+                compile_task_template(&input.id, input.version, &fields)
                     .unwrap_err()
                     .code,
                 "task_template_field_required"
             );
             fields.insert(key.clone(), " \n\u{85} ".into());
             assert_eq!(
-                compile_task_template(&input.id, 1, &fields)
+                compile_task_template(&input.id, input.version, &fields)
                     .unwrap_err()
                     .code,
                 "task_template_field_required"
@@ -47,7 +47,7 @@ fn invalid_template_identity_fields_placeholders_and_size_are_refused() {
     let fields = BTreeMap::from([("topic".into(), "[topic]".into())]);
     for (id, version, code) in [
         ("unknown", 1, "task_template_id_unknown"),
-        ("research", 2, "task_template_version_unsupported"),
+        ("research", 3, "task_template_version_unsupported"),
         ("research", 1, "task_template_field_placeholder"),
     ] {
         assert_eq!(

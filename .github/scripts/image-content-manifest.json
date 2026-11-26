@@ -1,13 +1,13 @@
 {
   "files": {
-    "image-content-policy.json": "9648e96c9fd19a2c0b255172e0807d476311ca922464151443f5339304aafd49",
+    "image-content-policy.json": "c63ec9e8abddbc3aaac66b0a32d6ace96c1471447a33d38682039a2e98f6bba6",
     "image-content-vendor/BABEL-LICENSE": "2e97627cb278aa7556fb9e8817368302301a595b6c7582512b8d74c57b773652",
     "image-content-vendor/PROVENANCE.json": "bb7d68cdb634b11bd9ae9534f88fa1e9e708bc4444f4ee96c00bd99cef8816c7",
     "image-content-vendor/babel-parser-7.29.3.cjs": "201724d1415df7749087d9d6e88af50f2bcafe2eb68dfbe9347f49d3361ff426",
     "image_bundle_contexts.py": "8621898b9455aaa4de04e2a2d0e6d05ac8139b6bb8ce6b4f00ee024f4b365c26",
     "image_bundle_syntax.cjs": "05c3b245583a1dd1f7ac08e5bcad34233ae1c8ab16bdd22c5b6d8d1ca0dddc7a",
     "image_content_identity.py": "eb840bb2198106e6c1f47f1ef28d70a35759bff247cc69d20bbf62f820d21cef",
-    "image_content_policy.py": "171571d5d343f4ffe1a89a2729af2f92789b81a9613114c405e48366688c5553",
+    "image_content_policy.py": "0e1bef784e14ed28533f0b9f6509fbcd6c2516ec63b0c8c7dd28020cd6ae9ce0",
     "image_runtime_headers.py": "f22bf9c438907e6b90473005d5cadc0bcb20235f54bbba925217ca9764535e1e"
   },
   "schema": "cma-image-content-source-v1"

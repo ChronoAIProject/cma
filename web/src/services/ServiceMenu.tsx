@@ -10,6 +10,7 @@ import {
   IconCodeOutline16,
 } from '../ui/icons';
 import './Services.css';
+import { useImageManagerAvailability } from './ImageManagerRetirement';
 
 type Service = 'agent_manager' | 'event_gateway';
 
@@ -26,10 +27,7 @@ export function serviceFor(route: AppRoute): Service {
 /**
  * The one service switch — the shared style contracts
  *
- * A menu rather than a row of segments: the segments cost a full sidebar row
- * for a choice made rarely, and a third segment that could never be chosen
- * still had to be drawn at full weight. Image Manager stays listed, disabled
- * with its reason, because disabled is never removal.
+ * The menu keeps seldom-used service switching from occupying a sidebar row.
  */
 export function ServiceMenu({
   route,
@@ -41,6 +39,7 @@ export function ServiceMenu({
   readonly collapsed?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  const imageManager = useImageManagerAvailability();
   const current = serviceFor(route);
   const items: MenuEntry[] = [
     {
@@ -55,14 +54,16 @@ export function ServiceMenu({
       icon: <IconCodeOutline16 />,
       href: routePath({ kind: 'event_gateway' }),
     },
-    {
+  ];
+  if (imageManager !== 'retired') {
+    items.push({
       id: 'image_manager',
       label: 'Image Manager',
       icon: <IconBrowseOutline16 />,
       disabled: true,
       reason: 'Coming soon. Image Manager is not available yet.',
-    },
-  ];
+    });
+  }
   return (
     <Menu
       open={open}

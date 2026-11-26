@@ -83,7 +83,12 @@ export function useNavigationOpeningPreparation(
         .readAccessible(agentId, { signal: entry.abort.signal })
         .then((detail) => {
           entry.abort.signal.throwIfAborted();
-          if (detail.id !== agentId || detail.access === 'shared') return;
+          if (
+            detail.id !== agentId ||
+            detail.access === 'shared' ||
+            detail.sandbox.status === 'retired'
+          )
+            return;
           // Navigation is speculative. The route later takes an opening lease;
           // its dedicated navigation lease lets pointer cancellation leave the
           // route-owned selection alive when activation already began.

@@ -10,6 +10,7 @@ import {
   type AgentImageChoice,
 } from '../create/imageCatalog';
 import { inlineResultSentence } from './model';
+import { useImageManagerAvailability } from '../services/ImageManagerRetirement';
 
 export function InlineTargetStep({
   value,
@@ -25,6 +26,7 @@ export function InlineTargetStep({
   readonly onImageResolving: (resolving: boolean) => void;
 }) {
   const target = value.target.inline as TriggerInlineTarget;
+  const imageManager = useImageManagerAvailability();
   const [images, setImages] = React.useState<readonly AgentImageChoice[]>([]);
   const [imageFailure, setImageFailure] = React.useState<string>();
   const [imageResolving, setImageResolving] = React.useState(false);
@@ -35,6 +37,7 @@ export function InlineTargetStep({
   const imageRequest = React.useRef(0);
   const imageController = React.useRef<AbortController | undefined>(undefined);
   React.useEffect(() => {
+    if (imageManager !== 'legacy') return;
     const controller = new AbortController();
     void listAgentImages(controller.signal)
       .then((next) => {
@@ -53,7 +56,7 @@ export function InlineTargetStep({
       controller.abort();
       imageController.current?.abort();
     };
-  }, []);
+  }, [imageManager]);
   const updateTarget = (next: React.SetStateAction<TriggerInlineTarget>) =>
     onChange((current) => ({
       ...current,
@@ -62,73 +65,79 @@ export function InlineTargetStep({
         inline: typeof next === 'function' ? next(current.target.inline!) : next,
       },
     }));
+  // Merge into the latest target: an image resolution may have committed since
+  // this render, and an edit must never restore the unresolved image.
   const updateAgent = (patch: Partial<TriggerInlineTarget['agent']>) =>
-    updateTarget({ ...target, agent: { ...target.agent, ...patch } });
+    updateTarget((current) => ({ ...current, agent: { ...current.agent, ...patch } }));
   const workspace = target.workspace ?? {};
   const repository = workspace.repository;
-  const setRepository = (next: { url: string; reference?: string } | undefined) =>
-    updateTarget({
-      ...target,
+  const setRepository = (next: { url: string; ref?: string } | undefined) =>
+    updateTarget((current) => ({
+      ...current,
       workspace: next === undefined ? undefined : { repository: next },
-    });
+    }));
   return (
     <>
-      <div className="trigger-field">
-        <label htmlFor="trigger-inline-image">Image</label>
-        <Picker
-          id="trigger-inline-image"
-          value={target.image?.id ?? ''}
-          disabled={disabled || imageResolving}
-          onChange={(choice) => {
-            const id = choice;
-            const request = ++imageRequest.current;
-            if (id === '') {
+      {imageManager !== 'retired' ? (
+        <div className="trigger-field">
+          <label htmlFor="trigger-inline-image">Image</label>
+          <Picker
+            id="trigger-inline-image"
+            value={target.image?.id ?? ''}
+            disabled={disabled || imageResolving || imageManager === 'loading'}
+            onChange={(choice) => {
+              const id = choice;
+              const request = ++imageRequest.current;
+              if (id === '') {
+                setImageFailure(undefined);
+                updateTarget((current) => ({ ...current, image: undefined }));
+                return;
+              }
+              updateTarget((current) => ({ ...current, image: { id } }));
+              setImageResolving(true);
               setImageFailure(undefined);
-              updateTarget({ ...target, image: undefined });
-              return;
-            }
-            updateTarget({ ...target, image: { id } });
-            setImageResolving(true);
-            setImageFailure(undefined);
-            imageController.current?.abort();
-            const controller = new AbortController();
-            imageController.current = controller;
-            void resolveAgentImage(id, controller.signal)
-              .then((resolved) => {
-                if (request !== imageRequest.current || controller.signal.aborted) return;
-                updateTarget((current) => ({ ...current, image: resolved }));
-              })
-              .catch(() => {
-                if (request !== imageRequest.current || controller.signal.aborted) return;
-                setImageFailure('The selected image has no successful immutable version.');
-              })
-              .finally(() => {
-                if (request === imageRequest.current) setImageResolving(false);
-              });
-          }}
-          label="Image"
-          options={[
-            { value: '', label: 'System default image' },
-            ...images.map((image) => ({
-              value: image.id,
-              label: `${image.name} (${imageVisibilityLabel(image.visibility)})`,
-            })),
-          ]}
-        />
-        <Presence>
-          <div>
-            {imageResolving ? (
-              <p className="trigger-caption">Resolving immutable image version…</p>
-            ) : null}
-            {imageFailure === undefined ? null : <p className="trigger-caption">{imageFailure}</p>}
-            {errors['target.inline.image'] === undefined ? null : (
-              <p className="trigger-error" role="alert">
-                {errors['target.inline.image']}
-              </p>
-            )}
-          </div>
-        </Presence>
-      </div>
+              imageController.current?.abort();
+              const controller = new AbortController();
+              imageController.current = controller;
+              void resolveAgentImage(id, controller.signal)
+                .then((resolved) => {
+                  if (request !== imageRequest.current || controller.signal.aborted) return;
+                  updateTarget((current) => ({ ...current, image: resolved }));
+                })
+                .catch(() => {
+                  if (request !== imageRequest.current || controller.signal.aborted) return;
+                  setImageFailure('The selected image has no successful immutable version.');
+                })
+                .finally(() => {
+                  if (request === imageRequest.current) setImageResolving(false);
+                });
+            }}
+            label="Image"
+            options={[
+              { value: '', label: 'System default image' },
+              ...images.map((image) => ({
+                value: image.id,
+                label: `${image.name} (${imageVisibilityLabel(image.visibility)})`,
+              })),
+            ]}
+          />
+          <Presence>
+            <div>
+              {imageResolving ? (
+                <p className="trigger-caption">Resolving immutable image version…</p>
+              ) : null}
+              {imageFailure === undefined ? null : (
+                <p className="trigger-caption">{imageFailure}</p>
+              )}
+              {errors['target.inline.image'] === undefined ? null : (
+                <p className="trigger-error" role="alert">
+                  {errors['target.inline.image']}
+                </p>
+              )}
+            </div>
+          </Presence>
+        </div>
+      ) : null}
       <div className="trigger-field">
         <label htmlFor="trigger-inline-model">Model</label>
         <Input
@@ -228,19 +237,19 @@ export function InlineTargetStep({
           aria-invalid={errors['target.inline.workspace.repository'] !== undefined}
           onChange={(event) => {
             const url = event.target.value;
-            setRepository(url === '' ? undefined : { url, reference: repository?.reference });
+            setRepository(url === '' ? undefined : { url, ref: repository?.ref });
           }}
         />
         <Input
           aria-label="GitHub repository ref"
-          value={repository?.reference ?? ''}
+          value={repository?.ref ?? ''}
           disabled={disabled || repository === undefined}
           placeholder="main (optional)"
           onChange={(event) =>
             setRepository(
               repository === undefined
                 ? undefined
-                : { url: repository.url, reference: event.target.value || undefined },
+                : { url: repository.url, ref: event.target.value || undefined },
             )
           }
         />

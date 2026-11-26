@@ -12,6 +12,26 @@ pub(super) enum Policy {
     Empty,
 }
 use Policy::*;
+
+// Deployment release authority is independent of any Sandbox. Keep it out
+// of the persisted census so the preceding build can read these archives.
+pub(super) const DEPLOYMENT_ONLY: &[&str] = &[
+    crate::store::released_runtimes::COLLECTION,
+    crate::store::released_runtimes::TRANSITIONS_COLLECTION,
+];
+
+// Detached custody and disposable report projections have no Sandbox archive entry.
+pub(super) const OUTSIDE_MANIFEST: &[&str] = &[
+    super::super::retained_consents::COLLECTION,
+    crate::store::migrations::measured_custody::COLLECTION,
+    crate::store::migrations::usage_projections::COLLECTION,
+    crate::store::migrations::measured_batches::COLLECTION,
+    crate::store::migrations::measured_index::PROJECTIONS,
+    crate::store::migrations::measured_index::MANIFESTS,
+    crate::store::migrations::measured_index::BATCHES,
+    // Reconstructible proof over segmented source bytes. Segmented heads already refuse legacy archives.
+    crate::store::agent_log_segments::active_proof::COLLECTION,
+];
 pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("account_deletions", Independent),
     ("account_deletion_events", Independent),
@@ -32,6 +52,8 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("cma_document_artifacts", Documents),
     ("cma_document_quotas", Independent),
     ("native_warm_pool_targets", Independent),
+    ("released_runtimes", Independent),
+    ("released_runtime_transitions", Independent),
     ("native_prepared_sandboxes", Empty),
     ("runtime_backend_routes", Sandbox(&["sandbox_id"])),
     ("activity", Activity),
@@ -148,10 +170,16 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("provider_binding_preparations", Empty),
     ("provider_tool_opens", Empty),
     ("provider_tool_relays", Empty),
+    // Serialized execution records lack a qualified per-Sandbox archive closure.
+    ("resource_execution_effects_v1", Empty),
+    ("resource_execution_grants_v1", Empty),
+    ("resource_execution_records_v1", Empty),
     ("resource_policies", Sandbox(&["_id"])),
+    ("resource_revocation_operations_v1", Empty),
     ("resource_share_commands", Sandbox(&["sandbox_id"])),
     ("resource_shares", Sandbox(&["sandbox_id"])),
     ("sandbox_admissions", Independent),
+    (super::super::creation_outcomes::COLLECTION, Independent),
     ("sandbox_billing_state", Sandbox(&["_id"])),
     ("sandbox_colors", Empty),
     ("sandbox_controls", Sandbox(&["sandbox_id"])),
@@ -162,6 +190,11 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("sandbox_events", Sandbox(&["sandbox_id"])),
     ("sandbox_usage", Sandbox(&["_id"])),
     ("sandbox_usage_events", Sandbox(&["sandbox_id"])),
+    ("sandbox_usage_captures_v1", Empty),
+    ("sandbox_usage_evidence_v1", Empty),
+    ("sandbox_usage_outbox_v1", Empty),
+    ("sandbox_usage_streams_v1", Empty),
+    ("sandbox_usage_inventory_v1", Empty),
     ("sandbox_profile_revisions", Independent),
     ("sandbox_profiles", Independent),
     ("sandbox_retained_availability", Sandbox(&["_id"])),

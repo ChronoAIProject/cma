@@ -50,7 +50,12 @@ it.each(['cancel', 'approval'] as const)(
       ),
     );
     const second = renderHook(() => useAgentController(h.client, 'agt_1'));
-    await waitFor(() => expect(second.result.current.state.status).toBe('ready'));
+    await waitFor(() =>
+      expect(second.result.current.state).toMatchObject({
+        historyLoading: false,
+        historyUnavailable: false,
+      }),
+    );
     await act(() => second.result.current.recoverPending!());
     expect(h.control).toHaveBeenCalledTimes(2);
     const [originalTarget, original] = h.control.mock.calls[0]!;
@@ -161,7 +166,12 @@ it('retains an unknown control when a fresh observation conflict prevents receip
   await act(() => first.result.current.interrupt());
   first.unmount();
   const second = renderHook(() => useAgentController(h.client, 'agt_1'));
-  await waitFor(() => expect(second.result.current.state.status).toBe('ready'));
+  await waitFor(() =>
+    expect(second.result.current.state).toMatchObject({
+      historyLoading: false,
+      historyUnavailable: false,
+    }),
+  );
   await act(() => second.result.current.recoverPending!());
   expect(second.result.current.pendingControl).toBe(true);
   await act(() => second.result.current.recoverPending!());

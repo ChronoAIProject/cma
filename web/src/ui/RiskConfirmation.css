@@ -89,3 +89,44 @@
     min-height: 44px;
   }
 }
+
+.risk__actions {
+  display: contents;
+}
+
+.risk--retain .risk__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+}
+
+.risk--retain {
+  width: min(560px, 100%);
+  max-width: 100%;
+  max-height: calc(100dvh - 32px);
+}
+
+.risk--retain .risk__acknowledgement {
+  flex: none;
+  min-height: 44px;
+  margin-top: 16px;
+}
+
+.risk--retain .risk__cancel,
+.risk--retain .risk__confirm {
+  min-height: 44px;
+}
+
+@media (max-width: 480px) {
+  .risk--retain .risk__actions {
+    align-items: stretch;
+  }
+
+  .risk--retain .risk__cancel,
+  .risk--retain .risk__confirm {
+    flex: 1 1 136px;
+    white-space: normal;
+  }
+}

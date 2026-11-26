@@ -143,7 +143,10 @@ async fn admission_replay_majority_commits_and_retries_an_ambiguous_commit() {
         .iter()
         .filter_map(|(name, command)| (name == "commitTransaction").then_some(command))
         .collect::<Vec<_>>();
-    assert_eq!(commits.len(), 6);
+    // The replay transaction spends its bounded commit attempts. An unknown
+    // outcome then reconciles the exact receipt read-only at the recorded
+    // snapshot and never starts another transaction (#3112).
+    assert_eq!(commits.len(), 5);
     assert!(commits.iter().all(|command| {
         command
             .get_document("writeConcern")
@@ -152,10 +155,16 @@ async fn admission_replay_majority_commits_and_retries_an_ambiguous_commit() {
             == Some("majority")
     }));
     let first_transaction = commits[0].get("txnNumber").unwrap();
-    assert!(commits[..5]
+    assert!(commits
         .iter()
         .all(|command| command.get("txnNumber") == Some(first_transaction)));
-    assert_ne!(commits[5].get("txnNumber"), Some(first_transaction));
+    let last_commit = commands
+        .iter()
+        .rposition(|(name, _)| name == "commitTransaction")
+        .unwrap();
+    assert!(commands[last_commit + 1..].iter().all(|(_, command)| {
+        command.get("txnNumber").is_none() && !command.contains_key("startTransaction")
+    }));
     assert!(!commands.iter().any(|(name, _)| name == "abortTransaction"));
 
     client.database(&database).drop().await.unwrap();

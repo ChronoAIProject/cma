@@ -5,9 +5,17 @@ import type {
   UsageMetricSort,
   UsageMetricStatus,
 } from '@cma/client';
+import type {
+  UsageInitialCreate,
+  UsageInitialData,
+  UsageInitialProjection,
+  UsageInitialReport,
+  UsageInitialView,
+  UsageInitialViewInput,
+} from '@cma/client';
 import { statusLabel } from '../../vocabulary/status';
 
-export type MetricsClient = Pick<
+type LegacyMetricsClient = Pick<
   Cma['usageMetrics'],
   | 'create'
   | 'report'
@@ -18,6 +26,18 @@ export type MetricsClient = Pick<
   | 'options'
   | 'ownerAllocations'
 >;
+type InitialMetricsClient = Partial<
+  Pick<Cma['usageMetrics'], 'createInitial' | 'initialReport' | 'latestInitial'>
+>;
+export type MetricsClient = LegacyMetricsClient & InitialMetricsClient;
+export type {
+  UsageInitialCreate,
+  UsageInitialData,
+  UsageInitialProjection,
+  UsageInitialReport,
+  UsageInitialView,
+  UsageInitialViewInput,
+};
 export type Metric = 'cpu' | 'memory' | 'disk';
 export type Group = 'total' | 'owner' | 'sandbox';
 export type Range = '1h' | '24h' | '7d' | '30d' | 'custom';

@@ -1,4 +1,7 @@
-use super::nyxid::{complete, identifier, NyxidClient};
+use super::{
+    nyxid::{complete, identifier, NyxidClient},
+    EffectAdmission,
+};
 use layer2_core::bots::{Bot, BotError, BotKeyRef, BotKeyRole};
 use reqwest::Method;
 use serde::Deserialize;
@@ -143,7 +146,13 @@ impl NyxidClient {
         }
         Ok(key)
     }
-    pub async fn revoke_key(&self, token: &str, bot: &Bot, id: &str) -> Result<(), BotError> {
+    pub(super) async fn revoke_key(
+        &self,
+        token: &str,
+        bot: &Bot,
+        id: &str,
+        admission: Option<&EffectAdmission>,
+    ) -> Result<(), BotError> {
         // Listing omission is authoritative only after bounded complete enumeration.
         if !self
             .owned_keys(token, bot)
@@ -162,18 +171,25 @@ impl NyxidClient {
         {
             return Err(BotError::Forbidden);
         }
+        if let Some(admission) = admission {
+            admission.check(bot)?;
+        }
         self.delete(token, &format!("/api/v1/api-keys/{id}")).await
     }
-    pub async fn callback(
+    pub(super) async fn callback(
         &self,
         token: &str,
         bot: &Bot,
         id: &str,
         url: &str,
+        admission: Option<&EffectAdmission>,
     ) -> Result<(), BotError> {
         let key = self.owned_key(token, bot, id).await?;
         if key.require(bot)? != BotKeyRole::Route || !key.is_active {
             return Err(BotError::Forbidden);
+        }
+        if let Some(admission) = admission {
+            admission.check(bot)?;
         }
         let updated: Key = self
             .json(

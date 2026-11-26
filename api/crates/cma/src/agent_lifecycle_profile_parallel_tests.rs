@@ -12,10 +12,10 @@ mod store;
 use store::Store;
 
 type Created = (AgentProfileRevision, WorkspaceProfileRef, SandboxProfileRef);
-const PUBLISH: [&str; 3] = [
-    "publish_agent_profile",
-    "publish_workspace_profile",
-    "publish_sandbox_profile",
+const INITIAL: [&str; 3] = [
+    "ensure_initial_agent_profile",
+    "ensure_initial_workspace_profile",
+    "ensure_initial_sandbox_profile",
 ];
 
 fn service(store: Arc<Store>) -> Arc<PrivateProfileCreationService> {
@@ -49,6 +49,7 @@ async fn create(
         },
         LifecycleBehavior::PromptRepository,
         Default::default(),
+        "",
     )
     .await
 }
@@ -117,9 +118,9 @@ async fn workspace_and_sandbox_finish_while_agent_storage_is_blocked() {
             .position(|event| *event == (name, after))
             .unwrap()
     };
-    assert!(at("publish_workspace_profile", true) < at("create_sandbox_profile", false));
-    assert!(at("publish_sandbox_profile", true) < at("create_agent_profile", true));
-    for method in PUBLISH {
+    assert!(at("ensure_initial_workspace_profile", true) < at("create_sandbox_profile", false));
+    assert!(at("ensure_initial_sandbox_profile", true) < at("create_agent_profile", true));
+    for method in INITIAL {
         assert_eq!(
             events
                 .iter()
@@ -134,11 +135,11 @@ async fn workspace_and_sandbox_finish_while_agent_storage_is_blocked() {
 async fn each_branch_failure_finishes_other_work_and_replays_exact_private_profiles() {
     for method in [
         "create_agent_profile",
-        "publish_agent_profile",
+        "ensure_initial_agent_profile",
         "create_workspace_profile",
-        "publish_workspace_profile",
+        "ensure_initial_workspace_profile",
         "create_sandbox_profile",
-        "publish_sandbox_profile",
+        "ensure_initial_sandbox_profile",
     ] {
         let store = Arc::new(Store::default());
         store.fail(
@@ -151,10 +152,10 @@ async fn each_branch_failure_finishes_other_work_and_replays_exact_private_profi
             Err(AgentLifecycleProvisioningError::Unavailable)
         ));
         if method.contains("agent") {
-            assert_eq!(store.completed(PUBLISH[1]), 1);
-            assert_eq!(store.completed(PUBLISH[2]), 1);
+            assert_eq!(store.completed(INITIAL[1]), 1);
+            assert_eq!(store.completed(INITIAL[2]), 1);
         } else {
-            assert_eq!(store.completed(PUBLISH[0]), 1);
+            assert_eq!(store.completed(INITIAL[0]), 1);
         }
         if method.contains("workspace") {
             assert_eq!(store.completed("create_sandbox_profile"), 0);
@@ -170,15 +171,16 @@ async fn each_branch_failure_finishes_other_work_and_replays_exact_private_profi
                 .unwrap(),
             created
         );
-        for published in PUBLISH {
-            assert_eq!(store.completed(published), 1, "{method}: {published}");
-        }
+        // Ensuring the same initial publication may execute on every replay.
+        // Its durable history, checked after the final retry, must still have
+        // exactly one revision of the original content for every profile kind.
+        assert_revisions(&store, &created).await;
     }
 }
 
 #[tokio::test]
 async fn lost_publication_replies_reuse_committed_revisions_in_both_branches() {
-    for method in PUBLISH {
+    for method in INITIAL {
         let store = Arc::new(Store::default());
         store.fail(
             method,
@@ -192,10 +194,10 @@ async fn lost_publication_replies_reuse_committed_revisions_in_both_branches() {
         let created = create(&service(store.clone()), "owner", "Lost Reply")
             .await
             .unwrap();
+        // Ensuring the same initial publication may execute on every replay.
+        // Its durable history, checked after the final retry, must still have
+        // exactly one revision of the original content for every profile kind.
         assert_revisions(&store, &created).await;
-        for published in PUBLISH {
-            assert_eq!(store.completed(published), 1, "{method}: {published}");
-        }
     }
 }
 

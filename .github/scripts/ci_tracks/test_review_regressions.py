@@ -7,6 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from image_inputs import changed_images
+from rust_inputs import cached_declarations, source_edges
 import test_images
 from version_label import current_pull, selected_upgrade
 from web_inputs import public_directory
@@ -36,9 +37,27 @@ class SourceInputRegressions(unittest.TestCase):
 
     def test_r1_ambiguous_rust_is_retained(self):
         self.write('api/crates/cmaeg/src/live.rs', 'pub fn shipped() {}')
-        for source in ['#[cfg_attr(test, path="else.rs")] mod live;', '#[cfg(test)] mod live;\nthis is invalid rust']:
+        for source in [
+            '#[cfg_attr(test, path="else.rs")] mod live;',
+            '#[cfg_attr(test, allow(dead_code), path="else.rs")] mod live;',
+            '#[cfg_attr(test, external::allow(dead_code))] mod live;',
+            '#[cfg(test)] mod live;\nthis is invalid rust',
+        ]:
             self.write('api/crates/cmaeg/src/lib.rs', source)
             self.assertEqual(self.selected('api/crates/cmaeg/src/live.rs'), ['cma-event-gateway'])
+
+    def test_conditional_builtin_lint_preserves_test_and_production_edges(self):
+        live = 'api/crates/cmaeg/src/live.rs'
+        checks = 'api/crates/cmaeg/src/checks.rs'
+        self.write(live, 'pub fn shipped() {}')
+        self.write(checks, 'pub fn check() {}')
+        for lint in ('allow', 'expect', 'warn', 'deny', 'forbid'):
+            with self.subTest(lint=lint):
+                attribute = f'#[cfg_attr(not(test), {lint}(dead_code, reason = "example"),)]'
+                self.write('api/crates/cmaeg/src/lib.rs',
+                           f'{attribute}\nmod live;\n#[cfg(test)]\n{attribute}\nmod checks;')
+                self.assertEqual(self.selected(live), ['cma-event-gateway'])
+                self.assertEqual(self.selected(checks), [])
 
     def test_only_a_real_include_macro_makes_module_edges_uncertain(self):
         self.write('api/crates/cmaeg/src/checks.rs', 'pub fn check() {}')
@@ -48,6 +67,27 @@ class SourceInputRegressions(unittest.TestCase):
         self.assertEqual(self.selected(checks), [])
         self.write(source, '#[cfg(test)] mod checks; fn f() { let _ = include!("extra.rs"); }')
         self.assertEqual(self.selected(checks), ['cma-event-gateway'])
+
+    def test_cached_rust_declarations_resolve_files_in_each_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            older, newer = (Path(directory) / name for name in ('older', 'newer'))
+            for snapshot in (older, newer):
+                snapshot.mkdir()
+                (snapshot / 'lib.rs').write_text('#[cfg(test)] mod checks;')
+            (older / 'checks.rs').touch()
+            (newer / 'checks').mkdir()
+            alternate = newer / 'checks' / 'mod.rs'
+            alternate.touch()
+            cached_declarations.cache_clear()
+            self.addCleanup(cached_declarations.cache_clear)
+            self.assertEqual(source_edges(older / 'lib.rs'), [(older / 'checks.rs', True)])
+            self.assertEqual(source_edges(newer / 'lib.rs'), [(alternate, True)])
+            self.assertEqual(cached_declarations.cache_info().hits, 1)
+            (newer / 'checks.rs').touch()
+            self.assertIsNone(source_edges(newer / 'lib.rs'))
+            (newer / 'checks.rs').unlink()
+            (newer / 'lib.rs').write_text('mod checks;')
+            self.assertEqual(source_edges(newer / 'lib.rs'), [(alternate, False)])
 
     def test_transitive_unicode_stems_survive_wide_text_and_decode_replacement(self):
         first = 'web/src/顔.test.ts'

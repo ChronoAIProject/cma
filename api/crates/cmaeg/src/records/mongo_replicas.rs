@@ -4,9 +4,9 @@ use super::{
     replica_retry::{self, AttemptError},
     MongoRecords, Record, RecordError, CONNECTIONS, INTERACTIONS,
 };
+use crate::transaction_terminal::GuardedTerminal as _;
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
-    options::{Acknowledgment, ReadConcern, WriteConcern},
     ClientSession,
 };
 use serde::{Deserialize, Serialize};
@@ -93,10 +93,7 @@ impl MongoRecords {
             .await
             .map_err(|error| observed_error(observation, error))?;
         observation.phase(Phase::TransactionStart);
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+        crate::transaction_start::start_write(&self.db, &mut session, None)
             .await
             .map_err(|error| observed_error(observation, error))?;
         let mut versions = Vec::with_capacity(writes.len());
@@ -110,7 +107,7 @@ impl MongoRecords {
         // same admission rather than guessing whether an external effect occurred.
         observation.phase(Phase::Commit);
         session
-            .commit_transaction()
+            .commit_guarded()
             .await
             .map_err(|error| observed_error(observation, error))?;
         Ok(versions)

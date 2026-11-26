@@ -53,6 +53,10 @@ class WebInputEquivalence(unittest.TestCase):
         self.assertEqual(list(actual), list(expected))
         return actual
 
+    def test_checked_in_vite_config_models_public_directory(self):
+        repository = Path(__file__).resolve().parents[3]
+        self.assertEqual(public_directory(repository), 'web/public')
+
     def test_chain_found_only_in_files_added_by_later_rounds(self):
         self.write('web/src/main.tsx', 'import "./a.test";')
         self.write('web/src/a.test.ts', 'import "./b.spec";')

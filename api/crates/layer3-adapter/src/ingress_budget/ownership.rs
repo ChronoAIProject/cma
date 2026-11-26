@@ -29,6 +29,15 @@ impl ReservationBundle {
             })
     }
 
+    pub(super) fn shares_custody_domain(&self, root: &IngressBudget) -> bool {
+        Arc::ptr_eq(self.reservation.root.semaphore(), &root.0)
+            && match (&self.reservation.attachment, &root.3) {
+                (None, None) => true,
+                (Some(actual), Some(expected)) => SharedCustody::ptr_eq(actual, expected),
+                _ => false,
+            }
+    }
+
     pub(super) fn shares_root(&self, other: &Self) -> bool {
         Arc::ptr_eq(
             self.reservation.root.semaphore(),
@@ -165,6 +174,12 @@ impl<T: ?Sized> SharedOwned<T> {
     /// Check the root and any attachment required by the receiving policy.
     pub fn belongs_to(&self, policy: &super::IngressOwnershipPolicy) -> bool {
         self.storage.belongs_to(&policy.root)
+    }
+
+    /// Independent copies must retain the same root and optional attachment.
+    /// A process policy cannot replace an attached source's lifetime owner.
+    pub fn shares_custody_domain(&self, policy: &super::IngressOwnershipPolicy) -> bool {
+        self.storage.shares_custody_domain(&policy.root)
     }
 
     pub fn requested_bytes(&self) -> usize {

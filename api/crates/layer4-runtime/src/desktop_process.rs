@@ -18,8 +18,6 @@ mod restart_budget;
 pub(crate) mod supervision;
 pub(crate) mod transport;
 
-pub(crate) const STARTUP_LIMIT: std::time::Duration = std::time::Duration::from_secs(30);
-
 pub(crate) fn supervision_enabled(
     env: &std::collections::BTreeMap<String, String>,
 ) -> std::result::Result<bool, String> {

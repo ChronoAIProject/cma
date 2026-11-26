@@ -3,6 +3,9 @@ use super::*;
 use layer2_core::sandbox::store::{SandboxEventStore as _, SandboxStore as _};
 use layer2_core::sandbox::{SandboxEventKind, SandboxStatus};
 use layer2_core::sandbox_usage_service::SandboxUsageStore as _;
+mod runtime_controls;
+
+mod missing_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
@@ -121,9 +124,12 @@ async fn funding_mongo_cas_restart_retained_zero_evidence_and_due_recovery() {
         adapter: adapter.clone(),
         deployment: "fixture".into(),
     };
-    control.deadline(&sandbox, start + 400).await.unwrap(); // no runtime needs no provider mutation
     control
-        .pause(&sandbox, "unfunded", at(start + 300))
+        .deadline(deadline(&sandbox, start + 400))
+        .await
+        .unwrap(); // no runtime needs no provider mutation
+    control
+        .pause(target(&sandbox), "unfunded", at(start + 300))
         .await
         .unwrap(); // retired is not eligible
     let mut active = fixture::sandbox();
@@ -133,11 +139,11 @@ async fn funding_mongo_cas_restart_retained_zero_evidence_and_due_recovery() {
     active.lifecycle.home = None;
     store.create_sandbox(active.clone()).await.unwrap();
     assert!(matches!(
-        control.deadline(&active, start + 400).await,
+        control.deadline(deadline(&active, start + 400)).await,
         Err(FundingError::Retryable(_))
     ));
     control
-        .pause(&active, "producer HTTP 402", at(start + 300))
+        .pause(target(&active), "producer HTTP 402", at(start + 300))
         .await
         .unwrap();
     assert_eq!(
@@ -164,4 +170,30 @@ async fn funding_mongo_cas_restart_retained_zero_evidence_and_due_recovery() {
     )
     .unwrap();
     client.database(&name).drop().await.unwrap();
+}
+
+fn target(sandbox: &Sandbox) -> FundingRuntime<'_> {
+    FundingRuntime::for_state(
+        &SandboxBillingState::new(sandbox, generation(sandbox)),
+        sandbox,
+    )
+    .unwrap()
+    .unwrap()
+}
+
+fn deadline(sandbox: &Sandbox, until: u64) -> FundedRuntime<'_> {
+    target(sandbox)
+        .confirmed(&FundingWindow {
+            request_id: "fixture-request".into(),
+            quote_id: "fixture-quote".into(),
+            window_id: "fixture-window".into(),
+            owner_id: sandbox.owner.to_string(),
+            sandbox_id: sandbox.id.to_string(),
+            runtime_generation: generation(sandbox),
+            allocation: maximum_allocation(sandbox),
+            covered_from: until - 300,
+            covered_until: until,
+            receipt: serde_json::json!({}),
+        })
+        .unwrap()
 }

@@ -103,3 +103,20 @@ pub(super) fn parse_public_api_aliases(value: &str) -> Result<Vec<String>, Confi
     }
     values.into_iter().map(validate_public_api_url).collect()
 }
+
+/// Earlier CMA origins whose record URLs are sealed into retained channel IDs.
+pub(super) fn parse_cma_record_origin_aliases(value: &str) -> Result<Vec<String>, ConfigError> {
+    if value.is_empty() {
+        return Ok(vec![]);
+    }
+    let values = value.split(',').collect::<Vec<_>>();
+    if values.len() > 8 {
+        return Err(ConfigError::InvalidManagement {
+            detail: format!("{CMAEG_CMA_RECORD_ORIGIN_ALIASES} allows at most eight origins"),
+        });
+    }
+    values
+        .into_iter()
+        .map(|value| validate_origin(CMAEG_CMA_RECORD_ORIGIN_ALIASES, value))
+        .collect()
+}

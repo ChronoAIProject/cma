@@ -126,7 +126,10 @@ async fn exercise(uri: &str, db: &Database) -> Result<(), Box<dyn std::error::Er
     Ok(())
 }
 
-async fn snapshot(db: &Database, names: &[&str]) -> Result<Vec<Document>, mongodb::error::Error> {
+pub(super) async fn snapshot(
+    db: &Database,
+    names: &[&str],
+) -> Result<Vec<Document>, mongodb::error::Error> {
     let mut state = Vec::new();
     for name in names {
         for command in [

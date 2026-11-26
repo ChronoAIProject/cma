@@ -130,11 +130,14 @@ impl AgentTitleEffectState {
         match self {
             Self::Legacy => true,
             Self::Ready => source == super::AgentTitleSource::Fallback,
-            Self::LegacyUnknown => false,
-            Self::Retained(effect) => {
-                source == super::AgentTitleSource::Generated
-                    && effect.result.as_ref() == Some(title)
-            }
+            // An unresolved provider effect forbids redispatch, not the
+            // prompt-derived fallback: it sends nothing and still leaves the
+            // effect unresolved for purge finality (#2266).
+            Self::LegacyUnknown => source == super::AgentTitleSource::Fallback,
+            Self::Retained(effect) => match effect.result.as_ref() {
+                Some(result) => source == super::AgentTitleSource::Generated && result == title,
+                None => source == super::AgentTitleSource::Fallback,
+            },
         }
     }
 }

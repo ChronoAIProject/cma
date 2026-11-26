@@ -61,6 +61,27 @@ pub(crate) struct PendingActivity {
 }
 
 impl PendingActivity {
+    fn is_usage_view_probe(&self, response: &Response) -> bool {
+        response.status() == StatusCode::NOT_IMPLEMENTED
+            && response
+                .extensions()
+                .get::<layer1_public::rest::UsageReportViewDisabled>()
+                .is_some()
+            && matches!(
+                (&self.method, self.matched_route.as_deref()),
+                (
+                    &Method::GET,
+                    Some("/api/v1/admin/usage/metrics/view" | "/api/v1/usage/metrics/view")
+                ) | (
+                    &Method::POST,
+                    Some(
+                        "/api/v1/admin/usage/metrics/initial/view"
+                            | "/api/v1/usage/metrics/initial/view"
+                    )
+                )
+            )
+    }
+
     pub(crate) async fn record(self, status: StatusCode) {
         let action = classify(&self.method, &self.path);
         let mut activity =
@@ -112,7 +133,9 @@ pub async fn record(
         .map(MatchedPath::as_str)
         .unwrap_or_else(|| request.uri().path())
         .to_owned();
-    if matches!(path.as_str(), "/livez" | "/ready") {
+    if matches!(path.as_str(), "/livez" | "/ready")
+        || path == layer1_public::rest::creation_outcomes::LOOKUP_PATH
+    {
         return next.run(request).await;
     }
     let actor = request
@@ -127,6 +150,9 @@ pub async fn record(
         actor,
     };
     let mut response = next.run(request).await;
+    if pending.is_usage_view_probe(&response) {
+        return response;
+    }
     if defer
         && response
             .extensions()

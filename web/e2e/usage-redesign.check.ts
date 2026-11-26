@@ -1,8 +1,12 @@
 import { test, expect } from '@playwright/test';
+import { registerUsageRedesignCases } from './redesign-usage.cases';
+
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 import { LocalUsageFilterOptions } from './usage-filter-options.fixture';
 import { asOf, metricRow } from '../src/usage/metrics/fixtures.test-support';
+
+registerUsageRedesignCases();
 
 for (const admin of [false, true]) {
   test(`LOCAL allocated sorting keeps API pagination and confirmed missing intervals for admin=${admin}`, async ({
@@ -444,7 +448,7 @@ test('LOCAL Usage count copy follows applied searches through one, zero and mult
   });
   await page.goto('/usage');
   const surface = page.getByRole('dialog', { name: 'Your usage' });
-  const search = surface.getByRole('searchbox', { name: 'Usage Sandbox search' });
+  const search = surface.getByRole('searchbox', { name: 'Sandbox name or ID starts with' });
   const chart = surface.getByRole('region', { name: 'Allocation comparison chart' });
   await expect(surface.getByText('2 Sandboxes · 0 running', { exact: true })).toBeVisible();
   for (const [query, count, label] of [

@@ -30,7 +30,7 @@ OLDER, NEWER = "a" * 40, "b" * 40
 
 
 def receipt(component, source=OLDER, version="0.10.1"):
-    previous = "0.10.0" if version == "0.10.1" else "0.10.1"
+    previous = f"0.10.{int(version.rsplit('.', 1)[1]) - 1}"
     make = fixture_runtime_receipt if component.startswith("runtime") else fixture_receipt
     return make(component=component, source=source, version=version, previous=previous)
 
@@ -38,8 +38,8 @@ def receipt(component, source=OLDER, version="0.10.1"):
 class OvertakenDeploymentTests(unittest.TestCase):
     def fixture(self, keys, *, overtaken, listed=None):
         """An admitted older set; `overtaken` members have a final at a newer develop source."""
-        receipts = {key: receipt(key) for key in keys}
-        newer = {key: receipt(key, NEWER, "0.10.2") for key in overtaken}
+        receipts = {key: receipt(key, version="0.10.2" if key == "runtime" else "0.10.1") for key in keys}
+        newer = {key: receipt(key, NEWER, "0.10.3" if key == "runtime" else "0.10.2") for key in overtaken}
         listed = newer if listed is None else listed
         api, registry = Mock(), Mock()
         api.history.return_value = DevelopHistory(NEWER, [NEWER, OLDER])
@@ -170,7 +170,7 @@ class OvertakenDeploymentTests(unittest.TestCase):
         self.assertEqual(verify_set(value, api, registry, automatic=False, inputs=inputs), value)
         # A superseded runtime still raises, as before.
         value, api, registry = self.fixture(["runtime"], overtaken=["runtime"])
-        inputs = {"deployables": "runtime", "mode": "release", "version": "0.10.1"}
+        inputs = {"deployables": "runtime", "mode": "release", "version": "0.10.2"}
         with self.assertRaises(ObsoleteSource) as error:
             verify_set(value, api, registry, automatic=False, inputs=inputs)
         self.assertNotIsInstance(error.exception, OvertakenByNewerFinal)

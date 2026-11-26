@@ -17,7 +17,7 @@ pub(super) async fn check(
     session: &mut ClientSession,
 ) -> Result<Room, mongodb::error::Error> {
     if reserve > 0
-        && super::super::registration_capacity::is_public(admissions, owner, session).await?
+        && super::super::registration_capacity::is_public(admissions, owner, Some(session)).await?
     {
         limit = limit.saturating_sub(reserve);
     }

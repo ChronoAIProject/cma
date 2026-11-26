@@ -68,8 +68,17 @@ pub(super) fn registration_decision(
 
 impl AuthState {
     pub(crate) fn with_platform_spend(
-        mut self: Arc<Self>,
+        self: Arc<Self>,
         spend: Arc<dyn PlatformSpendLedger>,
+    ) -> Arc<Self> {
+        self.with_registration_policy(Arc::new(super::registration::SpendRegistrationPolicy(
+            spend,
+        )))
+    }
+
+    pub(crate) fn with_registration_policy(
+        mut self: Arc<Self>,
+        spend: Arc<dyn super::registration::RegistrationPolicy>,
     ) -> Arc<Self> {
         Arc::get_mut(&mut self)
             .expect("platform spend is composed before sharing authentication")

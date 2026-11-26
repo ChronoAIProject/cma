@@ -2,13 +2,13 @@ use super::ownership_retry_wake_tests::fixture;
 use super::*;
 use crate::store::agent_failure_pacing::discovery;
 use futures_util::TryStreamExt;
-use layer2_core::sandbox::store::StartupWorkFilter;
+use layer2_core::sandbox::store::{AgentWorkDiscovery, PendingAgentWork, StartupWorkFilter};
 use layer2_core::sandbox::{AgentStatus, AgentStopReason};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[tokio::test]
 #[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
-async fn cleanup_holds_preserve_healthy_work_and_controls_behind_a_full_page() {
+async fn cleanup_and_acquisition_holds_preserve_healthy_work_and_controls_behind_a_full_page() {
     let (client, name, store, template, _authority, _) = fixture("cleanup_discovery").await;
     let now = layer2_core::rfc3339_at(SystemTime::now());
     let candidate = |id: String| {
@@ -20,11 +20,16 @@ async fn cleanup_holds_preserve_healthy_work_and_controls_behind_a_full_page() {
         agent
     };
     let mut held = BTreeSet::new();
+    let mut cooldowns = BTreeMap::new();
     let mut rows = Vec::new();
     let until = layer2_core::rfc3339_at(SystemTime::now() + Duration::from_secs(120));
     for index in 0..200 {
         let agent = candidate(format!("000-held-{index:03}"));
         held.insert(agent.id.clone());
+        cooldowns.insert(
+            agent.id.clone(),
+            PendingAgentWork::from_agent(&agent).unwrap(),
+        );
         let mut row = crate::store::agents::agent_document(&agent).unwrap();
         // Stale parent revisions make these due through the wakeup arm of the union.
         if index % 2 == 0 {
@@ -37,10 +42,19 @@ async fn cleanup_holds_preserve_healthy_work_and_controls_behind_a_full_page() {
     }
     let healthy = candidate("001-healthy".into());
     let mut stop = candidate("002-stop".into());
+    cooldowns.insert(
+        stop.id.clone(),
+        PendingAgentWork::from_agent(&stop).unwrap(),
+    );
     stop.request_stop(AgentStopReason::Owner, now.clone())
         .unwrap();
     let mut delete = candidate("003-delete".into());
     delete.status = AgentStatus::Stopped;
+    // Snapshot a pending predecessor on the same ID. Deletion changes the work.
+    cooldowns.insert(
+        delete.id.clone(),
+        PendingAgentWork::from_agent(&delete).unwrap(),
+    );
     delete.request_delete(now.clone()).unwrap();
     held.extend([stop.id.clone(), delete.id.clone()]);
     for agent in [&healthy, &stop, &delete] {
@@ -59,11 +73,24 @@ async fn cleanup_holds_preserve_healthy_work_and_controls_behind_a_full_page() {
             .due_agent_work_with_cleanup_holds(&now, 3, &held)
             .await
             .unwrap(),
-        vec![healthy.id, stop.id, delete.id]
+        vec![healthy.id.clone(), stop.id.clone(), delete.id.clone()]
     );
     assert_eq!(
         store.due_agent_work(&now, 1).await.unwrap(),
         vec![AgentId("000-held-000".into())]
+    );
+    let no_receiver_holds = BTreeSet::new();
+    let filter = AgentWorkDiscovery {
+        receiver_holds: &no_receiver_holds,
+        startup: StartupWorkFilter::All,
+        acquisition_cooldowns: Some(&cooldowns),
+    };
+    assert_eq!(
+        store
+            .due_agent_work_filtered(&now, 3, filter)
+            .await
+            .unwrap(),
+        vec![healthy.id, stop.id, delete.id]
     );
     client.database(&name).drop().await.unwrap();
 }
@@ -131,9 +158,10 @@ async fn startup_sibling_hold_filters_both_discovery_arms_and_keeps_a_directed_p
             vec![ordinary.id.as_str(), paced.id.as_str()],
         ),
     ] {
+        let filter = AgentWorkDiscovery::new(&cleanup, scope);
         for pipeline in [
-            discovery::filtered_pipeline(&store, &now, limit, &cleanup, scope),
-            discovery::filtered_owned_pipeline(&store, &now, limit, None, &cleanup, scope),
+            discovery::filtered_pipeline(&store, &now, limit, filter),
+            discovery::filtered_owned_pipeline(&store, &now, limit, None, filter),
         ] {
             let rows: Vec<Document> = store
                 .agents

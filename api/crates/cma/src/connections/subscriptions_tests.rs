@@ -11,6 +11,9 @@ use tokio::sync::Notify;
 
 use super::*;
 
+#[path = "subscriptions_refresh_tests.rs"]
+mod refresh_cases;
+
 #[derive(Default)]
 struct MemoryStore(Mutex<HashMap<SubjectId, SubscriptionRecord>>);
 

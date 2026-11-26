@@ -1,4 +1,5 @@
 //! Admit owner-approved quiescence and its workflow receipt in one transaction.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::agent_access::AgentAccessError;
 use layer2_core::sandbox::store::{
     apply_sandbox_lifecycle_command, SandboxLifecycleCommand, SandboxLifecycleCommandApplication,
@@ -121,7 +122,7 @@ impl MongoSandboxStore {
             let receipt = match apply(self, lease, action, &mut session).await {
                 Ok(receipt) => receipt,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if error.transient() {
                         continue;
                     }
@@ -129,7 +130,7 @@ impl MongoSandboxStore {
                 }
             };
             if receipt.maintenance.event.is_none() {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(receipt.maintenance.outcome);
             }
             match commit_transaction(&mut session).await {
@@ -190,7 +191,12 @@ async fn apply(
     {
         return Err(AgentAccessError::Conflict.into());
     }
-    let lineage = access::validate_lineage(store, &record.requester, session, false).await?;
+    let lineage = access::validate_lineage_transaction(store, &record.requester, session, false)
+        .await
+        .map_err(|error| match error {
+            access::Error::Domain(error) => Error::Access(error),
+            access::Error::Driver(error) => driver(error),
+        })?;
     let document = store
         .sandboxes
         .find_one(doc! { "_id": record.requester.sandbox_id.as_str() })
@@ -319,9 +325,10 @@ async fn apply(
                 requested_at.clone(),
                 SandboxReviveCause::ExplicitRequest,
             );
-            command
-                .managed_runtime_version
-                .clone_from(&store.managed_runtime_version);
+            command.managed_runtime_version = store
+                .managed_resume_destination(&current, session)
+                .await
+                .map_err(domain)?;
             match apply_sandbox_lifecycle_command(current.clone(), &command).map_err(domain)? {
                 SandboxLifecycleCommandApplication::Commit {
                     expected_revision,
@@ -434,7 +441,7 @@ async fn reconcile(
     receipt: &Receipt,
     time: Timestamp,
 ) -> Result<bool, AgentAccessError> {
-    if !super::transaction::reconcile(store, &receipt.maintenance, time)
+    if !super::reconcile(store, &receipt.maintenance, time)
         .await
         .map_err(|_| AgentAccessError::Unavailable)?
     {

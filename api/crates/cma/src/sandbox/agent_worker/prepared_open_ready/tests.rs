@@ -30,6 +30,9 @@ impl Fixture {
         Self::with_app(None).await
     }
     async fn with_app(app: Option<String>) -> Self {
+        Self::with_adoption(app, false).await
+    }
+    async fn with_adoption(app: Option<String>, enabled: bool) -> Self {
         let key = if app.is_some() {
             "CHRONO_TEST_MONGODB_FAILPOINT_URI"
         } else {
@@ -40,7 +43,12 @@ impl Fixture {
         options.app_name = app;
         let client = mongodb::Client::with_options(options).unwrap();
         let name = format!("cma_open_ready_worker_{}", uuid::Uuid::new_v4().simple());
-        let store = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
+        let store = Arc::new(
+            MongoSandboxStore::open(&client, &name)
+                .await
+                .unwrap()
+                .with_segment_adoption_enabled(enabled),
+        );
         let (agent, sandbox, workspace, worktree) =
             crate::store::native_prepared::tests::open_ready_fixture::hierarchy(&store).await;
         let runtime = RuntimeHandle::new(&sandbox.runtime.as_ref().unwrap().runtime_id);

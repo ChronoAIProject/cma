@@ -192,7 +192,7 @@ pub fn account_deletion_problem(error: AccountDeletionError) -> Response {
         NotFound => (StatusCode::NOT_FOUND, "account-deletion-not-found", "account_deletion_not_found", "No account deletion request exists."),
         InProgress => (StatusCode::FORBIDDEN, "account-deletion-in-progress", "account_deletion_in_progress", "Account deletion is in progress."),
         InvalidIdempotencyKey => return IdempotencyProblem::Invalid.into_response(),
-        Invalid | Conflict | Store(_) | StaleFence => (StatusCode::SERVICE_UNAVAILABLE, "store-failed", "store_failed", "Account deletion state is temporarily unavailable."),
+        Invalid | Conflict | Store(_) | StaleFence | VerificationRequired => (StatusCode::SERVICE_UNAVAILABLE, "store-failed", "store_failed", "Account deletion state is temporarily unavailable."),
     };
     super::problem_response(status, super::problem_document(status, slug, detail, code))
 }

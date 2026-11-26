@@ -1,5 +1,5 @@
 use super::{
-    text::{chunks, escaped},
+    text::{chunks, escaped, literal, TextStyle},
     RenderedPart, Renderer,
 };
 use crate::tools::Capabilities;
@@ -45,23 +45,66 @@ impl Renderer for RelayText {
         message: &OutboundMessage,
         capabilities: &Capabilities,
     ) -> (Vec<RenderedPart>, RenderingReport) {
-        let (text, mut report) = sections(message, capabilities);
-        let parts: Vec<_> = chunks(&text, (capabilities.max_text_chars as usize).clamp(2, 4000))
-            .into_iter()
-            .map(|text| RenderedPart { text })
-            .collect();
-        if parts.len() > 1 {
-            report.outcome = RenderingOutcome::Degraded;
-            // The sentinel names a whole-message transformation, outside block indices 0..15.
-            report.blocks.push(BlockRendering {
-                index: u16::MAX,
-                outcome: BlockRenderingOutcome::Degraded {
-                    how: format!("chunked:{}", parts.len()),
-                },
-            });
-        }
-        (parts, report)
+        render_parts(message, capabilities, TextStyle::Escaped)
     }
+}
+
+/// Text renderer for destinations that show plain text (Lark, Feishu) or
+/// parse their own Markdown (Discord). Mention neutralization and
+/// control/bidi filtering match `RelayText`; Markdown punctuation stays
+/// literal so URLs, masked links and intentional backslashes survive.
+pub struct LiteralText;
+impl LiteralText {
+    /// One logical message, for native edits that replace a whole message.
+    pub fn whole(
+        &self,
+        message: &OutboundMessage,
+        capabilities: &Capabilities,
+    ) -> (RenderedPart, RenderingReport) {
+        let (text, report) = sections(message, capabilities);
+        (
+            RenderedPart {
+                text: literal(&text),
+            },
+            report,
+        )
+    }
+}
+impl Renderer for LiteralText {
+    fn render(
+        &self,
+        message: &OutboundMessage,
+        capabilities: &Capabilities,
+    ) -> (Vec<RenderedPart>, RenderingReport) {
+        render_parts(message, capabilities, TextStyle::Literal)
+    }
+}
+
+fn render_parts(
+    message: &OutboundMessage,
+    capabilities: &Capabilities,
+    style: TextStyle,
+) -> (Vec<RenderedPart>, RenderingReport) {
+    let (text, mut report) = sections(message, capabilities);
+    let parts: Vec<_> = chunks(
+        &text,
+        (capabilities.max_text_chars as usize).clamp(2, 4000),
+        style,
+    )
+    .into_iter()
+    .map(|text| RenderedPart { text })
+    .collect();
+    if parts.len() > 1 {
+        report.outcome = RenderingOutcome::Degraded;
+        // The sentinel names a whole-message transformation, outside block indices 0..15.
+        report.blocks.push(BlockRendering {
+            index: u16::MAX,
+            outcome: BlockRenderingOutcome::Degraded {
+                how: format!("chunked:{}", parts.len()),
+            },
+        });
+    }
+    (parts, report)
 }
 fn sections(message: &OutboundMessage, capabilities: &Capabilities) -> (String, RenderingReport) {
     let mut sections = Vec::new();

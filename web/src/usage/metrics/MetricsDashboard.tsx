@@ -9,6 +9,7 @@ import { MetricDetail } from './MetricDetail';
 import { MetricFilters } from './MetricFilters';
 import { OpsMetricFilters } from './OpsMetricFilters';
 import { MetricSummary } from './MetricSummary';
+import { UsageAllocationOverview } from './UsageAllocationOverview';
 import { MetricTable } from './MetricTable';
 import { MetricsNotice } from './MetricsNotice';
 import { useUsageReport, useUsageVisible } from './useReport';
@@ -66,7 +67,16 @@ function MetricsDashboardContent({
     [measured, selection],
   );
   const visible = useUsageVisible(active);
-  const state = useUsageReport(api, effectiveSelection, admin, active, principal, forceOnMount);
+  const state = useUsageReport(
+    api,
+    effectiveSelection,
+    admin,
+    active,
+    principal,
+    forceOnMount,
+    measured,
+    true,
+  );
   useWarmUsageRanges(
     api,
     effectiveSelection,
@@ -81,6 +91,13 @@ function MetricsDashboardContent({
   const preview = state.report ? undefined : state.fallback;
   const displayedReport = state.report ?? preview?.report;
   const reportId = displayedReport?.report_id;
+  const initialMatchesSelection =
+    !preview &&
+    state.initial &&
+    state.initialProjection?.first_page?.sort === effectiveSelection.sort &&
+    state.initialProjection?.first_page?.order === effectiveSelection.order;
+  const initialPage = initialMatchesSelection ? state.initial?.rows : undefined;
+  const initialCharts = initialMatchesSelection ? state.initial?.charts : undefined;
   const onFailure = useCallback(
     (failure: MetricsFailure) => {
       if (reportId) setBlocked({ report: reportId, failure });
@@ -92,6 +109,39 @@ function MetricsDashboardContent({
   const safeActions = actions
     ? (row: UsageMetricRow) => actions(row, state.busy || state.stale || !!state.error || !!preview)
     : undefined;
+  const resourceDetails = report && (
+    <>
+      <MetricSummary
+        report={report}
+        measured={measured}
+        selectedMetric={admin ? undefined : metric}
+        onMetric={admin ? undefined : setMetric}
+      />
+      {admin && measured && (
+        <Picker
+          label="Chart grouping"
+          value={group}
+          options={[
+            { value: 'total', label: 'Total' },
+            { value: 'owner', label: 'By owner' },
+            { value: 'sandbox', label: 'By Sandbox' },
+          ]}
+          onChange={setGroup}
+        />
+      )}
+      {measured && (
+        <MetricCharts
+          api={api}
+          report={report}
+          group={admin ? group : 'total'}
+          metric={admin ? undefined : metric}
+          active={visible}
+          initialCharts={initialCharts}
+          onFailure={onFailure}
+        />
+      )}
+    </>
+  );
   return (
     <div
       className="usage-metrics"
@@ -184,38 +234,14 @@ function MetricsDashboardContent({
       )}
       {report && (
         <section className="usage-report" aria-busy={(state.busy && !preview) || undefined}>
-          <MetricSummary
-            report={report}
-            measured={measured}
-            selectedMetric={admin ? undefined : metric}
-            onMetric={admin ? undefined : setMetric}
-          />
-          {admin && measured && (
-            <Picker
-              label="Chart grouping"
-              value={group}
-              options={[
-                { value: 'total', label: 'Total' },
-                { value: 'owner', label: 'By owner' },
-                { value: 'sandbox', label: 'By Sandbox' },
-              ]}
-              onChange={setGroup}
-            />
-          )}
-          {measured && (
-            <MetricCharts
-              api={api}
-              report={report}
-              group={admin ? group : 'total'}
-              metric={admin ? undefined : metric}
-              active={visible}
-              onFailure={onFailure}
-            />
-          )}
+          {!admin && <UsageAllocationOverview value={report.summary?.allocated_period ?? null} />}
+          {admin && resourceDetails}
           <MetricTable
             key={report.report_id}
             api={api}
             reportId={report.report_id}
+            initialPage={initialPage}
+            reportCoverage={report.summary?.allocated_period}
             sort={effectiveSelection.sort}
             order={effectiveSelection.order}
             admin={admin}
@@ -236,6 +262,7 @@ function MetricsDashboardContent({
             onFailure={onFailure}
             actions={safeActions}
           />
+          {!admin && resourceDetails}
           {detail?.report === report.report_id && (
             <MetricDetail
               key={report.report_id + detail.sandbox}

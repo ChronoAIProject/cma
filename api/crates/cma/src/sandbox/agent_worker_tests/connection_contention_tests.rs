@@ -70,7 +70,7 @@ async fn connection_contention_recovers_through_normal_worker_and_sends_input_on
         .unwrap();
     let outcome = harness
         .worker
-        .finish_connection_publication(claimed.clone(), &attachment, now)
+        .finish_connection_publication(claimed.clone(), &attachment, None, now)
         .await;
     admin
         .database("admin")

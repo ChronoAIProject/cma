@@ -3,6 +3,7 @@ import { AdmissionFields } from './AdmissionFields';
 import { ChannelPolicyFields } from './ChannelPolicyFields';
 import { Section } from './Fields';
 import { SourceAdmissionFields } from './SourceAdmissionFields';
+import { ValidationScope } from './ValidationPath';
 import { object, records, strings, text, type Fields } from './model';
 
 export function SetupSection({
@@ -40,6 +41,7 @@ export function SetupPolicy({
     >
       {value.connection_ref !== undefined ? (
         <AdmissionFields
+          path="/connection_admission"
           label="Connection admission"
           value={value.connection_admission}
           onChange={(connection_admission) => onChange({ ...value, connection_admission })}
@@ -48,15 +50,17 @@ export function SetupPolicy({
         sources.map((source, index) =>
           source.type !== 'custom' ? (
             <Section key={index} title={`Producer ${index + 1} access`}>
-              <SourceAdmissionFields
-                value={source}
-                onChange={(next) =>
-                  onChange({
-                    ...value,
-                    sources: sources.map((item, i) => (i === index ? next : item)),
-                  })
-                }
-              />
+              <ValidationScope value={`/sources/${index}`}>
+                <SourceAdmissionFields
+                  value={source}
+                  onChange={(next) =>
+                    onChange({
+                      ...value,
+                      sources: sources.map((item, i) => (i === index ? next : item)),
+                    })
+                  }
+                />
+              </ValidationScope>
             </Section>
           ) : null,
         )
@@ -79,7 +83,7 @@ export function SetupReview({ value }: { value: Fields }) {
       <dl className="channel-inspector__facts">
         <div>
           <dt>Channel</dt>
-          <dd>{text(value.name) || 'Name required'}</dd>
+          <dd>{text(value.name).trim() || 'Name required'}</dd>
         </div>
         <div>
           <dt>Connection</dt>
@@ -112,9 +116,11 @@ export function SetupReview({ value }: { value: Fields }) {
         <div>
           <dt>Replies</dt>
           <dd>
-            {reply.auto_final === true
-              ? 'Final answers sent automatically'
-              : 'Explicit reply tool calls only'}
+            {reply.auto_final !== true
+              ? 'Explicit reply tool calls only'
+              : records(reply.sinks).length > 0
+                ? 'Final answers sent automatically'
+                : 'Final answers have no reply destination. Add one or turn off automatic answers.'}
           </dd>
         </div>
       </dl>

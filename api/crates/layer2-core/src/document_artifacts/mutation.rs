@@ -227,7 +227,7 @@ impl DocumentService {
             }
             record.metadata.revision = previous.checked_add(1).ok_or(DocumentError::Capacity)?;
             record.metadata.updated_at = crate::now_rfc3339();
-            let mut outcome = self.apply(caller, key, &command, &mut record).await?;
+            let (mut outcome, source) = self.apply(caller, key, &command, &mut record).await?;
             outcome.document = view(caller, token, &record)?;
             record.receipts.insert(
                 receipt_key.clone(),
@@ -249,6 +249,10 @@ impl DocumentService {
                 self.store
                     .compare_exchange_grant(previous, &record, subject)
                     .await?
+            } else if let Some(source) = source {
+                self.store
+                    .compare_exchange_source(previous, &record, &source, &receipt_key)
+                    .await?
             } else {
                 self.store.compare_exchange(previous, &record).await?
             };
@@ -264,9 +268,10 @@ impl DocumentService {
         key: &str,
         command: &Command,
         record: &mut StoredDocument,
-    ) -> Result<DocumentMutation, DocumentError> {
+    ) -> Result<(DocumentMutation, Option<DocumentSourceWrite>), DocumentError> {
         let mut comment = None;
         let mut link = None;
+        let mut source = None;
         match command {
             Command::Update(body) => {
                 if record.revisions.len() >= MAX_REVISIONS {
@@ -275,16 +280,17 @@ impl DocumentService {
                 let last = record.revisions.last().ok_or(DocumentError::Corrupt)?;
                 let mut object = last.object_key.clone();
                 if let Some(markdown) = &body.markdown {
-                    let sha = digest(markdown.as_bytes());
-                    object = object_key(&record.metadata.owner_subject, &record.metadata.id, &sha);
-                    self.upload(
-                        &record.metadata.owner_subject,
-                        &record.metadata.id,
-                        markdown.as_bytes(),
-                    )
-                    .await?;
-                    record.metadata.sha256 = sha;
-                    record.metadata.size_bytes = markdown.len() as u64;
+                    let uploaded = self
+                        .upload(
+                            &record.metadata.owner_subject,
+                            &record.metadata.id,
+                            markdown.as_bytes(),
+                        )
+                        .await?;
+                    object = uploaded.source.object_key();
+                    record.metadata.sha256 = uploaded.source.sha256.clone();
+                    record.metadata.size_bytes = uploaded.source.bytes;
+                    source = Some(uploaded);
                 }
                 if let Some(title) = &body.title {
                     record.metadata.title = title.clone();
@@ -388,10 +394,13 @@ impl DocumentService {
                 record.comments.retain(|c| &c.id != id);
             }
         }
-        Ok(DocumentMutation {
-            document: record.metadata.clone(),
-            comment,
-            link,
-        })
+        Ok((
+            DocumentMutation {
+                document: record.metadata.clone(),
+                comment,
+                link,
+            },
+            source,
+        ))
     }
 }

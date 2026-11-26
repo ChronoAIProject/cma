@@ -13,6 +13,13 @@ use layer2_core::{AgentProfileId, SandboxProfileId, ServiceId, SubjectId, Worksp
 use layer3_adapter::HomeVolumePolicy;
 use serde::{Deserialize, Serialize};
 
+/// Preparation identity of the prepared Agent home with the current guidance.
+/// Revision 4 named the document guidance. Revision 5 names the explicit Codex
+/// stream limits (#2406): the same profile content renders different
+/// `config.toml` bytes. `PREPARED_HOME_CONFIG_SHA256` in the tests pins those
+/// bytes, so a rendering change cannot keep an old identity by accident.
+pub(crate) const PREPARED_AGENT_REVISION: u32 = 5;
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NativePreparedPlan {
@@ -38,10 +45,11 @@ impl NativePreparedPlan {
         }
         let agent = AgentProfileSnapshot {
             id: AgentProfileId("agp_native_prepared_default".into()),
-            // New guidance gets a new preparation identity. Replenish unclaimed
-            // older homes; never replay changed bytes into an owned Agent home.
+            // New guidance or newly rendered home bytes get a new preparation
+            // identity. Replenish unclaimed older homes; never replay changed
+            // bytes into an owned Agent home.
             revision: if agent.system_prompt == crate::agent_lifecycle::guidance::managed_v3() {
-                4
+                PREPARED_AGENT_REVISION
             } else if agent.system_prompt == crate::agent_lifecycle::guidance::managed_v2() {
                 3
             } else {
@@ -91,8 +99,31 @@ impl NativePreparedPlan {
         &self.warm
     }
 
+    pub(crate) fn for_runtime(&self, image: &str) -> Result<Self, SandboxStoreError> {
+        let mut plan = self.clone();
+        if plan.warm.runtime_version != image {
+            plan.warm.runtime_version = image.into();
+            if plan.machine() {
+                let profile = &mut plan.warm.profile;
+                profile.content.runtime_image = Some(image.into());
+                profile.digest = digest(&profile.content)?;
+            }
+            plan.validate()?;
+        }
+        Ok(plan)
+    }
+
     pub(crate) fn machine(&self) -> bool {
         !self.warm.profile.content.environment_variables.is_empty()
+    }
+
+    /// Whether this process renders the prepared Agent home byte for byte.
+    /// The runtime refuses a home replay whose bytes differ from the
+    /// prepared ones, so a home from an earlier renderer is never claimed.
+    pub(crate) fn renders_current_home(&self) -> bool {
+        let agent = &self.warm.workspaces[0].agents[0];
+        agent.revision == PREPARED_AGENT_REVISION
+            && agent.content.system_prompt == crate::agent_lifecycle::guidance::managed_v3()
     }
 
     pub(crate) fn validate(&self) -> Result<(), SandboxStoreError> {

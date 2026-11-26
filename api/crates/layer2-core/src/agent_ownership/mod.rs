@@ -5,14 +5,22 @@
 
 mod placement;
 pub use placement::candidates;
+mod heartbeat_retry;
+mod lease_operation;
+mod policy;
+pub use policy::{MaintenancePolicy, MaintenanceStep, RetirementIntent, Settlement};
 mod authority;
 pub use authority::{execution_authority, execution_owner, Authority};
 mod cleanup_pacing;
 mod coordinator;
 mod observations;
 mod receiver_binding;
+pub mod receiver_diagnostics;
 mod transport;
+pub use coordinator::ForeignReconciliationOwners;
 pub use coordinator::{bounded, OwnershipCoordinator};
+#[cfg(feature = "qualification-hooks")]
+pub use coordinator::{qualification_owner_digest, CapturedOwner, RenewalWindow};
 pub use observations::{observe_transport, observed_transport, transport_observation_scope};
 
 use crate::AgentId;
@@ -24,6 +32,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 pub const DEFAULT_LEASE_MS: u64 = 15_000;
 pub const HEARTBEAT_INTERVAL_MS: u64 = 3_000;
 pub const STORE_DEADLINE_MS: u64 = 2_000;
+pub const MAX_RENEWAL_BATCH: usize = 8;
 pub const DEFAULT_MAX_OWNED_AGENTS: u32 = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -62,6 +71,19 @@ pub struct OwnershipToken {
 pub struct OwnershipLease {
     pub token: OwnershipToken,
     pub expires_at_ms: i64,
+}
+
+/// A read-only lease observation with lifetime measured by the store clock.
+pub struct ReconciliationOwner {
+    pub token: OwnershipToken,
+    pub remaining_ms: u64,
+}
+
+/// A partial match is usable for fallback only after a definite transaction abort.
+#[derive(Debug, PartialEq, Eq)]
+pub enum RenewalBatch {
+    Committed(Vec<OwnershipLease>),
+    PartialMatchAborted,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -115,17 +137,50 @@ pub trait OwnershipStore: Send + Sync {
     ) -> Result<Membership, OwnershipError>;
     async fn membership(&self) -> Result<Membership, OwnershipError>;
     async fn owner(&self, agent_id: &AgentId) -> Result<Option<OwnershipLease>, OwnershipError>;
+    /// A page of observations may defer background work. Missing observations
+    /// always fall back to ordinary acquisition.
+    async fn reconciliation_owners(
+        &self,
+        _ids: &[&AgentId],
+    ) -> Result<Vec<ReconciliationOwner>, OwnershipError> {
+        Ok(Vec::new())
+    }
     /// Permanent custody, including expired and released epochs. Absence of a
     /// live owner never authorizes returning an opted-in Agent to legacy mode.
     async fn has_owner_history(&self, agent_id: &AgentId) -> Result<bool, OwnershipError>;
     /// Returns None for a live peer owner, another preferred member, or capacity.
     /// Missing process-local attachment is never evidence for takeover.
+    /// Errors other than Unavailable prove no acquisition committed. If a
+    /// store cannot establish the result, it must return Unavailable.
     async fn acquire(
         &self,
         agent_id: &AgentId,
         instance_id: &str,
     ) -> Result<Option<OwnershipLease>, OwnershipError>;
+    /// Order a read of exact acquisition custody after any in-flight write
+    /// from a completed or cancelled acquisition task. Return this member's
+    /// token even when its lease has expired.
+    async fn reconcile_acquisition(
+        &self,
+        _agent_id: &AgentId,
+        _instance_id: &str,
+    ) -> Result<Option<OwnershipToken>, OwnershipError> {
+        Err(OwnershipError::Unavailable(
+            "acquisition custody could not be reconciled".into(),
+        ))
+    }
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError>;
+    fn supports_batch_renewal(&self) -> bool {
+        false
+    }
+    async fn renew_batch(
+        &self,
+        _tokens: &[OwnershipToken],
+    ) -> Result<RenewalBatch, OwnershipError> {
+        Err(OwnershipError::Invalid(
+            "batch renewal is unsupported".into(),
+        ))
+    }
     /// Call only after revoking local and receiving-runtime authority.
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError>;
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError>;
@@ -154,3 +209,16 @@ mod coordinator_race_tests;
 
 #[cfg(test)]
 mod receiver_loss_tests;
+
+#[cfg(test)]
+mod containment_diagnostic_tests;
+#[cfg(test)]
+mod containment_test_support;
+#[cfg(test)]
+mod containment_tests;
+#[cfg(test)]
+mod drain_containment_tests;
+#[cfg(test)]
+mod receiver_settlement_containment_tests;
+#[cfg(test)]
+mod retirement_containment_tests;

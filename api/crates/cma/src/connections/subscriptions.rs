@@ -5,16 +5,22 @@ use std::{
 };
 
 use layer2_core::{trigger_domain::BrokerHandoffState, SubjectId};
+use layer3_adapter::ingress_budget::{AdmittedError, IngressOwnershipPolicy, SharedOwned};
 use tokio::sync::{oneshot, Semaphore};
 
 use crate::auth::persistence::SecretValue;
 
 use super::{
     native_codex::{DeviceLogin, NativeCodex, LOGIN_TIMEOUT},
-    subscription_store::{PendingLogin, RefreshLease, SubscriptionRecord, SubscriptionStore},
+    subscription_store::{
+        PendingLogin, SubscriptionOperation, SubscriptionRecord, SubscriptionStore,
+    },
     subscription_tokens::SubscriptionTokens,
     SubscriptionError,
 };
+
+#[path = "subscriptions_refresh.rs"]
+pub(super) mod refresh;
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
 const STALE_HEARTBEAT: Duration = Duration::from_secs(60);
@@ -31,6 +37,18 @@ pub(super) struct NativeLogin {
 
 #[async_trait::async_trait]
 pub(super) trait NativeSubscriptionAuth: Send + Sync {
+    /// The producer admits process, pipe, cache and cleanup storage before use.
+    /// The returned cache must retain this policy through its final physical free.
+    fn refresh_admitted<'a>(
+        &'a self,
+        _cache: &'a SharedOwned<SecretValue>,
+        _policy: &IngressOwnershipPolicy,
+    ) -> Result<SubscriptionOperation<'a, SharedOwned<SecretValue>>, AdmittedError> {
+        Err(AdmittedError::Unsupported(
+            "admitted native subscription refresh",
+        ))
+    }
+
     async fn start(&self) -> Result<NativeLogin, SubscriptionError>;
     async fn refresh(&self, cache: &SecretValue) -> Result<SecretValue, SubscriptionError>;
 }
@@ -78,6 +96,20 @@ pub(crate) struct CodexSubscriptions {
 }
 
 impl CodexSubscriptions {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "admitted source qualification pending")
+    )]
+    pub(crate) fn tokens_admitted<'a>(
+        &'a self,
+        owner: &'a SharedOwned<SubjectId>,
+        force: bool,
+        previous_account: Option<&'a SharedOwned<String>>,
+        policy: &IngressOwnershipPolicy,
+    ) -> Result<SubscriptionOperation<'a, SharedOwned<SubscriptionTokens>>, AdmittedError> {
+        refresh::admitted::tokens(self, owner, force, previous_account, policy)
+    }
+
     pub(crate) fn new(store: Arc<dyn SubscriptionStore>) -> Arc<Self> {
         Arc::new(Self {
             store,
@@ -272,80 +304,7 @@ impl CodexSubscriptions {
         force: bool,
         previous_account: Option<&str>,
     ) -> Result<SubscriptionTokens, SubscriptionError> {
-        let mut original_cache = None;
-        loop {
-            let current = self.record(owner).await?;
-            let cache = current
-                .cache
-                .as_ref()
-                .ok_or(SubscriptionError::SignInRequired)?;
-            let tokens = SubscriptionTokens::from_native_cache(cache)?;
-            if previous_account.is_some_and(|account| account != tokens.account_id) {
-                return Err(SubscriptionError::SignInRequired);
-            }
-            let refreshed_elsewhere = original_cache
-                .as_ref()
-                .is_some_and(|original| original != cache);
-            if tokens.usable_at(SystemTime::now()) && (!force || refreshed_elsewhere) {
-                return Ok(tokens);
-            }
-            original_cache.get_or_insert_with(|| cache.clone());
-            if current
-                .refresh_lease
-                .as_ref()
-                .is_some_and(|lease| lease.expires_at > SystemTime::now())
-            {
-                tokio::time::sleep(Duration::from_millis(100)).await;
-                continue;
-            }
-            let holder = uuid::Uuid::new_v4().to_string();
-            let mut claimed = current.clone();
-            claimed.revision += 1;
-            claimed.refresh_lease = Some(RefreshLease {
-                holder: holder.clone(),
-                expires_at: SystemTime::now() + REFRESH_LEASE,
-            });
-            if !self.store.replace(&current, claimed.clone()).await? {
-                continue;
-            }
-            let refreshed = self.native.refresh(cache).await.and_then(|cache| {
-                let renewed = SubscriptionTokens::from_native_cache(&cache)?;
-                if renewed.account_id != tokens.account_id || !renewed.usable_at(SystemTime::now())
-                {
-                    return Err(SubscriptionError::InvalidAccount);
-                }
-                Ok(cache)
-            });
-            // A newer sign-in invalidates this lease, even while native OAuth is
-            // waiting on the network. Never overwrite that sign-in's credentials.
-            for _ in 0..CAS_ATTEMPTS {
-                let latest = self.record(owner).await?;
-                if latest.incarnation != claimed.incarnation
-                    || latest
-                        .refresh_lease
-                        .as_ref()
-                        .is_none_or(|lease| lease.holder != holder)
-                {
-                    return Err(SubscriptionError::Changed);
-                }
-                let mut next = latest.clone();
-                next.revision += 1;
-                next.refresh_lease = None;
-                match &refreshed {
-                    Ok(cache) => {
-                        SubscriptionTokens::from_native_cache(cache)?;
-                        next.cache = Some(cache.clone());
-                    }
-                    Err(SubscriptionError::SignInRequired) => next.cache = None,
-                    Err(_) => {}
-                }
-                if self.store.replace(&latest, next).await? {
-                    let tokens = SubscriptionTokens::from_native_cache(&refreshed?)?;
-                    return Ok(tokens);
-                }
-            }
-            return Err(SubscriptionError::Changed);
-        }
+        refresh::tokens_within(&refresh::Legacy(self), owner, force, previous_account).await
     }
 
     async fn get_or_create(

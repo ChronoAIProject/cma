@@ -46,6 +46,7 @@ impl SandboxStatus {
                 | (Self::Provisioning | Self::Installing, Self::Retiring)
                 | (Self::Pausing, Self::Paused | Self::Active | Self::Reviving)
                 | (Self::Reviving | Self::Rotating, Self::Pausing)
+                | (Self::Rotating, Self::Paused)
                 | (Self::Installing | Self::Provisioning, Self::Reviving)
                 | (
                     Self::Paused,
@@ -187,7 +188,10 @@ impl AgentStatus {
                     Self::Working,
                     Self::Ready | Self::WaitingApproval | Self::Paused
                 )
-                | (Self::WaitingApproval, Self::Working | Self::Paused)
+                | (
+                    Self::WaitingApproval,
+                    Self::Working | Self::Ready | Self::Paused
+                )
                 | (Self::Paused, Self::Ready)
                 | (Self::Stopped | Self::Failed, Self::Deleted)
         ) || (live && next == Self::Stopped);

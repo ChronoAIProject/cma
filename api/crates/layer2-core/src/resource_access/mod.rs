@@ -16,6 +16,7 @@ mod observation;
 mod personal;
 mod personal_inventory;
 mod policy;
+pub mod revocations;
 mod sandbox_inventory;
 mod service;
 mod share;

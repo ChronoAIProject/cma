@@ -43,6 +43,34 @@ pub(super) struct Stored {
     normal: bool,
 }
 
+pub(super) fn load_id(
+    db: &Connection,
+    config: &RuntimeConfig,
+    generation_scope: &[u8; 8],
+    operation_id: &str,
+) -> Result<Option<Record>> {
+    let identity: Option<Vec<u8>> = db
+        .query_row(
+            "SELECT identity FROM operations WHERE scope=? AND operation_id=? AND status>0",
+            params![generation_scope.as_slice(), operation_id],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|_| storage_error())?;
+    let Some(identity) = identity else {
+        return Ok(None);
+    };
+    if identity.len() > 65536 {
+        return Err(invalid());
+    }
+    let operation: Operation = serde_json::from_slice(&identity).map_err(|_| invalid())?;
+    if operation.operation_id != operation_id || scope(config, &operation) != *generation_scope {
+        return Err(invalid());
+    }
+    let record = load(db, config, &operation)?.and_then(|stored| stored.record);
+    Ok(Some(record.ok_or_else(invalid)?))
+}
+
 pub(super) fn load(
     db: &Connection,
     config: &RuntimeConfig,

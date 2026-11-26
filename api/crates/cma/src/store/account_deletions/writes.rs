@@ -2,6 +2,7 @@ use super::*;
 use crate::store::sandbox_mongo::{
     commit_transaction, is_transient, start_transaction, CommitOutcome,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 
 pub(super) async fn claim_due(
     store: &MongoAccountDeletionStore,
@@ -56,6 +57,7 @@ pub(super) async fn commit(
     claim_at: Option<&str>,
     expected_lease_token: Option<&str>,
 ) -> Result<(), AccountDeletionError> {
+    super::completion_guard::require_pending(&deletion, &events)?;
     for attempt in 0..8 {
         backoff(attempt, expected).await;
         let mut session = store
@@ -83,11 +85,11 @@ pub(super) async fn commit(
         {
             Ok(()) => {}
             Err(AttemptError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(AttemptError::Driver(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if is_transient(&error) {
                     continue;
                 }
@@ -120,6 +122,7 @@ async fn once(
         .map_err(AttemptError::Driver)?
         .ok_or(AttemptError::Domain(AccountDeletionError::NotFound))?;
     let old = read_record(row.clone()).map_err(AttemptError::Domain)?;
+    super::completion_guard::preserve_acceptance(&old, deletion).map_err(AttemptError::Domain)?;
     let claimed = claim_at.is_some();
     let expected_next = old
         .work

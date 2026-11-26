@@ -1,13 +1,18 @@
 export function saveDelivery(bytes: Uint8Array, name: string) {
-  const url = URL.createObjectURL(
-    new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }),
-  );
+  saveAgentDownload(new Blob([new Uint8Array(bytes)], { type: 'application/octet-stream' }), name);
+}
+
+export function saveAgentDownload(blob: Blob, name: string) {
   const link = document.createElement('a');
+  const url = URL.createObjectURL(blob);
   link.href = url;
   link.download = name;
   link.rel = 'noreferrer';
-  document.body.append(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  try {
+    document.body.append(link);
+    link.click();
+  } finally {
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }

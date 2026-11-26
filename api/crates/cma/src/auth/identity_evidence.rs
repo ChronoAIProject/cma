@@ -11,23 +11,26 @@ use super::{
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct EvidenceStamp([u8; 32]);
 
+/// Where evidence was validated, not why it was requested.
+///
+/// A retained-owner verification differs from an independent one only by an
+/// extra requirement that the provider's subject equal the retained owner. The
+/// verified subject is part of every stamp, so equivalent observations are the
+/// same authority whichever purpose requested them. Keeping the purpose here
+/// made an independent verification of a browser's credential (for example
+/// the organization principal) fence every overlapping cookie verification of
+/// it, refusing ordinary reads with `store_failed` (#2709).
 #[derive(Serialize)]
 pub(super) struct EvidenceScope<'a> {
     provider: Option<(&'a str, &'a str)>,
     resource: Option<&'a str>,
     agent_service: Option<&'a str>,
-    retained_subject: Option<&'a str>,
     agent_key: bool,
     endpoints: (&'a str, &'a str, Option<&'a str>, Option<&'a str>),
 }
 
 impl<'a> EvidenceScope<'a> {
-    pub(super) fn new(
-        auth: &'a AuthState,
-        metadata: &'a ProviderMetadata,
-        token: &str,
-        expected_subject: Option<&'a str>,
-    ) -> Self {
+    pub(super) fn new(auth: &'a AuthState, metadata: &'a ProviderMetadata, token: &str) -> Self {
         // Each AuthState constructs its own private store/key. Configuration is
         // fixed before sharing; changed discovery endpoints are included here
         // so a successful verification against another provider scope fences.
@@ -49,7 +52,6 @@ impl<'a> EvidenceScope<'a> {
             provider,
             resource: auth.oauth_api_resource.as_deref(),
             agent_service: auth.agent_key_service_id.as_deref(),
-            retained_subject: expected_subject,
             agent_key: super::agent_keys::is_agent_key(token),
             endpoints: (
                 authorization_endpoint,

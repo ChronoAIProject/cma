@@ -8,6 +8,9 @@ use layer2_core::{
 };
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
+#[path = "agent_lifecycle_managed_repository_tests.rs"]
+mod managed;
+
 struct Probe {
     result: Result<String, AuthoringSourceError>,
     reads: AtomicUsize,
@@ -43,12 +46,12 @@ impl SandboxCredentialPrerequisite for Connections {
         services: &[ServiceId],
     ) -> Result<(), SandboxCredentialPrerequisiteError> {
         assert_eq!(owner.as_str(), "owner");
-        assert!(services.contains(&ServiceId::new("api-github")));
-        if self.0.load(Ordering::SeqCst) {
+        let github = ServiceId::new("api-github");
+        if !services.contains(&github) || self.0.load(Ordering::SeqCst) {
             Ok(())
         } else {
             Err(SandboxCredentialPrerequisiteError::ConnectionsRequired {
-                services: vec![ServiceId::new("api-github")],
+                services: vec![github],
             })
         }
     }
@@ -74,6 +77,95 @@ async fn read_operation_when(
     })
     .await
     .unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
+async fn missing_github_does_not_block_another_creation_for_the_same_owner() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let database = client.database(&format!(
+        "repository_wait_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let operations = Arc::new(MongoAgentLifecycleStore::open(&database).await.unwrap());
+    let profiles = Arc::new(
+        crate::store::MongoProfileStore::open(&client, database.name())
+            .await
+            .unwrap(),
+    );
+    let store = Arc::new(layer2_core::sandbox::store::InMemorySandboxStore::default());
+    let service = fixture::facade_with_limit(
+        store,
+        profiles,
+        operations.clone(),
+        1,
+        Connections(Arc::new(AtomicBool::new(false))),
+    )
+    .with_task_experience(fixture::task_policy());
+    let mut owner = fixture::context("owner");
+    owner.caller.authorization =
+        Authorization::new([Capability::UseOwnSandboxes, Capability::CreateSandbox]);
+    let repository = request(json!({
+        "name": "Repository task", "initial_message": "Inspect the synthetic source.",
+        "repository": {"url":"https://github.com/example/project"},
+    }));
+    let first = service
+        .create(
+            &owner.caller,
+            Some(&owner),
+            None,
+            repository,
+            "repository-key",
+        )
+        .await
+        .unwrap();
+    let waiting = read_operation_when(&operations, &first.id, |row| {
+        row.status == "waiting_for_connection"
+    })
+    .await;
+    assert!(waiting.sandbox_id.is_none() && waiting.agent_id.is_none());
+    let connection = waiting.connection.unwrap();
+    assert_eq!(connection.services, [crate::trigger::GITHUB_SERVICE]);
+    assert_eq!(connection.target["type"], "sandbox_profile");
+    assert_eq!(
+        service
+            .sandbox
+            .capacity(&owner.caller)
+            .await
+            .unwrap()
+            .available,
+        1
+    );
+
+    let mut other_client = owner.clone();
+    other_client.credential.credential_id = "independent-credential".into();
+    let independent = request(json!({
+        "name": "Independent task", "initial_message": "Write a short outline.",
+    }));
+    let second = service
+        .create(
+            &other_client.caller,
+            Some(&other_client),
+            None,
+            independent,
+            "independent-key",
+        )
+        .await
+        .unwrap();
+    assert_ne!(first.id, second.id);
+    let allocated =
+        read_operation_when(&operations, &second.id, |row| row.sandbox_id.is_some()).await;
+    assert!(allocated.connection.is_none());
+    let original = operations
+        .read_for_owner(&owner.caller.subject, &first.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(original.status, "waiting_for_connection");
+    assert_eq!(original.attempts, waiting.attempts);
+    assert!(original.sandbox_id.is_none());
+    database.drop().await.unwrap();
 }
 
 #[tokio::test]

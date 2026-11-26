@@ -359,3 +359,92 @@ test('LOCAL shared aggregate preserves personal work and supports filtered pages
   await expect(inventory.getByRole('link', { name: rows[1].title })).toHaveCount(0);
   expect(boundary.unexpected).toEqual([]);
 });
+
+test('LOCAL shared task navigation uses the detail title and keeps long metadata readable', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  let title = 'Shared investigation from the authorized detail';
+  const longOwner =
+    'International research and applied engineering organization with a deliberately long label';
+  const row = {
+    agent_id: 'agt_contract',
+    title: 'New Agent',
+    status: 'ready',
+    task_status: 'completed',
+    creation_origin: 'manual',
+    created_at: localTime,
+    updated_at: localTime,
+  };
+  await page.route('**/api/v1/agents/agt_contract', (route) =>
+    route.fulfill({
+      json: {
+        id: row.agent_id,
+        access: 'shared',
+        title,
+        status: row.status,
+        created_at: localTime,
+        updated_at: localTime,
+      },
+    }),
+  );
+  await page.route('**/api/v1/resource-access/agent/agt_contract', (route) =>
+    route.fulfill({
+      json: {
+        owner: { kind: 'organization', organization_id: 'org_research' },
+        capabilities: ['view_details', 'view_history', 'view_files'],
+        revalidate_at: null,
+        policy_revision: 1,
+      },
+    }),
+  );
+  await page.route('**/api/v1/organizations', (route) =>
+    route.fulfill({
+      json: { items: [{ id: 'org_research', display_name: longOwner, role: 'viewer' }] },
+    }),
+  );
+  await page.route('**/api/v1/agents/provenance?*', (route) =>
+    route.fulfill({ json: { items: [row] } }),
+  );
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.goto('/agents/agt_contract');
+  await expect(page.getByRole('heading', { name: title, exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /^Filter/ }).click();
+  await page.getByRole('button', { name: 'Navigation scope', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Shared', exact: true }).click();
+  await page.getByRole('button', { name: 'Tasks', exact: true }).click();
+  const navigation = page.getByRole('tree', { name: 'Shared Agents' });
+  const item = navigation.getByRole('treeitem', { name: new RegExp(title) });
+  await expect(item).toBeVisible();
+  await expect(item.locator('.resource-access-summary')).toHaveAttribute(
+    'title',
+    new RegExp(longOwner),
+  );
+  for (const width of [1440, 375]) {
+    await page.setViewportSize({ width, height: 812 });
+    if (width === 375) {
+      const show = page.getByRole('button', { name: 'Show navigation', exact: true });
+      await expect(show).toBeVisible();
+      await show.click();
+    }
+    await expect(item).toBeVisible();
+    const facts = item.locator('.tree-row__meta > :not(.sr-only)');
+    expect(
+      await facts.evaluateAll((items) =>
+        items.every((el) => {
+          const style = getComputedStyle(el);
+          return (
+            style.whiteSpace === 'nowrap' &&
+            el.getBoundingClientRect().height <= Number.parseFloat(style.lineHeight) + 1
+          );
+        }),
+      ),
+    ).toBe(true);
+  }
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  title = 'Renamed shared investigation';
+  await page.getByRole('button', { name: 'Refresh Agents', exact: true }).click();
+  await expect(navigation.getByRole('treeitem', { name: new RegExp(title) })).toBeVisible();
+});

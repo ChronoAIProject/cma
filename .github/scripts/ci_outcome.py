@@ -237,10 +237,12 @@ def cell(text):
 
 
 def render(family, code, *, subject, stage=None, site=None, component=None, pr=None, sha=None,
-           attempts=None, recovery=None):
+           attempts=None, recovery=None, level=None):
     """Return (machine line, annotation, summary row) built from validated fields only.
 
     Raises when the catalogue is unavailable; report() then prints the plain line.
+    A caller may lower an annotation to a warning when its own step does not
+    fail, for example while an automatic retry follows.
     """
     known = catalogue()
     spec = known["families"].get(family) if isinstance(family, str) else None
@@ -291,7 +293,7 @@ def render(family, code, *, subject, stage=None, site=None, component=None, pr=N
         properties += ["file=" + escape_property(FILE_PREFIX + path), "line=" + number]
     heading = f"{values['subject']}: " + (spec["title"] + ": " if spec.get("title") else "") + found["title"]
     properties.append("title=" + escape_property(heading))
-    level = spec.get("level") if spec.get("level") in LEVELS else "error"
+    level = level if level in LEVELS else spec.get("level") if spec.get("level") in LEVELS else "error"
     annotation = f"::{level} {','.join(properties)}::{escape_data(chr(10).join(details))}"
     row = "| " + " | ".join(cell(text) for text in (
         values["subject"], f"{token}: {found['title']}", "; ".join(where) or "-", cause, next_step)) + " |"
@@ -338,7 +340,7 @@ def summarize(path, row):
 
 
 def report(family, code, *, subject, stage=None, site=None, component=None, pr=None, sha=None,
-           attempts=None, recovery=None, stream=None, env=None):
+           attempts=None, recovery=None, stream=None, env=None, level=None):
     """Print one machine line, one annotation and one summary row; never raise.
 
     Without a readable catalogue only the plain machine line is printed. Returns
@@ -349,7 +351,7 @@ def report(family, code, *, subject, stage=None, site=None, component=None, pr=N
     fields = dict(subject=subject, stage=stage, site=site, component=component, pr=pr, sha=sha,
                   attempts=attempts, recovery=recovery)
     try:
-        line, annotation, row = render(family, code, **fields)
+        line, annotation, row = render(family, code, level=level, **fields)
     except Exception:  # noqa: BLE001 - reporting must never replace the caller's line or exit status.
         try:
             line = plain(family, code, **fields)

@@ -1,15 +1,37 @@
 """One complete ref snapshot and bounded settlement for insert-only tags."""
 import itertools
 import json
+import re
 
+import ci_retry
 from staging_cd_allocation_io import SETTLE_WAITS, VERIFY_RESERVE_SECONDS, TransientRead, UncertainPush, parallel_read
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
+from staging_cd_release_tags import LocalTags
 from staging_cd_reservations import Reservations, claim_ref, pending_name, validate_reservation
-from staging_cd_versions import DEPLOYABLES, version_tuple
+from staging_cd_versions import DEPLOYABLES, require_publishable_release, version_tuple
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
+# Bound captured Git output even when the release inventory contains many tags.
+ANNOTATION_BATCH_SIZE = 256
+LOCAL_READ_SECONDS = 5
+# GitHub's own answer to a push, which a repeat meets again: a tag ruleset or
+# hook declined the refs (a porcelain rejection line), or a 403 alone whose
+# message names the missing write permission. A 403 also answers a secondary
+# rate limit, and git prints no status for a bad credential ("Authentication
+# failed"), so neither is durable. Any other failed push proves nothing.
+DECLINED = re.compile(r"^!\t[^\t\n]*\t\[remote rejected\] \([^)\n]*\bdeclined\b", re.MULTILINE)
+DENIED = re.compile(r"\bPermission to \S+ denied to\b|\bWrite access to repository not granted\b", re.IGNORECASE)
+THROTTLED = re.compile(r"\brate[ -]?limit", re.IGNORECASE)
+
+
+def declined(pushed):
+    stdout, stderr = pushed.stdout or "", pushed.stderr or ""
+    if THROTTLED.search(stdout + stderr):
+        return False
+    statuses = {int(code) for code in ci_retry.STATUS.findall(stderr)}
+    return bool(DECLINED.search(stdout)) or (statuses == {403} and bool(DENIED.search(stderr)))
 
 
 class AllocationConflict(Refusal):
@@ -42,12 +64,13 @@ class AllocationSnapshot(Reservations):
         refs = self.ref_oids()
         develop_head = refs.pop("refs/heads/develop", None)
         require(develop_head is not None, "Develop head could not be verified")
-        if event_source is not None and develop_head != event_source:
-            return False
-        # Head and watermarks come from the same advertisement. A delayed API
-        # head must not make the actual newest event silently lose its build.
+        # Head and watermarks come from the same advertisement. Skip this
+        # push only when the advertised head is proved to supersede it.
         self.progress("all", "history")
-        self.api.history_at(develop_head, root=self.root)
+        history = self.api.history_at(develop_head, root=self.root)
+        if event_source is not None and develop_head != event_source:
+            require(event_source in history.positions, "Develop history has not reached the push")
+            return False
         selected, claims = [], {}
         for reference, oid in refs.items():
             name = reference.removeprefix("refs/tags/")
@@ -62,8 +85,7 @@ class AllocationSnapshot(Reservations):
                         if kind == "pending":
                             self.pending_oids[name] = oid
 
-        for kind, value in parallel_read(self.annotation, selected):
-            (self.pending if kind == "pending" else self.finals).append(value)
+        self.read_annotations(selected)
         pending_by_version = {(item["component"], item["version"]): item for item in self.pending}
         for tag in self.finals:
             identity = tag["receipt"]["identity"]
@@ -72,6 +94,9 @@ class AllocationSnapshot(Reservations):
                 verify_final_owner(item, tag)
         # A claim may outlive its pending tag, but its burned version must
         # remain visible as either the matching reservation or its final.
+        # One listing is not an atomic snapshot: it can show another job's
+        # claim before that push's reservation, so an unbacked claim is a
+        # transient refusal that a fresh listing settles.
         backed = {claim_ref(tag["receipt"]["identity"]) for tag in self.finals}
         for item in self.pending:
             ref = claim_ref(item)
@@ -84,8 +109,9 @@ class AllocationSnapshot(Reservations):
 
     def ref_oids(self, *patterns):
         result = self.command("ls-remote", "--refs", REMOTE, *(patterns or ("refs/heads/develop", "refs/tags/*")), read=True)
-        require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
-                "Allocation tag inventory is incomplete")
+        require(result.returncode == 0, "Allocation tag inventory is incomplete")
+        # A complete advertisement this large stays as large on every read.
+        require(len(result.stdout) <= 16 * 1024 * 1024, "Allocation tag inventory exceeds 16 MiB")
         refs = {}
         for line in result.stdout.splitlines():
             parts = line.split("\t")
@@ -98,9 +124,22 @@ class AllocationSnapshot(Reservations):
             refs[reference] = oid
         return refs
 
-    def annotation(self, row):
+    def read_annotations(self, selected):
+        # The checkout supplies only immutable objects named by the live refs.
+        # A ref newer than the checkout, or a tag GitHub decodes differently,
+        # still goes through the existing exact-object API path.
+        deadline = min(self.io.deadline, self.io.clock() + LOCAL_READ_SECONDS)
+        local = LocalTags(self.root, deadline=deadline, clock=self.io.clock)
+        for start in range(0, len(selected), ANNOTATION_BATCH_SIZE):
+            batch = selected[start:start + ANNOTATION_BATCH_SIZE]
+            tags, _ = local.read(row[-1] for row in batch)
+            for kind, value in parallel_read(lambda row: self.annotation(row, tags.get(row[-1])), batch):
+                (self.pending if kind == "pending" else self.finals).append(value)
+
+    def annotation(self, row, tag=None):
         component, kind, name, oid = row
-        tag = self.api.request("git/tags/" + oid)
+        if tag is None:
+            tag = self.api.request("git/tags/" + oid)
         require(isinstance(tag, dict) and tag.get("sha") == oid and tag.get("tag") == name
                 and isinstance(tag.get("object"), dict) and tag["object"].get("type") == "commit"
                 and matches(r"[0-9a-f]{40}", tag["object"].get("sha")),
@@ -145,9 +184,12 @@ class AllocationSnapshot(Reservations):
     def insert(self, value):
         require(self.loaded and not self.commit_started, "Allocation planning is closed")
         validate_reservation(value)
-        require(value["component"] in DEPLOYABLES
-                and pending_name(value) not in {pending_name(item) for item in self.pending + self.planned},
-                "Allocation reservation collision")
+        require(value["component"] in DEPLOYABLES, "Unknown reservation component")
+        require_publishable_release(value)
+        # The plan is computed from this complete inventory, so a version it
+        # already holds is a planner defect, never a race with another run.
+        require(pending_name(value) not in {pending_name(item) for item in self.pending + self.planned},
+                "Allocation planned a duplicate reservation")
         self.planned.append(value)
         return True
 
@@ -183,7 +225,7 @@ class AllocationSnapshot(Reservations):
             self.settle_uncertain(refs)
         else:
             if pushed.returncode:
-                self.check_conflict(refs)
+                self.check_conflict(refs, pushed)
             else:
                 require(sum(line.startswith("*\t") and "[new tag]" in line for line in pushed.stdout.splitlines())
                         == len(refs), "An up-to-date push is not a new version reservation")
@@ -223,7 +265,7 @@ class AllocationSnapshot(Reservations):
         self.progress("all", "settle-refused")
         require(False, "Allocation write settlement is uncertain")
 
-    def check_conflict(self, expected):
+    def check_conflict(self, expected, pushed):
         # Ambiguous success must match the entire transaction. A proven foreign
         # successor allows replanning; absence or malformed evidence never does.
         actual = self.ref_oids(*expected)
@@ -243,6 +285,9 @@ class AllocationSnapshot(Reservations):
                     and tag.get("tag") == pending_name(winner) and tag["object"].get("sha") == winner["source"],
                     "Allocation reservation readback differs")
             raise AllocationConflict("Allocation reservation collision")
+        # None of the batch exists and no winner holds a claim. Only GitHub's
+        # explicit refusal makes that durable; a lost connection does not.
+        require(actual or not declined(pushed), "Reservation push was rejected")
         raise Refusal("Allocation reservation readback differs")
 
     def verify(self, name, oid, component):

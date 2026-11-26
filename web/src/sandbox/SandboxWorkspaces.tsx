@@ -5,11 +5,11 @@ import { agentDisplayTitle } from '../agent/presentation';
 import { ResourceLink } from '../resources/ResourceLink';
 import type { SandboxContents } from '../resources/retainedOwnerViews';
 import { Alert } from '../ui/Alert';
-import { StatusBadge } from '../ui/Badge';
+import { SandboxChildBadge } from './SandboxChildBadge';
 import { Button } from '../ui/Button';
 import { IconPlusOutline16 } from '../ui/icons';
 import { SkeletonRows } from '../ui/Skeleton';
-import { sandboxChildrenReadable, sandboxChildStatus } from './lifecycle';
+import { sandboxChildrenReadable } from './lifecycle';
 
 function permissionLabel(level: string): string {
   return level === 'guarded' ? 'Guarded' : level === 'autonomous' ? 'Autonomous' : 'Not reported';
@@ -38,7 +38,7 @@ function WorkspaceAgents({
               <ResourceLink route={{ kind: 'agent', agentId: agent.id }} onNavigate={onNavigate}>
                 {agentDisplayTitle(agent)}
               </ResourceLink>
-              <StatusBadge status={sandboxChildStatus(sandbox, agent.status)} />
+              <SandboxChildBadge sandbox={sandbox} status={agent.status} agent={agent} />
             </span>
             {detail === undefined ? null : (
               <span className="sandbox-table__quiet">
@@ -148,7 +148,7 @@ export function SandboxWorkspaces({
                             >
                               {workspace.name}
                             </ResourceLink>
-                            <StatusBadge status={sandboxChildStatus(sandbox, workspace.status)} />
+                            <SandboxChildBadge sandbox={sandbox} status={workspace.status} />
                           </span>
                         </th>
                         <td>

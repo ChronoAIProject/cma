@@ -70,7 +70,7 @@ fn every_documented_operation_and_named_problem_has_exact_contract_coverage() {
             "OpenAPI must describe shared problem {code}"
         );
     }
-    assert_eq!(inventory.openapi_operations, 305);
+    assert_eq!(inventory.openapi_operations, 340);
     assert_eq!(
         openapi.len(),
         inventory.openapi_operations,

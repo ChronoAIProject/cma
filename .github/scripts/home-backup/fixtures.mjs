@@ -1,6 +1,8 @@
 // Provisional synthetic projections. PR-1 serializer SHA
 // f3e63466760db540053a3874dde296bf391a62b7 confirms sandbox_id in the BSON
 // envelope; the real projection/export and Mongo data remain unverified.
+import { createHash } from "node:crypto";
+
 export function fixture() {
   const now = "2026-11-16T01:00:00Z";
   const lease = (fence) => ({
@@ -78,4 +80,50 @@ export function fixture() {
       available_key_ids: ["auth-old", "auth-new", "cmek-version-fixture"],
       objects: { status: "replicated", consistent_at: now, receipt: "fixture-object-receipt" } },
   };
+}
+
+// Synthetic parser fixtures only. Mongo-to-Rust-to-Node contracts live in the
+// store suite and construct artifacts through the real exporter.
+export function catalogFixture() {
+  const input = fixture();
+  const authority = (lease) => ({ validation: "strict_codec_v1", lease_present: lease !== null });
+  const hash = (s) => createHash("sha256").update(s).digest("hex");
+  const rows = {
+    sandboxes: input.sandboxes.map(s => ({ id: s._id, owner_sha256: hash(s.owner), home: s.record.lifecycle.home ?? null })),
+    home_backup_schedules: [{ id: "a", home: { mode: "full_home", home_source_id: "uid-a",
+      home_identity: "identity-a", source_reference: "home-a" }, state: "active",
+      next_due_at: input.now, last_ready_at: "2026-11-16T00:41:00Z", last_ready_backup_id: "hb-a-2",
+      in_flight: null, next_fence: 1, revision: 1, authority: authority(null) }],
+    home_backups: input.home_backups.map(b => {
+      const { _id, document_schema_version, lease, source, cut, storage, custody, ...rest } = b;
+      const { pvc_uid, ...sourceRest } = source;
+      const { provider_creation_time, ...cutRest } = cut;
+      const { storage_handle, ...storageRest } = storage;
+      const { cmek_key_version_id, ...custodyRest } = custody;
+      return { ...rest, source: { ...sourceRest, home_source_id: pvc_uid },
+        cut: { ...cutRest, source_creation_time: provider_creation_time },
+        storage: { ...storageRest, source_reference: storage_handle },
+        custody: { ...custodyRest, encryption_key_version_id: cmek_key_version_id }, authority: authority(lease) };
+    }),
+  };
+  const collections = Object.fromEntries(Object.entries(rows).map(([name, data]) => [name, {
+    rows: data.sort((a, b) => Buffer.compare(Buffer.from(a.id), Buffer.from(b.id))),
+    count: data.length, pages: 1, eof: true,
+  }]));
+  return { format: "home-backup-catalog-payload-v1", source_kind: "mongo_snapshot",
+    run_id: "00000000-0000-4000-8000-000000000001",
+    identity: { source_revision_claim: "a".repeat(40), executable_sha256: "b".repeat(64) },
+    provenance: "operator_claim_requires_external_verification", observed_start: input.now, observed_end: input.now,
+    snapshot: { time: Date.parse(input.now) / 1000, increment: 1, session_sha256: "c".repeat(64), scope_sha256: "d".repeat(64) },
+    scope: "all_records_in_three_collections", page_size: 128, collections };
+}
+
+export function encodeCatalogFixture(payload = catalogFixture()) {
+  const hash = (s) => createHash("sha256").update(s).digest("hex");
+  const payload_json = JSON.stringify(payload), payload_sha256 = hash(payload_json);
+  const bytes = JSON.stringify({ format: "home-backup-catalog-export-v1", payload_sha256, payload_json });
+  const receipt = { format: "home-backup-catalog-receipt-v1", artifact_sha256: hash(bytes), payload_sha256,
+    run_sha256: hash(payload.run_id), ...payload.identity,
+    counts: Object.fromEntries(Object.entries(payload.collections).map(([name, entry]) => [name, entry.count])) };
+  return { bytes, receipt };
 }

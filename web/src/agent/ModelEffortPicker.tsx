@@ -132,7 +132,7 @@ export function ModelEffortPicker({
         onClose={() => setListOpen(false)}
         onSelect={(id) => {
           setListOpen(false);
-          onChange({ ...value, model: id });
+          if (id !== value.model) onChange({ ...value, model: id });
         }}
         anchor={
           <button

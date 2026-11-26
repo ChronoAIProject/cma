@@ -148,6 +148,7 @@ impl SandboxService {
         self.store
             .commit(super::store::SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: expected,
                 sandbox: Box::new(sandbox),
                 event_at: at,

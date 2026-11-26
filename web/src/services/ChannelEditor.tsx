@@ -1,3 +1,17 @@
+import { channelResponseMatches } from './channelEvidence';
+import { useChannelWriteGuard } from './useChannelWriteGuard';
+import { HmacCredentialsScope } from './channelForm/HmacCredentialsScope';
+import { ValidationMessageScope } from './channelForm/ValidationPath';
+import { useDraftReloadWarning } from './channelForm/useDraftReloadWarning';
+import {
+  clearNewChannelDraft,
+  releaseNewChannelDraft,
+  writeNewChannelDraft,
+  type NewChannelDraft,
+} from './channelForm/newChannelDraft';
+import { validateConnectorFields } from './channelForm/connectorValidation';
+import { channelNameRequired } from './channelForm/ChannelPolicyFields';
+import { validateReplyFields } from './channelForm/replyValidation';
 import { revealInvalidField } from './channelForm/AdvancedFields';
 import { ValidationError } from './channelForm/ValidationError';
 import { useRef, useState } from 'react';
@@ -5,11 +19,13 @@ import { Button } from '../ui/Button';
 import { segment, ServiceError, serviceRequest, type Denied } from './client';
 import { useRelayCapabilities } from './RelayCapabilities';
 import { validateRelayAuthoring } from './channelForm/relayAuthoring';
+import { validateAuthoringRules } from './channelForm/authoringRules';
 import { NodeFields, nodeCredentials } from './channelForm/NodeFields';
 import {
   ConsumerPolicyFields,
   initialRouting,
   RoutingFields,
+  routingLimitErrors,
   routingRequest,
 } from './channelForm/RoutingFields';
 import {
@@ -20,64 +36,16 @@ import {
   object,
   records,
   selectedDraft,
+  text,
   type EditorSection,
   type Fields,
 } from './channelForm/model';
 import { customExecutionRequest, customExecutionWaiting } from './channelForm/customExecution';
 export type { EditorSection } from './channelForm/model';
-export interface Channel {
-  native_discord_activation?: {
-    state: string;
-    detail: string;
-    capacity: number;
-    selected_records: number;
-  };
-  created_at?: string;
-  owner?: unknown;
-  channel_id: string;
-  record_id: string;
-  version: number;
-  provider: { slug: string; level: string };
-  definition: {
-    [key: string]: unknown;
-    name: string;
-    sources: unknown[];
-    schema_version?: number;
-    profile?: unknown;
-    provider?: {
-      [key: string]: unknown;
-      slug?: string;
-      binding_id?: string;
-      target?: { type: 'profile' } | { type: 'existing_agent'; agent_id: string };
-    };
-    partition?: unknown;
-    reply?: unknown;
-    routing?: unknown;
-    connection_ref?: string;
-    durable_custom_execution?: boolean;
-  };
-  endpoints: {
-    custom_event_url: string;
-    nyxid_callback_url: string;
-    telegram_webhook_url?: string;
-    whatsapp_webhook_url?: string;
-    native_lark_webhook_url?: string;
-  };
-}
-export type ChannelListItem = Omit<Channel, 'channel_id' | 'endpoints'> & {
-  readonly channel_id?: string | null;
-  readonly endpoints?: Channel['endpoints'] | null;
-};
-export function hasChannelAddress(channel: ChannelListItem): channel is Channel {
-  return (
-    typeof channel.channel_id === 'string' &&
-    channel.channel_id.length > 0 &&
-    channel.endpoints != null &&
-    typeof channel.endpoints.custom_event_url === 'string' &&
-    typeof channel.endpoints.nyxid_callback_url === 'string'
-  );
-}
+import { hasChannelAddress, type Channel, type ChannelListItem } from './channelTypes';
+export { hasChannelAddress, type Channel, type ChannelListItem } from './channelTypes';
 interface Pending {
+  uncertain?: boolean;
   key: string;
   body: string;
   record: string;
@@ -90,22 +58,30 @@ interface Pending {
 export function ChannelEditor({
   channel,
   active = true,
+  writable = true,
   section = { kind: 'channel' },
   ownerSubject = '',
+  recoverDraft = false,
+  initialDraft,
   onDone,
   denied,
 }: {
   readonly channel?: Channel;
   readonly active?: boolean;
+  readonly writable?: boolean;
   readonly section?: EditorSection;
   readonly ownerSubject?: string;
+  readonly recoverDraft?: boolean;
+  readonly initialDraft?: NewChannelDraft;
   readonly onDone: (channel?: Channel) => void;
   readonly denied: Denied;
 }) {
   const editor = useRef<HTMLDivElement>(null);
   const discovery = useRelayCapabilities();
   const [baseline, setBaseline] = useState(channel);
-  const [draft, setDraft] = useState(() => channelDraft(channel, ownerSubject));
+  const [draft, setDraft] = useState(
+    () => initialDraft?.fields ?? channelDraft(channel, ownerSubject),
+  );
   const [routing, setRouting] = useState(() =>
     channel?.definition.routing ? object(channel.definition.routing) : initialRouting(),
   );
@@ -114,10 +90,36 @@ export function ChannelEditor({
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [edited, setEdited] = useState(false);
   const create = !baseline;
+  const canWrite = useChannelWriteGuard(create || writable);
+  useDraftReloadWarning((create && edited) || pending !== undefined);
+  function editDraft(next: Fields) {
+    if (!canWrite() || pending || busy) return;
+    setEdited(true);
+    setError(undefined);
+    setDraft(next);
+    if (create && recoverDraft)
+      writeNewChannelDraft(
+        ownerSubject,
+        next,
+        initialDraft?.privateFields === true || Object.keys(credentials).length > 0,
+      );
+  }
+  function editCredentials(next: Fields) {
+    if (!canWrite() || pending || busy) return;
+    setEdited(true);
+    setError(undefined);
+    setCredentials(next);
+    if (create && recoverDraft) writeNewChannelDraft(ownerSubject, draft, true);
+  }
   const checkingCustomSupport = create && customExecutionWaiting(discovery, draft);
   const additional = section.kind === 'consumer' && section.id !== 'default';
+  const limitErrors = routingLimitErrors(routing);
+  const invalidRoutingLimits =
+    section.kind === 'channel' && Object.values(limitErrors).some(Boolean);
   async function send(request: Pending) {
+    if (!canWrite() || busy) return;
     setBusy(true);
     setError(undefined);
     setNotice(undefined);
@@ -127,7 +129,13 @@ export function ChannelEditor({
         body: request.body,
         headers: { 'Idempotency-Key': request.key },
       });
+      if (baseline && hasChannelAddress(value) && !channelResponseMatches(baseline, value))
+        throw new Error(
+          'The saved channel identity or version could not be confirmed. Keep the original request and refresh.',
+        );
       setPending(undefined);
+      setEdited(false);
+      if (create && recoverDraft) clearNewChannelDraft(ownerSubject, request.record);
       if (hasChannelAddress(value)) {
         setBaseline(value);
         if (request.kind === 'channel') {
@@ -157,7 +165,19 @@ export function ChannelEditor({
       onDone(hasChannelAddress(value) ? value : undefined);
     } catch (e) {
       if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
-      if (e instanceof ServiceError && e.status === 400) setPending(undefined);
+      if (
+        e instanceof ServiceError &&
+        ((e.status === 400 && (!create || e.code !== 'provider_rejected')) ||
+          (e.status === 409 &&
+            e.code === 'conflict' &&
+            e.message.startsWith('channel_creation_pending:') &&
+            !request.uncertain))
+      ) {
+        // This precondition is checked before any update effect. Keep the
+        // draft editable; an uncertain write or version conflict keeps its key.
+        setPending(undefined);
+        if (create && recoverDraft) releaseNewChannelDraft(ownerSubject, request.record);
+      } else setPending({ ...request, uncertain: true });
       setError(
         e instanceof Error
           ? e.message
@@ -168,23 +188,34 @@ export function ChannelEditor({
     }
   }
   function submit(kind: 'channel' | 'routing') {
+    if (!canWrite() || busy) return;
     if (pending) {
       void send(pending);
       return;
     }
+    if (kind === 'routing' && invalidRoutingLimits) return;
     try {
       const record = baseline?.record_id ?? crypto.randomUUID();
-      const projected = baseline ? selectedDraft(channelDraft(baseline), draft, section) : draft;
+      let projected = baseline ? selectedDraft(channelDraft(baseline), draft, section) : draft;
+      if (kind === 'channel' && (create || section.kind === 'channel')) {
+        const name = text(projected.name).trim();
+        if (!name) throw new Error(`/name: ${channelNameRequired}`);
+        projected = { ...projected, name };
+      }
       const selectedCredentials = baseline
         ? nodeCredentials(credentials, section, projected)
         : channelCredentials(credentials, projected, true);
-      if (kind === 'channel')
+      if (kind === 'channel') {
+        validateConnectorFields(projected);
+        validateReplyFields(projected, baseline ? channelDraft(baseline) : undefined);
         validateRelayAuthoring(
           discovery,
           projected,
           baseline ? channelDraft(baseline) : undefined,
           selectedCredentials,
         );
+        validateAuthoringRules(discovery, projected, baseline ? channelDraft(baseline) : undefined);
+      }
       const body: Fields =
         kind === 'routing'
           ? {
@@ -217,6 +248,8 @@ export function ChannelEditor({
           key === 'hmac_secrets' ? ['hmac_secrets', 'replace_hmac'] : [key],
         ),
       };
+      if (create && recoverDraft)
+        writeNewChannelDraft(ownerSubject, draft, Object.keys(credentials).length > 0, record);
       setPending(request);
       void send(request);
     } catch (e) {
@@ -253,31 +286,55 @@ export function ChannelEditor({
       : undefined;
   return (
     <div className="channel-node-editor" ref={editor}>
+      {create && initialDraft?.privateFields ? (
+        <p role="status">
+          Draft restored. Re-enter any private credentials, environment overrides or MCP server
+          settings before creating.
+        </p>
+      ) : null}
       {!additional ? (
         <form
           className="service-form"
-          onInvalidCapture={(event) => revealInvalidField(event.target as HTMLElement)}
+          onInvalidCapture={(event) => {
+            const first = event.currentTarget.querySelector<HTMLElement>(
+              'input:invalid, textarea:invalid',
+            );
+            revealInvalidField(first ?? (event.target as HTMLElement));
+            first?.focus();
+          }}
           onSubmit={(e) => {
             e.preventDefault();
             submit('channel');
           }}
         >
-          <fieldset className="channel-form-section" disabled={pending !== undefined || busy}>
-            <NodeFields
-              active={active}
-              draft={draft}
-              onChange={setDraft}
-              credentials={credentials}
-              onCredentials={setCredentials}
-              section={section}
-              create={create}
-              sourceCount={baseline?.definition.sources.length ?? 0}
-              savedCustomExecution={baseline?.definition.durable_custom_execution}
-              denied={denied}
-            />
+          <fieldset
+            className="channel-form-section"
+            disabled={!writable || pending !== undefined || busy}
+          >
+            <ValidationMessageScope value={!pending && !busy ? error : undefined}>
+              <HmacCredentialsScope value={credentials} create={create}>
+                <NodeFields
+                  active={active}
+                  draft={draft}
+                  onChange={editDraft}
+                  credentials={credentials}
+                  onCredentials={editCredentials}
+                  section={section}
+                  create={create}
+                  sourceCount={baseline?.definition.sources.length ?? 0}
+                  retainedAckDelay={object(baseline?.definition.reply).ack_after_ms}
+                  savedCustomExecution={baseline?.definition.durable_custom_execution}
+                  denied={denied}
+                />
+              </HmacCredentialsScope>
+            </ValidationMessageScope>
           </fieldset>
           {!pending ? (
-            <Button type="submit" variant="primary" disabled={busy || checkingCustomSupport}>
+            <Button
+              type="submit"
+              variant="primary"
+              disabled={!writable || busy || checkingCustomSupport}
+            >
               {checkingCustomSupport
                 ? discovery.status === 'loading'
                   ? 'Checking support…'
@@ -301,9 +358,12 @@ export function ChannelEditor({
             submit('routing');
           }}
         >
-          <fieldset className="channel-form-section" disabled={pending !== undefined || busy}>
+          <fieldset
+            className="channel-form-section"
+            disabled={!writable || pending !== undefined || busy}
+          >
             {section.kind === 'channel' ? (
-              <RoutingFields value={routing} onChange={setRouting} />
+              <RoutingFields value={routing} onChange={setRouting} limitErrors={limitErrors} />
             ) : activeConsumer ? (
               <>
                 {additional ? (
@@ -335,7 +395,12 @@ export function ChannelEditor({
           {!pending ? (
             <Button
               type="submit"
-              disabled={busy || (section.kind === 'consumer' && !activeConsumer)}
+              disabled={
+                !writable ||
+                busy ||
+                invalidRoutingLimits ||
+                (section.kind === 'consumer' && !activeConsumer)
+              }
             >
               {section.kind === 'channel' ? 'Save routing' : 'Save consumer policy'}
             </Button>
@@ -350,7 +415,7 @@ export function ChannelEditor({
       ) : null}
       {pending ? (
         <div className="service-actions">
-          <Button variant="primary" disabled={busy} onClick={() => void send(pending)}>
+          <Button variant="primary" disabled={!writable || busy} onClick={() => void send(pending)}>
             {busy ? 'Submitting…' : 'Retry same request'}
           </Button>
           <Button disabled={busy} onClick={() => void recover()}>
@@ -372,57 +437,4 @@ function routingProjection(base: Fields, draft: Fields, section: EditorSection):
     consumers: records(base.consumers).map((v) => (v.id === section.id && next ? next : v)),
   };
 }
-export function DeleteChannel({
-  channel,
-  onDone,
-  denied,
-}: {
-  readonly channel: Channel;
-  readonly onDone: () => void;
-  readonly denied: Denied;
-}) {
-  const [confirm, setConfirm] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  return (
-    <div>
-      {confirm ? (
-        <>
-          <p>
-            Delete {channel.definition.name}? This disconnects its provider and stops incoming event
-            delivery.
-          </p>
-          <Button
-            disabled={busy}
-            onClick={() => {
-              setBusy(true);
-              void serviceRequest(
-                'event-gateway',
-                `/v1/channels/${segment(channel.channel_id)}?expected_version=${channel.version}`,
-                { method: 'DELETE' },
-              )
-                .then(onDone)
-                .catch((e: unknown) => {
-                  if (e instanceof ServiceError && [401, 403].includes(e.status)) denied(e.status);
-                  setError(
-                    e instanceof Error
-                      ? e.message
-                      : 'Deletion is unconfirmed. Refresh the channel before retrying.',
-                  );
-                })
-                .finally(() => setBusy(false));
-            }}
-          >
-            {busy ? 'Deleting…' : 'Confirm delete'}
-          </Button>{' '}
-          <Button disabled={busy} onClick={() => setConfirm(false)}>
-            Cancel
-          </Button>
-        </>
-      ) : (
-        <Button onClick={() => setConfirm(true)}>Delete channel</Button>
-      )}
-      {error ? <p role="alert">{error}</p> : null}
-    </div>
-  );
-}
+export { DeleteChannel } from './DeleteChannel';

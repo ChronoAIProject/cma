@@ -59,9 +59,17 @@ pub(crate) async fn update(
     record
         .detail
         .record(DetailKey::Revision, sandbox.revision.to_string());
-    record
-        .detail
-        .record(DetailKey::Runtime, &body.target_version);
+    // A reopen stalled on a superseded target is admitted onto the latest
+    // runtime; audit the target that was actually admitted or queued.
+    let target = sandbox
+        .admitted_runtime_update_target()
+        .or_else(|| {
+            sandbox
+                .runtime_update_request()
+                .map(|r| r.target_version.as_str())
+        })
+        .unwrap_or(&body.target_version);
+    record.detail.record(DetailKey::Runtime, target);
     record.detail.record(DetailKey::Setting, "runtime_update");
     state
         .activity

@@ -7,12 +7,27 @@ pub(crate) fn router(
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
     config: &crate::config::Config,
 ) -> axum::Router {
-    let origin = reqwest::Url::parse(&config.public_url)
+    layer1_public::rest::desktop_router_with_origins(
+        Arc::new(
+            layer2_core::sandbox::DesktopService::new(reads, adapter)
+                .with_admission(if config.agent_manager_replicas.is_some() {
+                    DesktopAdmission::Protected
+                } else {
+                    DesktopAdmission::Disabled
+                })
+                .with_runtime_migration_tracking(config.runtime.migration.enabled),
+        ),
+        origins(&config.public_url, &config.cors_origins),
+    )
+}
+
+pub(super) fn origins(public_url: &str, cors_origins: &[axum::http::HeaderValue]) -> Vec<String> {
+    let origin = reqwest::Url::parse(public_url)
         .expect("configured public URL is valid")
         .origin()
         .ascii_serialization();
     let mut origins = vec![origin];
-    for value in &config.cors_origins {
+    for value in cors_origins {
         let origin = value
             .to_str()
             .expect("configured CORS origin is valid")
@@ -21,16 +36,5 @@ pub(crate) fn router(
             origins.push(origin);
         }
     }
-    layer1_public::rest::desktop_router_with_origins(
-        Arc::new(
-            layer2_core::sandbox::DesktopService::new(reads, adapter).with_admission(
-                if config.agent_manager_replicas.is_some() {
-                    DesktopAdmission::Protected
-                } else {
-                    DesktopAdmission::Disabled
-                },
-            ),
-        ),
-        origins,
-    )
+    origins
 }

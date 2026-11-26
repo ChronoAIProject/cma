@@ -59,8 +59,8 @@ impl SandboxAutoPauseService {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
         let policy = tokio::time::timeout_at(deadline, self.settings.current())
             .await
-            .map_err(|_| unavailable())?
-            .map_err(|_| unavailable())?;
+            .map_err(|_| unavailable_before_batch(pause_now, "policy_read_timeout"))?
+            .map_err(|_| unavailable_before_batch(pause_now, "policy_read_error"))?;
         let mut batch = AutoPauseBatch {
             policy_revision: policy.revision,
             enabled: policy.settings.inactivity.auto_pause_enabled,
@@ -76,15 +76,21 @@ impl SandboxAutoPauseService {
             self.maintenance.sandbox_maintenance_candidates(&page),
         )
         .await
-        .map_err(|_| unavailable())?
-        .map_err(|_| unavailable())?;
+        .map_err(|_| unavailable_before_batch(pause_now, "discovery_timeout"))?
+        .map_err(|_| unavailable_before_batch(pause_now, "discovery_error"))?;
         if candidates.items.len() > usize::from(page.limit) {
-            return Err(unavailable());
+            return Err(unavailable_before_batch(
+                pause_now,
+                "invalid_discovery_page",
+            ));
         }
         let mut previous = page.cursor.as_deref();
         for id in &candidates.items {
             if previous.is_some_and(|value| value >= id.as_str()) {
-                return Err(unavailable());
+                return Err(unavailable_before_batch(
+                    pause_now,
+                    "invalid_discovery_page",
+                ));
             }
             previous = Some(id.as_str());
         }
@@ -93,7 +99,10 @@ impl SandboxAutoPauseService {
             .as_deref()
             .is_some_and(|next| previous != Some(next) || candidates.items.is_empty())
         {
-            return Err(unavailable());
+            return Err(unavailable_before_batch(
+                pause_now,
+                "invalid_discovery_page",
+            ));
         }
         let mut cursor = page.cursor.clone();
         for id in candidates.items {
@@ -206,6 +215,16 @@ impl SandboxAutoPauseService {
             .map_err(|_| unavailable())?;
         Ok(record.id.0)
     }
+}
+
+fn unavailable_before_batch(pause_now: bool, reason: &'static str) -> OperatorError {
+    metrics::counter!(
+        "cma_auto_pause_operator_unavailable_total",
+        "mode" => if pause_now { "pause" } else { "preview" },
+        "reason" => reason
+    )
+    .increment(1);
+    unavailable()
 }
 
 fn unavailable() -> OperatorError {

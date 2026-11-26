@@ -1,6 +1,7 @@
 import type { AgentStatus, SandboxSummary, WorkspaceDetail } from '../api/types';
 import { sandboxChildrenAvailable, sandboxLifecycleAction } from '../sandbox/lifecycle';
 import { sandboxDeletionReason } from '../sandbox/deletionEligibility';
+import { sandboxHasParkedRuntimeUpdate } from '../sandbox/parkedRuntimeUpdate';
 import {
   IconPauseOutline16,
   IconPlayOutline16,
@@ -12,6 +13,7 @@ import {
 } from '../ui/icons';
 import type { TreePermissions } from './Tree';
 import type { TreeRowAction } from './TreeRow';
+import { agentDeletionReason } from '../agent/deletionEligibility';
 
 export function sandboxActions(
   sandbox: SandboxSummary,
@@ -109,8 +111,14 @@ export interface AgentActionContext {
 }
 
 export const OPEN_SANDBOX_TO_RESUME = 'open_sandbox_to_resume';
+export const OPEN_RUNTIME_UPDATE = 'open_runtime_update';
 const ACTION_BUSY = 'Another action is still being confirmed.';
 const REQUIRES_ACTIVE_SANDBOX = 'Available when the Sandbox is active.';
+const terminalStopReasons: Partial<Record<AgentStatus, string>> = {
+  stopped: 'Agent is already stopped.',
+  failed: 'Agent has failed. There is no running Agent to stop.',
+  deleted: 'Agent has been deleted.',
+};
 
 export function agentActions(
   status: AgentStatus,
@@ -121,6 +129,39 @@ export function agentActions(
   const runtimeAvailable =
     !busy && !stale && sandbox !== undefined && sandboxChildrenAvailable(sandbox);
   const actions: TreeRowAction[] = [];
+  const canReviewUpdate =
+    sandbox !== undefined &&
+    viewerId !== undefined &&
+    sandbox.owner === viewerId &&
+    !stale &&
+    (sandboxHasParkedRuntimeUpdate(sandbox) ||
+      (sandbox.status === 'failed' &&
+        sandbox.runtimeUpdate?.state === 'failed' &&
+        sandbox.runtimeUpdate.completedAt === undefined));
+  const canOfferEnvironmentDeletion =
+    sandbox !== undefined &&
+    viewerId !== undefined &&
+    sandbox.owner === viewerId &&
+    permissions.deleteSandbox &&
+    sandboxHasParkedRuntimeUpdate(sandbox);
+  const environmentDeletionReason = canOfferEnvironmentDeletion
+    ? sandboxDeletionReason(sandbox, { busy, stale })
+    : undefined;
+  const recoveryReason =
+    canReviewUpdate && !busy
+      ? canOfferEnvironmentDeletion && environmentDeletionReason === undefined
+        ? 'Use Retry runtime update to review this environment, or Delete environment… to delete it and all its tasks.'
+        : 'Use Retry runtime update to review this environment.'
+      : undefined;
+  if (canReviewUpdate)
+    actions.push({
+      id: OPEN_RUNTIME_UPDATE,
+      label: 'Retry runtime update',
+      icon: <IconDataOutline16 />,
+      route: { kind: 'sandbox', sandboxId: sandbox.id },
+      disabled: busy,
+      reason: busy ? ACTION_BUSY : 'Open the environment to review and retry this update.',
+    });
   if (permissions.stopAgent)
     actions.push({
       id: 'stop_agent',
@@ -129,20 +170,28 @@ export function agentActions(
       disabled:
         !runtimeAvailable ||
         !['starting', 'ready', 'working', 'waiting_approval', 'paused'].includes(status),
-      reason: busy ? ACTION_BUSY : !runtimeAvailable ? REQUIRES_ACTIVE_SANDBOX : undefined,
+      reason:
+        terminalStopReasons[status] ??
+        (busy
+          ? ACTION_BUSY
+          : !runtimeAvailable
+            ? (agentDeletionBlock(context) ??
+              recoveryReason ??
+              sandboxStopReason(sandbox) ??
+              REQUIRES_ACTIVE_SANDBOX)
+            : undefined),
     });
   if (permissions.deleteAgent) {
     const terminal = status === 'stopped' || status === 'failed';
     const paused = terminal && sandbox?.status === 'paused' && !sandbox.lifecycle?.operation;
     const reason =
       agentDeletionBlock(context) ??
+      recoveryReason ??
       (paused
         ? 'Resume the Sandbox before deleting this Agent and its Worktree.'
         : !runtimeAvailable
           ? REQUIRES_ACTIVE_SANDBOX
-          : !terminal
-            ? 'Stop this Agent before deleting it and its Worktree.'
-            : undefined);
+          : agentDeletionReason(status, permissions, sandbox!, viewerId));
     if (
       paused &&
       sandbox.lifecycle &&
@@ -166,6 +215,15 @@ export function agentActions(
       reason,
     });
   }
+  if (canOfferEnvironmentDeletion)
+    actions.push({
+      id: 'delete_sandbox',
+      label: 'Delete environment…',
+      icon: <IconTrashOutline16 />,
+      danger: true,
+      disabled: environmentDeletionReason !== undefined,
+      reason: environmentDeletionReason,
+    });
   if (permissions.exportHistory) {
     actions.push({
       id: 'export_retained_conversation',
@@ -185,12 +243,20 @@ export function agentActions(
   return actions;
 }
 
+function sandboxStopReason(sandbox: SandboxSummary | undefined): string | undefined {
+  if (sandbox?.status === 'paused') return 'The Sandbox is paused.';
+  if (sandbox?.status === 'failed') return 'The Sandbox runtime is unavailable.';
+}
+
 function agentDeletionBlock({ sandbox, stale, busy }: AgentActionContext): string | undefined {
   if (stale || sandbox === undefined)
     return 'Sandbox status is unavailable. Refresh and try again.';
   if (sandbox.status === 'retiring') return 'The Sandbox is being deleted.';
   if (sandbox.status === 'retired') return 'The Sandbox has been deleted.';
-  if (sandbox.status === 'reviving' || sandbox.lifecycle?.operation?.purpose === 'revive')
-    return 'Wait for the Sandbox to finish resuming.';
   if (busy) return ACTION_BUSY;
+  if (
+    (sandbox.status === 'reviving' || sandbox.lifecycle?.operation?.purpose === 'revive') &&
+    !sandboxHasParkedRuntimeUpdate(sandbox)
+  )
+    return 'Wait for the Sandbox to finish resuming.';
 }

@@ -125,11 +125,26 @@ for (const admin of [false, true]) {
       }
       if (admin) {
         const chart = page.getByRole('region', { name: 'Allocation comparison chart' });
+        metrics.presentationRows = [
+          {
+            ...metricRow,
+            allocated_period: {
+              ...metricRow.allocated_period,
+              complete: false,
+              unknown_seconds: 3600,
+              projected_tail_seconds: 0,
+            },
+          },
+        ];
+        await page.getByRole('button', { name: 'Refresh usage', exact: true }).click();
+        const reportCoverage = chart.getByRole('note', { name: 'Report allocation coverage' });
+        await expect(reportCoverage).toContainText('Confirmed missing duration: 1h');
         await chart.getByRole('button', { name: 'Allocation chart grouping' }).click();
         await page.getByRole('menuitemradio', { name: 'By owner', exact: true }).click();
         const note = chart.getByRole('note', { name: 'Selected owners coverage' });
         await expect(note).toContainText('Coverage unverified');
-        await expect(note).toContainText('No missing interval has been established');
+        await expect(note).not.toContainText('No missing interval has been established');
+        await expect(reportCoverage).toContainText('Confirmed missing duration: 1h');
         await expect(note).toContainText(
           'Missing-interval durations are unavailable for this scope',
         );

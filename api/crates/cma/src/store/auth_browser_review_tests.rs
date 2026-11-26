@@ -38,6 +38,7 @@ fn attempt() -> LoginAttempt {
         verifier: SecretValue::new("fixture-verifier".into()),
         return_to: Some("/agent-manager".into()),
         actor_link_intent: None,
+        service_authorization: None,
         silent: false,
         consent_requested: false,
         custody_reserved: true,

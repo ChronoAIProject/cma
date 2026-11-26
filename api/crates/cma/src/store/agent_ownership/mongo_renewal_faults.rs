@@ -1,5 +1,6 @@
 //! Targeted real-Mongo faults shared by custody and public-route regressions.
 use super::*;
+use layer2_core::agent_ownership::RenewalBatch;
 use mongodb::options::ClientOptions;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -24,6 +25,8 @@ pub(crate) struct RoutedStore {
     pub(crate) releases: AtomicUsize,
     pub(crate) returned: Mutex<Option<OwnershipError>>,
     withhold_reply: AtomicBool,
+    reply_waiting: tokio::sync::Notify,
+    reply_allowed: tokio::sync::Notify,
 }
 
 #[async_trait::async_trait]
@@ -62,9 +65,25 @@ impl OwnershipStore for RoutedStore {
                 .expect("withhold only a committed real Mongo renewal");
             // Lose the successful reply at the store/coordinator boundary.
             // Mongo has committed; the coordinator learns only its own timeout.
-            std::future::pending::<()>().await;
+            self.reply_waiting.notify_one();
+            self.reply_allowed.notified().await;
         }
         *self.returned.lock().unwrap() = result.as_ref().err().cloned();
+        result
+    }
+    fn supports_batch_renewal(&self) -> bool {
+        true
+    }
+    async fn renew_batch(&self, tokens: &[OwnershipToken]) -> Result<RenewalBatch, OwnershipError> {
+        if !tokens.iter().any(|token| token.agent_id == self.target) {
+            return self.inner.renew_batch(tokens).await;
+        }
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        let result = self.fault_client.renew_batch(tokens).await;
+        if self.withhold_reply.load(Ordering::SeqCst) {
+            assert!(matches!(result, Ok(RenewalBatch::Committed(_))));
+            std::future::pending::<()>().await;
+        }
         result
     }
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
@@ -96,7 +115,19 @@ impl RoutedStore {
             releases: AtomicUsize::new(0),
             returned: Mutex::new(None),
             withhold_reply: AtomicBool::new(false),
+            reply_waiting: tokio::sync::Notify::new(),
+            reply_allowed: tokio::sync::Notify::new(),
         })
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(crate) async fn wait_for_held_reply(&self) {
+        self.reply_waiting.notified().await;
+    }
+
+    #[cfg(feature = "qualification-hooks")]
+    pub(crate) fn allow_held_reply(&self) {
+        self.reply_allowed.notify_one();
     }
     pub(crate) async fn arm(&self, fault: Fault) {
         if matches!(fault, Fault::WithheldReply) {
@@ -106,7 +137,10 @@ impl RoutedStore {
         let (mode, data) = match fault {
             Fault::KnownAbort => (
                 mongodb::bson::Bson::String("alwaysOn".into()),
-                doc! {"failCommands": ["findAndModify"], "appName": &self.app,
+                // Reject the first transactional command before MongoDB opens
+                // the transaction. Failing the later owner write can strand
+                // the shared member write if the retry deadline cuts off abort.
+                doc! {"failCommands": ["find"], "appName": &self.app,
                 "errorCode": 112_i32, "errorLabels": ["TransientTransactionError"]},
             ),
             Fault::UnknownCommit => (

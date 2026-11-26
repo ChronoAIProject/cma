@@ -33,6 +33,17 @@ class AllocationProgressTests(unittest.TestCase):
                     mark("all", "history")
             self.assertEqual(output.getvalue(), "")
 
+    def test_a_rerun_prints_one_fixed_retry_line_and_nothing_else(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), allocation_progress(lambda: 0) as mark:
+            mark.retry("READ_FAILED", 2, 2, 14.0)
+            for args in (("private\n::warning::payload", 2, 2, 1.0), ("READ_FAILED", 1, 2, 1.0),
+                         ("READ_FAILED", 3, 2, 1.0), ("READ_FAILED", True, 2, 1.0),
+                         ("READ_FAILED", 2, 2, float("nan")), ("READ_FAILED", 2, 2, -1)):
+                with self.subTest(args=args), self.assertRaises(Refusal):
+                    mark.retry(*args)
+        self.assertEqual(output.getvalue(), "RETRY allocation reason=READ_FAILED attempt=2/2 wait=14.0s\n")
+
     def test_progress_arrives_before_completion_without_native_or_child_output(self):
         program = """
 import os, subprocess, sys

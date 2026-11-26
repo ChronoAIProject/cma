@@ -14,6 +14,7 @@ async fn fixture() -> (mongodb::Client, Database, MongoAccountDeletionStore) {
     (client, db, store)
 }
 
+mod completion;
 mod corruption;
 mod leases;
 mod queries;

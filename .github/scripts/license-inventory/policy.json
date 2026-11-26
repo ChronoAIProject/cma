@@ -1,0 +1,40 @@
+{
+  "recognized": ["0BSD", "MIT", "MIT-0", "Apache-2.0", "LLVM-exception", "BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0", "Unlicense", "CC0-1.0", "BSL-1.0", "BlueOak-1.0.0", "Python-2.0", "IJG", "CDLA-Permissive-2.0"],
+  "obligations": {
+    "MPL-2.0": {
+      "category": "weak-copyleft",
+      "summary": "For distributed covered files, retain notices and provide covered source, including modifications, under MPL. Tell recipients how to obtain that source when distributing executable form. Identify covered files in browser bundles.",
+      "source": "https://www.mozilla.org/en-US/MPL/2.0/FAQ/"
+    },
+    "EPL-2.0": {
+      "category": "weak-copyleft",
+      "summary": "Review the Program and derivative scope; retain notices and make covered source available under EPL when distributing. State source availability with object distributions and review commercial distribution responsibilities.",
+      "source": "https://www.eclipse.org/legal/epl-2.0/"
+    },
+    "LGPL-2.1-or-later": {
+      "category": "weak-copyleft-alternative",
+      "summary": "If selecting LGPL, choose the applicable version and review covered library source, modifications, notices and recipients' ability to modify/relink the library. A permissive OR alternative must be explicitly selected and verified before excluding these obligations.",
+      "source": "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"
+    },
+    "Artistic-2.0": {
+      "category": "conditional-redistribution",
+      "summary": "Preserve notices for the Standard Version. For modified versions, document changes and satisfy the applicable source or compiled distribution conditions, including an allowed naming, source-availability or permission route. Review the exact distribution form.",
+      "source": "https://perlfoundation.org/artistic-license-20.html"
+    },
+    "OFL-1.1": {
+      "category": "font-license",
+      "summary": "Retain copyright and OFL text with redistributed fonts; review reserved font names when modifying. Fonts remain under OFL and cannot be sold by themselves. Documents using the fonts do not inherit OFL.",
+      "source": "https://openfontlicense.org/open-font-license-official-text/"
+    },
+    "CC-BY-3.0": {
+      "category": "attribution",
+      "summary": "Preserve attribution and license references; identify adaptations and review the exact attribution requirements for the distributed material.",
+      "source": "https://creativecommons.org/licenses/by/3.0/legalcode.en"
+    },
+    "CC-BY-4.0": {
+      "category": "attribution",
+      "summary": "Credit the creator, retain supplied notices, link the license and indicate modifications as required; review attribution placement in the distributed artifact.",
+      "source": "https://creativecommons.org/licenses/by/4.0/legalcode.en"
+    }
+  }
+}

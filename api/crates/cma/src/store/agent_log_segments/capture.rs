@@ -1,4 +1,5 @@
 //! Read-only captured source. Unsupported contexts refuse before any write.
+use futures_util::TryStreamExt;
 use layer2_core::sandbox::{
     store::SandboxStoreError, Agent, AgentLogEntry, AgentLogProjectionState,
 };
@@ -10,6 +11,7 @@ use mongodb::{
 
 mod legacy;
 mod point_reads;
+pub(in crate::store) mod preview_budget;
 mod segmented;
 mod snapshot;
 use super::transaction_scope::{TransactionIdentity, TransactionScope};
@@ -20,6 +22,7 @@ use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::Mong
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::store) enum CaptureMode {
     Snapshot,
+    PrivacyExport,
     // Production transaction capture requires the exclusive TransactionScope.
     // Retain the invalid raw-mode token only for refusal qualification tests.
     #[cfg(test)]
@@ -96,7 +99,7 @@ pub(in crate::store) async fn capture(
     session: &mut ClientSession,
     mode: CaptureMode,
 ) -> Result<CapturedLog, TransactionLogError> {
-    if mode != CaptureMode::Snapshot {
+    if !matches!(mode, CaptureMode::Snapshot | CaptureMode::PrivacyExport) {
         return Err(pending());
     }
     let (row, at) = snapshot::agent(store, current, session).await?;
@@ -109,6 +112,21 @@ pub(in crate::store) async fn capture(
         at,
         database: store.agents.namespace().db,
     };
+    if mode == CaptureMode::PrivacyExport {
+        if super::read_format(&row)?.is_none() {
+            return Err(pending());
+        }
+        return segmented::read(
+            store,
+            current,
+            &row,
+            session,
+            context,
+            true,
+            segmented::ReadBudget::Export,
+        )
+        .await;
+    }
     source(store, current, &row, session, context, true).await
 }
 
@@ -149,7 +167,16 @@ async fn source(
     snapshot: bool,
 ) -> Result<CapturedLog, TransactionLogError> {
     if super::read_format(row)?.is_some() {
-        segmented::read(store, current, row, session, context, snapshot).await
+        segmented::read(
+            store,
+            current,
+            row,
+            session,
+            context,
+            snapshot,
+            segmented::ReadBudget::Standard,
+        )
+        .await
     } else {
         legacy::read(store, current, row, session, context, snapshot).await
     }
@@ -210,6 +237,49 @@ pub(in crate::store) async fn capture_transaction(
     source(store, current, &row, scope.session(), context, false).await
 }
 
+/// Size the exact segment that the conversation writer will hash. Keep the
+/// source rows on the server until their total fits the caller's proof budget.
+pub(in crate::store) async fn stale_turn_segment_bytes(
+    store: &MongoSandboxStore,
+    id: &layer2_core::AgentId,
+    row: &Document,
+    remaining: i64,
+    scope: &mut TransactionScope<'_>,
+) -> Result<i64, TransactionLogError> {
+    let head = super::read_head(store, row, scope.session(), false).await?;
+    if head.active_count == 0 {
+        // The writer would reopen a sealed tail to locate its latest entry.
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    if head.active_bytes > remaining {
+        return Ok(head.active_bytes);
+    }
+    let session = scope.session();
+    let mut cursor = store
+        .agent_log
+        .aggregate([
+            doc! {"$match": {"agent_id": id.as_str(), "seq": {
+                "$gte": head.active_start_seq, "$lte": head.last_seq,
+            }}},
+            doc! {"$group": {"_id": null, "bytes": {"$sum": {"$toLong": {"$bsonSize": "$$ROOT"}}}}},
+        ])
+        .max_time(std::time::Duration::from_secs(1))
+        .session(&mut *session)
+        .await
+        .map_err(TransactionLogError::Driver)?;
+    let totals = cursor
+        .stream(session)
+        .try_next()
+        .await
+        .map_err(TransactionLogError::Driver)?
+        .ok_or_else(super::corrupt)?;
+    let bytes = totals.get_i64("bytes").map_err(|_| super::corrupt())?;
+    if bytes != head.active_bytes {
+        return Err(super::corrupt().into());
+    }
+    Ok(bytes)
+}
+
 pub(in crate::store) async fn points_transaction(
     store: &MongoSandboxStore,
     captured: &CapturedLog,
@@ -236,4 +306,47 @@ impl CapturedLog {
         scope.require(identity)?;
         Ok(())
     }
+}
+
+pub(in crate::store) async fn preview(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    session: &mut ClientSession,
+    budget: &mut preview_budget::PreviewBudget,
+) -> Result<Option<CapturedLog>, TransactionLogError> {
+    let (row, at) = snapshot::agent_budgeted(store, current, session, Some(budget)).await?;
+    if crate::store::agents::read_agent(&row)? != *current {
+        return Err(SandboxStoreError::SequenceConflict.into());
+    }
+    if super::read_format(&row)?.is_none() {
+        return Ok(None);
+    }
+    let context = SourceContext::Snapshot {
+        session_id: session.id().clone(),
+        at,
+        database: store.agents.namespace().db,
+    };
+    segmented::read(
+        store,
+        current,
+        &row,
+        session,
+        context,
+        true,
+        segmented::ReadBudget::Preview(budget),
+    )
+    .await
+    .map(Some)
+}
+
+pub(in crate::store) async fn preview_points(
+    store: &MongoSandboxStore,
+    source: &CapturedLog,
+    sequences: &[u64],
+    session: &mut ClientSession,
+    budget: &mut preview_budget::PreviewBudget,
+) -> Result<Vec<AgentLogEntry>, TransactionLogError> {
+    source.validate_snapshot(store, session, CaptureMode::Snapshot)?;
+    validate_sequences(source, sequences)?;
+    point_reads::read_budgeted(store, source, sequences, session, true, Some(budget)).await
 }

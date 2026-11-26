@@ -7,9 +7,13 @@ use tracing_subscriber::{
 };
 
 const LIFECYCLE_TARGET: &str = "agent_scheduler_failure";
+// Preserve the auth emitter's original module target and filter namespace.
+pub(crate) const AUTHENTICATION_TARGET: &str = "cma::auth::middleware::failure_diagnostics";
 pub(crate) const PROVIDER_IDENTITY_TARGET: &str = "cma::auth::verification_diagnostics";
 pub(crate) const ORGANIZATION_PRINCIPAL_TARGET: &str =
     "cma::auth::organizations::principal_diagnostics";
+pub(crate) const OPENING_DECISION_TARGET: &str = "cma::store::agent_opening_reads";
+pub(crate) const OPENING_DECISION_ROOT: &str = "agent_opening_decision";
 
 pub(crate) struct PrivacyFormat<F> {
     ordinary: F,
@@ -30,8 +34,10 @@ where
     ) -> std::fmt::Result {
         let target = event.metadata().target();
         let root = match target {
+            AUTHENTICATION_TARGET => Some("authentication_failure"),
             PROVIDER_IDENTITY_TARGET => Some("identity_verification"),
             ORGANIZATION_PRINCIPAL_TARGET => Some("organization_principal"),
+            OPENING_DECISION_TARGET => Some(OPENING_DECISION_ROOT),
             _ => None,
         };
         if let Some(root) = root {
@@ -50,7 +56,10 @@ where
                 return Ok(());
             }
         }
-        if target == LIFECYCLE_TARGET || root.is_some() {
+        if target == LIFECYCLE_TARGET
+            || target == layer2_core::agent_ownership::receiver_diagnostics::TARGET
+            || root.is_some()
+        {
             self.context_free.format_event(ctx, writer, event)
         } else {
             self.ordinary.format_event(ctx, writer, event)

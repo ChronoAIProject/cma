@@ -28,10 +28,23 @@ pub(super) async fn servers_with_capacity(
     enabled: bool,
     capacity: crate::config::RelayCapacityConfig,
 ) -> Vec<Server> {
+    start_servers(f, enabled, enabled, capacity).await
+}
+
+async fn start_servers(
+    f: &Fixture,
+    shared_observation: bool,
+    bounded_responses: bool,
+    capacity: crate::config::RelayCapacityConfig,
+) -> Vec<Server> {
     let (auth, identity_server) = identity().await;
-    let source = Arc::new(f.store.clone().with_bounded_response_reads(enabled));
+    let source = Arc::new(
+        f.store
+            .clone()
+            .with_bounded_response_reads(bounded_responses),
+    );
     let native = Arc::new(MongoAgentOwnership::open(&f.client, &f.name).await.unwrap());
-    if enabled {
+    if shared_observation {
         // Paired tests stop their closed-path listeners before opening this
         // cohort. Remove only those disposable fixture membership records.
         f.client
@@ -50,7 +63,7 @@ pub(super) async fn servers_with_capacity(
         let coordinator = OwnershipCoordinator::register(
             native.clone(),
             Member {
-                instance_id: if enabled {
+                instance_id: if shared_observation {
                     format!("observation-{index}")
                 } else {
                     format!("closed-observation-{index}")
@@ -77,7 +90,7 @@ pub(super) async fn servers_with_capacity(
             .with_resource_access(access.clone())
             .with_response_logs(source.response_log_reader());
         let service = AgentObservationService::new(base.clone(), store.clone());
-        let reads = if enabled {
+        let reads = if shared_observation {
             base.with_observation(service.clone())
         } else {
             base
@@ -101,7 +114,7 @@ pub(super) async fn servers_with_capacity(
             )),
             Arc::new(fixture::Authority),
         );
-        if enabled {
+        if shared_observation {
             relay
                 .install_observation(store.clone(), reads.clone(), Some(commands.clone()))
                 .unwrap();
@@ -112,7 +125,7 @@ pub(super) async fn servers_with_capacity(
                 commands.clone(),
                 reads.clone(),
             )
-            .with_paged_events(enabled),
+            .with_paged_events(bounded_responses),
         );
         let v2 = layer1_public::agent_v2::router(
             layer1_public::agent_v2::AgentV2State::new(reads.clone(), commands)
@@ -158,9 +171,17 @@ pub(super) async fn servers_with_capacity(
 }
 
 pub(super) async fn budget_servers(f: &Fixture) -> Vec<Server> {
+    budget_servers_with_observation(f, true).await
+}
+
+pub(super) async fn budget_servers_with_observation(
+    f: &Fixture,
+    shared_observation: bool,
+) -> Vec<Server> {
     // Production admission deadline; exactly 100 slots detects double admission.
-    servers_with_capacity(
+    start_servers(
         f,
+        shared_observation,
         true,
         crate::config::RelayCapacityConfig {
             limit: 100,

@@ -184,6 +184,7 @@ async fn correction_unknown_commit_never_restarts_the_body_or_duplicates_the_aud
             .count(),
         5
     );
+    crate::store::test_visibility::majority_barrier(&admin, &seed.database).await;
     assert_eq!(pending(&seed).await, 0);
     assert_eq!(activity.count_documents(doc! {}).await.unwrap(), before + 1);
     assert_eq!(seed.client.database(&seed.database).collection::<Document>("platform_settings")

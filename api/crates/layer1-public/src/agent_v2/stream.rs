@@ -56,6 +56,11 @@ async fn open(
     let (after, follow) = parse::tail(raw, &headers)?;
     let message_bindings = projection::message_bindings(&headers);
     let mut authorization = snapshot::authorize(&state, &auth, &id).await?;
+    let external = super::external_approval::Preference::new(
+        projection::preference(&headers, super::external_approval::PREFERENCE),
+        &state.external_review_origin,
+        &authorization,
+    );
     let observation = state.reads.observe_event_stream(&mut authorization)?;
     state.event_wake |= observation.is_some();
     // Subscription precedes the initial head observation, including its IO.
@@ -96,6 +101,7 @@ async fn open(
         live_timestamps: projection::live_timestamps(&headers),
         tool_output: projection::tool_output(&headers),
         retained_output: projection::retained_output(&headers),
+        external,
         pending: VecDeque::new(),
         deferred_live: VecDeque::new(),
         watching,
@@ -134,6 +140,7 @@ pub(super) struct Following {
     pub live_timestamps: bool,
     tool_output: bool,
     retained_output: bool,
+    external: super::external_approval::Preference,
     pub pending: VecDeque<Frame>,
     pub(super) deferred_live: VecDeque<Frame>,
     pub watching: Option<AgentLiveSubscription>,
@@ -163,12 +170,13 @@ impl Following {
         if cursor::incarnation(&window.header) != self.identity {
             return Err(Error::Incarnation);
         }
-        let items = projection::items(
+        let mut items = projection::items(
             &window,
             &self.identity,
             self.tool_output,
             self.retained_output,
         )?;
+        self.external.project(&mut items)?;
         self.header = window.header;
         for item in items {
             if matches!(
@@ -314,6 +322,7 @@ impl Following {
 }
 
 fn response(open: Following) -> Response {
+    let external = open.external.clone();
     let stream = futures_util::stream::unfold(open, |mut open| async move {
         loop {
             if let Some(frame) = open.pending.pop_front() {
@@ -394,5 +403,6 @@ fn response(open: Following) -> Response {
     response
         .headers_mut()
         .insert("x-accel-buffering", "no".parse().unwrap());
+    external.headers(response.headers_mut());
     response
 }

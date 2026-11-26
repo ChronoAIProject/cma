@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use layer1_public::rest::admin::warm_pools::{ResizeWarmPoolBody, WarmPoolError};
 use layer2_core::StoreError;
-use layer3_adapter::agent_sandbox::NativePoolBinding;
+use layer3_adapter::agent_sandbox::{NativePoolBinding, NativePoolConfiguration, NativePoolDrain};
 use mongodb::{
     bson::{doc, DateTime, Document},
     options::{IndexOptions, ReturnDocument},
@@ -14,6 +14,7 @@ use super::durability::majority_collection;
 use crate::warm_pools::{OperatorReplicas, PoolTarget, PoolTargetStore};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
+mod released;
 mod retirement;
 mod schema;
 
@@ -23,6 +24,7 @@ pub(crate) struct MongoNativeWarmPools {
     targets: Collection<PoolTarget>,
     deployment: String,
     database: Database,
+    pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
 }
 
 impl MongoNativeWarmPools {
@@ -41,6 +43,7 @@ impl MongoNativeWarmPools {
             targets,
             deployment: deployment.into(),
             database: database.clone(),
+            released_lanes: None,
         })
     }
 
@@ -92,22 +95,81 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
 
 #[async_trait]
 impl PoolTargetStore for MongoNativeWarmPools {
+    async fn begin_candidate_effect(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        self.authorize_candidate_effect(target).await
+    }
+
+    async fn candidate_pending(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        let mut filter = fence(target);
+        filter.insert("preparation.pending_revision", doc! {"$type": "long"});
+        Ok(self
+            .targets
+            .find_one(filter)
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?
+            .is_some())
+    }
+
+    async fn confirm_candidate_barrier(&self, target: &PoolTarget) -> Result<(), WarmPoolError> {
+        let mut filter = fence(target);
+        filter.insert("preparation.pending_revision", doc! {"$type": "long"});
+        self.check_fenced_write(self.targets.update_one(filter, doc! {
+            "$set": {"retiring": true, "target_replicas": 0_i64, "lease": mongodb::bson::Bson::Null,
+                "lease_until": DateTime::from_millis(0), "reconcile_after": DateTime::from_millis(0)},
+            "$inc": {"revision": 1_i64}, "$unset": {"preparation.pending_revision": ""},
+        }).await).await
+    }
+    async fn candidate_protected(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        let mut filter = self.scope();
+        filter.extend(doc! {"_id": &target.id, "preparation": {"$exists": true}});
+        Ok(self
+            .targets
+            .find_one(filter)
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?
+            .is_some())
+    }
     async fn activate(&self, id: &str) -> Result<(), WarmPoolError> {
         retirement::activate(self, id).await
+    }
+    async fn default_pin_conflicts(
+        &self,
+        plan: &NativePoolConfiguration,
+        machine: bool,
+    ) -> Result<bool, WarmPoolError> {
+        let mut scope = self.scope();
+        scope.insert("plan.config_sha256", &plan.config_sha256);
+        let exact = self
+            .targets
+            .find_one(scope)
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        if let Some(exact) = exact.map(validate).transpose()? {
+            if exact.machine != machine || exact.retiring || exact.retired {
+                return Ok(true);
+            }
+        }
+        match self.verify_bootstrap(machine, &plan.spec.image.uri).await {
+            Ok(()) => Ok(false),
+            Err(WarmPoolError::Conflict) => Ok(true),
+            Err(error) => Err(error),
+        }
     }
     async fn retirement_homes(
         &self,
         target: &PoolTarget,
         image: &str,
     ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
-        retirement::homes(self, target, image).await
+        let durable = self.current_retirement_image(target, image).await?;
+        retirement::homes(self, target, &durable).await
     }
     async fn retirement_drain_homes(
         &self,
         target: &PoolTarget,
         image: &str,
-    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
-        retirement::drain_homes(self, target, image).await
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
+        let durable = self.current_retirement_image(target, image).await?;
+        retirement::drain_homes(self, target, &durable).await
     }
     async fn begin_retirement(&self, target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         retirement::begin(self, target).await
@@ -265,15 +327,17 @@ impl PoolTargetStore for MongoNativeWarmPools {
         let mut fields = doc! {"lease":mongodb::bson::Bson::Null,"lease_until":DateTime::from_millis(0),
         "reconcile_after":DateTime::from_millis(DateTime::now().timestamp_millis()+15_000),
         "error": if success { mongodb::bson::Bson::Null } else { "Native warm pool reconciliation is unavailable; the recorded target will retry.".into() }};
+        let mut update = doc! {};
         if success {
             fields.insert("applied_revision", target.revision);
+            update.insert(
+                "$unset",
+                doc! {"preparation.pending_revision": "", "preparation.effect_until": ""},
+            );
         }
-        self.check_fenced_write(
-            self.targets
-                .update_one(fence(target), doc! {"$set":fields})
-                .await,
-        )
-        .await
+        update.insert("$set", fields);
+        self.check_fenced_write(self.targets.update_one(fence(target), update).await)
+            .await
     }
 }
 

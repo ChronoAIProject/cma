@@ -58,6 +58,29 @@ pub struct NonexecutingRecoveryVerification {
 
 #[async_trait::async_trait]
 pub trait RuntimeRecovery: Send + Sync {
+    /// Confirm a completed native Close on the observed writer without repairing journals.
+    /// False means the exact writer inspected the process and could not prove a Close.
+    async fn prove_agent_process_closed(
+        &self,
+        _handle: &crate::RuntimeHandle,
+        _proof: &crate::wire::AgentProcessCloseProof,
+    ) -> Result<bool> {
+        Err(AdapterError::Unsupported(
+            "native Agent Close proof is unavailable".into(),
+        ))
+    }
+
+    /// Fence a delayed numbered Open on the exact boot before it can start.
+    async fn fence_agent_restart(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::wire::AgentRestartFence,
+    ) -> Result<()> {
+        Err(AdapterError::Unsupported(
+            "native Agent restart fencing is unavailable".into(),
+        ))
+    }
+
     /// Read-only proof for reopening already restored, idle conversations.
     /// Requires complete settled history and no Agent/unowned process. This
     /// grants no authority to stop a process or suspend the retained runtime.

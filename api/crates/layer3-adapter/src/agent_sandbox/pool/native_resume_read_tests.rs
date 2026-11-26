@@ -443,5 +443,8 @@ async fn native_resume_rejects_authority_changes_at_fresh_final_cas_boundary() {
 #[path = "native_upgrade_tests.rs"]
 mod upgrade_tests;
 
+#[path = "native_retained_policy_upgrade_tests.rs"]
+mod retained_policy_upgrade_tests;
+
 #[path = "native_resume_policy_read_tests.rs"]
 mod policy_tests;

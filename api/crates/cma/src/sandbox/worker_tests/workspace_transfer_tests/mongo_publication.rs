@@ -139,6 +139,7 @@ async fn setup_and_prepared_completion_obey_parent_commit_order() {
                 retired.begin_retirement(rfc3339_at(now)).unwrap();
                 peer.commit(SandboxTransaction::SaveSandboxAndAppend {
                     command_revival: None,
+                    released_runtime: None,
                     expected_revision: parent.revision,
                     sandbox: Box::new(retired.clone()),
                     event_at: rfc3339_at(now),

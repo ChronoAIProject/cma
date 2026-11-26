@@ -1,6 +1,42 @@
 use super::*;
 
 #[tokio::test(start_paused = true)]
+async fn local_hold_metric_reports_failure_backoff_and_clear_only_when_enabled() {
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let handle = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
+    for enabled in [false, true] {
+        let (store, reconciler) = setup(1, Duration::ZERO).await;
+        let reconciler = reconciler.with_binding_hold_metrics(enabled);
+        store.fail("get", "sbx_000", Failure::Unavailable);
+        complete(&reconciler).await;
+        assert!(reconciler.binding_is_held(&SandboxId("sbx_000".into())));
+        if !enabled {
+            assert!(!handle.render().contains("cma_sandbox_binding_holds_local"));
+            continue;
+        }
+        assert!(handle
+            .render()
+            .lines()
+            .any(|line| line == "cma_sandbox_binding_holds_local 1"));
+        tokio::time::advance(Duration::from_secs(29)).await;
+        complete(&reconciler).await;
+        assert_eq!(store.keys("get"), ["sbx_000"]);
+        assert!(handle
+            .render()
+            .lines()
+            .any(|line| line == "cma_sandbox_binding_holds_local 1"));
+        tokio::time::advance(Duration::from_secs(1)).await;
+        complete(&reconciler).await;
+        assert!(!reconciler.binding_is_held(&SandboxId("sbx_000".into())));
+        assert!(handle
+            .render()
+            .lines()
+            .any(|line| line == "cma_sandbox_binding_holds_local 0"));
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn raced_recovery_is_reported_separately_from_cancellation() {
     let (_store, reconciler) = setup(1, Duration::ZERO).await;
     let output = Output::default();

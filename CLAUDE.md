@@ -60,6 +60,8 @@ CLAUDE.md
 AGENTS.md
 CONTRIBUTING.md
 README.md
+LICENSE
+NOTICE
 .gitignore
 .dockerignore
 ```
@@ -416,12 +418,12 @@ does not need to repair a deployment by clicking a revive control.
 
 ### Runtime identity and persistent homes
 
-Changing the configured runtime image does not immediately replace existing live
-Sandboxes. Reconciliation adopts each retained runtime using its recorded image;
-new allocations use the configured image. API/web upgrade and rollback preserve
-the existing runtime, native conversation, admitted turns, approvals and dirty
-work. An incompatible feature stays disabled until retained runtime coexistence
-and uninterrupted interaction are proved.
+Existing live Sandboxes retain their recorded image across a runtime release.
+Reconciliation adopts each retained runtime using that image. New managed
+allocations use the released default for their lane under §6. API/web upgrade
+and rollback preserve the existing runtime, native conversation, admitted turns,
+approvals and dirty work. An incompatible feature stays disabled until retained
+runtime coexistence and uninterrupted interaction are proved.
 
 Managed native homes support two explicit update policies: the owner's Sandbox
 Details update command, and a daily check at 02:00 Asia/Singapore. The first
@@ -432,7 +434,9 @@ It suspends the native Sandbox, changes its image and generation, and reopens
 the original conversations on the same PVC/home. IDs and original pool/claim/home
 authority remain unchanged. An initially paused Sandbox returns to paused unless
 new owner work supersedes that intent. Failures retain their exact phase and
-pinned target for retry. Custom-image Sandboxes are excluded.
+pinned target for retry; a recovery stalled at conversation reopen on a
+superseded target is retried on the latest runtime instead. Custom-image
+Sandboxes are excluded.
 
 An owner/control/message/creation revival from Paused uses the latest managed
 runtime on that same retained native Sandbox and home. Already admitted updates
@@ -524,39 +528,43 @@ That section, and only that section, becomes the annotated tag message and the r
 
 The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
 
-- The five images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{agent-manager,web,runtime,event-gateway,runtime-omarchy}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
-- After all five current GHCR digests pass the writer/history verification, each exact root digest is exported as
-  an OCI archive plus JSON metadata in a one-day Actions transfer artifact.
-  These unencrypted archives are an additional, ephemeral distribution
-  surface: anyone who can download this internal repository's Actions
-  artifacts can receive the private images, and that audience is not assumed
-  to equal the GHCR package ACL. Retention limits duration, not readership.
-  The artifacts are not release assets, are never committed, and contain no
-  standalone client package.
+- Nothing is rebuilt. For each of the five images, `ghcr.io/chronoaiproject/cma-{agent-manager,web,runtime,event-gateway,runtime-omarchy}`, the release selects the newest published component version whose source is the merged `develop` commit or one of its ancestors on `develop`'s first-parent history, and only if staging deployment evidence recorded that exact digest as controller-verified. For the components production deploys this is the selection `prod-cd.yml` makes; the runtime images are recorded the same way but not deployed by it. Each image is therefore built and scanned once, by the reviewed staging publication gate, and a release holding an image staging never verified is refused.
+- Each selected digest receives the release merge's short commit SHA tag and then the version tag through a digest-preserving copy; the image still records the `develop` commit it was built from. The runtime image contract runs again against the promoted runtime digest before any tag is assigned, and no version tag is written until all five short-SHA tags exist, so a release that fails earlier claims no version. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. A tag that already names the selected digest is reused and one that names anything else refuses the release. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk. No image is exported as an Actions artifact.
 - An annotated tag `vX.Y.Z` and a GitHub release are created. An active, GET-verified `v*` tag ruleset must reject updates and deletions without a bypass. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
 
 Publishing is not deploying. `prod-cd.yml` deploys a release, and only after a required
-approval in the `production` environment. It never deploys an image rebuilt for the tag:
+approval in the `production` environment. Neither it nor the release rebuilds an image:
 for each component production enables, it promotes the newest published version whose
 source is the merged `develop` commit or one of its ancestors, and only if staging deployment
 evidence recorded that exact image as controller-verified. The same deployment helpers and
-private controller design as staging do the write. Deployment configuration, including
+private controller design as staging do the write. A production release requests its own
+one-hour controller budget, because a production rollout takes far longer than staging's,
+and the deploy job's timeout outlives it; staging's release and bootstrap budgets are
+unchanged. Deployment configuration, including
 which components production enables, is maintained privately.
 Production selects only the application components (`am`, `eg`, `web`), never the
 `runtime` or `runtime-omarchy` images: until a reviewed production runtime-promotion
 design exists, runtime images stay pinned in Agent Manager's privately maintained
 configuration, and an approved release set that holds one is refused rather than
-narrowed. Staging still deploys runtime images together with Agent Manager.
-`CHRONO_SANDBOX_IMAGE` is the single released default for new allocations,
-managed-runtime updates and owner-requested revival under §5. It is pinned to a
-verified CI artifact by explicit release promotion; publishing a CI tag alone
-never changes that authority, and no registry tag scan chooses a newer image. Existing live
-Sandboxes retain their image until an admitted update reaches idle. Deployment
-alone never starts immediate image-drift rotation. Persisted update requests
-require a compatible reader during rollback; older binaries that reject the new
-lifecycle metadata cannot safely be restored after admission.
+narrowed. Staging deploys runtime images together with Agent Manager until
+runtime pointer following is activated there.
+
+For new managed allocations, managed-runtime updates and owner-requested revival
+under §5, each lane uses the active digest that Agent Manager has durably
+recorded as its released default. `CHRONO_SANDBOX_IMAGE` and
+`CHRONO_MACHINE_SANDBOX_IMAGE` bootstrap empty Agent and Machine Included lanes,
+respectively, and supply the fixed defaults in deployments without durable lane
+authority. After pointer following is activated, the CD runtime lanes advance
+their own environment's pointers to verified, finalized digests. Agent Manager
+verifies the digest named by its environment's pointer, prewarms the matching
+native pool, and promotes that digest only after the pool is ready. Freezing
+following preserves the active digest. Existing live Sandboxes retain their
+image until an admitted update reaches idle. Deployment alone never starts
+immediate image-drift rotation. Persisted update requests require a compatible
+reader during rollback; older binaries that reject the new lifecycle metadata
+cannot safely be restored after admission.
 
 Full procedure in private maintainer guidance.
 

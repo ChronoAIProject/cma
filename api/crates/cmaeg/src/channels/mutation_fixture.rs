@@ -9,7 +9,7 @@ use axum::{
     extract::{Path, State},
     http::{Method, StatusCode},
     response::{IntoResponse, Response},
-    routing::put,
+    routing::{get, put},
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -39,6 +39,9 @@ pub(super) struct Peer {
     pub rows: Arc<Mutex<BTreeMap<String, Value>>>,
     /// Lose the acknowledgement after committing this expected revision.
     pub lose_ack: Arc<AtomicU64>,
+    /// Answer every binding DELETE with this definite refusal.
+    pub refuse_delete: Arc<Mutex<Option<(StatusCode, &'static str)>>>,
+    pub refuse_bind: Arc<Mutex<Option<StatusCode>>>,
 }
 pub(super) struct Fixture {
     pub peer: Peer,
@@ -60,6 +63,7 @@ impl Fixture {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let app = Router::new()
             .route("/bindings/{id}", put(provider).delete(provider))
+            .route("/api/v1/gateway/channel-records", get(list))
             .route(
                 "/api/v1/gateway/channel-records/{id}",
                 put(save).get(load).delete(delete),
@@ -85,11 +89,29 @@ impl Fixture {
         }
     }
     pub async fn state(&self) -> ManagementState {
+        self.state_with_custody(self.custody).await
+    }
+    pub async fn state_with_custody(&self, custody: bool) -> ManagementState {
         let records = match &self.mongo {
             Some(mongo) => mongo.records(&self.base).await,
             None => RecordClient::new(&self.base, "fixture-service").unwrap(),
-        }
-        .with_channel_mutation_custody(self.custody);
+        };
+        self.with_records(records, custody)
+    }
+    pub async fn state_with_tracking(
+        &self,
+        tracking: crate::worker_credentials::WorkerCredentials,
+    ) -> ManagementState {
+        let records = self
+            .mongo
+            .as_ref()
+            .unwrap()
+            .records_with_tracking(&self.base, Some(tracking))
+            .await;
+        self.with_records(records, self.custody)
+    }
+    fn with_records(&self, records: RecordClient, custody: bool) -> ManagementState {
+        let records = records.with_channel_mutation_custody(custody);
         let registry = ProviderRegistry::parse(&json!([{"slug":"cma_codex","base_url":self.base,"kind":"responses_http","paths":{"agent_card":"/card","binding":"/bindings/{binding_id}","conversation":"/bindings/{binding_id}/conversations/{conversation_id}","responses":"/responses"},"max_inflight":8}]).to_string()).unwrap();
         ManagementState::new(
             Arc::new(
@@ -155,8 +177,15 @@ async fn provider(
     Path(id): Path<String>,
     method: Method,
     body: Option<Json<Value>>,
-) -> Json<Value> {
+) -> Response {
     peer.calls.lock().unwrap().push(method.to_string());
+    if method == Method::DELETE {
+        if let Some((status, code)) = *peer.refuse_delete.lock().unwrap() {
+            return (status, Json(json!({"code": code}))).into_response();
+        }
+    } else if let Some(status) = *peer.refuse_bind.lock().unwrap() {
+        return (status, Json(json!({"code": "invalid_binding"}))).into_response();
+    }
     let value = body.map(|Json(value)| value).unwrap_or(Value::Null);
     if peer.pause.swap(false, Ordering::SeqCst) {
         let (done, wait) = tokio::sync::oneshot::channel();
@@ -179,6 +208,7 @@ async fn provider(
     } else {
         json!({"binding_id":id,"level":"l1","honoured":[],"refused":[]})
     })
+    .into_response()
 }
 fn apply(peer: &Peer, id: &str, method: &Method, value: Value) {
     if method == Method::DELETE {
@@ -233,4 +263,13 @@ async fn delete(
     }
     rows.remove(&id);
     StatusCode::NO_CONTENT.into_response()
+}
+
+async fn list(State(peer): State<Peer>) -> Json<Value> {
+    let rows = peer.rows.lock().unwrap();
+    let items: Vec<_> = rows
+        .iter()
+        .map(|(id, row)| json!({"record_id": id, "owner": row["owner"], "version": row["version"]}))
+        .collect();
+    Json(json!({"items": items}))
 }

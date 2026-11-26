@@ -3,6 +3,7 @@ use super::*;
 use crate::store::sandbox_mongo::{
     commit_transaction, record_bson, start_transaction, CommitOutcome,
 };
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::binding::{
     reset_binding_eligibility, reset_eligibility, BindingError, ConversationHead,
     ConversationResetReceipt, ConversationResetRequest, ConversationResetState,
@@ -54,7 +55,7 @@ impl MongoSandboxStore {
                     }
                 },
                 Err(error) => {
-                    if let Err(abort) = session.abort_transaction().await {
+                    if let Err(abort) = session.abort_guarded().await {
                         tracing::debug!(error = %abort, "binding reset transaction abort failed; checking receipt");
                     }
                     if let Some(receipt) = self.reset_receipt(&request).await? {

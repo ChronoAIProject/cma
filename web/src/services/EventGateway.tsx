@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from 'react';
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { TreeRow } from '../shell/TreeRow';
 import { keyboardNavigation } from '../shell/treePresentation';
 import type { SidebarNewAgent } from '../shell/Sidebar';
@@ -10,25 +10,18 @@ import { PageHeader, type Crumb } from '../ui/PageHeader';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { can, type Denied, type ServiceSession } from './client';
 import { PageStatus, usePage } from './data';
-import {
-  ChannelEditor,
-  DeleteChannel,
-  hasChannelAddress,
-  type Channel,
-  type ChannelListItem,
-} from './ChannelEditor';
-import { ChannelMap } from './ChannelMap';
-import { NodeInspector } from './NodeInspector';
-import { ChannelNodeTests } from './ChannelNodeTests';
-import { ChannelOutboundMessage } from './ChannelOutboundMessage';
-import { channelNodes, selectionKey, type ChannelSelection } from './channelTopology';
-import { ChannelActivityView } from './ChannelActivity';
-import { ChannelActivityPreview } from './ChannelActivityPreview';
-import { useChannelActivity } from './useChannelActivity';
+import { ChannelEditor, type Channel, type ChannelListItem } from './ChannelEditor';
 import { GatewayWelcome } from './GatewayWelcome';
 import { GatewayRecordMeta } from './GatewayRecordMeta';
-import { ExistingChannel } from './ExistingChannel';
+import { ChannelDetail } from './ChannelDetail';
+import { ChannelLifecycleStatus } from './ChannelLifecycleStatus';
+import { channelEvidenceState } from './channelEvidence';
+import { hasChannelAddress } from './channelTypes';
+import { useChannelRecords } from './useChannelRecords';
+import { duplicateChannelLabels } from './channelLabels';
 import { RelayCapabilitiesProvider } from './RelayCapabilities';
+import { readNewChannelDraft, setNewChannelDraftOpen } from './channelForm/newChannelDraft';
+import { RecoverChannelCreation } from './channelForm/RecoverChannelCreation';
 import './EventGateway.css';
 
 export interface EventGatewaySlots {
@@ -59,20 +52,60 @@ function EventGatewayBody({
   active = true,
 }: EventGatewayProps) {
   const channels = usePage<ChannelListItem>('event-gateway', '/v1/channels', denied);
+  const canCreate = can(session, 'event-gateway', 'channels:create');
+  const [recovered, setRecovered] = useState(() =>
+    canCreate ? readNewChannelDraft(session.subject) : undefined,
+  );
   const [selected, setSelected] = useState<string>();
   const [visited, setVisited] = useState<readonly string[]>([]);
-  const [creating, setCreating] = useState(false);
-  const [createStarted, setCreateStarted] = useState(false);
+  const [creating, setCreating] = useState(recovered?.open ?? false);
+  const contentId = useId();
+  const [createOrigin, setCreateOrigin] = useState<HTMLElement | null>(null);
+  const [restoreRevision, setRestoreRevision] = useState(0);
+  const restoredRevision = useRef(0);
+  useLayoutEffect(() => {
+    if (!active) return;
+    const content = document.getElementById(contentId);
+    if (creating) {
+      content?.querySelector<HTMLElement>('.gateway-create-header h1')?.focus();
+    } else if (restoreRevision !== restoredRevision.current) {
+      restoredRevision.current = restoreRevision;
+      if (createOrigin?.isConnected && !createOrigin.closest('[hidden], [inert]')) {
+        createOrigin.focus();
+        if (document.activeElement === createOrigin) return;
+      }
+      const welcome = content?.querySelector<HTMLButtonElement>('.gateway-welcome button');
+      const heading = content?.querySelector<HTMLElement>('.gateway-detail:not([hidden]) h1');
+      (welcome ?? heading)?.focus();
+    }
+  }, [active, creating, restoreRevision, createOrigin, contentId]);
+  const [createStarted, setCreateStarted] = useState(recovered !== undefined);
   const [created, setCreated] = useState<Channel>();
   const [deleted, setDeleted] = useState<readonly string[]>([]);
-  const rows = channels.value?.items ?? [];
+  const evidence = useChannelRecords(channels.value, created);
+  const refresh = () => {
+    evidence.beginRefresh();
+    channels.refresh();
+  };
+  const stale = channels.busy || Boolean(channels.error);
+  const rows =
+    channels.value?.items ??
+    (channels.error ? [...evidence.records.values()].map((value) => value.channel) : []);
   const items = (
     created && !rows.some((row) => row.record_id === created.record_id) ? [created, ...rows] : rows
-  ).filter((row) => !deleted.includes(row.record_id));
+  )
+    .filter((row) => !deleted.includes(row.record_id))
+    .map((row) => evidence.records.get(row.record_id)!.channel);
+  const labels = duplicateChannelLabels(items);
   // Nothing is open until somebody chooses a channel: the page opens on the
   // welcome surface until a channel is selected.
-  const current = items.find((row) => row.record_id === selected);
-  const canCreate = can(session, 'event-gateway', 'channels:create');
+  const workspaces = [...new Set([...visited, ...(selected ? [selected] : [])])]
+    .filter((id) => !deleted.includes(id))
+    .flatMap((id) => {
+      const record = evidence.records.get(id);
+      return record ? [record.channel] : [];
+    });
+  const current = workspaces.find((row) => row.record_id === selected);
   useDocumentTitle(creating ? 'New channel' : (current?.definition.name ?? 'Event Gateway'));
   const retain = () => {
     if (current) setVisited((previous) => [...new Set([...previous, current.record_id])]);
@@ -82,22 +115,42 @@ function EventGatewayBody({
     setVisited((previous) => [...new Set([...previous, id])]);
     setSelected(id);
     setCreating(false);
+    setNewChannelDraftOpen(session.subject, false);
     onNavigate?.();
   };
   const startCreate = () => {
     retain();
+    setCreateOrigin(document.activeElement instanceof HTMLElement ? document.activeElement : null);
     setCreateStarted(true);
     setCreating(true);
+    setNewChannelDraftOpen(session.subject, true);
     onNavigate?.();
   };
+  const exitCreate = () => {
+    setRestoreRevision((value) => value + 1);
+    setCreating(false);
+    setNewChannelDraftOpen(session.subject, false);
+  };
+  const finishCreate = (channel?: Channel) => {
+    if (channel) {
+      setCreated(channel);
+      setSelected(channel.record_id);
+    }
+    setCreating(false);
+    setCreateStarted(false);
+    setRecovered(undefined);
+    refresh();
+  };
+  const showChannels = () => {
+    retain();
+    setSelected(undefined);
+  };
+  const homeHref = routePath({ kind: 'event_gateway' });
   // A channel's breadcrumb returns home; its editor stays mounted.
   const channelsCrumb: Crumb = {
     label: 'Channels',
-    href: routePath({ kind: 'event_gateway' }),
-    onSelect: () => {
-      retain();
-      setSelected(undefined);
-    },
+    href: homeHref,
+    onSelect: showChannels,
   };
   const sidebar = (
     <section className="gateway-sidebar" aria-label="Channels">
@@ -106,7 +159,7 @@ function EventGatewayBody({
           type="button"
           className="navigation-filters__toggle"
           disabled={channels.busy}
-          onClick={channels.refresh}
+          onClick={refresh}
           aria-label="Refresh channels"
           title="Refresh channels"
         >
@@ -114,7 +167,7 @@ function EventGatewayBody({
         </button>
       </div>
       {/* The welcome surface shows loading; the rail retains failures. */}
-      <PageStatus error={channels.error} retry={channels.refresh} />
+      <PageStatus error={channels.error} retry={refresh} />
       {channels.value && items.length === 0 ? (
         <p className="gateway-sidebar__empty">No channels yet.</p>
       ) : null}
@@ -130,22 +183,30 @@ function EventGatewayBody({
             nodeId={`channel:${channel.record_id}`}
             level={1}
             layout="line"
-            label={channel.definition.name}
+            label={labels.get(channel.record_id) ?? channel.definition.name}
             icon={null}
             selected={!creating && current?.record_id === channel.record_id}
             onNavigate={() => {}}
             onActivate={() => select(channel.record_id)}
             meta={
-              <GatewayRecordMeta
-                compact
-                createdAt={
-                  channel.created_at ??
-                  (typeof channel.definition.created_at === 'string'
-                    ? channel.definition.created_at
-                    : undefined)
-                }
-                owner={channel.owner ?? channel.definition.owner}
-              />
+              <>
+                <ChannelLifecycleStatus
+                  compact
+                  state={channelEvidenceState(evidence.records.get(channel.record_id)!)}
+                  addressAvailable={hasChannelAddress(channel)}
+                  stale={stale || Boolean(evidence.records.get(channel.record_id)!.stale)}
+                />
+                <GatewayRecordMeta
+                  compact
+                  createdAt={
+                    channel.created_at ??
+                    (typeof channel.definition.created_at === 'string'
+                      ? channel.definition.created_at
+                      : undefined)
+                  }
+                  owner={channel.owner ?? channel.definition.owner}
+                />
+              </>
             }
           />
         ))}
@@ -159,58 +220,76 @@ function EventGatewayBody({
   );
   const createActive = active && creating;
   const content = (
-    <div className="gateway-content">
+    <div className="gateway-content" id={contentId}>
       {createStarted ? (
         <section className="gateway-detail gateway-detail--create" hidden={!createActive}>
           <PageHeader
-            breadcrumb={[{ label: 'Event Gateway' }, { label: 'New channel' }]}
+            wrapIdentity
+            breadcrumb={[
+              {
+                label: 'Event Gateway',
+                href: homeHref,
+                onSelect: () => {
+                  showChannels();
+                  exitCreate();
+                },
+              },
+              { label: 'New channel' },
+            ]}
             title="New channel"
+            placement="gateway-create-header"
             description="Connect an event source to your agent."
           />
-          <ChannelEditor
-            active={createActive}
-            ownerSubject={session.subject}
-            denied={denied}
-            onDone={(channel) => {
-              if (channel) {
-                setCreated(channel);
-                setSelected(channel.record_id);
-              }
-              setCreating(false);
-              setCreateStarted(false);
-              channels.refresh();
-            }}
-          />
-          <Button onClick={() => setCreating(false)}>Cancel</Button>
+          {recovered?.record ? (
+            <RecoverChannelCreation
+              owner={session.subject}
+              record={recovered.record}
+              denied={denied}
+              onFound={finishCreate}
+            />
+          ) : (
+            <ChannelEditor
+              active={createActive}
+              ownerSubject={session.subject}
+              recoverDraft
+              initialDraft={recovered}
+              denied={denied}
+              onDone={finishCreate}
+            />
+          )}
+          <Button onClick={exitCreate}>Cancel</Button>
         </section>
       ) : null}
-      {items
-        .filter((row) => row.record_id === current?.record_id || visited.includes(row.record_id))
-        .map((channel) => (
-          <section
-            key={channel.record_id}
-            hidden={creating || channel.record_id !== current?.record_id}
-            className="gateway-detail"
-            aria-label={`${channel.definition.name} details`}
-          >
-            <ChannelDetail
-              channel={channel}
-              active={active && !creating && channel.record_id === current?.record_id}
-              channelsCrumb={channelsCrumb}
-              session={session}
-              denied={denied}
-              onChanged={(updated) => {
-                if (updated && updated.record_id === created?.record_id) setCreated(updated);
-                channels.refresh();
-              }}
-              onDeleted={() => {
-                setDeleted((previous) => [...previous, channel.record_id]);
-                if (created?.record_id === channel.record_id) setCreated(undefined);
-                channels.refresh();
-              }}
-            />
-          </section>
-        ))}
+      {workspaces.map((channel) => (
+        <section
+          key={channel.record_id}
+          hidden={creating || channel.record_id !== current?.record_id}
+          className="gateway-detail"
+          aria-label={`${channel.definition.name} details`}
+        >
+          <ChannelDetail
+            evidence={evidence.records.get(channel.record_id)!}
+            stale={stale}
+            onRead={evidence.observe}
+            onUnavailable={evidence.unavailable}
+            refresh={refresh}
+            active={active && !creating && channel.record_id === current?.record_id}
+            channelsCrumb={channelsCrumb}
+            session={session}
+            denied={denied}
+            onChanged={(updated) => {
+              if (updated) evidence.observe(updated);
+              if (updated && updated.record_id === created?.record_id) setCreated(updated);
+              refresh();
+            }}
+            onDeleted={() => {
+              setDeleted((previous) => [...previous, channel.record_id]);
+              if (created?.record_id === channel.record_id) setCreated(undefined);
+              refresh();
+            }}
+          />
+        </section>
+      ))}
       {!creating && !current ? (
         <GatewayWelcome
           kind="channel"
@@ -240,175 +319,6 @@ function EventGatewayBody({
         {sidebar}
       </div>
       {content}
-    </div>
-  );
-}
-
-function ChannelDetail({
-  channel,
-  active,
-  channelsCrumb,
-  session,
-  denied,
-  onChanged,
-  onDeleted,
-}: {
-  readonly channel: ChannelListItem;
-  readonly channelsCrumb: Crumb;
-  readonly active: boolean;
-  readonly session: ServiceSession;
-  readonly denied: Denied;
-  readonly onChanged: (channel?: Channel) => void;
-  readonly onDeleted: () => void;
-}) {
-  return (
-    <>
-      <PageHeader
-        breadcrumb={[{ label: 'Event Gateway' }, channelsCrumb, { label: channel.definition.name }]}
-        title={channel.definition.name}
-        meta={
-          <span className="page-header__chip">
-            {channel.provider.slug} · {channel.provider.level} · Version {channel.version}
-          </span>
-        }
-      />
-      {hasChannelAddress(channel) ? (
-        <AddressedChannel
-          channel={channel}
-          active={active}
-          session={session}
-          denied={denied}
-          onChanged={onChanged}
-          onDeleted={onDeleted}
-        />
-      ) : (
-        <ExistingChannel channel={channel} denied={denied}>
-          {(resolved) => (
-            <AddressedChannel
-              channel={resolved}
-              active={active}
-              session={session}
-              denied={denied}
-              onChanged={onChanged}
-              onDeleted={onDeleted}
-            />
-          )}
-        </ExistingChannel>
-      )}
-    </>
-  );
-}
-function AddressedChannel({
-  channel,
-  active,
-  session,
-  denied,
-  onChanged,
-  onDeleted,
-}: {
-  readonly channel: Channel;
-  readonly active: boolean;
-  readonly session: ServiceSession;
-  readonly denied: Denied;
-  readonly onChanged: (channel?: Channel) => void;
-  readonly onDeleted: () => void;
-}) {
-  const inspectorId = useId();
-  const [inspecting, setInspecting] = useState(false);
-  const [sendAvailable, setSendAvailable] = useState(false);
-  const [inspectorSection, setInspectorSection] = useState<'overview' | 'activity'>('overview');
-  const [selection, setSelection] = useState<ChannelSelection>({ kind: 'channel' });
-  const [editorSelection, setEditorSelection] = useState<
-    Exclude<ChannelSelection, { kind: 'toolsets' }>
-  >({ kind: 'channel' });
-  const [confirmed, setConfirmed] = useState<Channel>();
-  const current = confirmed && confirmed.version >= channel.version ? confirmed : channel;
-  const activity = useChannelActivity(current.channel_id, session.subject, active);
-  const nodes = channelNodes(current);
-  const editable = can(session, 'event-gateway', 'channels:update');
-  const newProducer =
-    editable && selection.kind === 'producer' && selection.index === nodes.producers.length;
-  const exists =
-    selection.kind === 'channel' ||
-    selection.kind === 'toolsets' ||
-    newProducer ||
-    [...nodes.producers, ...nodes.consumers].some((node) => node.key === selectionKey(selection));
-  const selected: ChannelSelection = exists ? selection : { kind: 'channel' };
-  return (
-    <div className="channel-workspace">
-      <ChannelMap
-        channel={current}
-        toolsets={nodes.toolsets}
-        selection={selected}
-        activityPreview={<ChannelActivityPreview feed={activity} />}
-        onActivity={() => {
-          setSelection({ kind: 'channel' });
-          setEditorSelection({ kind: 'channel' });
-          setInspectorSection('activity');
-          setInspecting(true);
-        }}
-        onSelect={(next) => {
-          setInspectorSection('overview');
-          setSelection(next);
-          if (next.kind !== 'toolsets') setEditorSelection(next);
-          setInspecting(true);
-        }}
-        inspectorId={inspectorId}
-        canAddProducer={editable}
-      />
-      <NodeInspector
-        channel={current}
-        selection={selected}
-        id={inspectorId}
-        open={active && inspecting}
-        initialSection={inspectorSection}
-        sendAvailable={sendAvailable}
-        testsAvailable={!newProducer}
-        onClose={() => setInspecting(false)}
-        send={
-          editable ? (
-            <ChannelOutboundMessage
-              owner={session.subject}
-              onAvailability={setSendAvailable}
-              channel={current}
-              selection={selected}
-              denied={denied}
-            />
-          ) : undefined
-        }
-        tests={
-          can(session, 'event-gateway', 'channels:test') ? (
-            <div hidden={newProducer}>
-              <ChannelNodeTests
-                channelId={current.channel_id}
-                channelVersion={current.version}
-                selection={selected}
-                denied={denied}
-              />
-            </div>
-          ) : undefined
-        }
-        activity={selected.kind === 'channel' ? <ChannelActivityView feed={activity} /> : undefined}
-        danger={
-          selected.kind === 'channel' && can(session, 'event-gateway', 'channels:delete') ? (
-            <DeleteChannel channel={current} denied={denied} onDone={onDeleted} />
-          ) : undefined
-        }
-      >
-        {editable ? (
-          <ChannelEditor
-            channel={current}
-            section={selected.kind === 'toolsets' ? editorSelection : selected}
-            denied={denied}
-            onDone={(updated) => {
-              if (updated) setConfirmed(updated);
-              onChanged(updated);
-            }}
-          />
-        ) : (
-          <p className="channel-field-hint">You have read-only access to this configuration.</p>
-        )}
-      </NodeInspector>
     </div>
   );
 }

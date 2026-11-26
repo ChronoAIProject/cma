@@ -207,6 +207,21 @@ pub trait SandboxLifecycleExecutionStore: Send + Sync {
         &self,
         mutation: SandboxLifecycleMutation,
     ) -> Result<(), SandboxStoreError>;
+
+    async fn reopen_refusal_snapshot(
+        &self,
+        _id: &crate::AgentId,
+    ) -> Result<Option<super::AgentMessageSnapshot>, SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
+
+    async fn park_sandbox_reopen_refusal(
+        &self,
+        _mutation: SandboxLifecycleMutation,
+        _fence: super::ReopenRefusalFence,
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::Conflict)
+    }
 }
 
 pub trait SandboxLifecycleStore:
@@ -443,6 +458,9 @@ fn validate_next_sandbox(
         || next.name != current.name
         || next.origin != current.origin
         || next.profile != current.profile
+        || next.lifecycle.runtime_migration_admission
+            != current.lifecycle.runtime_migration_admission
+        || !super::lifecycle_execution_validation::custom_authority_preserved(current, next)
         || next.limits != current.limits
         || next.created_at != current.created_at
         || (next.lifecycle.next_authority != current.lifecycle.next_authority

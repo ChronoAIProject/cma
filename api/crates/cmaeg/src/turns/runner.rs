@@ -50,6 +50,7 @@ pub struct TurnRunner {
     media: Option<Arc<MediaService>>,
     prepare: PrepareConfig,
     activity: Arc<dyn super::observer::ActivityObserver>,
+    recovery_authority: Option<Arc<dyn super::RecoveryChannelAuthority>>,
 }
 impl TurnRunner {
     pub fn new(
@@ -68,11 +69,19 @@ impl TurnRunner {
             media: None,
             prepare: PrepareConfig::default(),
             activity: Arc::new(super::observer::NoopObserver),
+            recovery_authority: None,
         }
     }
     /// Observe durable dispatch facts through the composition's shared observer.
     pub fn with_activity(mut self, activity: Arc<dyn super::observer::ActivityObserver>) -> Self {
         self.activity = activity;
+        self
+    }
+    pub fn with_recovery_authority(
+        mut self,
+        authority: Arc<dyn super::RecoveryChannelAuthority>,
+    ) -> Self {
+        self.recovery_authority = Some(authority);
         self
     }
     /// Prepare media turns with `media` under `prepare`'s bounds.
@@ -107,8 +116,9 @@ impl TurnRunner {
             Ok(consumer) => consumer,
             Err(error) => return self.unserved(turn, sender, error),
         };
-        let provider = consumer.provider.slug.to_string();
-        let mut observation = Operation::new(names::TURN_DURATION, names::PROVIDER, &provider);
+        let provider = &consumer.provider.slug;
+        let mut observation =
+            Operation::new(names::TURN_DURATION, names::PROVIDER, provider.as_str());
         let deadline = turn.received_at + self.config.turn_timeout;
         let audience = Audience::of(&consumer, &self.media_tool_providers);
         // One nonce per turn: busy retries resend this exact input under the
@@ -120,6 +130,9 @@ impl TurnRunner {
         };
         let prepare_deadline = (turn.received_at + self.prepare.budget).min(deadline);
         let mut admitted = Some(sender);
+        let recovery = self.recovery_authority.as_ref().and_then(|authority| {
+            super::RecoveryAuthority::new(authority.clone(), turn.clone(), deadline).map(Arc::new)
+        });
         let result = tokio::time::timeout_at(deadline.into(), async {
             let fenced = ticket.waits();
             // A predecessor may itself prepare for the whole budget before its
@@ -164,15 +177,16 @@ impl TurnRunner {
                 .map(Some);
                 return Ok(custom_replay::answer(replay, &mut admitted).unwrap());
             }
-            let stream = started
-                .map_err(|failure| super::refusal::classify_start_failure(&provider, failure))?;
+            let stream = started.map_err(|failure| {
+                super::refusal::classify_start_failure(provider.as_str(), failure)
+            })?;
             consume::consume(
                 stream,
                 turn.clone(),
-                &provider,
                 &*self.delivery,
                 self.activity.as_ref(),
-                self.providers.execution_verifiers.verifier(&provider),
+                self.providers.as_ref(),
+                recovery.as_ref(),
                 &mut admitted,
             )
             .await
@@ -185,7 +199,7 @@ impl TurnRunner {
             Ok(Ok(outcome)) => {
                 observation.finish(outcome);
                 if !matches!(outcome, "completed" | "replayed" | "refused") {
-                    provider_error(&provider, outcome);
+                    provider_error(provider.as_str(), outcome);
                 }
                 return;
             }
@@ -195,7 +209,14 @@ impl TurnRunner {
             }
         };
         observation.finish(error.detail);
-        provider_error(&provider, error.detail);
+        provider_error(provider.as_str(), error.detail);
+        if error.detail == "stream_authority_changed" {
+            let _ = self
+                .delivery
+                .try_submit(super::outcomes::DeliveryCommand::RetireStream { turn });
+            return;
+        }
+        let accepted = admitted.is_none();
         if let Some(sender) = admitted.take() {
             let mut problem = Problem::new(error.code, error.status, error.detail);
             if let Some(upstream) = error.upstream {
@@ -203,13 +224,23 @@ impl TurnRunner {
             }
             let _ = sender.send(LaunchOutcome::Refused(problem));
         }
-        self.delivery.terminal(
-            turn,
-            TurnOutcome::Failed {
-                code: error.detail.into(),
-                message: failure_message(error.detail).into(),
-            },
-        );
+        let outcome = TurnOutcome::Failed {
+            code: error.detail.into(),
+            message: failure_message(error.detail).into(),
+        };
+        if let Some(recovery) = recovery.filter(|_| accepted) {
+            let _ = self
+                .delivery
+                .try_submit(super::outcomes::DeliveryCommand::StreamOutcome {
+                    turn,
+                    outcome,
+                    answer_response_id: None,
+                    accepted_deadline: None,
+                    recovery: Some(recovery),
+                });
+        } else {
+            self.delivery.terminal(turn, outcome);
+        }
     }
     /// Fail a turn whose consumer its channel does not configure, as any
     /// other provider refusal fails, before any provider call.
@@ -356,6 +387,19 @@ impl TurnRunner {
             // Authority/retained-admission reads have their own bounded
             // deadline. Do not turn a slow denied lookup into Deferred/202:
             // at this point no new work has been submitted.
+            if request
+                .channel
+                .definition
+                .secrets
+                .profile_revisions
+                .is_some()
+            {
+                return LaunchOutcome::Refused(Problem::new(
+                    ProblemCode::ProviderUnavailable,
+                    503,
+                    "durable partition profile admission required",
+                ));
+            }
             match custom_replay::lookup(
                 &self.providers,
                 &request,

@@ -57,6 +57,7 @@ async fn generic_transaction_receipts_reconcile_from_one_commit_time_snapshot() 
         },
         SandboxTransaction::SaveSandboxAndAppend {
             command_revival: None,
+            released_runtime: None,
             expected_revision: 1,
             sandbox: Box::new(parent.clone()),
             event_at: MINUTE.into(),
@@ -136,3 +137,10 @@ fn assert_pinned_snapshot(commands: &[(String, Document)], expected_reads: usize
         assert_eq!(read.get_document("lsid").unwrap(), session);
     }
 }
+
+#[path = "../agent_commands/reserve/ownership_tests/typed_fence.rs"]
+mod admission_leaf_fence;
+#[path = "../agent_commands/typed_fence_tests.rs"]
+pub(in crate::store) mod command_fence;
+#[path = "../work_publication/authority_mongo_tests.rs"]
+mod work_authority;

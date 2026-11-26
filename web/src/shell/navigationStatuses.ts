@@ -58,8 +58,14 @@ export function sandboxNavigation<T>(
       deleting.push(item);
       continue;
     }
-    if (group === 'hidden' || (filter !== 'all' && status !== filter)) continue;
-    byId.get(filter === 'all' ? group : status)?.items.push(item);
+    if (
+      group === 'hidden' ||
+      (filter !== 'all' &&
+        status !== filter &&
+        !(filter === 'failed' && group === 'needs_attention'))
+    )
+      continue;
+    byId.get(filter === 'all' ? group : filter)?.items.push(item);
     visible.push(item);
   }
   return { groups, visible, deleting };

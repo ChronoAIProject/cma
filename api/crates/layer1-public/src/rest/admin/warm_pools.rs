@@ -71,6 +71,7 @@ pub enum WarmPoolError {
     Conflict,
     NotFound,
     Unavailable,
+    ProviderConfigurationDrift,
 }
 
 impl From<WarmPoolError> for CollectionProblem {
@@ -80,7 +81,9 @@ impl From<WarmPoolError> for CollectionProblem {
             WarmPoolError::Invalid => Self::InvalidRequest,
             WarmPoolError::Conflict => Self::Conflict,
             WarmPoolError::NotFound => Self::NotFound,
-            WarmPoolError::Unavailable => Self::Unavailable,
+            WarmPoolError::Unavailable | WarmPoolError::ProviderConfigurationDrift => {
+                Self::Unavailable
+            }
         }
     }
 }

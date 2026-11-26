@@ -6,7 +6,7 @@ const MAX_TEXT: usize = 256 * 1024;
 const MAX_ITEMS: usize = 256;
 #[derive(Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Projection {
+pub(crate) struct Projection {
     text: BTreeMap<String, String>,
     order: Vec<String>,
     committed: BTreeSet<String>,

@@ -58,7 +58,7 @@ async fn reconcile_publication_snapshot(
         .as_ref()
         .map(read_agent)
         .transpose()?;
-    if agent.as_ref() != Some(&receipt.agent) {
+    if !receipt.pending_adoption() && agent.as_ref() != Some(&receipt.agent) {
         return Ok(false);
     }
 
@@ -78,7 +78,11 @@ async fn reconcile_publication_snapshot(
         }
     }
 
-    if let Some(expected) = receipt.worktree.as_ref() {
+    if let Some(expected) = receipt
+        .worktree
+        .as_ref()
+        .filter(|_| !receipt.pending_adoption())
+    {
         let worktree = store
             .worktrees
             .find_one(doc! { "_id": expected.id.as_str() })

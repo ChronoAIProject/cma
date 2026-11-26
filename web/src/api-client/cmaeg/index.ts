@@ -2,7 +2,12 @@ import { CmaegOutbound, type PrepareOutboundOptions } from './outbound.js';
 import type { PrepareOutboundMessage } from './types.js';
 import { resolveConfig, type ClientConfig, type ResolvedConfig } from '../config.js';
 import type { OperationOptions } from '../http.js';
-import { CmaegChannels, type CreateChannelOptions, type ListChannelOptions } from './channels.js';
+import {
+  CmaegChannels,
+  type ChannelRecordManagementOptions,
+  type CreateChannelOptions,
+  type ListChannelOptions,
+} from './channels.js';
 import {
   CmaegConnections,
   type ConnectionOptions,
@@ -15,6 +20,8 @@ import { CmaegTools } from './tools.js';
 import type { CreateThreadRequest, ManageThreadRequest, ThreadListView } from './types.js';
 import {
   CmaegActivity,
+  type ChannelActivityHistoryDetailsOptions,
+  type ChannelActivityHistoryOptions,
   type ChannelActivityOptions,
   type EventMediaResponseOptions,
   type StreamChannelActivityOptions,
@@ -121,6 +128,18 @@ export class Cmaeg {
   getChannelActivity(id: string, options?: ChannelActivityOptions) {
     return this.#activity.getChannelActivity(id, options);
   }
+  /** Fetch one page of retained receipts, with coverage for the requested range. */
+  getChannelActivityHistory(id: string, options: ChannelActivityHistoryOptions) {
+    return this.#activity.getChannelActivityHistory(id, options);
+  }
+  /** Fetch one page of detail fragments using an item's opaque history_event_id. */
+  getChannelActivityHistoryDetails(
+    id: string,
+    historyEventId: string,
+    options: ChannelActivityHistoryDetailsOptions,
+  ) {
+    return this.#activity.getChannelActivityHistoryDetails(id, historyEventId, options);
+  }
   getEventMediaResponses(id: string, eventId: string, options?: EventMediaResponseOptions) {
     return this.#activity.getEventMediaResponses(id, eventId, options);
   }
@@ -129,6 +148,17 @@ export class Cmaeg {
   }
   recoverChannel(id: string, options?: OperationOptions) {
     return this.#channels.recoverChannel(id, options);
+  }
+  /** Inspect a retained record using its storage ID and optional organization scope. */
+  getChannelRecordManagement(recordId: string, options?: ChannelRecordManagementOptions) {
+    return this.#channels.getChannelRecordManagement(recordId, options);
+  }
+  retireLegacyChannelRecord(
+    recordId: string,
+    expectedVersion: number,
+    options?: ChannelRecordManagementOptions,
+  ) {
+    return this.#channels.retireLegacyChannelRecord(recordId, expectedVersion, options);
   }
   updateChannel(id: string, body: ChannelUpdateRequest, options?: OperationOptions) {
     return this.#channels.updateChannel(id, body, options);
@@ -251,11 +281,17 @@ export class Cmaeg {
 }
 
 export { signWebhook, type WebhookHeaders } from './signing.js';
-export type { CreateChannelOptions, ListChannelOptions } from './channels.js';
+export type {
+  ChannelRecordManagementOptions,
+  CreateChannelOptions,
+  ListChannelOptions,
+} from './channels.js';
 export type { EventOptions, StreamEventOptions } from './events.js';
 export type { GatewayStreamEvent, GatewayMediaStreamEvent } from './stream.js';
 export type {
   EventMediaResponseOptions,
+  ChannelActivityHistoryDetailsOptions,
+  ChannelActivityHistoryOptions,
   ChannelActivityOptions,
   StreamChannelActivityOptions,
   ChannelActivityEvent,

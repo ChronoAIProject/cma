@@ -11,6 +11,7 @@ mod dispatch;
 mod fixtures;
 mod receipts;
 mod retention;
+mod scheduled_refusal;
 use fixtures::*;
 
 #[tokio::test]
@@ -75,13 +76,18 @@ async fn title_custody_lost_provider_response_never_resends_after_restart_or_off
     let changed =
         AgentTitleGenerationContext::new("changed-strategy-model", "test-title-credential")
             .unwrap();
-    for service in [&service, &f.service_b] {
+    // The first later claim is fallback-only: it publishes the prompt-derived
+    // title without a provider call (#2266). Every later claim is skipped.
+    for (service, expected) in [
+        (&service, AgentTitleOutcome::Fallback),
+        (&f.service_b, AgentTitleOutcome::Skipped),
+    ] {
         assert_eq!(
             service
                 .generate_agent_title(&f.id, Some(&changed), Some(&provider.generator))
                 .await
                 .unwrap(),
-            AgentTitleOutcome::Skipped
+            expected
         );
     }
     let retained = f.row().await;
@@ -90,7 +96,11 @@ async fn title_custody_lost_provider_response_never_resends_after_restart_or_off
         original.get("title_effect_custody")
     );
     assert_eq!(provider.calls(), 1);
-    assert!(f.a.agent_title(&f.id).await.unwrap().is_none());
+    assert!(f.b.agent_title_effect(&f.id).await.unwrap().unknown());
+    assert_eq!(
+        f.a.agent_title(&f.id).await.unwrap().unwrap().source,
+        AgentTitleSource::Fallback
+    );
     f.cleanup().await;
 }
 
@@ -112,7 +122,7 @@ async fn title_custody_crash_after_intent_before_dispatch_preserves_zero_calls()
             .generate_agent_title(&f.id, Some(&context()), Some(&provider.generator))
             .await
             .unwrap(),
-        AgentTitleOutcome::Skipped
+        AgentTitleOutcome::Fallback
     );
     let mut changed = intent.clone();
     changed.strategy = "new-strategy".into();
@@ -151,6 +161,54 @@ async fn title_custody_proven_preparation_refusal_can_retry() {
             .await
             .unwrap(),
         AgentTitleOutcome::Generated
+    );
+    assert_eq!(provider.calls(), 1);
+    f.cleanup().await;
+}
+
+// #2266: an unresolved provider effect must not leave the Agent untitled
+// forever. Discovery keeps it until the prompt-derived fallback is stored,
+// and the fallback never makes another provider call.
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn title_custody_unresolved_effect_is_rediscovered_only_until_its_fallback_is_stored() {
+    let f = Fixture::new("unknown_fallback").await;
+    let provider = Provider::new(true).await;
+    assert_eq!(
+        f.service_a
+            .generate_agent_title(&f.id, Some(&context()), Some(&provider.generator))
+            .await,
+        Err(AgentTitleServiceError::EffectUnknown)
+    );
+    let page = PageRequest::new(100, None).unwrap();
+    let candidate = |page: layer2_core::sandbox::store::Page<AgentId>| page.items.contains(&f.id);
+    // The original capability's live lease still excludes any successor.
+    assert_eq!(
+        f.service_b
+            .generate_agent_title(&f.id, None, None)
+            .await
+            .unwrap(),
+        AgentTitleOutcome::Skipped
+    );
+    expire(&f.a, &f.id).await;
+    assert!(candidate(f.b.agent_title_candidates(&page).await.unwrap()));
+    assert_eq!(
+        f.service_b
+            .generate_agent_title(&f.id, Some(&context()), Some(&provider.generator))
+            .await
+            .unwrap(),
+        AgentTitleOutcome::Fallback
+    );
+    let stored = f.a.agent_title(&f.id).await.unwrap().unwrap();
+    assert_eq!(stored.source, AgentTitleSource::Fallback);
+    assert!(f.a.agent_title_effect(&f.id).await.unwrap().unknown());
+    assert!(!candidate(f.b.agent_title_candidates(&page).await.unwrap()));
+    assert_eq!(
+        f.service_a
+            .generate_agent_title(&f.id, Some(&context()), Some(&provider.generator))
+            .await
+            .unwrap(),
+        AgentTitleOutcome::Skipped
     );
     assert_eq!(provider.calls(), 1);
     f.cleanup().await;

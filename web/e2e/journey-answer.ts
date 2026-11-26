@@ -11,12 +11,16 @@ export async function firstAnswer(h: Harness, page: Page, launch: Launch, subjec
   expect(agentId).toBeTruthy();
   const sandbox = await h.get<unknown>(page, `/api/v1/sandboxes/${sandboxId}`);
   assertVisitorSandbox(sandbox, sandboxId!, subject);
+  return agentFirstAnswer(h, page, agentId!);
+}
+
+export async function agentFirstAnswer(h: Harness, page: Page, agentId: string) {
   let transcript: AgentTranscript | undefined;
   await expect
     .poll(
       async () => {
         transcript = await h.get<AgentTranscript>(page, `/api/v1/agents/${agentId}/transcript`);
-        return completedFirstAnswer(transcript, agentId!);
+        return completedFirstAnswer(transcript, agentId);
       },
       { timeout: 180_000, intervals: [1500, 3000, 5000] },
     )

@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from '@playwright/test';
+import { browserProjects } from './browser-projects';
 
 const preview = new URL(process.env.CMA_AGENT_V2_PREVIEW_URL ?? 'http://127.0.0.1:4359');
 if (
@@ -19,15 +20,22 @@ const port = Number(preview.port) || 80;
 const baseURL = `http://127.0.0.1:${port}`;
 process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
 export default defineConfig({
+  projects: browserProjects(),
   testDir: '.',
   testMatch: [
     'agent-v2.check.ts',
+    'agent-draft-binding.check.ts',
+    'agent-draft-identity-refresh.check.ts',
     'agent-v2-cjk.check.ts',
     'agent-v2-queued.check.ts',
+    'agent-v2-queued-edit.check.ts',
     'agent-v2-composer.check.ts',
+    'agent-deferred-send.check.ts',
     'agent-terminal-recovery.check.ts',
+    'agent-receipt-error.check.ts',
     'agent-history-export.check.ts',
     'agent-recovery-consistency.check.ts',
+    'file-preview.check.ts',
   ],
   workers: 1,
   retries: 0,
@@ -49,6 +57,5 @@ export default defineConfig({
     screenshot: 'only-on-failure',
     video: 'off',
     serviceWorkers: 'block',
-    launchOptions: { executablePath: process.env.CMA_E2E_BROWSER_PATH },
   },
 });

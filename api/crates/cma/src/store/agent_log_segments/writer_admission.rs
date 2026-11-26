@@ -20,6 +20,7 @@ use super::{
 use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::is_duplicate_key};
 
 pub(in crate::store) const COLLECTION: &str = "agent_log_admissions";
+pub(in crate::store) const PENDING_WORKER_PREFIX: &str = "pending-worker:v1:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -165,14 +166,66 @@ pub(in crate::store) async fn admit(
     admitted_at: &str,
     session: &mut ClientSession,
 ) -> Result<Admission, TransactionLogError> {
+    if operation.key.starts_with(PENDING_WORKER_PREFIX) {
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    admit_bound(
+        database,
+        agent,
+        operation,
+        kind,
+        admitted_at,
+        false,
+        session,
+    )
+    .await
+}
+
+/// This namespace is exclusively admitted alongside the worker's durable witness.
+pub(in crate::store) async fn admit_pending_worker(
+    database: &Database,
+    agent: &Agent,
+    operation: &PublicationIdentity,
+    admitted_at: &str,
+    session: &mut ClientSession,
+) -> Result<Admission, TransactionLogError> {
+    if !operation.key.starts_with(PENDING_WORKER_PREFIX) {
+        return Err(SandboxStoreError::Conflict.into());
+    }
+    admit_bound(
+        database,
+        agent,
+        operation,
+        AdmissionKind::Activation,
+        admitted_at,
+        true,
+        session,
+    )
+    .await
+}
+
+async fn admit_bound(
+    database: &Database,
+    agent: &Agent,
+    operation: &PublicationIdentity,
+    kind: AdmissionKind,
+    admitted_at: &str,
+    pending_worker: bool,
+    session: &mut ClientSession,
+) -> Result<Admission, TransactionLogError> {
     if let Some(existing) = read(database, agent, operation, session).await? {
+        if pending_worker {
+            // A fresh pending-witness insert and its admission are atomic.
+            // An orphan row cannot prove that the recovery gate was fenced.
+            return Err(SandboxStoreError::Conflict.into());
+        }
         existing.permits(agent, operation, kind)?;
         return Ok(existing);
     }
     let writer_gate = writer_gate::select_and_fence(database, GateName::Segments, agent, session)
         .await?
         .ok_or_else(closed)?;
-    let recovery_gate = if kind == AdmissionKind::CapacityRecovery {
+    let recovery_gate = if kind == AdmissionKind::CapacityRecovery || pending_worker {
         Some(
             writer_gate::select_and_fence(database, GateName::CapacityRecovery, agent, session)
                 .await?
@@ -199,7 +252,9 @@ pub(in crate::store) async fn admit(
         admitted_at: admitted_at.into(),
         kind,
         writer_gate,
-        recovery_gate,
+        // Compatible Activation readers require null here. The reserved key
+        // and the witness installed by the caller bind this dual-gate grant.
+        recovery_gate: recovery_gate.filter(|_| !pending_worker),
     };
     value.validate()?;
     database

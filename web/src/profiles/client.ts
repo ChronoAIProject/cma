@@ -80,6 +80,7 @@ export interface ServiceCatalogClient {
 export interface ServiceCatalogEntry {
   readonly id: string;
   readonly catalogId?: string;
+  readonly detailUrl?: string;
   readonly name: string;
   readonly description?: string;
 }

@@ -2,12 +2,18 @@ use layer3_adapter::wire::{FencedReceipt, RequestFrame, ResponseFrame};
 use layer3_adapter::{WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, WorktreeRequest};
 
 use super::{agent_validation, Supervisor};
-use crate::failure::Result;
+use crate::failure::{Result, RuntimeError};
 use crate::mutation_journal::{Operation, Subject};
 use crate::mutation_store::{finish, Begin, Cursor, Ticket};
 
 impl Supervisor {
     pub(super) async fn authorize_mutation(&self, request: &RequestFrame) -> Result<()> {
+        if request.has_unexpected_restart_runtime() {
+            return Err(RuntimeError::rejected(
+                "agent_process_restart_runtime_unexpected",
+                "only a numbered Agent Open accepts a restart runtime identity",
+            ));
+        }
         if let RequestFrame::PrepareAgentResources(request) = request {
             return self.authorize_agent_resources(request).await;
         }
@@ -47,20 +53,14 @@ impl Supervisor {
                     Operation::remove_agent_home(&request.request),
                 ))
             }
-            RequestFrame::OpenAgent(request) => {
-                agent_validation::open(&request.request)?;
-                Some((
-                    request.authority_fence,
-                    Operation::open_agent(&request.request),
-                ))
-            }
-            RequestFrame::CloseAgent(request) => {
-                agent_validation::close(&request.request)?;
-                Some((
-                    request.authority_fence,
-                    Operation::close_agent(&request.request),
-                ))
-            }
+            RequestFrame::OpenAgent(request) => Some((
+                request.authority_fence,
+                self.authorize_process_open(request).await?,
+            )),
+            RequestFrame::CloseAgent(request) => Some((
+                request.authority_fence,
+                self.authorize_process_close(&request.request).await?,
+            )),
             _ => None,
         };
         let Some((authority_fence, operation)) = fenced else {

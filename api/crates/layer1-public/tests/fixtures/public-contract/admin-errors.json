@@ -1039,6 +1039,31 @@
       "captures": {}
     },
     {
+      "id": "admin-activity-actors-anonymous",
+      "operation": "GET /api/v1/admin/activity/actors",
+      "scenario": "admin_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity/actors?q=sam",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "admin-activity-empty-filter-anonymous",
       "operation": "GET /api/v1/admin/activity",
       "scenario": "admin_anonymous",
@@ -1064,6 +1089,31 @@
       "captures": {}
     },
     {
+      "id": "admin-activity-actors-denied",
+      "operation": "GET /api/v1/admin/activity/actors",
+      "scenario": "admin_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity/actors?q=sam",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-an-operator",
+          "title": "not an operator",
+          "status": 403,
+          "detail": "This operation requires an operator capability this caller does not hold.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "admin-activity-empty-filter-denied",
       "operation": "GET /api/v1/admin/activity",
       "scenario": "admin_forbidden",
@@ -1083,6 +1133,31 @@
           "status": 403,
           "detail": "This operation requires an operator capability this caller does not hold.",
           "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-activity-actors-invalid",
+      "operation": "GET /api/v1/admin/activity/actors",
+      "scenario": "admin_actor_search",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/activity/actors?q=s",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-admin-request",
+          "title": "invalid admin request",
+          "status": 400,
+          "detail": "The operator request parameters are not valid.",
+          "code": "invalid_admin_request"
         },
         "bodyKind": "json"
       },

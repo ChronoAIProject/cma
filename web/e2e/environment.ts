@@ -2,6 +2,11 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Page } from '@playwright/test';
+import {
+  parseConnectionJourneyFixtures,
+  type ConnectionJourneyFixtures,
+  type ConnectionObservationInput,
+} from './connection-journey-contract';
 
 export const faultNames = [
   'install_failure',
@@ -17,6 +22,7 @@ export const visitorCases = [
   'J1',
   'J2',
   'J3',
+  'J5',
   'J4-oauth',
   'J4-api_key',
   'J4-device_code',
@@ -44,10 +50,36 @@ export interface TriggerFixture {
   publicId: string;
   placementId: string;
 }
+export type PublisherRole = 'owner' | 'secondOwner';
+export interface PublicJourneyFixtures {
+  repository: { url: string; reference: string };
+  owners: Record<
+    PublisherRole,
+    {
+      image: { id: string; name: string; version: string; reference: string };
+      model: string;
+      embedUrl: string;
+    }
+  >;
+}
+export interface PublishedEmbedInput {
+  phase: 'install' | 'restore';
+  run: string;
+  subject: string;
+  sourceUrl: string;
+  triggerId: string;
+  publicId: string;
+  placementId: string;
+  revision: number;
+  publicUrl: string;
+  html: string;
+}
 export interface StagingFixtures {
   origin: string;
   fixtureOwner: string;
   baselineServices: string[];
+  publicJourneys: PublicJourneyFixtures;
+  connectionJourneys: ConnectionJourneyFixtures;
   accounts: Record<Role, Account>;
   visitors: Record<string, Account>;
   triggers: Record<
@@ -62,7 +94,7 @@ export interface StagingFixtures {
   >;
   embeds: Record<
     'markdown' | 'html' | 'javascript' | 'react',
-    { url: string; placementId: string }
+    { url: string; placementId: string; triggerId: string }
   >;
   provenance: Record<'commit' | 'nyxidCommit' | 'apiImage' | 'webImage' | 'runtimeImage', string>;
   hooksFile: string;
@@ -72,6 +104,10 @@ export interface Hooks {
   // Hooks are audited operator-provided ordinary UI and scoped fault drivers, never NyxID admin.
   completeSignup(page: Page): Promise<void>;
   completeConnection(page: Page, mode: 'oauth' | 'api_key' | 'device_code'): Promise<void>;
+  observeConnection(input: ConnectionObservationInput): Promise<unknown>;
+  // The reviewed fixture host installs this run's snippet only in its allocated
+  // page and restores that page before returning from the restore phase.
+  publishEmbed(input: PublishedEmbedInput): Promise<void>;
   controlFault(input: {
     name:
       | FaultName
@@ -96,6 +132,8 @@ export interface Hooks {
     dirtyWorktreePresent: boolean;
     transcriptsPreserved: boolean;
     runtimeVersion: string;
+    imageReference: string;
+    homes: { agentId: string; homeDigest: string; fileHash: string }[];
   }>;
 }
 
@@ -172,6 +210,56 @@ function trigger(value: unknown, name: string): TriggerFixture {
     publicId: identifier(row.publicId, `${name}.publicId`),
     placementId: identifier(row.placementId, `${name}.placementId`),
   };
+}
+function publicJourneys(value: unknown): PublicJourneyFixtures {
+  const document = object(value, 'publicJourneys');
+  const repository = object(document.repository, 'publicJourneys.repository');
+  const url = new URL(required(repository.url, 'publicJourneys.repository.url'));
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname !== 'github.com' ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    !/^\/[^/]+\/[^/]+$/.test(url.pathname)
+  )
+    throw new Error('Invalid E2E public journey GitHub repository');
+  const reference = required(repository.reference, 'publicJourneys.repository.reference');
+  if (!/^[a-f0-9]{40}$/.test(reference))
+    throw new Error('Invalid E2E public journey repository commit');
+  const owners = object(document.owners, 'publicJourneys.owners');
+  const parsed = {} as PublicJourneyFixtures['owners'];
+  for (const role of ['owner', 'secondOwner'] as const) {
+    const row = object(owners[role], `publicJourneys.owners.${role}`);
+    const image = object(row.image, `${role}.image`);
+    const imageReference = required(image.reference, `${role}.image.reference`);
+    if (!/^[a-zA-Z0-9./:_-]+@sha256:[a-f0-9]{64}$/.test(imageReference))
+      throw new Error('Invalid E2E public journey immutable image reference');
+    const embed = new URL(required(row.embedUrl, `${role}.embedUrl`));
+    if (
+      embed.protocol !== 'https:' ||
+      embed.username ||
+      embed.password ||
+      embed.search ||
+      embed.hash
+    )
+      throw new Error('Invalid E2E public journey embed URL');
+    parsed[role] = {
+      image: {
+        id: identifier(image.id, `${role}.image.id`),
+        name: required(image.name, `${role}.image.name`),
+        version: identifier(image.version, `${role}.image.version`),
+        reference: imageReference,
+      },
+      model: required(row.model, `${role}.model`),
+      embedUrl: embed.href,
+    };
+  }
+  if (parsed.owner.embedUrl === parsed.secondOwner.embedUrl)
+    throw new Error('Invalid E2E public journey embed pages must be independent');
+  return { repository: { url: url.href, reference }, owners: parsed };
 }
 export function fixtures(env = process.env): StagingFixtures {
   const config = settings(env);
@@ -265,9 +353,17 @@ export function fixtures(env = process.env): StagingFixtures {
     parsedEmbeds[kind] = {
       url: url.href,
       placementId: identifier(row.placementId, `embeds.${kind}.placementId`),
+      triggerId: identifier(row.triggerId, `embeds.${kind}.triggerId`),
     };
   }
   const provenance = object(document.provenance, 'provenance');
+  const journeys = publicJourneys(document.publicJourneys);
+  if (
+    Object.values(journeys.owners).some((owner) =>
+      Object.values(parsedEmbeds).some((embed) => embed.url === owner.embedUrl),
+    )
+  )
+    throw new Error('Invalid E2E public journey pages must not replace retained embed fixtures');
   const parsedProvenance = {} as StagingFixtures['provenance'];
   for (const field of ['commit', 'nyxidCommit', 'apiImage', 'webImage', 'runtimeImage'] as const) {
     const value = required(provenance[field], `provenance.${field}`);
@@ -281,6 +377,11 @@ export function fixtures(env = process.env): StagingFixtures {
     origin: config.baseURL,
     fixtureOwner,
     baselineServices,
+    publicJourneys: journeys,
+    connectionJourneys: parseConnectionJourneyFixtures(
+      document.connectionJourneys,
+      parsedProvenance.nyxidCommit,
+    ),
     accounts: parsedAccounts,
     visitors: parsedVisitors,
     triggers: parsedTriggers,
@@ -295,7 +396,14 @@ export function fixtures(env = process.env): StagingFixtures {
 }
 export async function hooks(fixture: StagingFixtures): Promise<Hooks> {
   const loaded = object(await import(pathToFileURL(fixture.hooksFile).href), 'hooks exports');
-  for (const name of ['completeSignup', 'completeConnection', 'controlFault', 'verifyRuntime'])
+  for (const name of [
+    'completeSignup',
+    'completeConnection',
+    'observeConnection',
+    'publishEmbed',
+    'controlFault',
+    'verifyRuntime',
+  ])
     if (typeof loaded[name] !== 'function') throw new Error(`Required E2E operator hook: ${name}`);
   return loaded as unknown as Hooks;
 }

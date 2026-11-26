@@ -1,6 +1,9 @@
 use super::*;
 use serde_json::Value;
 
+#[path = "creation_pending.rs"]
+mod pending;
+
 fn reserved_body() -> Value {
     let mut body = create_body();
     body["record_id"] = uuid::Uuid::new_v4().to_string().into();
@@ -90,12 +93,85 @@ async fn reserved_creation_replays_across_replicas_and_restart_without_rebinding
 }
 
 #[tokio::test]
+async fn cached_reserved_creation_does_not_replay_a_channel_deleted_by_another_replica() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (first, stop_first, first_task) = app(&provider, &cma, &nyxid).await;
+    let (second, stop_second, second_task) = app(&provider, &cma, &nyxid).await;
+    let client = Client::new();
+    let body = reserved_body();
+    let record_id = body["record_id"].as_str().unwrap();
+    let create = || {
+        client
+            .post(format!("{first}/v1/channels"))
+            .bearer_auth("token-alice")
+            .header("Idempotency-Key", record_id)
+            .json(&body)
+    };
+
+    let response = create().send().await.unwrap();
+    assert_eq!(response.status(), 201);
+    let original: Value = response.json().await.unwrap();
+    let replay = create().send().await.unwrap();
+    assert_eq!(replay.status(), 201);
+    assert_eq!(replay.json::<Value>().await.unwrap(), original);
+    assert_eq!(provider.requests().len(), 1);
+
+    let deleted = client
+        .delete(format!(
+            "{second}/v1/channels/{}?expected_version={}",
+            original["channel_id"].as_str().unwrap(),
+            original["version"].as_u64().unwrap(),
+        ))
+        .bearer_auth("token-alice")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deleted.status(), 204);
+    assert!(cma.records().is_empty());
+
+    let replay = create().send().await.unwrap();
+    assert_eq!(replay.status(), 409);
+    assert_eq!(replay.json::<Value>().await.unwrap()["code"], "conflict");
+    assert!(cma.records().is_empty());
+    let effects = provider.requests();
+    assert_eq!(effects.len(), 2);
+    assert_eq!(effects[0].method, "PUT");
+    assert_eq!(effects[1].method, "DELETE");
+
+    stop_first.send(()).unwrap();
+    stop_second.send(()).unwrap();
+    first_task.await.unwrap();
+    second_task.await.unwrap();
+}
+
+#[tokio::test]
 async fn failed_binding_retains_encrypted_cleanup_identity_and_blocks_events() {
-    let provider = FakeProvider::start(FakeProviderConfig {
-        reject_binding: true,
-        ..Default::default()
-    })
+    failed_binding_creation(
+        FakeProviderConfig {
+            reject_binding: true,
+            ..Default::default()
+        },
+        502,
+    )
     .await;
+}
+
+#[tokio::test]
+async fn invalid_binding_profile_is_refused_and_retains_only_cleanup_identity() {
+    failed_binding_creation(
+        FakeProviderConfig {
+            binding_failures: [(0, (400, json!({"code": "invalid_binding"})))].into(),
+            ..Default::default()
+        },
+        400,
+    )
+    .await;
+}
+
+async fn failed_binding_creation(config: FakeProviderConfig, status: u16) {
+    let provider = FakeProvider::start(config).await;
     let cma = FakeCma::start(false).await;
     let nyxid = FakeNyxid::start().await;
     let state = management_state(&provider, &cma, &nyxid, key_ring(1));
@@ -110,7 +186,11 @@ async fn failed_binding_retains_encrypted_cleanup_identity_and_blocks_events() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 502);
+    assert_eq!(response.status(), status);
+    assert_eq!(
+        response.json::<Value>().await.unwrap()["code"],
+        "provider_rejected"
+    );
     let recovered: Value = client
         .get(format!(
             "{base}/v1/channel-records/{}",

@@ -159,6 +159,7 @@ async fn failed_lifecycle_history_survives_fresh_readers_and_owner_retirement() 
         store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: original.revision,
                 sandbox: Box::new(admitted.clone()),
                 event_at: MINUTE.into(),

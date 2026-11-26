@@ -56,10 +56,19 @@ impl AgentSandboxBackend {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
+        home: Option<&HomeVolumeAttachment>,
     ) -> Result<Option<RuntimeObservation>> {
         let started = Instant::now();
         for attempt in 0..ADOPTION_REFRESH_ATTEMPTS {
-            let Some(object) = self.client.validate_request(handle, request).await? else {
+            let observed = match home {
+                Some(home) => Some(
+                    self.client
+                        .validate_native_request_with_home(handle, request, home)
+                        .await?,
+                ),
+                None => self.client.validate_request(handle, request).await?,
+            };
+            let Some(object) = observed else {
                 return Ok(None);
             };
             let observed = observation(&object)?;

@@ -4,6 +4,9 @@ use super::DesktopOwnership;
 use serde::{Deserialize, Serialize};
 
 pub const DESKTOP_OWNER_HEADER: &str = "x-cma-desktop-owner";
+// The WebSocket client can receive the headers before the error body arrives.
+pub const DESKTOP_STATE_HEADER: &str = "x-cma-desktop-state";
+pub const DESKTOP_STATE_FAILED: &str = "failed";
 pub const DESKTOP_RECEIVER_LEASE_MS: u64 = 10_000;
 
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

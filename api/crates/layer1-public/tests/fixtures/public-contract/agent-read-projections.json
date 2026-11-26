@@ -1,0 +1,381 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "original-request-agent_capability_unsupported",
+      "operation": "GET /api/v1/agents/{id}/original-request",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/original-request",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "original-request-agent_not_found",
+      "operation": "GET /api/v1/agents/{id}/original-request",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/original-request",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "original-request-forbidden",
+      "operation": "GET /api/v1/agents/{id}/original-request",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/original-request",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "original-request-instance_service_unavailable",
+      "operation": "GET /api/v1/agents/{id}/original-request",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/original-request",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "original-request-not_authenticated",
+      "operation": "GET /api/v1/agents/{id}/original-request",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/original-request",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "original-request-organization_authority_unavailable",
+      "operation": "GET /api/v1/agents/{id}/original-request",
+      "scenario": "shared_agent_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/original-request",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "original-request-owner",
+      "operation": "GET /api/v1/agents/{id}/original-request",
+      "scenario": "read_projection_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_original/original-request",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "status": "ready",
+          "agent_id": "agt_original",
+          "original_request": {
+            "text": "  exact task\r\n第二行 🦀\n",
+            "source": "admitted_first_task",
+            "turn_sequence": null
+          }
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "original-request-unavailable",
+      "operation": "GET /api/v1/agents/{id}/original-request",
+      "scenario": "read_projection_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_original/original-request",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "status": "unavailable",
+          "agent_id": "agt_original",
+          "original_request": null
+        },
+        "bodyKind": "json"
+      }
+    },
+    {
+      "id": "reply-preview-agent_capability_unsupported",
+      "operation": "GET /api/v1/agents/{id}/reply-preview",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/reply-preview",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "reply-preview-agent_not_found",
+      "operation": "GET /api/v1/agents/{id}/reply-preview",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/reply-preview",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "reply-preview-forbidden",
+      "operation": "GET /api/v1/agents/{id}/reply-preview",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/reply-preview",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "reply-preview-instance_service_unavailable",
+      "operation": "GET /api/v1/agents/{id}/reply-preview",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/reply-preview",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "reply-preview-not_authenticated",
+      "operation": "GET /api/v1/agents/{id}/reply-preview",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/reply-preview",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "reply-preview-organization_authority_unavailable",
+      "operation": "GET /api/v1/agents/{id}/reply-preview",
+      "scenario": "shared_agent_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/reply-preview",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "reply-preview-owner",
+      "operation": "GET /api/v1/agents/{id}/reply-preview",
+      "scenario": "read_projection_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_original/reply-preview",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "status": "unavailable",
+          "agent_id": "agt_original",
+          "source_through_seq": null,
+          "latest_assistant_reply": null
+        },
+        "bodyKind": "json"
+      }
+    }
+  ]
+}

@@ -1,42 +1,116 @@
 //! Drain only spare capacity; retained runtime upgrades govern later deletion.
 use super::{
-    api_error, cleanup_inventory::complete, model, rejected, retirement::RETIRING,
-    AgentSandboxPools, NativePoolBinding, Result,
+    api_error, cleanup_inventory::complete, management, rejected, retirement::RETIRING,
+    unavailable, AgentSandboxPools, NativePoolBinding, NativePoolClaim, Result,
 };
 use crate::HomeVolumeAttachment;
-use kube::{api::DynamicObject, Resource, ResourceExt};
+use kube::{
+    api::{DynamicObject, Patch, PatchParams},
+    Resource, ResourceExt,
+};
+use serde_json::json;
 use std::collections::BTreeSet;
 
+const SPARE_DRAIN: &str = "cma/native-pool-spare-drain-v1";
+
 impl AgentSandboxPools {
-    /// The caller persists retirement and rechecks every durable allocation after
-    /// marking. Provider inventory also excludes Claims missing from that store.
+    /// Check drain evidence for an original, already-zero pool. Positive pools
+    /// await a controller that deletes members with identity preconditions.
     pub async fn drain_pool(
         &self,
         binding: &NativePoolBinding,
         homes: &[HomeVolumeAttachment],
+        adopted_claims: &[NativePoolClaim],
     ) -> Result<()> {
-        let (_, pool) = self.retirement_definitions(binding).await?;
-        let Some(pool) = pool else { return Ok(()) };
-        marked(&pool)?;
-        self.drain_inventory(binding, homes).await?;
-        // Fence the actual target write with fresh original identities and the
-        // marker. Never create a definition after a lost retirement response.
-        let (template, pool) = self.retirement_definitions(binding).await?;
-        let Some(pool) = pool else { return Ok(()) };
-        marked(&pool)?;
-        let template = template.ok_or_else(|| rejected("native drain template is missing"))?;
-        let config = model::binding_config(&self.config, binding);
-        let desired = model::pool(&config, &binding.spec, &template, 0)?;
-        self.apply_target(pool, &desired).await?;
+        let Some(pool) = self
+            .checked_drain_pool(binding, homes, adopted_claims)
+            .await?
+        else {
+            return Ok(());
+        };
+        // The WarmPool controller selects members from its cache and deletes
+        // them by name. A pool CAS cannot fence those member deletes.
+        if management::target(&pool)? != 0 {
+            return Err(crate::AdapterError::Unsupported(
+                "native pool drain requires UID and resourceVersion preconditions on controller member deletes".into(),
+            ));
+        }
         Ok(())
+    }
+
+    /// Leave replica changes to the provider that implements guarded member
+    /// deletion. A legacy controller ignores this request and stays pending.
+    pub(super) async fn request_spare_drain(
+        &self,
+        binding: &NativePoolBinding,
+        homes: &[HomeVolumeAttachment],
+        adopted_claims: &[NativePoolClaim],
+    ) -> Result<()> {
+        let Some(pool) = self
+            .checked_drain_pool(binding, homes, adopted_claims)
+            .await?
+        else {
+            return Ok(());
+        };
+        if let Some(request) = pool.annotations().get(SPARE_DRAIN) {
+            if request != &binding.uid {
+                return Err(rejected("native spare drain request has another pool UID"));
+            }
+        } else if management::target(&pool)? == 0 {
+            return Ok(());
+        } else {
+            let version = pool
+                .resource_version()
+                .filter(|value| !value.is_empty())
+                .ok_or_else(|| rejected("native spare drain pool has no resource version"))?;
+            let patch = json!({"metadata":{
+                "uid":binding.uid,"resourceVersion":version,"annotations":{SPARE_DRAIN:binding.uid}
+            }});
+            let result = self
+                .pools
+                .patch(&binding.name, &PatchParams::default(), &Patch::Merge(patch))
+                .await;
+            let (_, current) = self.retirement_definitions(binding).await?;
+            if !current.as_ref().is_some_and(|pool| {
+                marked(pool).is_ok() && pool.annotations().get(SPARE_DRAIN) == Some(&binding.uid)
+            }) {
+                result.map_err(api_error)?;
+                return Err(rejected("native spare drain request was not retained"));
+            }
+        }
+        let state = management::status(binding.clone(), &pool)?;
+        if state.desired_replicas != 0 || !state.observed || state.ready_replicas != 0 {
+            return Err(unavailable(
+                "native spare drain is pending provider completion",
+            ));
+        }
+        Ok(())
+    }
+
+    async fn checked_drain_pool(
+        &self,
+        binding: &NativePoolBinding,
+        homes: &[HomeVolumeAttachment],
+        adopted_claims: &[NativePoolClaim],
+    ) -> Result<Option<DynamicObject>> {
+        let (_, pool) = self.retirement_definitions(binding).await?;
+        let Some(pool) = pool else { return Ok(None) };
+        marked(&pool)?;
+        self.drain_inventory(binding, homes, adopted_claims).await?;
+        let (_, current) = self.retirement_definitions(binding).await?;
+        if let Some(pool) = &current {
+            marked(pool)?;
+        }
+        Ok(current)
     }
 
     async fn drain_inventory(
         &self,
         binding: &NativePoolBinding,
         homes: &[HomeVolumeAttachment],
+        adopted_claims: &[NativePoolClaim],
     ) -> Result<()> {
-        if homes.len() > 10_000 {
+        if homes.len().saturating_add(adopted_claims.len()) > 10_000 {
             return Err(rejected("native drain homes exceed their bound"));
         }
         let mut identities = BTreeSet::new();
@@ -91,7 +165,7 @@ impl AgentSandboxPools {
                         ));
                     }
                     self.validate_native_volume(volume, origin)?;
-                    retained.push(origin);
+                    retained.push(&origin.claim);
                     true
                 }
                 (None, None, None) => {
@@ -148,6 +222,27 @@ impl AgentSandboxPools {
                     }
                 }
             }
+        }
+        let mut owned_members = retained
+            .iter()
+            .filter_map(|claim| claim.sandbox_name.clone())
+            .collect::<BTreeSet<_>>();
+        for expected in adopted_claims {
+            let name = expected
+                .sandbox_name
+                .as_deref()
+                .ok_or_else(|| rejected("native drain Claim has no persisted assignment"))?;
+            let member = members
+                .iter()
+                .find(|member| member.name_any() == name)
+                .ok_or_else(|| rejected("native drain Claim member is missing"))?;
+            let claim = original(&claims, &expected.name, &expected.uid)?
+                .ok_or_else(|| rejected("native drain original Claim is missing"))?;
+            self.prove_drain_assignment(binding, expected, claim, member, &members)?;
+            if !owned_members.insert(name.to_owned()) {
+                return Err(rejected("native drain repeats a Claim member"));
+            }
+            retained.push(expected);
         }
         self.verify_retained_claim_inventory(binding, &retained, &claims)
     }

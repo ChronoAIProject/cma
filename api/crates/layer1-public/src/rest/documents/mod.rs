@@ -1,6 +1,8 @@
 //! Public document projections; durable policy and mutations belong to Layer 2.
 mod reads;
 mod shapes;
+#[cfg(test)]
+mod tests;
 mod writes;
 use super::idempotency::{IdempotencyKey, RequestBody};
 use crate::AuthenticatedCaller;
@@ -20,7 +22,9 @@ pub fn documents_router(service: Arc<DocumentService>) -> Router {
         .route("/api/v1/documents", get(reads::list).post(writes::create))
         .route(
             "/api/v1/documents/{id}",
-            get(reads::read).patch(writes::update),
+            get(reads::read)
+                .patch(writes::update)
+                .delete(writes::delete),
         )
         .route("/api/v1/documents/{id}/source", get(reads::source))
         .route("/api/v1/documents/{id}/revisions", get(reads::revisions))
@@ -157,6 +161,7 @@ impl IntoResponse for DocumentProblem {
         reads::comments,
         writes::create,
         writes::update,
+        writes::delete,
         writes::grant,
         writes::revoke,
         writes::create_link,
@@ -176,6 +181,7 @@ impl IntoResponse for DocumentProblem {
         DocumentShareRecipient,
         DocumentLink,
         DocumentMutation,
+        DocumentDeletionReceipt,
         CreateDocumentRequest,
         UpdateDocumentRequest,
         GrantDocumentRequest,

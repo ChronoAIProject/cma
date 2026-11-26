@@ -9,9 +9,9 @@ use tower::ServiceExt as _;
 
 const SANDBOX: &str = "/api/v1/sandboxes/fixture";
 const WORKSPACE: &str = "/api/v1/workspaces/fixture";
-const READS: [&str; 3] = ["/auth/session", SANDBOX, WORKSPACE];
+pub(super) const READS: [&str; 3] = ["/auth/session", SANDBOX, WORKSPACE];
 
-fn application(auth: Arc<AuthState>, calls: Arc<AtomicUsize>) -> Router {
+pub(super) fn application(auth: Arc<AuthState>, calls: Arc<AtomicUsize>) -> Router {
     async fn protected(AuthenticatedCaller(caller): AuthenticatedCaller) -> StatusCode {
         if caller.authorization.allows(Capability::UseOwnSandboxes) {
             StatusCode::OK
@@ -43,7 +43,7 @@ fn application(auth: Arc<AuthState>, calls: Arc<AtomicUsize>) -> Router {
         ))
 }
 
-async fn credentials(fixture: &Fixture, cookie: bool) -> HeaderMap {
+pub(super) async fn credentials(fixture: &Fixture, cookie: bool) -> HeaderMap {
     let mut headers = HeaderMap::new();
     if cookie {
         let login = fixture
@@ -64,7 +64,7 @@ async fn credentials(fixture: &Fixture, cookie: bool) -> HeaderMap {
     headers
 }
 
-async fn request(
+pub(super) async fn request(
     app: &Router,
     credentials: &HeaderMap,
     method: Method,
@@ -204,13 +204,19 @@ async fn malformed_partial_and_unknown_failures_never_gain_retry_permission() {
                 }
             }
             for path in READS {
-                let before = fixture.control.requests.load(Ordering::SeqCst);
-                let (status, headers, body) = request(&app, &credentials, Method::GET, path).await;
+                use super::protected_outage_counts::{dispatches, measured};
+                let ((status, headers, body), metrics) =
+                    measured(request(&app, &credentials, Method::GET, path)).await;
                 assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{fault} {path}");
                 assert_eq!(body["code"], "store_failed");
                 assert_eq!(body["retryable"], false);
                 assert!(!headers.contains_key(header::RETRY_AFTER));
-                assert!(fixture.control.requests.load(Ordering::SeqCst) - before <= 2);
+                let attempted = dispatches(&metrics);
+                assert!(
+                    attempted <= 2,
+                    "cookie={cookie} fault={fault} path={path} dispatches={attempted}\n{metrics}"
+                );
+                assert_eq!(attempted, if fault == "store" { 0 } else { 2 });
                 assert_eq!(calls.load(Ordering::SeqCst), 0);
             }
         }

@@ -2,10 +2,7 @@ use super::*;
 use crate::dependency_test_support::{assert_deadline, finish, Peer};
 
 fn client(peer: &Peer) -> OrnnAgentSkillResolver {
-    // Keep the production client/timeouts/redirect policy, changing only the peer.
-    let mut client =
-        OrnnAgentSkillResolver::scoped(LOCATOR_ORIGIN, TestCredentials::present()).unwrap();
-    Arc::get_mut(&mut client).unwrap().request_origin = reqwest::Url::parse(&peer.origin).unwrap();
+    let client = super::super::test_support::scoped_peer(peer, TestCredentials::present());
     Arc::try_unwrap(client).ok().unwrap()
 }
 
@@ -173,4 +170,30 @@ async fn successive_lookup_batches_share_one_30_second_resolution_budget() {
     tokio::time::advance(Duration::from_secs(120)).await;
     assert_eq!(peer.count(), 16);
     drop(held);
+}
+
+#[tokio::test]
+async fn streamed_metadata_enforces_the_byte_limit_without_content_length() {
+    for oversized in [false, true] {
+        let mut peer = Peer::start().await;
+        let result = resolve(client(&peer), 1);
+        let metadata = material("skill_0", "2.3", &"a".repeat(64)).to_string();
+        let mut body = metadata.into_bytes();
+        body.resize(MAX_RESPONSE_BYTES + usize::from(oversized), b' ');
+        // A streaming body leaves Content-Length unknown to exercise the accumulated limit.
+        let chunks = body
+            .chunks(16 * 1024)
+            .map(|chunk| Ok::<_, std::io::Error>(axum::body::Bytes::copy_from_slice(chunk)))
+            .collect::<Vec<_>>();
+        peer.next()
+            .await
+            .respond(200, Body::from_stream(futures_util::stream::iter(chunks)));
+        let value = finish(result).await;
+        if oversized {
+            assert!(matches!(value, Err(AgentSkillResolutionError::Invalid(_))));
+        } else {
+            assert_eq!(value.unwrap()[0].version, "2.3");
+        }
+        assert_eq!(peer.count(), 1);
+    }
 }

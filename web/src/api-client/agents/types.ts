@@ -83,7 +83,12 @@ export const agentSandbox = object({
   id: text,
   name: text,
   status: sandboxStatus,
-  profile: instanceProfileReference,
+  profile: object({
+    id: text,
+    revision: positiveInteger,
+    digest: text,
+    readable: optional(boolean),
+  }),
 });
 export type AgentSandbox = Output<typeof agentSandbox>;
 export const agentRuntimeMetadata = object({
@@ -133,6 +138,7 @@ export const agent = object({
   first_message: optional(firstMessageState),
   failure: optional(failure),
   stop_reason: optional(text),
+  restart_available: optional(boolean),
   created_at: text,
   updated_at: text,
   ready_at: optional(text),

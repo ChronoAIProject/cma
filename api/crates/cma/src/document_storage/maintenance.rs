@@ -14,6 +14,9 @@ use std::{
 };
 use tokio::time::Instant;
 
+mod fenced;
+pub(crate) use fenced::ConfirmedDeletion;
+
 // Provisional E1 scope names; storage-owner confirmation and NyxID grants are pending.
 const MAINTENANCE_SCOPE: &str = "proxy object:read object:list object:delete";
 const MAX_LIST_BYTES: usize = 256 * 1024;
@@ -38,11 +41,7 @@ impl StorageMaintenance {
             .map_err(|_| "document maintenance HTTP client could not be built")?;
         let origin = url::Url::parse(&config.platform_origin)
             .map_err(|_| "document maintenance origin is invalid")?;
-        let mut objects = origin.clone();
-        objects.set_path(&format!(
-            "/api/v1/proxy/s/chrono-storage-service/api/buckets/{}/objects",
-            config.bucket
-        ));
+        let objects = super::storage_objects_url(&config)?;
         let token = StorageToken::new(
             http.clone(),
             origin,
@@ -56,6 +55,10 @@ impl StorageMaintenance {
             enabled,
             token,
         }))
+    }
+
+    pub(crate) fn namespace_sha256(&self) -> String {
+        layer2_core::document_artifacts::digest(self.objects.as_str().as_bytes())
     }
 
     async fn send(

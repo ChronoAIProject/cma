@@ -398,3 +398,6 @@ async fn checkpoint_bounds_corruption_and_history_seal_fail_closed() {
     assert_eq!(store.get_agent(&current.id).await.unwrap(), Some(current));
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "typed_fence_tests.rs"]
+mod typed_fence;

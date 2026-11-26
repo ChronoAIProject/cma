@@ -1,7 +1,7 @@
 use super::*;
 use crate::ingress::routing_store::EventIdentity;
 
-struct Server {
+pub(super) struct Server {
     url: String,
     task: tokio::task::JoinHandle<()>,
 }
@@ -11,7 +11,7 @@ impl Drop for Server {
     }
 }
 impl Server {
-    async fn new(f: &Fixture) -> Self {
+    pub(super) async fn new(f: &Fixture) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!(
             "http://{}/v1/telegram/{}",
@@ -24,7 +24,7 @@ impl Server {
         });
         Self { url, task }
     }
-    async fn send(&self, raw: &Value, secret: &str) -> (u16, Value) {
+    pub(super) async fn send(&self, raw: &Value, secret: &str) -> (u16, Value) {
         let response = reqwest::Client::new()
             .post(&self.url)
             .header("x-telegram-bot-api-secret-token", secret)

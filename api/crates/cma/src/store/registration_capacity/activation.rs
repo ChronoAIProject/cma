@@ -1,5 +1,6 @@
 //! The immutable cohort marker also admits the new Launch reservation format.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::{
     bson::{doc, Document},
     Client, ClientSession, Collection,
@@ -83,7 +84,7 @@ pub(super) async fn activate(
                 }
             },
             Err(error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 if matches!(&error, Error::Driver(error) if is_transient(error) || is_duplicate_key(error))
                 {
                     continue;

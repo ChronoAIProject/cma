@@ -1,6 +1,7 @@
 //! Single-writer Mongo claims for automatic agent-title generation.
 
 use crate::store::agent_log_telemetry::ScanCaller;
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use std::time::SystemTime;
 
@@ -63,20 +64,20 @@ pub(super) async fn acquire_claim(
         }
         let claim = match apply_claim(store, request, now, expires_at, &mut session).await {
             Ok(ClaimApply::Settled(claim)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Ok(claim);
             }
             Ok(ClaimApply::Written(claim)) => claim,
             Err(ApplyError::Domain(error)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 continue;
             }
             Err(ApplyError::Driver(_)) => {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(AgentTitleStoreError::Unavailable);
             }
         };
@@ -139,7 +140,10 @@ async fn apply_claim(
     {
         return Ok(ClaimApply::Settled(None));
     }
-    if state.effect.unknown() {
+    // An unresolved provider effect is never redispatched. Until its
+    // prompt-derived fallback is stored, it may take a fallback-only claim.
+    let unknown = state.effect.unknown();
+    if unknown && state.stored.is_some() {
         return Ok(ClaimApply::Settled(None));
     }
     let accepted = state.effect.accepted().is_some();
@@ -154,8 +158,8 @@ async fn apply_claim(
     if !accepted && !state.retry.eligible(now) {
         return Ok(ClaimApply::Settled(None));
     }
-    let exhausted =
-        !accepted && state.retry.attempts >= layer2_core::sandbox::AGENT_TITLE_MAX_ATTEMPTS;
+    let exhausted = !accepted
+        && (unknown || state.retry.attempts >= layer2_core::sandbox::AGENT_TITLE_MAX_ATTEMPTS);
     let attempts = state.retry.attempts + u32::from(!exhausted && !accepted);
     let mode = if exhausted {
         AgentTitleClaimMode::FallbackOnly

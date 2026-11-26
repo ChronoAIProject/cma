@@ -4,12 +4,10 @@ use crate::ingress_budget::{AdmittedError, AdmittedOperation, IngressOwnershipPo
 
 #[path = "runtime_routing_backend_ingress.rs"]
 mod ingress;
+#[path = "runtime_routing_provider.rs"]
+mod provider;
 
-/// Persistence port for the provider chosen before a runtime creation request.
-#[async_trait::async_trait]
-pub trait RuntimeRoutingStore: Send + Sync {
-    async fn select(&self, sandbox: &str, generation: u64, default_new: bool) -> Result<bool>;
-}
+pub use provider::RuntimeRoutingStore;
 
 /// New allocations use the selected provider. Existing runtime handles retain
 /// their provider during rollout and rollback; inventory includes both owners.
@@ -19,40 +17,6 @@ pub struct RuntimeBackends {
     pub allocate_agent_sandbox: bool,
     pub routing: Arc<dyn RuntimeRoutingStore>,
     pub home_routes: Option<Arc<crate::RoutedHomeVolumes>>,
-}
-
-impl RuntimeBackends {
-    fn require_home_routes(&self, home: &crate::HomeVolumeRequest) -> Result<()> {
-        if self.home_routes.is_none() && home.scope.is_some() {
-            return Err(AdapterError::Rejected(
-                "recorded home storage authority is not configured".into(),
-            ));
-        }
-        Ok(())
-    }
-    fn select(&self, agent_sandbox: bool) -> Result<&dyn HostedBackend> {
-        let backend = if agent_sandbox {
-            &self.agent_sandbox
-        } else {
-            &self.opensandbox
-        };
-        backend.as_deref().ok_or_else(|| {
-            AdapterError::Unavailable("recorded runtime provider is not configured".into())
-        })
-    }
-    async fn allocation_provider(&self, request: &ProviderSandboxRequest) -> Result<bool> {
-        let identity = crate::hosted::deployment::provider_request_identity(request)?;
-        self.routing
-            .select(
-                &identity.sandbox_id,
-                identity.generation,
-                self.allocate_agent_sandbox,
-            )
-            .await
-    }
-    fn for_handle(&self, handle: &RuntimeHandle) -> Result<&dyn HostedBackend> {
-        self.select(handle.0.starts_with("agent-sandbox:"))
-    }
 }
 
 #[async_trait::async_trait]
@@ -87,6 +51,13 @@ impl HostedBackend for RuntimeBackends {
         self.for_handle(handle)
             .ok()?
             .capacity_recovery_transport(handle)
+    }
+
+    fn stale_turn_producer(
+        &self,
+        handle: &RuntimeHandle,
+    ) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
+        self.for_handle(handle).ok()?.stale_turn_producer(handle)
     }
 
     async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
@@ -236,6 +207,23 @@ impl HostedBackend for RuntimeBackends {
             .select_native_pool(request, image, home)
             .await
     }
+    async fn select_native_canary_pool(
+        &self,
+        request: &ProviderSandboxRequest,
+        image: &crate::RuntimeImage,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<crate::agent_sandbox::NativePoolBinding> {
+        self.require_home_routes(home)?;
+        if !self.allocation_provider(request).await? {
+            return Err(AdapterError::Rejected(
+                "runtime canary requires native allocation".into(),
+            ));
+        }
+        self.select(true)?
+            .select_native_canary_pool(request, image, home)
+            .await
+    }
+
     async fn validate_funding(
         &self,
         request: &ProviderSandboxRequest,
@@ -278,6 +266,38 @@ impl HostedBackend for RuntimeBackends {
             .provision_with_home(request, home)
             .await
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        receiver: &crate::receiver_failure::RetirementReceiver,
+    ) -> Result<bool> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .challenge_retirement_receiver(handle, request, home, receiver)
+            .await
+    }
+    async fn retire_unreachable(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        receiver: &crate::RetirementPod,
+    ) -> Result<()> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .retire_unreachable(handle, request, home, receiver)
+            .await
+    }
+    async fn verify_retired(
+        &self,
+        handle: &RuntimeHandle,
+        home: &crate::HomeVolumeAttachment,
+    ) -> Result<()> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?.verify_retired(handle, home).await
+    }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
         self.for_handle(handle)?.teardown_retained(handle).await
     }
@@ -296,6 +316,9 @@ impl HostedBackend for RuntimeBackends {
         self.for_handle(handle)?
             .verify_suspended(handle, request)
             .await
+    }
+    fn retained_startup_policy(&self) -> Option<&dyn crate::hosted::HostedRetainedStartupPolicy> {
+        Some(self)
     }
     async fn resume(
         &self,
@@ -372,6 +395,16 @@ impl HostedBackend for RuntimeBackends {
         request: &ProviderSandboxRequest,
     ) -> Result<Option<RuntimeObservation>> {
         self.for_handle(handle)?.adopt(handle, request).await
+    }
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        self.for_handle(handle)?
+            .adopt_with_home(handle, request, home)
+            .await
     }
     async fn inspect_native_runtime(
         &self,
@@ -455,3 +488,6 @@ impl HostedBackend for RuntimeBackends {
 #[cfg(test)]
 #[path = "runtime_routing_backend_ingress_tests.rs"]
 mod ingress_tests;
+
+#[path = "retained_startup_policy_routing.rs"]
+mod retained_policy;

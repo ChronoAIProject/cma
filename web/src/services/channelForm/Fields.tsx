@@ -1,8 +1,9 @@
+import { useFieldValidity } from './useFieldValidity';
 import { useId, type ReactNode } from 'react';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { Picker } from '../../ui/Picker';
-import { useValidationPath } from './ValidationPath';
+import { useServerFieldError, useValidationPath } from './ValidationPath';
 import { text } from './model';
 import '../NodeInspector.css';
 import { ConfigurationDepth, useConfigurationSection } from '../ConfigurationSections';
@@ -46,6 +47,10 @@ export function TextField({
   secret,
   multiline,
   hint,
+  validationMessage,
+  pattern,
+  minLength,
+  maxLength,
 }: {
   path?: string;
   label: string;
@@ -54,38 +59,64 @@ export function TextField({
   secret?: boolean;
   multiline?: boolean;
   hint?: string;
+  validationMessage?: string;
+  pattern?: string;
+  minLength?: number;
+  maxLength?: number;
 } & (
   { readOnly: true; onChange?: never } | { readOnly?: false; onChange: (value: string) => void }
 )) {
   const validationPath = useValidationPath(path);
   const id = useId();
+  const serverError = useServerFieldError(validationPath);
+  const message = validationMessage ?? serverError;
+  const ref = useFieldValidity(message);
   const description = [required ? 'Required.' : undefined, hint].filter(Boolean).join(' ');
   return (
-    <div className="channel-value-field" data-validation-path={validationPath}>
+    <div className="channel-value-field" data-validation-path={validationPath} ref={ref}>
       <label htmlFor={id}>{label}</label>
       {multiline ? (
         <textarea
           id={id}
-          aria-describedby={description ? `${id}-hint` : undefined}
+          aria-describedby={
+            [description ? `${id}-hint` : '', message ? `${id}-error` : '']
+              .filter(Boolean)
+              .join(' ') || undefined
+          }
+          aria-invalid={message ? true : undefined}
           value={text(value)}
           onChange={onChange ? (e) => onChange(e.target.value) : undefined}
           readOnly={readOnly}
           rows={3}
-          maxLength={32768}
+          minLength={minLength}
+          maxLength={maxLength ?? 32768}
           required={required}
         />
       ) : (
         <Input
           id={id}
-          aria-describedby={description ? `${id}-hint` : undefined}
+          aria-describedby={
+            [description ? `${id}-hint` : '', message ? `${id}-error` : '']
+              .filter(Boolean)
+              .join(' ') || undefined
+          }
+          aria-invalid={message ? true : undefined}
           value={text(value)}
           onChange={onChange ? (e) => onChange(e.target.value) : undefined}
           readOnly={readOnly}
+          pattern={pattern}
+          minLength={minLength}
+          maxLength={maxLength}
           type={secret ? 'password' : 'text'}
           autoComplete={secret ? 'new-password' : 'off'}
           required={required}
         />
       )}
+      {message ? (
+        <p id={`${id}-error`} className="channel-field-error">
+          {message}
+        </p>
+      ) : null}
       {description ? (
         <p id={`${id}-hint`} className="channel-field-hint">
           {description}
@@ -102,6 +133,8 @@ export function NumberField({
   min = 0,
   max,
   step = 1,
+  hint,
+  validationMessage,
 }: {
   path?: string;
   label: string;
@@ -110,15 +143,25 @@ export function NumberField({
   min?: number;
   max?: number;
   step?: number | 'any';
+  hint?: string;
+  validationMessage?: string;
 }) {
   const validationPath = useValidationPath(path);
   const id = useId();
+  const serverError = useServerFieldError(validationPath);
+  const message = validationMessage ?? serverError;
+  const ref = useFieldValidity(message);
   return (
-    <div className="channel-value-field" data-validation-path={validationPath}>
+    <div className="channel-value-field" data-validation-path={validationPath} ref={ref}>
       <label htmlFor={id}>{label}</label>
       <Input
         id={id}
         type="number"
+        aria-invalid={message ? true : undefined}
+        aria-describedby={
+          [hint ? `${id}-hint` : '', message ? `${id}-error` : ''].filter(Boolean).join(' ') ||
+          undefined
+        }
         value={typeof value === 'number' && Number.isFinite(value) ? value : ''}
         min={min}
         max={max}
@@ -126,6 +169,16 @@ export function NumberField({
         onChange={(e) => onChange(e.target.valueAsNumber)}
         required
       />
+      {hint ? (
+        <p id={`${id}-hint`} className="channel-field-hint">
+          {hint}
+        </p>
+      ) : null}
+      {message ? (
+        <p id={`${id}-error`} className="channel-field-error">
+          {message}
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -158,20 +211,23 @@ export function Choice({
   );
 }
 export function Toggle({
+  path,
   label,
   value,
   onChange,
   disabled,
   hint,
 }: {
+  path?: string;
   label: string;
   value: unknown;
   onChange: (v: boolean) => void;
   disabled?: boolean;
   hint?: string;
 }) {
+  const validationPath = useValidationPath(path);
   return (
-    <label className="channel-toggle-field">
+    <label className="channel-toggle-field" data-validation-path={validationPath}>
       <input
         type="checkbox"
         checked={value === true}
@@ -192,6 +248,7 @@ export function StringList({
   onChange,
   max = 64,
   requiredItems = false,
+  validationMessage,
 }: {
   path?: string;
   label: string;
@@ -199,9 +256,18 @@ export function StringList({
   onChange: (v: string[]) => void;
   max?: number;
   requiredItems?: boolean;
+  validationMessage?: string;
 }) {
+  const errorId = useId();
+  const serverError = useServerFieldError(useValidationPath(path));
+  const error = validationMessage ?? serverError;
   return (
     <Section title={label} path={path}>
+      {error ? (
+        <p id={errorId} className="channel-field-error">
+          {error}
+        </p>
+      ) : null}
       {value.map((item, index) => (
         <div className="channel-form-row" key={index}>
           <TextField
@@ -219,7 +285,11 @@ export function StringList({
           </Button>
         </div>
       ))}
-      <Button disabled={value.length >= max} onClick={() => onChange([...value, ''])}>
+      <Button
+        aria-describedby={validationMessage ? errorId : undefined}
+        disabled={value.length >= max}
+        onClick={() => onChange([...value, ''])}
+      >
         Add {label}
       </Button>
     </Section>

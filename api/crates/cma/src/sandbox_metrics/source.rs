@@ -4,6 +4,32 @@ use layer2_core::sandbox_metrics::{
 };
 use layer3_adapter::sandbox_metrics::{PhysicalSeries, Selection, SourceMetric};
 use std::collections::{BTreeMap, BTreeSet};
+
+#[cfg(test)]
+pub(crate) async fn collect_fixture(
+    store: Arc<ReportingStore>,
+    source: MetricsClient,
+    ids: &[String],
+    range: Range,
+) -> Result<()> {
+    let holder = "measured-usage-fixture";
+    if !store.lease("rollups", holder, 70).await? {
+        return Err(MetricsError::Busy);
+    }
+    let worker = MetricsWorkers {
+        store: store.clone(),
+        source: Some(source),
+        native: None,
+        cluster: "fixture".into(),
+        enabled: true,
+    };
+    let collected = worker
+        .collect_page("rollups", holder, ids, range, false)
+        .await;
+    store.release("rollups", holder).await?;
+    collected
+}
+
 impl MetricsWorkers {
     pub(super) async fn collect(&self, holder: &str, replay: bool) -> Result<()> {
         let now = crate::store::usage_reports::now();

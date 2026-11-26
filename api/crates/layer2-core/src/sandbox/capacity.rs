@@ -7,6 +7,7 @@ use crate::{Caller, Capability};
 #[derive(Debug, Clone)]
 pub struct SandboxCapacitySnapshot {
     pub counts: Vec<(SandboxStatus, u64)>,
+    pub public_owner_limit: Option<u16>,
     pub observed_at: String,
 }
 
@@ -52,10 +53,12 @@ impl SandboxService {
                 SandboxServiceError::Unavailable("Sandbox capacity overflow".into())
             })?;
         }
+        let owner_limit = policy.max_sandboxes_per_owner;
+        let limit = owner_limit.min(snapshot.public_owner_limit.unwrap_or(owner_limit));
         Ok(OwnerSandboxCapacity {
-            limit: policy.max_sandboxes_per_owner,
+            limit,
             live,
-            available: u64::from(policy.max_sandboxes_per_owner).saturating_sub(live),
+            available: u64::from(limit).saturating_sub(live),
             counts_by_status,
             observed_at: snapshot.observed_at,
         })

@@ -84,11 +84,15 @@ pub(crate) async fn command(args: &[String]) -> Result<String> {
         .await?;
         return publish(&invocation.output_file, &result);
     }
-    let client =
-        mongodb::Client::with_uri_str(std::env::var("CHRONO_MONGODB_URI").map_err(|_| REFUSED)?)
-            .await
-            .map_err(|_| REFUSED)?;
-    let database = client.database(&std::env::var("CHRONO_MONGODB_DATABASE").map_err(|_| REFUSED)?);
+    let name = std::env::var("CHRONO_MONGODB_DATABASE").map_err(|_| REFUSED)?;
+    let mut options = mongodb::options::ClientOptions::parse(
+        std::env::var("CHRONO_MONGODB_URI").map_err(|_| REFUSED)?,
+    )
+    .await
+    .map_err(|_| REFUSED)?;
+    crate::store::transaction_barrier::bind(&mut options, &name);
+    let client = mongodb::Client::with_options(options).map_err(|_| REFUSED)?;
+    let database = client.database(&name);
     let store = ArchiveStore { client, database };
     if action == "inspect" {
         let current = store.inspect(&request.sandbox_id).await?;

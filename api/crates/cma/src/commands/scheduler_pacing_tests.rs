@@ -20,6 +20,76 @@ async fn advance(duration: Duration) {
 }
 
 #[tokio::test(start_paused = true)]
+async fn cancel_wake_scans_before_the_periodic_tick_and_coalesces_at_fifty_ms() {
+    let probe = Arc::new(Probe::default());
+    let wake = Arc::new(Notify::new());
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = probe
+        .paced()
+        .with_cancel_wake(Some(wake.clone()))
+        .spawn(signal);
+    settle().await;
+    assert_eq!(probe.discovery_calls.lock().unwrap().len(), 1);
+    advance(Duration::from_millis(10)).await;
+
+    let committed = Instant::now();
+    let first = probe.put("cmd_interrupt_first", Behavior::Complete);
+    wake.notify_one();
+    advance(Duration::from_millis(1)).await;
+    assert_eq!(probe.count(&first), 1);
+    let first_wake_scan = probe.discovery_calls.lock().unwrap()[1];
+    assert!(first_wake_scan.duration_since(committed) < POLL_INTERVAL);
+
+    let second = probe.put("cmd_interrupt_second", Behavior::Complete);
+    for _ in 0..32 {
+        wake.notify_one();
+    }
+    advance(CANCEL_WAKE_SPACING - Duration::from_millis(2)).await;
+    assert_eq!(probe.discovery_calls.lock().unwrap().len(), 2);
+    assert_eq!(probe.count(&second), 0);
+    advance(Duration::from_millis(2)).await;
+    assert_eq!(probe.count(&second), 1);
+    let second_wake_scan = probe.discovery_calls.lock().unwrap()[2];
+    assert!(second_wake_scan.duration_since(first_wake_scan) >= CANCEL_WAKE_SPACING);
+    advance(CANCEL_WAKE_SPACING).await;
+    assert_eq!(probe.discovery_calls.lock().unwrap().len(), 3);
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancel_wake_waits_for_capacity_and_shutdown_drops_pending_discovery() {
+    let probe = Arc::new(Probe::default());
+    let release = Arc::new(Notify::new());
+    let first = probe.put("cmd_existing", Behavior::Wait(release.clone()));
+    let wake = Arc::new(Notify::new());
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = probe
+        .scheduler(1)
+        .with_cancel_wake(Some(wake.clone()))
+        .spawn(signal);
+    settle().await;
+    assert_eq!(probe.count(&first), 1);
+
+    let waiting = probe.put("cmd_interrupt_waiting", Behavior::Complete);
+    wake.notify_one();
+    advance(CANCEL_WAKE_SPACING).await;
+    assert_eq!(probe.discovery_calls.lock().unwrap().len(), 1);
+    assert_eq!(probe.count(&waiting), 0);
+    release.notify_one();
+    settle().await;
+    assert_eq!(probe.count(&waiting), 1);
+    assert_eq!(probe.peak.load(Ordering::SeqCst), 1);
+
+    let late = probe.put("cmd_interrupt_shutdown", Behavior::Complete);
+    wake.notify_one();
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+    assert_eq!(probe.count(&late), 0);
+    assert_eq!(probe.discovery_calls.lock().unwrap().len(), 2);
+}
+
+#[tokio::test(start_paused = true)]
 async fn first_fold_is_required_then_unchanged_work_waits_for_the_audit() {
     let probe = Arc::new(Probe::default());
     let id = probe.dispatched("cmd_a", true, Behavior::Deferred(Duration::from_secs(1)));

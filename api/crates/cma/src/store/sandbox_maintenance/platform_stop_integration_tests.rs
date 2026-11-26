@@ -9,7 +9,7 @@ use layer2_core::budget::{
 use layer2_core::sandbox::store::{InactivityPauseCause, SandboxSessionStore};
 use layer2_core::sandbox::PLATFORM_SPEND_PAUSE_NOTICE;
 
-async fn install_stop(store: &MongoSandboxStore) {
+pub(super) async fn install_stop(store: &MongoSandboxStore) {
     let settings = layer2_core::PlatformSettings {
         model_budget: BudgetSettings {
             enabled: true,

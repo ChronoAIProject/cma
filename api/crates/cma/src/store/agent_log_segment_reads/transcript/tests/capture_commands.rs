@@ -166,3 +166,43 @@ async fn projections_capture_head_once_with_equal_results_and_fewer_find_command
         db.drop().await.unwrap();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires a disposable replica set"]
+async fn privacy_export_refuses_over_budget_segment_before_fetching_log_originals() {
+    let (_, db, store, agent, _) = fixture(0, false).await;
+    let (observed, commands) = observed_store(db.name()).await;
+    let request = first(32);
+    let page = observed
+        .agent_log_export_page(&agent, &request)
+        .await
+        .unwrap();
+    assert!(page.is_some());
+    assert!(!std::mem::take(&mut *commands.lock().unwrap())
+        .finds
+        .is_empty());
+
+    let over_budget = 8_i64 * 1024 * 1024 + 1;
+    assert_eq!(
+        store
+            .segment_logs
+            .heads
+            .update_one(
+                doc! {"_id": agent.id.as_str()},
+                doc! {"$set": {"active_bytes": over_budget, "lifetime_bytes": over_budget}},
+            )
+            .await
+            .unwrap()
+            .modified_count,
+        1,
+    );
+    assert_eq!(
+        observed.agent_log_export_page(&agent, &request).await,
+        Err(SandboxStoreError::AgentLogCapacityExceeded),
+    );
+    let refused = std::mem::take(&mut *commands.lock().unwrap());
+    assert!(refused.finds.iter().any(|name| name == segments::HEADS));
+    assert!(refused.finds.iter().all(|name| name != "agent_log"));
+    assert_eq!(refused.writes, 0);
+    db.drop().await.unwrap();
+}

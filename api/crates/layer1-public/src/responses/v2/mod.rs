@@ -43,6 +43,7 @@ mod stream_pages;
 #[cfg(test)]
 pub(crate) mod tests;
 
+pub use error::{missing as resource_not_found, unauthenticated as authentication_required};
 pub use output::{ActivityItem, V2OutputItem};
 pub use projection::{ResponseConversation, V2ResponseObject, V2ResponseStatus};
 pub use queued_cancellation::QueuedCancellationNeedsOwner;

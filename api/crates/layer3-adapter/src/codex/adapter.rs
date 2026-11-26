@@ -1,14 +1,16 @@
 use super::*;
+use crate::{desktop_ownership::DesktopOwnedRuntime, Result};
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    fn retained_startup_policy(&self) -> Option<&dyn crate::RetainedStartupPolicyControl> {
+        self.hosted.retained_startup_policy()
+    }
+
     fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
         self.hosted.startup_binding_headroom(handles)
     }
-    fn desktop_ownership(
-        &self,
-        handle: &RuntimeHandle,
-    ) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
+    fn desktop_ownership(&self, handle: &RuntimeHandle) -> Option<&dyn DesktopOwnedRuntime> {
         self.hosted.desktop_ownership(handle)
     }
     fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
@@ -21,28 +23,28 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileListRequest,
-    ) -> crate::Result<crate::AgentFileListReceipt> {
+    ) -> Result<crate::AgentFileListReceipt> {
         self.list_agent_files_protected(handle, request).await
     }
     async fn read_agent_file(
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileReadRequest,
-    ) -> crate::Result<crate::AgentFileReadReceipt> {
+    ) -> Result<crate::AgentFileReadReceipt> {
         self.read_agent_file_protected(handle, request).await
     }
     async fn write_agent_file(
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileWriteRequest,
-    ) -> crate::Result<crate::AgentFileWriteReceipt> {
+    ) -> Result<crate::AgentFileWriteReceipt> {
         self.write_agent_file_protected(handle, request).await
     }
     async fn delete_agent_file(
         &self,
         handle: &RuntimeHandle,
         request: &crate::AgentFileDeleteRequest,
-    ) -> crate::Result<crate::AgentFileDeleteReceipt> {
+    ) -> Result<crate::AgentFileDeleteReceipt> {
         self.delete_agent_file_protected(handle, request).await
     }
     async fn upload_agent_attachment(
@@ -50,7 +52,7 @@ impl SandboxAdapter for CodexAdapter {
         handle: &RuntimeHandle,
         request: &crate::AgentAttachmentRequest,
         content: Vec<u8>,
-    ) -> crate::Result<crate::AgentAttachmentReceipt> {
+    ) -> Result<crate::AgentAttachmentReceipt> {
         self.hosted
             .upload_agent_attachment(handle, request, content)
             .await
@@ -59,14 +61,14 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         runtime: &RuntimeProvisionRequest,
         home: &crate::HomeVolumeRequest,
-    ) -> crate::Result<crate::HomeVolumeRequest> {
+    ) -> Result<crate::HomeVolumeRequest> {
         self.hosted.reserve_home_request(runtime, home).await
     }
     fn verify_retained_home_route(
         &self,
         handle: &RuntimeHandle,
         home: &crate::HomeVolumeRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.hosted.verify_retained_home_route(handle, home)
     }
     fn native_pools(&self) -> Option<&dyn crate::agent_sandbox::NativePoolControl> {
@@ -75,23 +77,20 @@ impl SandboxAdapter for CodexAdapter {
     fn native_pools_for_home(
         &self,
         home: &crate::HomeVolumeRequest,
-    ) -> crate::Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
+    ) -> Result<Option<&dyn crate::agent_sandbox::NativePoolControl>> {
         self.hosted.native_pools_for_home(home)
     }
     async fn select_native_pool(
         &self,
         request: &RuntimeProvisionRequest,
         home: &crate::HomeVolumeRequest,
-    ) -> crate::Result<Option<crate::agent_sandbox::NativePoolBinding>> {
+    ) -> Result<Option<crate::agent_sandbox::NativePoolBinding>> {
         self.hosted.select_native_pool(request, home).await
     }
     fn capabilities(&self) -> AdapterCapabilities {
         self.hosted.capabilities()
     }
-    async fn open_desktop(
-        &self,
-        handle: &RuntimeHandle,
-    ) -> crate::Result<crate::DesktopConnectionHandle> {
+    async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         self.hosted.open_desktop(handle).await
     }
     fn home_volumes(&self) -> Option<&dyn crate::HomeVolumeStore> {
@@ -101,48 +100,45 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         request: &RuntimeAdoptionRequest,
         until: u64,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.hosted.set_runtime_deadline(request, until).await
     }
 
-    async fn provision(&self, spec: &SandboxSpec) -> crate::Result<RuntimeHandle> {
+    async fn provision(&self, spec: &SandboxSpec) -> Result<RuntimeHandle> {
         self.hosted.provision(spec).await
     }
-    async fn teardown_retained_runtime(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+    async fn teardown_retained_runtime(&self, handle: &RuntimeHandle) -> Result<()> {
         self.hosted.teardown_retained_runtime(handle).await
     }
-    async fn suspend_runtime(&self, request: &RuntimeAdoptionRequest) -> crate::Result<()> {
+    fn runtime_retirement(&self) -> Option<&dyn crate::RuntimeRetirement> {
+        Some(&self.hosted)
+    }
+    async fn suspend_runtime(&self, request: &RuntimeAdoptionRequest) -> Result<()> {
         self.hosted.suspend_runtime(request).await
     }
-    async fn verify_suspended_runtime(
-        &self,
-        request: &RuntimeAdoptionRequest,
-    ) -> crate::Result<()> {
+    async fn verify_suspended_runtime(&self, request: &RuntimeAdoptionRequest) -> Result<()> {
         self.hosted.verify_suspended_runtime(request).await
     }
     async fn resume_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
         next: &RuntimeProvisionRequest,
-    ) -> crate::Result<RuntimeHandle> {
+    ) -> Result<RuntimeHandle> {
         self.hosted.resume_runtime(request, next).await
     }
     async fn upgrade_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
         next: &RuntimeProvisionRequest,
-    ) -> crate::Result<RuntimeHandle> {
+    ) -> Result<RuntimeHandle> {
         self.hosted.upgrade_runtime(request, next).await
     }
 
-    async fn runtime_status(&self, handle: &RuntimeHandle) -> crate::Result<crate::RuntimeStatus> {
+    async fn runtime_status(&self, handle: &RuntimeHandle) -> Result<crate::RuntimeStatus> {
         self.hosted.runtime_status(handle).await
     }
 
-    async fn provision_runtime(
-        &self,
-        request: &RuntimeProvisionRequest,
-    ) -> crate::Result<RuntimeHandle> {
+    async fn provision_runtime(&self, request: &RuntimeProvisionRequest) -> Result<RuntimeHandle> {
         self.hosted.provision_runtime(request).await
     }
 
@@ -150,7 +146,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         request: &RuntimeProvisionRequest,
         operation_id: &str,
-    ) -> crate::Result<crate::RuntimeProvisionReceipt> {
+    ) -> Result<crate::RuntimeProvisionReceipt> {
         self.hosted
             .provision_runtime_receipted(request, operation_id)
             .await
@@ -160,38 +156,38 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         original: &crate::RuntimeProvisionReceipt,
         operation_id: &str,
-    ) -> crate::Result<crate::RuntimeFinalityReceipt> {
+    ) -> Result<crate::RuntimeFinalityReceipt> {
         self.hosted.finalize_runtime(original, operation_id).await
     }
     async fn runtime_termination(
         &self,
         handle: &RuntimeHandle,
-    ) -> crate::Result<Option<crate::RuntimeTermination>> {
+    ) -> Result<Option<crate::RuntimeTermination>> {
         self.hosted.runtime_termination(handle).await
     }
-    async fn runtime_inventory(&self) -> crate::Result<Vec<RuntimeObservation>> {
+    async fn runtime_inventory(&self) -> Result<Vec<RuntimeObservation>> {
         self.hosted.runtime_inventory().await
     }
     async fn inspect_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
-    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+    ) -> Result<Option<crate::RuntimeInspection>> {
         self.hosted.inspect_runtime(request).await
     }
     async fn inspect_runtime_after(
         &self,
         request: &RuntimeAdoptionRequest,
         admission: &crate::InspectionAdmission,
-    ) -> crate::Result<Option<crate::RuntimeInspection>> {
+    ) -> Result<Option<crate::RuntimeInspection>> {
         self.hosted.inspect_runtime_after(request, admission).await
     }
     async fn adopt_runtime(
         &self,
         request: &RuntimeAdoptionRequest,
-    ) -> crate::Result<Option<RuntimeObservation>> {
+    ) -> Result<Option<RuntimeObservation>> {
         self.hosted.adopt_runtime(request).await
     }
-    async fn reclaim_runtime(&self, observation: &RuntimeObservation) -> crate::Result<()> {
+    async fn reclaim_runtime(&self, observation: &RuntimeObservation) -> Result<()> {
         self.hosted.reclaim_runtime(observation).await
     }
 
@@ -199,7 +195,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &InstallRequest,
-    ) -> crate::Result<InstallReceipt> {
+    ) -> Result<InstallReceipt> {
         self.hosted.run_install(handle, request).await
     }
 
@@ -207,7 +203,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &RestoreBootstrapRequest,
-    ) -> crate::Result<RestoreBootstrapReceipt> {
+    ) -> Result<RestoreBootstrapReceipt> {
         self.hosted.bootstrap_restore(handle, request).await
     }
 
@@ -215,7 +211,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         frame: CredentialFrame,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.hosted.deliver_credential(handle, frame).await
     }
 
@@ -223,7 +219,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceRequest,
-    ) -> crate::Result<WorkspaceReceipt> {
+    ) -> Result<WorkspaceReceipt> {
         self.hosted.prepare_workspace(handle, request).await
     }
 
@@ -231,7 +227,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &crate::WorkspacePrepareRecoveryRequest,
-    ) -> crate::Result<crate::WorkspacePrepareRecoveryReceipt> {
+    ) -> Result<crate::WorkspacePrepareRecoveryReceipt> {
         self.hosted.recover_workspace_prepare(handle, request).await
     }
 
@@ -239,7 +235,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceSetupRequest,
-    ) -> crate::Result<SetupReceipt> {
+    ) -> Result<SetupReceipt> {
         self.hosted.run_workspace_setup(handle, request).await
     }
 
@@ -247,14 +243,14 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &WorkspaceRemoveRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.hosted.remove_workspace(handle, request).await
     }
 
     async fn workspace_removal_support(
         &self,
         handle: &RuntimeHandle,
-    ) -> crate::Result<crate::WorkspaceRemovalSupport> {
+    ) -> Result<crate::WorkspaceRemovalSupport> {
         self.hosted.workspace_removal_support(handle).await
     }
 
@@ -263,7 +259,7 @@ impl SandboxAdapter for CodexAdapter {
         handle: &RuntimeHandle,
         expected_runtime: &crate::RuntimeStatus,
         request: &WorkspaceRemoveRequest,
-    ) -> crate::Result<crate::WorkspaceRemovalObservation> {
+    ) -> Result<crate::WorkspaceRemovalObservation> {
         self.hosted
             .reconcile_workspace_removal(handle, expected_runtime, request)
             .await
@@ -274,7 +270,7 @@ impl SandboxAdapter for CodexAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &WorktreeRequest,
-    ) -> crate::Result<WorktreeReceipt> {
+    ) -> Result<WorktreeReceipt> {
         self.hosted
             .add_worktree(handle, authority_fence, request)
             .await
@@ -285,7 +281,7 @@ impl SandboxAdapter for CodexAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &WorktreeRef,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.hosted
             .remove_worktree(handle, authority_fence, request)
             .await
@@ -297,7 +293,7 @@ impl SandboxAdapter for CodexAdapter {
         authority_fence: u64,
         worktree: &WorktreeRequest,
         home: &AgentHomeRequest,
-    ) -> crate::Result<WorktreeReceipt> {
+    ) -> Result<WorktreeReceipt> {
         self.hosted
             .prepare_agent_resources(handle, authority_fence, worktree, home)
             .await
@@ -308,7 +304,7 @@ impl SandboxAdapter for CodexAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &AgentHomeRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.hosted
             .materialize_agent_home(handle, authority_fence, request)
             .await
@@ -318,7 +314,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         archive: &crate::SkillArchive,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.hosted.cache_skill_archive(handle, archive).await
     }
 
@@ -327,7 +323,7 @@ impl SandboxAdapter for CodexAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &crate::AgentSkillInstallRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.hosted
             .install_agent_skill(handle, authority_fence, request)
             .await
@@ -338,7 +334,7 @@ impl SandboxAdapter for CodexAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &AgentHomeRemoveRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.hosted
             .remove_agent_home(handle, authority_fence, request)
             .await
@@ -350,7 +346,7 @@ impl SandboxAdapter for CodexAdapter {
         authority_fence: u64,
         request: &AgentOpenRequest,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> Result<ConversationChannel> {
         self.hosted
             .open_agent(handle, authority_fence, request, updates)
             .await
@@ -363,7 +359,7 @@ impl SandboxAdapter for CodexAdapter {
         request: &AgentOpenRequest,
         conversation_id: &str,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> Result<ConversationChannel> {
         self.hosted
             .reconnect_agent(handle, authority_fence, request, conversation_id, updates)
             .await
@@ -389,7 +385,7 @@ impl SandboxAdapter for CodexAdapter {
         conversation_id: &str,
         recovered_prompt: Option<crate::PromptIdentity>,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> Result<ConversationChannel> {
         self.hosted
             .reconnect_agent_with_prompt(
                 handle,
@@ -410,7 +406,7 @@ impl SandboxAdapter for CodexAdapter {
         conversation_id: &str,
         operation_sequence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<ConversationChannel> {
+    ) -> Result<ConversationChannel> {
         self.hosted
             .reconnect_agent_with_context(
                 handle,
@@ -428,7 +424,7 @@ impl SandboxAdapter for CodexAdapter {
         handle: &RuntimeHandle,
         authority_fence: u64,
         request: &AgentCloseRequest,
-    ) -> crate::Result<()> {
+    ) -> Result<()> {
         self.hosted
             .close_agent(handle, authority_fence, request)
             .await
@@ -438,7 +434,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         agent: &AgentSlot,
-    ) -> crate::Result<ConversationSnapshot> {
+    ) -> Result<ConversationSnapshot> {
         self.hosted.capture_agent(handle, agent).await
     }
 
@@ -446,11 +442,11 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         agent: &AgentSlot,
-    ) -> crate::Result<Vec<u8>> {
+    ) -> Result<Vec<u8>> {
         self.hosted.export_agent_history(handle, agent).await
     }
 
-    fn checkpoint_exclusions(&self, agents: &[AgentSlot]) -> crate::Result<Vec<String>> {
+    fn checkpoint_exclusions(&self, agents: &[AgentSlot]) -> Result<Vec<String>> {
         home::checkpoint_exclusions(agents)
     }
 
@@ -458,7 +454,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &CheckpointRequest,
-    ) -> crate::Result<CheckpointReceipt> {
+    ) -> Result<CheckpointReceipt> {
         self.hosted.checkpoint(handle, request).await
     }
 
@@ -466,7 +462,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &CheckpointHoldRequest,
-    ) -> crate::Result<CheckpointHoldReceipt> {
+    ) -> Result<CheckpointHoldReceipt> {
         self.hosted.checkpoint_for_teardown(handle, request).await
     }
 
@@ -474,7 +470,7 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &CheckpointHoldRequest,
-    ) -> crate::Result<CheckpointHoldReceipt> {
+    ) -> Result<CheckpointHoldReceipt> {
         self.hosted.verify_checkpoint_hold(handle, request).await
     }
 
@@ -482,19 +478,19 @@ impl SandboxAdapter for CodexAdapter {
         &self,
         handle: &RuntimeHandle,
         request: &CheckpointWriterResumeRequest,
-    ) -> crate::Result<CheckpointWriterResumeReceipt> {
+    ) -> Result<CheckpointWriterResumeReceipt> {
         self.hosted.resume_checkpoint_writers(handle, request).await
     }
 
-    async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> crate::Result<()> {
+    async fn restore(&self, handle: &RuntimeHandle, request: &RestoreRequest) -> Result<()> {
         self.hosted.restore(handle, request).await
     }
 
-    async fn resources(&self, handle: &RuntimeHandle) -> crate::Result<ResourceReading> {
+    async fn resources(&self, handle: &RuntimeHandle) -> Result<ResourceReading> {
         self.hosted.resources(handle).await
     }
 
-    async fn teardown(&self, handle: &RuntimeHandle) -> crate::Result<()> {
+    async fn teardown(&self, handle: &RuntimeHandle) -> Result<()> {
         self.hosted.teardown(handle).await
     }
 }

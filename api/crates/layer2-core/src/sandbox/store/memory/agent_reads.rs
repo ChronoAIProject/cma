@@ -52,3 +52,16 @@ impl InMemorySandboxStore {
         self.lock().agent_logs.insert(id.clone(), entries);
     }
 }
+
+#[cfg(test)]
+impl InMemorySandboxStore {
+    pub(crate) fn with_agent_fixture(agent: Agent) -> Self {
+        agent
+            .work
+            .validate_resolved_skills(&agent.profile.content.skills)
+            .expect("valid stored skill material");
+        let store = Self::default();
+        store.lock().agents.insert(agent.id.clone(), agent);
+        store
+    }
+}

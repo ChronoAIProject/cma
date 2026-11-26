@@ -72,6 +72,9 @@ pub struct FilterOptions {
 /// The primary label is always the person's or Sandbox's plain display name.
 pub fn option_label(kind: OptionKind, value: &str, name: Option<&str>) -> String {
     if kind == OptionKind::Runtime {
+        if let Some(label) = pinned_runtime_label(value) {
+            return label;
+        }
         return if value.trim().is_empty()
             || contains_identifier(value)
             || value.chars().any(char::is_control)
@@ -88,6 +91,27 @@ pub fn option_label(kind: OptionKind, value: &str, name: Option<&str>) -> String
             "Unnamed Sandbox"
         })
         .to_owned()
+}
+
+/// OCI pins expose the repository basename and the leading digest shown in
+/// Sandbox details. General identifier redaction still applies to the name.
+fn pinned_runtime_label(value: &str) -> Option<String> {
+    let (image, digest) = value.rsplit_once("@sha256:")?;
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
+    let name = image.rsplit('/').next().filter(|name| {
+        !name.is_empty()
+            && !contains_identifier(name)
+            && name.bytes().all(|byte| {
+                byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_' | b':')
+            })
+    });
+    Some(format!(
+        "{} · sha256:{}",
+        name.unwrap_or("Runtime image"),
+        &digest[..12]
+    ))
 }
 
 pub fn public_option_name<'a>(value: &str, name: Option<&'a str>) -> Option<&'a str> {

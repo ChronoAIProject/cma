@@ -373,3 +373,9 @@ fn inodes(config: &RuntimeConfig) -> Result<[(u64, u64); 3]> {
     }
     Ok(result)
 }
+
+/// Decode captured metadata without selecting, locking or opening a store.
+pub(crate) fn inspect_descriptor(config: &RuntimeConfig, bytes: &[u8]) -> Result<(u64, Vec<u8>)> {
+    let descriptor = Descriptor::decode(config, bytes)?;
+    Ok((descriptor.born, descriptor.bytes()?))
+}

@@ -18,6 +18,10 @@ pub(in crate::store::sandbox_maintenance) struct CapturedActivities {
 }
 
 impl CapturedActivities {
+    pub(super) fn contains(&self, agent: &Agent) -> bool {
+        self.rows.contains_key(&agent.id)
+    }
+
     pub(in crate::store::sandbox_maintenance) async fn capture(
         store: &MongoSandboxStore,
         id: &SandboxId,

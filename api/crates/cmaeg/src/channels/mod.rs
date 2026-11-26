@@ -12,10 +12,14 @@ pub mod definition;
 mod definition_sources;
 mod github_sources;
 pub(crate) use definition_sources::check_github_sources;
+mod inspection;
 mod lifecycle;
 pub mod management;
 pub(crate) mod mutation;
 pub mod observer;
+pub(crate) mod profile_assignment;
+pub(crate) mod profile_revision;
+mod relay_telegram;
 mod requests;
 pub mod resolver;
 /// The routed channel the core's routing tests use, shared by this crate's tests.
@@ -37,8 +41,12 @@ mod native_discord;
 mod native_telegram;
 
 #[cfg(test)]
+mod create_cleanup_tests;
+#[cfg(test)]
 mod lark_effect_gate_tests;
 
+#[cfg(test)]
+mod create_fence_tests;
 #[cfg(test)]
 mod mutation_audit_tests;
 #[cfg(test)]
@@ -47,3 +55,5 @@ mod mutation_bounds_tests;
 mod mutation_fixture;
 #[cfg(test)]
 mod mutation_tests;
+#[cfg(test)]
+mod setup_refusal_tests;

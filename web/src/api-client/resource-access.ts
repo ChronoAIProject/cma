@@ -1,5 +1,7 @@
 import type { ResolvedConfig } from './config.js';
 import type { OperationOptions } from './http.js';
+import { ProtocolError } from './errors.js';
+import { revocationReference, type RevocationResult } from './resource-revocation-result.js';
 import {
   command,
   identity,
@@ -138,6 +140,33 @@ export type ResourceShare = Output<typeof resourceShare>;
 export type ShareReceipt = Output<typeof shareReceipt>;
 export type EffectiveAccess = Output<typeof effectiveAccess>;
 
+function changedShare(
+  kind: string,
+  id: string,
+  shareId: string,
+  revision: number,
+  mode?: ResourceShare['mode'],
+) {
+  return (raw: unknown): ShareReceipt & RevocationResult => {
+    const value = shareReceipt(raw);
+    const revocation = revocationReference(raw, kind, id, shareId, revision);
+    if (!revocation) return value;
+    const selector = value.share.selector;
+    if (
+      value.operation_id !== revocation.operation ||
+      value.share.id !== shareId ||
+      value.share.revision !== revision + 1 ||
+      selector.kind !== kind ||
+      (selector.kind === 'agent' ? selector.agent_id : selector.sandbox_id) !== id ||
+      (mode === undefined
+        ? value.share.revoked_at === null
+        : value.share.revoked_at !== null || value.share.mode !== mode)
+    )
+      throw new ProtocolError('Revocation receipt does not match the original request');
+    return { ...value, revocation };
+  };
+}
+
 /** Policy inspection and owner share management; a permission is not a later-operation credential. */
 export class ResourceAccess {
   constructor(private readonly config: ResolvedConfig) {}
@@ -183,11 +212,16 @@ export class ResourceAccess {
     body: UpdateShareRequest,
     options: CommandOptions,
   ) {
-    return read(this.config, this.path(kind, id, shareId), shareReceipt, {
-      ...command(options),
-      method: 'PATCH',
-      body: input(updateShareRequest, body),
-    });
+    return read(
+      this.config,
+      this.path(kind, id, shareId),
+      changedShare(kind, id, shareId, body.expected_revision, body.mode),
+      {
+        ...command(options),
+        method: 'PATCH',
+        body: input(updateShareRequest, body),
+      },
+    );
   }
   revokeShare(
     kind: string,
@@ -200,7 +234,7 @@ export class ResourceAccess {
     return read(
       this.config,
       query(this.path(kind, id, shareId), { expected_revision: expectedRevision }),
-      shareReceipt,
+      changedShare(kind, id, shareId, expectedRevision),
       { ...command(options), method: 'DELETE' },
     );
   }
@@ -238,7 +272,19 @@ export class ResourceAccess {
       query(`/api/v1/agents/${segment(agentId)}/share-links/${segment(shareId)}`, {
         expected_revision: expectedRevision,
       }),
-      agentShareLink,
+      (raw): AgentShareLink & RevocationResult => {
+        const value = agentShareLink(raw);
+        const revocation = revocationReference(raw, 'agent', agentId, shareId, expectedRevision);
+        if (!revocation) return value;
+        if (
+          value.id !== shareId ||
+          value.agent_id !== agentId ||
+          value.revision !== expectedRevision + 1 ||
+          value.revoked_at === null
+        )
+          throw new ProtocolError('Revocation link does not match the original request');
+        return { ...value, revocation };
+      },
       { ...command(options), method: 'DELETE' },
     );
   }

@@ -49,6 +49,7 @@ pub(in crate::store) async fn advance_sandbox(
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "channel_reuse_cleanup_execution": { "$exists": false },
             "owned_workspace_cleanup_admission_v1": { "$exists": false },
+            crate::store::native_retirement_action::FIELD: { "$exists": false },
             "revision": signed(previous.revision, "sandbox revision")
                 .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
         },

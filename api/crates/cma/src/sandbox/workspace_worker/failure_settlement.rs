@@ -24,7 +24,11 @@ impl WorkspaceWorker {
             .as_ref()
             .filter(|binding| {
                 workspace.work.step == WorkspaceWorkStep::Prepare
-                    && matches!(workspace.source, WorkspaceSource::RepositorySnapshot { .. })
+                    && matches!(
+                        workspace.source,
+                        WorkspaceSource::RepositorySnapshot { .. }
+                            | WorkspaceSource::PublicRepositorySnapshot { .. }
+                    )
                     && !failure.retryable
                     && matches!(
                         failure.class,

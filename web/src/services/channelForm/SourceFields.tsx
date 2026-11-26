@@ -1,16 +1,17 @@
+import { CustomSourceFields } from './CustomSourceFields';
+import { botIdMessage, telegramUsernameMessage } from './connectorValidation';
 import { AdvancedFields } from './AdvancedFields';
 import { LarkMessageEffectsFields } from './LarkMessageEffectsFields';
 import { LarkResourceFields } from './LarkResourceFields';
 import { DiscordSourceFields } from './DiscordSourceFields';
 import { NativeLarkSourceFields } from './NativeLarkSourceFields';
 import { WhatsappSourceFields } from './WhatsappSourceFields';
-import { Button } from '../../ui/Button';
 import { modeUnavailable, RelayDiscoveryNotice, useRelayCapabilities } from '../RelayCapabilities';
 import { RelaySetupGuidance } from './RelaySetupGuidance';
 import { SourceAdmissionFields } from './SourceAdmissionFields';
+import { TelegramMemberJoinFields } from './TelegramMemberJoinFields';
 import { Choice, Section, StringList, TextField, Toggle } from './Fields';
-import { object, optional, strings, without, type Fields } from './model';
-import { ValueBuilder } from './ValueBuilder';
+import { optional, strings, without, type Fields } from './model';
 const platforms = ['telegram', 'lark', 'feishu', 'discord', 'whatsapp', 'slack'];
 export function SourceFields({
   value,
@@ -45,7 +46,7 @@ export function SourceFields({
     return <WhatsappSourceFields value={value} onChange={onChange} hideAdmission={hideAdmission} />;
   if (value.type === 'custom')
     return (
-      <CustomSource
+      <CustomSourceFields
         value={value}
         onChange={onChange}
         attachmentDescription={attachmentDescription}
@@ -79,7 +80,10 @@ export function SourceFields({
               }))}
               onChange={(platform) => {
                 const updated = {
-                  ...without(value, platform !== value.platform ? ['lark_resources'] : []),
+                  ...without(
+                    value,
+                    platform !== value.platform ? ['lark_resources', 'member_join_chat_ids'] : [],
+                  ),
                   platform,
                   ...(['discord', 'whatsapp'].includes(platform) &&
                   !value.trust_normalized &&
@@ -189,6 +193,9 @@ export function SourceFields({
                 original platform event.
               </p>
             ) : null}
+            {value.platform === 'telegram' ? (
+              <TelegramMemberJoinFields value={value} onChange={onChange} />
+            ) : null}
             <RelaySetupGuidance platform={String(value.platform)} />
           </>
         ) : null}
@@ -239,11 +246,9 @@ export function SourceFields({
               }
               onChange={(enabled) =>
                 onChange(
-                  optional(
-                    optional(value, 'message_events', enabled || undefined),
-                    'channel_posts',
-                    enabled ? value.channel_posts : undefined,
-                  ),
+                  enabled
+                    ? optional(value, 'message_events', true)
+                    : without(value, ['message_events', 'channel_posts', 'member_join_chat_ids']),
                 )
               }
             />
@@ -278,6 +283,7 @@ export function SourceFields({
                 ? 'Managed connections register these event types; an older registration may need an operator refresh.'
                 : 'If the current webhook does not subscribe to these event types, refresh its registration.'}
             </p>
+            <TelegramMemberJoinFields value={value} onChange={onChange} />
             {discovery.authoring?.native_telegram_message_events_enabled !== true ? (
               <p className="channel-field-hint">
                 This gateway has not enabled new message event settings. Saved settings are
@@ -295,6 +301,10 @@ export function SourceFields({
         ) : (
           <>
             <TextField
+              path="bot_id"
+              validationMessage={
+                value.type === 'telegram' ? botIdMessage(value.bot_id, 'telegram') : undefined
+              }
               label="Bot ID"
               value={value.bot_id}
               onChange={(v) => onChange(optional(value, 'bot_id', v || undefined))}
@@ -302,6 +312,15 @@ export function SourceFields({
               hint="Use the platform's bot user ID for exact mention and reply matching."
             />
             <TextField
+              path="bot_username"
+              validationMessage={
+                value.type === 'telegram' ? telegramUsernameMessage(value.bot_username) : undefined
+              }
+              hint={
+                value.type === 'telegram'
+                  ? 'Optional: 5–32 letters, numbers or underscores, without @.'
+                  : undefined
+              }
               label="Bot username"
               value={value.bot_username}
               onChange={(v) => onChange(optional(value, 'bot_username', v || undefined))}
@@ -316,110 +335,6 @@ export function SourceFields({
         </>
       ) : null}
       {!hideAdmission ? <SourceAdmissionFields value={value} onChange={onChange} /> : null}
-    </>
-  );
-}
-function CustomSource({
-  value,
-  onChange,
-  attachmentDescription,
-}: {
-  value: Fields;
-  onChange: (v: Fields) => void;
-  attachmentDescription?: string;
-}) {
-  const auth = object(value.auth),
-    attachments = object(value.attachments);
-  const set = (key: string, next: unknown) => onChange(optional(value, key, next));
-  return (
-    <>
-      <Section
-        title="Custom event authentication"
-        description="Choose how your application authenticates incoming HTTP events. The prompt template controls how event data is presented to the agent."
-      >
-        <Choice
-          label="Authentication method"
-          value={auth.type}
-          options={[
-            { value: 'hmac', label: 'HMAC signature' },
-            { value: 'nyxid_key', label: 'NyxID agent key' },
-          ]}
-          onChange={(type) =>
-            set('auth', type === 'hmac' ? { type, key_id: '' } : { type, key_hashes: [] })
-          }
-        />
-        {auth.type === 'hmac' ? (
-          <TextField
-            label="HMAC key ID"
-            value={auth.key_id}
-            onChange={(key_id) => set('auth', { ...auth, key_id })}
-            required
-          />
-        ) : (
-          <StringList
-            label="Allowed key hashes"
-            value={strings(auth.key_hashes)}
-            onChange={(key_hashes) => set('auth', { ...auth, key_hashes })}
-          />
-        )}
-        <TextField
-          label="Prompt template"
-          value={value.prompt_template}
-          onChange={(v) => set('prompt_template', v || undefined)}
-          multiline
-        />
-      </Section>
-      <Section
-        title="Event attachments"
-        description={
-          attachmentDescription ??
-          'Allow attachments from approved HTTPS origins. What the agent can open depends on its connection and attachment support.'
-        }
-      >
-        <Toggle
-          label="Accept event attachments"
-          value={value.attachments != null}
-          onChange={(enabled) =>
-            set('attachments', enabled ? { pointer: '/attachments', origins: [] } : undefined)
-          }
-        />
-        {value.attachments != null ? (
-          <>
-            <TextField
-              label="Attachment list path"
-              value={attachments.pointer}
-              onChange={(pointer) => set('attachments', { ...attachments, pointer })}
-              required
-              hint="Path inside event data, for example /attachments."
-            />
-            <StringList
-              label="Allowed HTTPS origins"
-              value={strings(attachments.origins)}
-              onChange={(origins) => set('attachments', { ...attachments, origins })}
-              max={16}
-            />
-          </>
-        ) : null}
-      </Section>
-      <Section
-        title="Event data validation"
-        description="Optionally require incoming event data to match a schema before it reaches the agent."
-      >
-        {value.schema != null ? (
-          <>
-            <ValueBuilder
-              label="Event schema"
-              value={value.schema}
-              onChange={(v) => set('schema', v)}
-            />
-            <Button onClick={() => set('schema', undefined)}>Remove schema validation</Button>
-          </>
-        ) : (
-          <Button onClick={() => set('schema', { type: 'object', properties: {} })}>
-            Add schema validation
-          </Button>
-        )}
-      </Section>
     </>
   );
 }

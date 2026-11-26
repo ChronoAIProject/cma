@@ -11,13 +11,13 @@
   "oracle_rerun": "UNCONFIRMED direct invocation (no test-count output); subsequent Cargo invocation CANCELLED while queued, exit130",
   "compiler_failure": "Initial invocation selected rustc1.99.1 with1.96.1 cached crates (E0514); pin RUSTC/RUSTDOC/RUSTUP_TOOLCHAIN1.96.1, remove only task-local num-traits/regex-syntax artifacts (64.4MiB), rebuild PASS",
   "logs": {
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/fmt-integration-3415875.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/clippy-integration-3415875.log": "0f2000c65e0a753d5b3c72e57b538e81d450a662a1291d9b7a053b38df191863",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/compile-integration-3415875.log": "03880963d60492386ef6a1ce96177d2b5432775f6762bf70d041b08ca50eff40",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/compile-integration-3415875-pinned.log": "207ecbef2c81e3b544587520d310277610fe230ccc4e067a94a9733d24dcfc6e",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/compile-integration-3415875-clean.log": "7ce87a9410232121c20a0720e84d7404f81e6dba2c29ffda5535b1ccd751ffca",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/oracle-integration-3415875.log": "88235285c9866d17311c51c79ffb2de90f7b5c05acc80944e7d2c4c80350c461",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/oracle-integration-3415875-cargo.log": "fb0077f40eb9e70c644995863decf8c8d8a7468603b7c3e773ca8435c1d255bf"
+    "tech-lead.staff/developer-17/evidence/final/fmt-integration-3415875.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tech-lead.staff/developer-17/evidence/final/clippy-integration-3415875.log": "0f2000c65e0a753d5b3c72e57b538e81d450a662a1291d9b7a053b38df191863",
+    "tech-lead.staff/developer-17/evidence/final/compile-integration-3415875.log": "03880963d60492386ef6a1ce96177d2b5432775f6762bf70d041b08ca50eff40",
+    "tech-lead.staff/developer-17/evidence/final/compile-integration-3415875-pinned.log": "207ecbef2c81e3b544587520d310277610fe230ccc4e067a94a9733d24dcfc6e",
+    "tech-lead.staff/developer-17/evidence/final/compile-integration-3415875-clean.log": "7ce87a9410232121c20a0720e84d7404f81e6dba2c29ffda5535b1ccd751ffca",
+    "tech-lead.staff/developer-17/evidence/final/oracle-integration-3415875.log": "88235285c9866d17311c51c79ffb2de90f7b5c05acc80944e7d2c4c80350c461",
+    "tech-lead.staff/developer-17/evidence/final/oracle-integration-3415875-cargo.log": "fb0077f40eb9e70c644995863decf8c8d8a7468603b7c3e773ca8435c1d255bf"
   },
   "binaries": {
     "cmaeg": "2b14cce6854a5a603a88af7075390045139760154e6409acd98e4096ba6e6dd0",

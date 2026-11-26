@@ -32,6 +32,8 @@ pub(super) struct LoginAttemptDoc {
     pub(super) return_to: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) actor_link_intent: Option<CipherEnvelope>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) service_authorization: Option<CipherEnvelope>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(super) silent: bool,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]

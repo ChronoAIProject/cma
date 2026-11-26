@@ -5,6 +5,7 @@ import { conversationFromTranscript } from '../conversation';
 import { mergeTranscriptSnapshot } from '../chronology';
 import { transientReadFailure, type AgentLoadLineage, type ReadyAgent } from '../loadAgent';
 import type { ConversationState } from '../model';
+import { sameApprovalProjection, withApprovalProjection } from './externalApprovalProjection';
 import { foldV2Item } from './projection';
 import type { AgentV2Session } from './client';
 import { conversationFromHead } from './liveHead';
@@ -13,6 +14,7 @@ import { createProjectionPublication } from './publication';
 import { readAgentProjections } from './projections';
 import type { AuthorizedOpeningReads } from './openingReads';
 import { IdentityChangedError } from './identity';
+import { ApprovalBaselineRequired } from './approvalBaseline';
 import { OPENING_EVENT_PAGE_LIMIT } from './openingReplay';
 
 export async function loadV2Agent(
@@ -63,6 +65,7 @@ export async function loadV2Agent(
         limit: OPENING_EVENT_PAGE_LIMIT,
         pageCursor,
         signal,
+        externalApprovals: true,
         messageBindings: true,
         toolOutput: true,
         retainedOutput: true,
@@ -152,7 +155,7 @@ export async function loadV2Agent(
     try {
       const head =
         prepared?.replay === undefined
-          ? await v2.events.head(agentId, { signal })
+          ? await v2.events.head(agentId, { signal, externalApprovals: true })
           : await prepared.replay.head;
       if (head === undefined) return undefined;
       const conversation = conversationFromHead(head);
@@ -223,6 +226,22 @@ export async function loadV2Agent(
     incarnation = page.incarnation;
     if (head !== undefined && incarnation !== head.agentIncarnation)
       throw new Error('Agent snapshot changed conversation identity.');
+    if (page.externalApprovalProjection) {
+      if (
+        [conversation, head].some(
+          (prior) =>
+            prior?.externalApprovalProjection &&
+            !sameApprovalProjection(
+              prior.externalApprovalProjection,
+              page!.externalApprovalProjection!,
+            ),
+        )
+      ) {
+        v2.invalidateApprovalProjection();
+        throw new ApprovalBaselineRequired('policy');
+      }
+      conversation = withApprovalProjection(conversation, page.externalApprovalProjection);
+    }
     conversation = { ...conversation, agentIncarnation: incarnation };
     for (const item of page.items) conversation = foldV2Item(conversation, item);
     items.push(...page.items);

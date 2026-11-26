@@ -13,7 +13,7 @@ pub(in crate::store) fn binary(bytes: impl Into<Vec<u8>>) -> Binary {
     }
 }
 
-pub(super) fn valid_digest(value: &Binary) -> bool {
+pub(in crate::store) fn valid_digest(value: &Binary) -> bool {
     value.subtype == BinarySubtype::Generic && value.bytes.len() == 32
 }
 

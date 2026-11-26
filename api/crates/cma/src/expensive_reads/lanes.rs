@@ -71,7 +71,9 @@ pub(super) fn classify(request: &Request) -> Option<Lane> {
     }
     matches!(
         path,
-        "/api/v1/agents/{id}/events"
+        "/api/v1/account/privacy-export"
+            | "/api/v1/account/privacy-export/agents/{id}/transcript"
+            | "/api/v1/agents/{id}/events"
             | "/api/v1/agents/{id}/transcript"
             | "/api/v1/agents/{id}/history"
             | "/api/v1/agents/{id}/artifacts"

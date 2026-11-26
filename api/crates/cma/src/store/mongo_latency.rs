@@ -1,7 +1,10 @@
 //! Bounded connection-pool latency summaries. Never retain or log commands, replies,
 //! addresses, identifiers, credentials, database names, or driver errors.
 use std::{
-    collections::{hash_map::DefaultHasher, HashMap},
+    collections::{
+        hash_map::{DefaultHasher, Entry},
+        HashMap,
+    },
     hash::{Hash, Hasher},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -22,6 +25,23 @@ const LABELS: [&str; 4] = [
 const MAX_TRACKED_CONNECTIONS: usize = 4096;
 const LIMITS_US: [u64; 6] = [1_000, 5_000, 25_000, 100_000, 250_000, 1_000_000];
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PoolConnection {
+    server: u64,
+    id: u32,
+}
+
+impl PoolConnection {
+    fn new(address: &mongodb::options::ServerAddress, id: u32) -> Self {
+        let mut hash = DefaultHasher::new();
+        address.hash(&mut hash);
+        Self {
+            server: hash.finish(),
+            id,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
 struct Sample {
     count: u64,
@@ -34,7 +54,8 @@ struct Sample {
 struct Window {
     started: Instant,
     samples: [Sample; LABELS.len()],
-    checked_out: HashMap<u64, Instant>,
+    checked_out: HashMap<PoolConnection, Instant>,
+    server_in_use: HashMap<u64, usize>,
     in_use_peak: usize,
     untracked: u64,
     tracking_incomplete: bool,
@@ -47,6 +68,7 @@ impl Window {
             started,
             samples: [Sample::default(); LABELS.len()],
             checked_out: HashMap::new(),
+            server_in_use: HashMap::new(),
             in_use_peak: 0,
             untracked: 0,
             tracking_incomplete: false,
@@ -69,20 +91,33 @@ impl Window {
 struct Observer(Arc<Mutex<Window>>, &'static str, u32);
 
 impl Observer {
-    fn checked_out(&self, key: u64, duration: Duration) {
+    fn checked_out(&self, connection: PoolConnection, duration: Duration) {
         let pool_state = {
             let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
             let pool_state = if window.tracking_incomplete
                 || window.checked_out.len() >= MAX_TRACKED_CONNECTIONS
             {
                 "unknown"
-            } else if window.checked_out.len() + 1 >= self.2 as usize {
+            } else if window
+                .server_in_use
+                .get(&connection.server)
+                .copied()
+                .unwrap_or(0)
+                + 1
+                >= self.2 as usize
+            {
                 "at_limit"
             } else {
                 "below_limit"
             };
             if window.checked_out.len() < MAX_TRACKED_CONNECTIONS {
-                window.checked_out.insert(key, Instant::now());
+                if window
+                    .checked_out
+                    .insert(connection, Instant::now())
+                    .is_none()
+                {
+                    *window.server_in_use.entry(connection.server).or_default() += 1;
+                }
                 window.in_use_peak = window.in_use_peak.max(window.checked_out.len());
             } else {
                 window.untracked = window.untracked.saturating_add(1);
@@ -99,10 +134,19 @@ impl Observer {
         self.record(0, duration, false);
     }
 
-    fn returned(&self, key: u64, closed: bool) {
+    fn returned(&self, connection: PoolConnection, closed: bool) {
         let started = {
             let mut window = self.0.lock().unwrap_or_else(|error| error.into_inner());
-            let started = window.checked_out.remove(&key);
+            let started = window.checked_out.remove(&connection);
+            if let (Some(_), Entry::Occupied(mut count)) =
+                (started, window.server_in_use.entry(connection.server))
+            {
+                if *count.get() == 1 {
+                    count.remove();
+                } else {
+                    *count.get_mut() -= 1;
+                }
+            }
             metrics::gauge!("cma_mongo_connections_tracked", "pool" => self.1)
                 .set(window.checked_out.len() as f64);
             started
@@ -127,6 +171,7 @@ impl Observer {
                 // no pairing key we cannot prove occupancy complete again.
                 next.tracking_incomplete = window.tracking_incomplete;
                 std::mem::swap(&mut next.checked_out, &mut window.checked_out);
+                std::mem::swap(&mut next.server_in_use, &mut window.server_in_use);
                 next.in_use_peak = next.checked_out.len();
                 let in_use = next.checked_out.len();
                 (std::mem::replace(&mut *window, next), in_use)
@@ -207,15 +252,17 @@ fn record_event(observer: &Observer, event: CmapEvent) {
             metrics::counter!("cma_mongo_checkout_started_total", "pool" => observer.1).increment(1)
         }
         CmapEvent::ConnectionCheckedOut(event) => observer.checked_out(
-            connection_key(&event.address, event.connection_id),
+            PoolConnection::new(&event.address, event.connection_id),
             event.duration,
         ),
-        CmapEvent::ConnectionCheckedIn(event) => {
-            observer.returned(connection_key(&event.address, event.connection_id), false)
-        }
-        CmapEvent::ConnectionClosed(event) => {
-            observer.returned(connection_key(&event.address, event.connection_id), true)
-        }
+        CmapEvent::ConnectionCheckedIn(event) => observer.returned(
+            PoolConnection::new(&event.address, event.connection_id),
+            false,
+        ),
+        CmapEvent::ConnectionClosed(event) => observer.returned(
+            PoolConnection::new(&event.address, event.connection_id),
+            true,
+        ),
         CmapEvent::ConnectionCheckoutFailed(event) => observer.record(0, event.duration, true),
         CmapEvent::ConnectionReady(event) => observer.record(1, event.duration, false),
         CmapEvent::PoolCleared(_) => observer.record(2, Duration::ZERO, false),

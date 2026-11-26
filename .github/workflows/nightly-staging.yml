@@ -74,20 +74,20 @@ jobs:
       CMA_E2E_PUBLIC_ID: ${{ vars.CMA_E2E_PUBLIC_ID == secrets.CMA_E2E_PUBLIC_ID && secrets.CMA_E2E_PUBLIC_ID || '' }}
     steps:
       # Run trusted develop code, never the dispatcher's arbitrary branch with fixture credentials.
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           ref: develop
       - name: Initialize isolated evidence path
         working-directory: .
         run: printf '%s\n' "CMA_E2E_OUTPUT_DIR=$RUNNER_TEMP/cma-e2e-smoke-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 26
           cache: npm
           cache-dependency-path: web/package-lock.json
       - run: npm ci
       - name: Use supported Node LTS for the pinned browser harness
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           # Playwright 1.58.2 stalls extracting its Chromium archive on Node 26.
           node-version: 24.15.0
@@ -103,7 +103,7 @@ jobs:
         run: npm run e2e -- --project=smoke
       - name: Upload curated evidence only
         if: always() && steps.harness.outputs.evidence_ready == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staging-smoke-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -116,7 +116,8 @@ jobs:
   journeys:
     name: Explicitly scoped staging journeys
     needs: plan
-    if: github.event_name == 'workflow_dispatch' && inputs.mutation_target != ''
+    # Disabled until these journeys have a GitHub-hosted execution path.
+    if: false
     # This protected environment needs required reviewers and develop-only deployment rules.
     # The isolated runner must hold mode-0600 fixture/auth/hook files outside the checkout.
     # No credential values are passed through this workflow, logs, or artifacts.
@@ -175,7 +176,7 @@ jobs:
         run: node .github/scripts/staging-authority.mjs audit "$CMA_E2E_OUTPUT_DIR" "$RUNNER_TEMP/staging-before.json" "$RUNNER_TEMP/staging-after.json"
       - name: Upload credential-checked screenshots, redacted results and cleanup journal
         if: always() && steps.audit.outputs.publishable == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: staging-journeys-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

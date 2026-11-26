@@ -9,6 +9,7 @@ fn options(qualification: Option<TransactionDrainQualification>) -> Options {
         billing_enabled: false,
         allocation_rollups_enabled: Some(false),
         agent_shared_observation: Some(false),
+        retain_legal_consents: false,
         transaction_drain_minimum_secs: 120,
         drain_qualification: qualification,
     }

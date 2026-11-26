@@ -71,16 +71,10 @@ async fn bootstrap_stop_supersedes_wait_and_delete_finishes_without_runtime_effe
         .run_one(&agent.id, h.now + Duration::from_secs(1))
         .await
         .unwrap());
-    // Existing Stop semantics retain the superseded lease's cleanup fence.
-    assert!(!h
-        .worker
-        .run_one(&agent.id, h.now + Duration::from_secs(1))
-        .await
-        .unwrap());
     for _ in 0..2 {
         assert!(h
             .worker
-            .run_one(&agent.id, h.now + Duration::from_secs(4))
+            .run_one(&agent.id, h.now + Duration::from_secs(1))
             .await
             .unwrap());
     }

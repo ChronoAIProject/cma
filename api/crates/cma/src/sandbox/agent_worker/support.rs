@@ -42,6 +42,17 @@ pub(super) struct AgentContext {
     pub(super) agent_resource_preparation: bool,
 }
 
+impl AgentContext {
+    pub(super) fn publication_parents(&self) -> AgentWorkPublicationParents {
+        AgentWorkPublicationParents {
+            sandbox_revision: self.sandbox.revision,
+            workspace_revision: self.workspace.revision,
+            worktree_revision: self.worktree.revision,
+            lineage: AgentWorkPublicationLineage::Authorized,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(super) struct RequestEvidence {
     pub(super) step: AgentWorkStep,

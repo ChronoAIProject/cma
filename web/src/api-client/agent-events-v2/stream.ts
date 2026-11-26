@@ -1,5 +1,5 @@
 import { createParser, type EventSourceMessage } from 'eventsource-parser';
-import { ProtocolError } from '../errors.js';
+import { ProtocolError, TransportError } from '../errors.js';
 import { raceWithAbortSignal } from '../http.js';
 import { AgentFrameBound } from './framing.js';
 import {
@@ -22,6 +22,7 @@ export async function* agentFrames(
   signal: AbortSignal,
   agentId: string,
   after?: V2AgentCursor,
+  externalApprovals = false,
 ): AsyncGenerator<V2AgentStreamFrame> {
   if (response.body === null) throw new ProtocolError('Agent stream carried no body');
   let sequence = after === undefined ? 0 : cursorSequence(after);
@@ -37,7 +38,7 @@ export async function* agentFrames(
     let frame: V2AgentStreamFrame;
     switch (message.event) {
       case 'cma.agent.event': {
-        const data = v2AgentEvent(value);
+        const data = v2AgentEvent(value, externalApprovals);
         if (message.id !== data.cursor)
           throw new ProtocolError('Agent durable frame has no matching explicit cursor');
         validateItem(data, incarnation ?? data.incarnation, sequence + 1);
@@ -103,18 +104,28 @@ export async function* agentFrames(
       if (value !== undefined && value.byteLength > 2 * MAX_AGENT_BYTES)
         throw new ProtocolError('Agent transport chunk exceeds its byte boundary');
       if (value !== undefined) bound.inspect(value);
+      // A disconnected browser reader may report EOF, including mid-codepoint.
+      // Reject the incomplete frame before flushing the UTF-8 decoder.
+      if (done) bound.finish();
+      let decoded: string;
       try {
-        parser.feed(done ? decoder.decode() : decoder.decode(value, { stream: true }));
+        decoded = done ? decoder.decode() : decoder.decode(value, { stream: true });
       } catch (cause) {
-        throw new ProtocolError('invalid Agent UTF-8 or SSE', { cause });
+        // Streaming decoding already rejects malformed bytes. A failed final
+        // UTF-8 flush means EOF interrupted a codepoint, even in an SSE comment.
+        if (done)
+          throw new TransportError('Agent stream closed inside a UTF-8 codepoint', { cause });
+        throw new ProtocolError('invalid Agent UTF-8', { cause });
+      }
+      try {
+        parser.feed(decoded);
+      } catch (cause) {
+        throw new ProtocolError('invalid Agent SSE', { cause });
       }
       if (failure !== undefined) throw failure;
       while (pending.length) yield pending.shift()!;
       pendingBytes = 0;
-      if (done) {
-        bound.finish();
-        return;
-      }
+      if (done) return;
     }
   } finally {
     void reader.cancel().catch(() => undefined);

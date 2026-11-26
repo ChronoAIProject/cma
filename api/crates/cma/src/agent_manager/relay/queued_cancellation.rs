@@ -109,5 +109,5 @@ async fn forward_to_owner(
             .unwrap_or_else(|_| http::unavailable());
         return http::retain(response, permit);
     }
-    http::forward(relay, destination, retry, bytes, permit, None).await
+    super::forward::forward(relay, destination, retry, bytes, permit, None).await
 }

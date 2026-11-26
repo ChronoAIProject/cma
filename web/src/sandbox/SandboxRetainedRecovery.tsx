@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
+import type { SandboxLifecycle } from '../api/types';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { useRetainedRecovery } from './useRetainedRecovery';
@@ -11,6 +12,8 @@ export function SandboxRetainedRecovery({
   revision,
   disabled,
   failed = true,
+  stale = false,
+  lifecycle,
   onAccepted,
 }: {
   readonly client: CmaWebClient;
@@ -19,9 +22,22 @@ export function SandboxRetainedRecovery({
   readonly revision: number;
   readonly disabled: boolean;
   readonly failed?: boolean;
+  readonly stale?: boolean;
+  readonly lifecycle?: SandboxLifecycle;
   readonly onAccepted: () => void;
 }) {
-  const command = useRetainedRecovery(client, sandboxId, ownerId, !disabled, onAccepted);
+  const failureRevision =
+    failed && !stale && !lifecycle?.operation && !lifecycle?.result?.continuing
+      ? revision
+      : undefined;
+  const command = useRetainedRecovery(
+    client,
+    sandboxId,
+    ownerId,
+    !disabled && !stale,
+    failureRevision,
+    onAccepted,
+  );
   const [confirmation, setConfirmation] = useState<{
     sandboxId: string;
     ownerId: string;
@@ -38,7 +54,7 @@ export function SandboxRetainedRecovery({
     [client, sandboxId, ownerId],
   );
   const inspect = async () => {
-    if (disabled || checking || !client.inspectSandboxRecovery) return;
+    if (disabled || stale || checking || !client.inspectSandboxRecovery) return;
     const request = new AbortController();
     inspection.current = request;
     setChecking(true);
@@ -76,6 +92,7 @@ export function SandboxRetainedRecovery({
     command.intent !== undefined && !command.intent.receipt && !command.intent.refused;
   const unavailable =
     disabled ||
+    stale ||
     !!command.storageError ||
     checking ||
     command.busy ||
@@ -83,7 +100,7 @@ export function SandboxRetainedRecovery({
   const consentIsCurrent =
     confirmation?.sandboxId === sandboxId &&
     confirmation.ownerId === ownerId &&
-    confirmation.revision === revision;
+    confirmation.revision === failureRevision;
   if (!failed && !command.intent) return null;
   return (
     <section className="sandbox-page__band" aria-label="Retained recovery">

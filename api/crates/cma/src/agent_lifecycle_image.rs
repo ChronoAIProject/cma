@@ -5,11 +5,24 @@ use std::{sync::Arc, time::Duration};
 
 #[async_trait]
 pub(crate) trait ImageResolver: Send + Sync {
+    fn retirement_enabled(&self) -> bool {
+        false
+    }
+
     async fn resolve(
         &self,
         delegated_credential: Option<&str>,
         image: &AgentLifecycleImageReference,
     ) -> Result<String, AgentLifecycleProvisioningError>;
+
+    async fn resolve_retained(
+        &self,
+        delegated_credential: Option<&str>,
+        image: &AgentLifecycleImageReference,
+        _pinned_reference: &str,
+    ) -> Result<String, AgentLifecycleProvisioningError> {
+        self.resolve(delegated_credential, image).await
+    }
 }
 
 /// Thin, bounded client for the independently deployed Image Manager. The
@@ -18,10 +31,11 @@ pub(crate) trait ImageResolver: Send + Sync {
 pub(crate) struct ImageManagerResolver {
     base_url: String,
     http: reqwest::Client,
+    retirement_enabled: bool,
 }
 
 impl ImageManagerResolver {
-    pub(crate) fn new(base_url: String) -> Result<Arc<Self>, String> {
+    pub(crate) fn new(base_url: String, retirement_enabled: bool) -> Result<Arc<Self>, String> {
         let parsed = reqwest::Url::parse(&base_url)
             .map_err(|_| "Image Manager base URL is not a valid URL".to_owned())?;
         if parsed.host_str().is_none()
@@ -40,7 +54,11 @@ impl ImageManagerResolver {
             .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|_| "Image Manager HTTP client could not be initialized".to_owned())?;
-        Ok(Arc::new(Self { base_url, http }))
+        Ok(Arc::new(Self {
+            base_url,
+            http,
+            retirement_enabled,
+        }))
     }
 }
 
@@ -54,7 +72,51 @@ struct ResolvedImage {
 
 #[async_trait]
 impl ImageResolver for ImageManagerResolver {
+    fn retirement_enabled(&self) -> bool {
+        self.retirement_enabled
+    }
+
+    async fn resolve_retained(
+        &self,
+        delegated_credential: Option<&str>,
+        image: &AgentLifecycleImageReference,
+        pinned_reference: &str,
+    ) -> Result<String, AgentLifecycleProvisioningError> {
+        if !self.retirement_enabled {
+            return self
+                .resolve_catalog_selection(delegated_credential, image)
+                .await;
+        }
+        // Revalidate current use access to the original immutable version.
+        // Historical selections without a version cannot authorize a new
+        // profile through the mutable latest-version lookup.
+        if image.version.is_none() {
+            return Err(AgentLifecycleProvisioningError::ImageSelectionUnsupported);
+        }
+        let reference = self
+            .resolve_catalog_selection(delegated_credential, image)
+            .await?;
+        if reference != pinned_reference {
+            return Err(AgentLifecycleProvisioningError::ImageSelectionUnsupported);
+        }
+        Ok(reference)
+    }
+
     async fn resolve(
+        &self,
+        delegated_credential: Option<&str>,
+        image: &AgentLifecycleImageReference,
+    ) -> Result<String, AgentLifecycleProvisioningError> {
+        if self.retirement_enabled {
+            return Err(AgentLifecycleProvisioningError::ImageSelectionUnsupported);
+        }
+        self.resolve_catalog_selection(delegated_credential, image)
+            .await
+    }
+}
+
+impl ImageManagerResolver {
+    async fn resolve_catalog_selection(
         &self,
         delegated_credential: Option<&str>,
         image: &AgentLifecycleImageReference,
@@ -100,6 +162,9 @@ impl ImageResolver for ImageManagerResolver {
         }
         let resolved: ResolvedImage = serde_json::from_slice(&bounded_body(response).await?)
             .map_err(|_| AgentLifecycleProvisioningError::Unavailable)?;
+        if self.retirement_enabled && resolved.id.as_deref() != Some(version.as_str()) {
+            return Err(AgentLifecycleProvisioningError::Unavailable);
+        }
         let reference = resolved
             .reference
             .ok_or_else(|| AgentLifecycleProvisioningError::Unavailable)?;
@@ -117,9 +182,6 @@ impl ImageResolver for ImageManagerResolver {
         }
         Ok(reference)
     }
-}
-
-impl ImageManagerResolver {
     async fn latest_version(
         &self,
         image_id: &str,
@@ -211,7 +273,7 @@ async fn bounded_body(
 #[path = "agent_lifecycle_image_tests.rs"]
 mod tests;
 
-fn valid_immutable_image(value: &str) -> bool {
+pub(crate) fn valid_immutable_image(value: &str) -> bool {
     let Some((name, digest)) = value.rsplit_once("@sha256:") else {
         return false;
     };

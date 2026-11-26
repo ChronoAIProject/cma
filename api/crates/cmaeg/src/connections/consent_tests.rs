@@ -283,3 +283,39 @@ async fn managed_consent_refuses_identity_credentials_extra_sources_and_wrong_ow
     .is_err());
     assert_eq!(app.peer.calls.lock().unwrap().len(), before_calls);
 }
+
+#[tokio::test]
+async fn setup_gate_refuses_new_binding_but_preserves_bound_retry_and_update() {
+    let mut app = Native::new().await;
+    let current = managed(&app).await;
+    app.service.management.managed_telegram_setup_enabled = false;
+    let before_calls = app.peer.calls.lock().unwrap().len();
+    let mut retry = app.replacement_request(&current);
+    retry.record_id = Some(current.record_id.clone());
+    binding::expand_create(
+        &app.service.management,
+        &owner(&app.record.owner, false),
+        &mut retry,
+    )
+    .await
+    .unwrap();
+    expand(&app, &current, &mut update(&current)).await;
+    let (mut connection, version) = app.stored().await;
+    connection.channel_record = None;
+    app.fixture
+        .store()
+        .save_connection(&connection, Some(version))
+        .await
+        .unwrap();
+    let before = app.stored().await;
+    let mut fresh = app.replacement_request(&current);
+    assert!(binding::expand_create(
+        &app.service.management,
+        &owner(&app.record.owner, false),
+        &mut fresh
+    )
+    .await
+    .is_err());
+    assert_eq!(app.stored().await.1, before.1);
+    assert_eq!(app.peer.calls.lock().unwrap().len(), before_calls);
+}

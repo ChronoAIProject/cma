@@ -6,6 +6,9 @@ mod erasure;
 mod machine_pools;
 #[path = "../config_native_tests.rs"]
 mod native;
+#[path = "runtime_canary_tests.rs"]
+mod runtime_canaries;
+pub(crate) use runtime_canaries::{desktop_canary_config, retained_runtime_config};
 mod home_tests {
     include!("home_tests.rs");
 }
@@ -74,6 +77,25 @@ fn skill_upgrades_require_an_explicit_strict_boolean() {
     }
 }
 
+#[test]
+fn proxy_replay_principal_writer_requires_explicit_activation() {
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = super::FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED")
+                .then(|| value.map(str::to_owned))
+                .flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.nyxid_proxy_replay_principal, expected);
+    }
+    for value in ["", "1", "TRUE", " true "] {
+        assert!(super::FeatureFlags::from_lookup(&mut |key| Ok((key
+            == "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED")
+            .then(|| value.to_owned())))
+        .is_err());
+    }
+}
+
 #[cfg(test)]
 mod silent_sign_in_tests {
     use super::*;
@@ -120,6 +142,25 @@ mod shared_output_tests {
             .is_err());
         }
     }
+}
+
+#[test]
+fn privacy_export_requires_explicit_opt_in() {
+    let key = "CHRONO_ACCOUNT_PRIVACY_EXPORT_ENABLED";
+    assert!(!configured(&[]).unwrap().features.privacy_export_enabled);
+    assert!(
+        !configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .privacy_export_enabled
+    );
+    assert!(
+        configured(&[(key, "true")])
+            .unwrap()
+            .features
+            .privacy_export_enabled
+    );
+    assert!(configured(&[(key, "TRUE")]).is_err());
 }
 
 #[test]
@@ -240,4 +281,19 @@ fn shared_observation_requires_routed_replicas_and_bounded_replay() {
             .features
             .agent_shared_observation
     );
+}
+
+#[test]
+fn home_backup_expiry_cannot_enable_without_a_qualified_production_provider() {
+    let key = "CHRONO_HOME_BACKUP_EXPIRY_ENABLED";
+    assert!(!configured(&[]).unwrap().features.home_backup_expiry_enabled);
+    assert!(
+        !configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .home_backup_expiry_enabled
+    );
+    let error = configured(&[(key, "true")]).unwrap_err();
+    assert!(error.contains(key));
+    assert!(error.contains("qualified deletion provider"));
 }

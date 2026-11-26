@@ -2,7 +2,60 @@ use super::*;
 use layer3_adapter::{AgentHomeRequest, AgentOpenRequest, WorktreeRequest};
 
 pub(crate) async fn hierarchy(store: &MongoSandboxStore) -> (Agent, Sandbox, Workspace, Worktree) {
-    let plan = plan();
+    hierarchy_with_plan(store, plan()).await
+}
+
+pub(crate) async fn adoption_policy(
+    client: &mongodb::Client,
+    name: &str,
+    agent_id: &str,
+    revision: i64,
+    enabled: bool,
+) {
+    adoption_policies(client, name, agent_id, agent_id, revision, enabled).await;
+}
+
+pub(crate) async fn adoption_policies(
+    client: &mongodb::Client,
+    name: &str,
+    writer_agent: &str,
+    recovery_agent: &str,
+    revision: i64,
+    enabled: bool,
+) {
+    use crate::store::agent_log_segments::{
+        schema,
+        writer_gate::{self, GateName, Policy},
+    };
+    let db = client.database(name);
+    if revision == 0 {
+        schema::migrate(&db).await.unwrap();
+        crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;
+    }
+    let mut session = client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    for (gate, agent_id) in [
+        (GateName::Segments, writer_agent),
+        (GateName::CapacityRecovery, recovery_agent),
+    ] {
+        let policy = Policy {
+            enabled,
+            agents: enabled.then(|| agent_id.to_owned()).into_iter().collect(),
+            ..Policy::default()
+        };
+        writer_gate::replace(&db, gate, revision, policy, &mut session)
+            .await
+            .unwrap();
+    }
+    session.commit_transaction().await.unwrap();
+}
+
+pub(crate) async fn hierarchy_with_plan(
+    store: &MongoSandboxStore,
+    plan: NativePreparedPlan,
+) -> (Agent, Sandbox, Workspace, Worktree) {
     store
         .reconcile_native_prepared_target(Some(&plan), 1, NOW)
         .await

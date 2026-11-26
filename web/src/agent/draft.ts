@@ -1,10 +1,19 @@
-import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { DraftAttachment } from './attachments';
 import {
   draftReadError,
   draftWriteError,
   emptyDraft,
+  importEmptyAgentDraft,
   readAgentDraft,
   removeAgentDraft,
   saveAgentDraft,
@@ -15,6 +24,10 @@ import { requireDraftIdentity, retainAgentDraftOwner } from './draftIdentity';
 import { watchDraftSubmission } from './draftDelivery';
 
 export interface AgentDraft {
+  readonly importText?: (
+    source: { readonly owner: string; readonly agentId: string; readonly text: string },
+    current: () => boolean,
+  ) => { readonly verify: () => boolean } | undefined;
   readonly content: string;
   readonly setContent: Dispatch<SetStateAction<string>>;
   readonly attachments: readonly DraftAttachment[];
@@ -65,6 +78,16 @@ export function useAgentDraft(
     };
   });
   const { scope } = stored;
+  const active = useRef<typeof stored | undefined>(undefined);
+  const editing = useRef(false);
+  const submissions = useRef(new Set<{ scope: typeof scope }>());
+  useLayoutEffect(() => {
+    active.current = stored;
+    editing.current = false;
+    return () => {
+      active.current = undefined;
+    };
+  }, [stored]);
   const current =
     scope.client === client && scope.viewerId === viewerId && scope.agentId === agentId;
   if (!current) {
@@ -105,6 +128,8 @@ export function useAgentDraft(
   );
   const update = useCallback(
     (change: (value: DraftValue) => DraftValue) => {
+      if (active.current?.scope !== scope) return;
+      editing.current = true;
       const revision = crypto.randomUUID();
       setStored((previous) => {
         if (previous.scope !== scope) return previous;
@@ -165,26 +190,58 @@ export function useAgentDraft(
       }
     });
   const beginSubmission = (message: string) => {
+    const submission = { scope };
+    submissions.current.add(submission);
     const snapshot = stored.entry.value;
-    const settled = watchDraftSubmission({
+    const stopWatching = watchDraftSubmission({
       owner: viewerId,
       agentId: agentId ?? '',
       message,
       bind: (key, storage) => {
+        const current = active.current;
+        if (!agentId || (current && current.scope.viewerId !== viewerId)) return 'superseded';
+        const mounted = current?.scope.agentId === agentId;
+        const entry = mounted ? current.entry : current?.cache.get(agentId);
+        if ((mounted && editing.current) || (entry && entry.value.revision !== snapshot.revision))
+          return 'superseded';
+        const updateEntry = (update: (value: Entry) => Entry) => {
+          if (!current) return;
+          setStored((previous) => {
+            if (previous.scope.viewerId !== viewerId) return previous;
+            if (previous.scope.agentId === agentId) {
+              if (previous.entry.value.revision !== snapshot.revision) return previous;
+              return { ...previous, entry: update(previous.entry) };
+            }
+            const cached = previous.cache.get(agentId);
+            if (cached?.value.revision !== snapshot.revision) return previous;
+            return { ...previous, cache: new Map(previous.cache).set(agentId, update(cached)) };
+          });
+        };
         try {
           requireDraftIdentity();
-          const saved = readAgentDraft(viewerId, agentId!, storage);
-          if (saved.revision === snapshot.revision)
-            saveAgentDraft(viewerId, agentId!, { ...saved, commandKey: key }, storage);
+          const saved = readAgentDraft(viewerId, agentId, storage);
+          if (entry?.unread) throw new Error(draftWriteError);
+          if (saved.revision !== snapshot.revision) {
+            if (entry) throw new Error(draftWriteError);
+            return 'superseded';
+          }
+          saveAgentDraft(viewerId, agentId, { ...saved, commandKey: key }, storage);
+          updateEntry((entry) => ({
+            ...entry,
+            value: { ...entry.value, commandKey: key },
+            error: entry.error === draftWriteError ? undefined : entry.error,
+          }));
+          return 'bound';
         } catch {
-          setStored((previous) =>
-            previous.scope === scope
-              ? { ...previous, entry: { ...previous.entry, error: draftWriteError } }
-              : previous,
-          );
+          updateEntry((entry) => (entry.unread ? entry : { ...entry, error: draftWriteError }));
+          return 'unavailable';
         }
       },
     });
+    const settled = () => {
+      submissions.current.delete(submission);
+      stopWatching();
+    };
     return {
       settled,
       accepted: () => {
@@ -199,6 +256,47 @@ export function useAgentDraft(
   };
   const entry = current ? stored.entry : { value: emptyDraft };
   return {
+    importText: ({ owner, agentId: targetAgent, text }, permitted) => {
+      const entry = active.current?.scope === scope ? active.current.entry : undefined;
+      const canImport = () =>
+        active.current?.scope === scope &&
+        !editing.current &&
+        ![...submissions.current].some((submission) => submission.scope === scope) &&
+        owner === scope.viewerId &&
+        targetAgent === scope.agentId &&
+        active.current.entry === entry &&
+        entry !== undefined &&
+        !entry.error &&
+        !entry.unread &&
+        !entry.value.content &&
+        entry.value.attachments.length === 0 &&
+        entry.value.commandKey === undefined &&
+        permitted();
+      if (!scope.agentId || !canImport()) return;
+      try {
+        requireDraftIdentity();
+        const imported = importEmptyAgentDraft(scope.viewerId, scope.agentId, text, canImport);
+        if (!imported) return;
+        const next = { ...active.current!, entry: { value: imported } };
+        active.current = next;
+        setStored(next);
+        return {
+          verify: () => {
+            if (active.current?.scope !== scope || editing.current || !permitted()) return false;
+            const saved = readAgentDraft(scope.viewerId, scope.agentId!);
+            return (
+              active.current.entry.value.revision === imported.revision &&
+              saved.revision === imported.revision &&
+              saved.content === text &&
+              saved.attachments.length === 0 &&
+              saved.commandKey === undefined
+            );
+          },
+        };
+      } catch {
+        return undefined;
+      }
+    },
     ...entry.value,
     error: entry.error,
     recoveryBlocked: entry.unread,

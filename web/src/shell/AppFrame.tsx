@@ -1,6 +1,6 @@
 import { DragHandle } from './ColumnDragHandle';
 import { SidebarContext } from './sidebarContext';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   CENTER_MIN,
@@ -91,6 +91,15 @@ export function AppFrame({
   const frameRef = useRef<HTMLDivElement>(null);
   const detailsRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(0);
+  /*
+   * Whether the tracks have been resolved at a measured width. Until then they
+   * are a placeholder solve for a zero-wide box, and easing out of it grew the
+   * centre in from nothing on every mount: its controls slid for the whole
+   * transition, so a press that landed early could release over another
+   * element and never become a click. The first measured layout is drawn as
+   * it is; only later width changes animate.
+   */
+  const [settled, setSettled] = useState(false);
   const [taskSidebarChoice, setTaskSidebarChoice] = useState<boolean>();
   const [sidebarWidth, setSidebarWidth] = useState(taskLayout ? SIDEBAR_MIN : SIDEBAR_DEFAULT);
   const [detailsWidth, setDetailsWidth] = useState(DETAILS_MIN);
@@ -113,7 +122,8 @@ export function AppFrame({
    */
   const [expandedAnyway, setExpandedAnyway] = useState(false);
 
-  useEffect(() => {
+  // Measured before the first paint, so a new frame never shows the placeholder.
+  useLayoutEffect(() => {
     const element = frameRef.current;
     if (element === null) {
       return;
@@ -164,6 +174,17 @@ export function AppFrame({
       }
     };
   }, []);
+
+  useLayoutEffect(() => {
+    const element = frameRef.current;
+    if (settled || viewport === 0 || element === null) {
+      return;
+    }
+    // Resolve the measured tracks while transitions are still off, so turning
+    // them on leaves nothing earlier for the columns to ease from.
+    element.getBoundingClientRect();
+    setSettled(true);
+  }, [settled, viewport]);
 
   const narrow =
     viewport > 0 &&
@@ -255,9 +276,14 @@ export function AppFrame({
     },
     [workspaceDetails, viewport, solved.sidebar],
   );
-  const detailsInline = detailsOpen && columns.details === 0 && compactDetailsInline;
-  const detailsOverlay =
-    detailsOpen && columns.details === 0 && compactDetailsOverlay && !detailsInline;
+  /*
+   * An unmeasured frame solves every column for a zero-wide box, where the
+   * details column has no room. That is not a compact frame: treating it as one
+   * moved focus into the panel and made the page inert on a wide screen.
+   */
+  const compactDetails = viewport > 0 && detailsOpen && columns.details === 0;
+  const detailsInline = compactDetails && compactDetailsInline;
+  const detailsOverlay = compactDetails && compactDetailsOverlay && !detailsInline;
   usePlateFocus(
     detailsRef,
     onDetailsClose ?? (() => {}),
@@ -270,6 +296,7 @@ export function AppFrame({
       className="frame"
       data-workspace={taskLayout || undefined}
       data-dragging={dragging ? '' : undefined}
+      data-measuring={settled ? undefined : ''}
       data-details-collapsed={columns.details === 0 ? '' : undefined}
       data-details-overlay={detailsOverlay ? '' : undefined}
       data-details-inline={detailsInline ? '' : undefined}

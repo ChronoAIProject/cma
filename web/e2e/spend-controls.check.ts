@@ -404,8 +404,12 @@ for (const available of [false, undefined]) {
     expect(local.writes).toHaveLength(1);
     local.setRequestAvailable(true);
     await page.getByRole('button', { name: 'Refresh settings availability' }).click();
-    await page.getByRole('button', { name: 'Review retained draft' }).click();
     await expect(page.getByRole('button', { name: 'Add request model' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Review retained draft' })).toHaveCount(0);
+    await expect(page.getByLabel('Owner override 1: owner ID')).toHaveValue(
+      'fixture-isolated-owner',
+    );
+    expect(local.writes).toHaveLength(1);
     expect(local.boundary.errors).toEqual([]);
   });
 }

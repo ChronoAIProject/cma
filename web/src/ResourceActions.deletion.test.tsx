@@ -164,10 +164,11 @@ function animatePresence() {
   }));
 }
 const tick = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
-const click = (name: string) =>
-  act(async () => {
-    fireEvent.click(screen.getByRole('button', { name }));
-  });
+const click = async (name: string) => {
+  if (name.startsWith('View '))
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'View status' })));
+  await act(async () => fireEvent.click(screen.getByRole('button', { name })));
+};
 const retained = (id = 'first') => ({
   action: { kind: 'delete_agent' as const, agentId: id },
   key: `original-${id}`,

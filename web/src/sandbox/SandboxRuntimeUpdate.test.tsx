@@ -28,6 +28,93 @@ const props = () => ({
 });
 
 describe('owner runtime update control', () => {
+  it.each([
+    [true, 'Retry the runtime update. Recovery can use the latest runtime on your retained home.'],
+    [
+      true,
+      'Retry the runtime update to continue with the requested runtime on your retained home.',
+    ],
+    [
+      false,
+      'Retry is unavailable. Contact the deployment operator for help recovering your retained home.',
+    ],
+  ] as const)(
+    'shows the reported recovery path with retry eligibility %s',
+    (canUpdate, guidance) => {
+      const updateSandboxRuntime = vi.fn();
+      const message = `The runtime update stopped at its current step. ${guidance}`;
+      render(
+        <SandboxRuntimeUpdate
+          {...props()}
+          sandboxStatus="rotating"
+          client={agentClient({ updateSandboxRuntime })}
+          update={{
+            ...available,
+            state: 'failed',
+            canUpdate,
+            failure: { code: 'terminal_validation', message },
+          }}
+        />,
+      );
+      expect(screen.getByRole('alert')).toHaveTextContent(message);
+      expect(screen.getByRole('alert')).not.toHaveTextContent(/paused safely/i);
+      const retry = screen.getByRole('button', { name: 'Retry runtime update' });
+      if (canUpdate) expect(retry).toBeEnabled();
+      else expect(retry).toBeDisabled();
+      expect(updateSandboxRuntime).not.toHaveBeenCalled();
+    },
+  );
+
+  it('does not advise retry when the client lacks the update method', () => {
+    render(
+      <SandboxRuntimeUpdate
+        {...props()}
+        sandboxStatus="rotating"
+        update={{
+          ...available,
+          state: 'failed',
+          failure: {
+            code: 'terminal_validation',
+            message:
+              'The runtime update stopped at its current step. Retry the runtime update. Recovery can use the latest runtime on your retained home.',
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('Retry is unavailable in this client.');
+    expect(screen.getByRole('alert')).not.toHaveTextContent(
+      /retry the runtime update|latest runtime/i,
+    );
+    expect(screen.getByRole('button', { name: 'Retry runtime update' })).toBeDisabled();
+  });
+
+  it('replaces older server guidance for an unavailable retry without asserting home retention', () => {
+    const updateSandboxRuntime = vi.fn();
+    render(
+      <SandboxRuntimeUpdate
+        {...props()}
+        sandboxStatus="rotating"
+        client={agentClient({ updateSandboxRuntime })}
+        update={{
+          ...available,
+          state: 'failed',
+          canUpdate: false,
+          preservesHome: false,
+          failure: {
+            code: 'terminal_validation',
+            message:
+              'The runtime update paused safely. Your home and conversations are retained. Retry the update to continue.',
+          },
+        }}
+      />,
+    );
+    expect(screen.getByRole('alert')).toHaveTextContent('stopped at its current step');
+    expect(screen.getByRole('alert')).toHaveTextContent('Contact the deployment operator');
+    expect(screen.getByRole('alert')).not.toHaveTextContent(/paused safely|retained|retry the/i);
+    expect(screen.getByRole('button', { name: 'Retry runtime update' })).toBeDisabled();
+    expect(updateSandboxRuntime).not.toHaveBeenCalled();
+  });
+
   it('retries a failed accepted target without switching to a newer deployment', async () => {
     const updateSandboxRuntime = vi.fn().mockResolvedValue({
       runtimeUpdate: { ...available, state: 'queued', canUpdate: false },
@@ -78,26 +165,37 @@ describe('owner runtime update control', () => {
     expect(input.onAccepted).toHaveBeenCalledWith(receipt);
   });
 
-  it('retains exact uncertain target and key through navigation even when latest changes', async () => {
-    const updateSandboxRuntime = vi.fn().mockRejectedValue(new Error('Response lost'));
-    const input = { ...props(), client: agentClient({ updateSandboxRuntime }) };
-    const first = render(<SandboxRuntimeUpdate {...input} />);
-    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Update runtime' })));
-    const initial = updateSandboxRuntime.mock.calls[0]!;
-    first.unmount();
-    render(
-      <SandboxRuntimeUpdate
-        {...input}
-        update={{ ...available, latestVersion: 'registry.example/runtime@sha256:newer' }}
-      />,
-    );
-    expect(screen.getByText('Requested runtime')).toBeVisible();
-    await act(async () =>
-      fireEvent.click(screen.getByRole('button', { name: 'Retry update request' })),
-    );
-    expect(updateSandboxRuntime.mock.calls[1]?.[1]).toBe(initial[1]);
-    expect(updateSandboxRuntime.mock.calls[1]?.[2].idempotencyKey).toBe(initial[2].idempotencyKey);
-  });
+  it.each([
+    [available, 'Update runtime'],
+    [
+      { ...available, state: 'failed', targetVersion: 'registry.example/runtime@sha256:pinned' },
+      'Retry runtime update',
+    ],
+  ] as const)(
+    'retains the original target and key through navigation after %j',
+    async (update, label) => {
+      const updateSandboxRuntime = vi.fn().mockRejectedValue(new Error('Response lost'));
+      const input = { ...props(), update, client: agentClient({ updateSandboxRuntime }) };
+      const first = render(<SandboxRuntimeUpdate {...input} />);
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: label })));
+      const initial = updateSandboxRuntime.mock.calls[0]!;
+      first.unmount();
+      render(
+        <SandboxRuntimeUpdate
+          {...input}
+          update={{ ...update, latestVersion: 'registry.example/runtime@sha256:newer' }}
+        />,
+      );
+      expect(screen.getByText('Requested runtime')).toBeVisible();
+      await act(async () =>
+        fireEvent.click(screen.getByRole('button', { name: 'Retry update request' })),
+      );
+      expect(updateSandboxRuntime.mock.calls[1]?.[1]).toBe(initial[1]);
+      expect(updateSandboxRuntime.mock.calls[1]?.[2].idempotencyKey).toBe(
+        initial[2].idempotencyKey,
+      );
+    },
+  );
 
   it('does not reuse another owner’s uncertain command', async () => {
     const updateSandboxRuntime = vi.fn().mockRejectedValue(new Error('Response lost'));
@@ -152,6 +250,7 @@ describe('owner runtime update control', () => {
           ...available,
           currentVersion: null,
           state: 'failed',
+          canUpdate: false,
           failure: { code: 'restore_failed', message: 'Restore needs attention.' },
         }}
       />,

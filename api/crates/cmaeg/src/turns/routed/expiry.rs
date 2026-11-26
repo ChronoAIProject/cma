@@ -1,4 +1,4 @@
-//! Expiry is terminal only when the durable journal proves no Responses start.
+//! Expiry is terminal only when the durable journal proves no accepted response.
 use super::{
     dispatcher::admission_error, journal, model::delivery_event, ExecutionError, Journal, Lease,
     Phase, RoutedDelivery, TargetState,
@@ -38,13 +38,17 @@ impl Journal {
         let phase = Phase::Refused {
             code: EXPIRED_BEFORE_START.into(),
         };
-        // Prepared has no original Responses start, but can retain media work.
+        // Prepared can follow a proved non-admitting POST and retain media work.
         // Its original expiry closes media effect guards; the media worker
         // refuses outstanding obligations and retires the active head separately.
         // Keep binding_preparation unchanged: Pending can retain an ambiguous
         // reservation or a confirmed hierarchy receipt. Neither is cancelled
         // or retried by terminalizing the never-started Responses target.
+        let never_prepared = lease.state.phase == Phase::Pending;
         self.transition(lease, phase.clone()).await?;
+        if let Some(measurement) = &self.start_measurement {
+            measurement.expired(&lease.state.root, never_prepared);
+        }
         Ok(Some(phase))
     }
 }

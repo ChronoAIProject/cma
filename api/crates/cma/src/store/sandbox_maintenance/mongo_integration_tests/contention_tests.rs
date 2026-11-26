@@ -1,5 +1,6 @@
 use super::*;
-use layer2_core::PlatformSettingsStore;
+use crate::store::settings::MongoPlatformSettingsStore;
+use layer2_core::{PlatformSettings, PlatformSettingsStore, StoreError, StoredPlatformSettings};
 use mongodb::{event::command::CommandEvent, event::EventHandler};
 use std::{collections::BTreeSet, sync::Mutex, time::Duration};
 
@@ -7,6 +8,7 @@ use std::{collections::BTreeSet, sync::Mutex, time::Duration};
 struct Counts {
     attempts: usize,
     conflicts: usize,
+    settings_write_conflicts: usize,
     aborts: usize,
     exhausted_windows: usize,
     paused: BTreeSet<String>,
@@ -20,6 +22,7 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
         let (admin, name, setup) = database().await;
         let (settings, policy) = policy_tests::enable(&admin, &name).await;
         let counts = Arc::new(Mutex::new(Counts::default()));
+        let settings_write_failed = Arc::new(tokio::sync::Notify::new());
         let mut replicas = Vec::new();
         for _ in 0..2 {
             let mut options =
@@ -27,6 +30,7 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
                     .await
                     .unwrap();
             let observed = counts.clone();
+            let settings_write_failed = settings_write_failed.clone();
             options.command_event_handler = Some(EventHandler::callback(move |event| {
                 let mut counts = observed.lock().unwrap();
                 match event {
@@ -42,7 +46,13 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
                         if event.command_name != "abortTransaction"
                             && is_transient(&event.failure) =>
                     {
-                        counts.conflicts += 1
+                        counts.conflicts += 1;
+                        // Pause admission uses update, while the settings CAS
+                        // uses findAndModify. Count only a failed body write.
+                        if event.command_name == "findAndModify" {
+                            counts.settings_write_conflicts += 1;
+                            settings_write_failed.notify_one();
+                        }
                     }
                     CommandEvent::Succeeded(event) if event.command_name == "findAndModify" => {
                         if let Ok(value) = event.reply.get_document("value") {
@@ -90,6 +100,7 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
             .await
             .unwrap();
         let barrier = Arc::new(tokio::sync::Barrier::new(33));
+        let cutover = Arc::new(tokio::sync::Notify::new());
         let deadline_anchor = Arc::new(Mutex::new(None));
         let mut tasks = Vec::new();
         for (i, id) in ids.iter().enumerate() {
@@ -100,16 +111,23 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
                 ..pause(id)
             };
             let barrier = barrier.clone();
+            // Reserve one stale-policy request to test after the cutover even
+            // if all of the racing requests finish before the policy changes.
+            let after_cutover = (change_policy && i + 1 == ids.len()).then(|| cutover.clone());
             let deadline_anchor = deadline_anchor.clone();
             let counts = counts.clone();
             tasks.push(tokio::spawn(async move {
                 barrier.wait().await;
+                if let Some(cutover) = after_cutover {
+                    cutover.notified().await;
+                }
                 admit_cohort_candidate(&store, request, deadline_anchor, &counts).await
             }));
         }
         barrier.wait().await;
+        let contenders = ids.len() - usize::from(change_policy);
         tokio::time::timeout(Duration::from_secs(5), async {
-            while counts.lock().unwrap().conflicts < 32 {
+            while counts.lock().unwrap().conflicts < contenders {
                 tokio::time::sleep(Duration::from_millis(2)).await;
             }
         })
@@ -118,20 +136,26 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
         // Use the production settings adapter on one independently monitored
         // replica. Its atomic returned fence is the exact serialization cutover.
         let policy_task = if change_policy {
-            let settings = crate::store::settings::MongoPlatformSettingsStore::open(
-                &replicas[0].client,
-                &name,
-            )
-            .await
-            .unwrap();
+            let settings = MongoPlatformSettingsStore::open(&replicas[0].client, &name)
+                .await
+                .unwrap();
             let mut updated = policy.settings.clone();
             updated.inactivity.auto_pause_enabled = false;
+            let counts = counts.clone();
             Some(tokio::spawn(async move {
-                settings.replace(policy.revision, &updated).await.unwrap()
+                replace_contended_settings(&settings, policy.revision, &updated, &counts)
+                    .await
+                    .unwrap()
             }))
         } else {
             None
         };
+        if change_policy {
+            // Exercise the writer's retry path before releasing the holder.
+            tokio::time::timeout(Duration::from_secs(5), settings_write_failed.notified())
+                .await
+                .expect("the settings write did not observe the held fence");
+        }
         holder.abort_transaction().await.unwrap();
         // This holder is artificial. Production retains and retries failed candidates:
         // api/crates/cma/src/sandbox/reconciliation_sweep.rs:364,376,383.
@@ -139,16 +163,11 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
         // api/crates/cma/src/sandbox/reconciliation_supervision.rs:6,24.
         *deadline_anchor.lock().unwrap() = Some(tokio::time::Instant::now());
         if let Some(task) = policy_task {
-            task.await.unwrap();
-            assert!(
-                !settings
-                    .read()
-                    .await
-                    .unwrap()
-                    .settings
-                    .inactivity
-                    .auto_pause_enabled
-            );
+            let updated = task.await.unwrap();
+            assert_eq!(updated.revision, policy.revision + 1);
+            assert!(!updated.settings.inactivity.auto_pause_enabled);
+            assert_eq!(settings.read().await.unwrap(), updated);
+            cutover.notify_one();
         }
         let mut scheduled = 0;
         let mut skipped = 0;
@@ -190,7 +209,10 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
             .unwrap_or(0);
         {
             let counts = counts.lock().unwrap();
-            eprintln!("contention exhausted_windows={}", counts.exhausted_windows);
+            eprintln!(
+                "contention exhausted_windows={} settings_write_conflicts={}",
+                counts.exhausted_windows, counts.settings_write_conflicts
+            );
             eprintln!("contention change_policy={change_policy}: attempts={} retries={} conflicts={} aborts={} scheduled={scheduled} not_eligible={skipped} errors={} cutover={:?} final_fence={final_fence}", counts.attempts, counts.attempts.saturating_sub(32), counts.conflicts, counts.aborts, errors.len(), counts.cutover_fence);
             assert!(errors.is_empty(), "{errors:?}");
             assert_eq!(scheduled + skipped, 32);
@@ -213,6 +235,32 @@ async fn two_replicas_admit_32_pauses_under_settings_contention_without_stale_po
         }
         admin.database(&name).drop().await.unwrap();
     }
+}
+
+async fn replace_contended_settings(
+    settings: &MongoPlatformSettingsStore,
+    revision: u64,
+    updated: &PlatformSettings,
+    counts: &Mutex<Counts>,
+) -> Result<StoredPlatformSettings, StoreError> {
+    tokio::time::timeout(Duration::from_secs(60), async {
+        loop {
+            let before = counts.lock().unwrap().settings_write_conflicts;
+            let result = settings.replace(revision, updated).await;
+            // A fence-only write keeps the CAS revision unchanged. Retry
+            // only if Mongo reported a transient body failure on this CAS.
+            // An equal-revision error alone could hide an uncertain commit.
+            if !matches!(&result, Err(StoreError::RevisionConflict { expected, actual })
+                if *expected == revision && *actual == revision)
+                || counts.lock().unwrap().settings_write_conflicts == before
+            {
+                return result;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("settings cutover did not settle within its fixture bound")
 }
 
 async fn admit_cohort_candidate(

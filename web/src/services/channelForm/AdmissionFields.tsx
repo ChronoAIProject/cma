@@ -1,19 +1,23 @@
 import { useRelayCapabilities } from '../RelayCapabilities';
+import { missingLarkAllowedSender } from './connectorValidation';
 import { Choice, Section, StringList } from './Fields';
 import { object, strings, type Fields } from './model';
 function IdentityFields({
+  path,
   label,
   value,
   onChange,
 }: {
+  path: string;
   label: string;
   value: unknown;
   onChange: (v: Fields) => void;
 }) {
   const current = object(value);
   return (
-    <Section title={label}>
+    <Section title={label} path={current.type === 'allowlist' ? undefined : path}>
       <Choice
+        path={`${path}/type`}
         label={`${label} policy`}
         value={current.type}
         options={['deny', 'open', 'allowlist']}
@@ -21,6 +25,7 @@ function IdentityFields({
       />
       {current.type === 'allowlist' ? (
         <StringList
+          path={path}
           label={`${label} IDs`}
           value={strings(current.ids)}
           onChange={(ids) => onChange({ ...current, ids })}
@@ -30,6 +35,7 @@ function IdentityFields({
   );
 }
 export function AdmissionFields({
+  path = 'admission',
   value,
   onChange,
   label = 'Admission',
@@ -37,7 +43,9 @@ export function AdmissionFields({
   privateChats = false,
   allowReplyToBot = true,
   allowGroupMentions = true,
+  requireAllowedSender = false,
 }: {
+  path?: string;
   value: unknown;
   onChange: (v: Fields) => void;
   label?: string;
@@ -45,12 +53,15 @@ export function AdmissionFields({
   privateChats?: boolean;
   allowReplyToBot?: boolean;
   allowGroupMentions?: boolean;
+  requireAllowedSender?: boolean;
 }) {
   const discovery = useRelayCapabilities();
   const admission = object(value);
+  const allowedSenders = strings(admission.sender_ids);
   return (
-    <Section title={label}>
+    <Section title={label} path={admission.type === 'allowlist' ? undefined : path}>
       <Choice
+        path={`${path}/type`}
         label={`${label} policy`}
         value={admission.type}
         options={[
@@ -83,25 +94,34 @@ export function AdmissionFields({
       />
       {admission.type === 'allowlist' ? (
         <StringList
+          path={path}
           label="Allowed sender IDs"
-          value={strings(admission.sender_ids)}
+          value={allowedSenders}
+          validationMessage={
+            requireAllowedSender && allowedSenders.every((sender) => !sender.trim())
+              ? missingLarkAllowedSender
+              : undefined
+          }
           onChange={(sender_ids) => onChange({ ...admission, sender_ids })}
         />
       ) : null}
       {admission.type === 'scoped' ? (
         <>
           <IdentityFields
+            path={`${path}/senders`}
             label="Senders"
             value={admission.senders}
             onChange={(senders) => onChange({ ...admission, senders })}
           />
           <IdentityFields
+            path={`${path}/chats`}
             label="Chats"
             value={admission.chats}
             onChange={(chats) => onChange({ ...admission, chats })}
           />
           {!privateChats ? (
             <Choice
+              path={`${path}/groups`}
               label="Group messages"
               value={admission.groups}
               options={
@@ -116,6 +136,7 @@ export function AdmissionFields({
           ) : null}
           {allowBotMessages ? (
             <Choice
+              path={`${path}/bot_messages`}
               label="Messages from bots"
               value={admission.bot_messages ?? 'deny'}
               options={[

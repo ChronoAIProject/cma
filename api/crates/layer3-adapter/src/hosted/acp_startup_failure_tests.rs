@@ -9,6 +9,17 @@ async fn lost_new_session_identity_requires_explicit_recovery_instead_of_claimin
             let initialize = receive_json(&mut server).await;
             if retry {
                 reject(&mut server, &initialize).await;
+                // The only frame allowed is the read-only adoption probe; this
+                // runtime cannot list completed opens, so nothing is adopted.
+                let probe = receive_json(&mut server).await;
+                assert_eq!(probe["method"], "cma/open-completion");
+                assert_eq!(probe["params"], serde_json::json!({"action": "support"}));
+                respond(
+                    &mut server,
+                    &probe,
+                    serde_json::json!({"supported": true, "version": 1}),
+                )
+                .await;
                 while let Some(Ok(frame)) = server.next().await {
                     assert!(
                         !matches!(frame, Message::Binary(_)),

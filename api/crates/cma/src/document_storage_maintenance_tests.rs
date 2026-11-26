@@ -117,6 +117,50 @@ async fn delete_absent_key_is_success() {
 }
 
 #[tokio::test]
+async fn fenced_deletion_requires_confirmation_for_the_exact_key_and_generation() {
+    let mut peer = Peer::start().await;
+    let client = client(&peer, true);
+    let key = failure_tests::key();
+    for (index, status) in [404, 200, 200, 200].into_iter().enumerate() {
+        let namespace = client.namespace_sha256();
+        let client = client.clone();
+        let request_key = key.clone();
+        let task = tokio::spawn(async move { client.delete_fenced(&request_key, 3).await });
+        if index == 0 {
+            authorize(&mut peer).await;
+        }
+        let request = peer.next().await;
+        assert_eq!(request.method, Method::DELETE);
+        assert!(request.uri.path().ends_with("/objects/fenced-v2"));
+        let query: std::collections::BTreeMap<_, _> =
+            url::form_urlencoded::parse(request.uri.query().unwrap().as_bytes())
+                .into_owned()
+                .collect();
+        assert_eq!(query["key"], key);
+        assert_eq!(query["mutationGeneration"], "3");
+        if status == 404 {
+            request.respond(status, "");
+            assert_eq!(
+                finish(task).await.unwrap_err().error,
+                DocumentError::Unavailable
+            );
+        } else {
+            let generation = if index == 1 { 2 } else { 3 };
+            request.json(json!({ "data": { "deleted": true, "generation": generation,
+                "fenceVersion": if index == 2 { 1 } else { 2 }, "key": key }, "error": null }));
+            if index == 1 || index == 2 {
+                assert_eq!(
+                    finish(task).await.unwrap_err().error,
+                    DocumentError::Corrupt
+                );
+            } else {
+                assert!(finish(task).await.unwrap().matches(&key, 3, &namespace));
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn delete_treats_only_200_and_204_as_deleted() {
     let mut peer = Peer::start().await;
     let client = client(&peer, true);

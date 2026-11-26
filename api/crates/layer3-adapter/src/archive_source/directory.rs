@@ -84,6 +84,9 @@ impl Directory {
     pub(super) fn sync(&self) -> Result<()> {
         self.0.sync_all().map_err(|_| INVALID)
     }
+    pub(super) fn socket(&self, name: &[u8]) -> Result<()> {
+        super::socket::restore(&self.0, name)
+    }
     pub(super) fn names(&self) -> Result<Vec<Vec<u8>>> {
         // fdopendir owns this independent descriptor, so enumeration never
         // changes the offset or lifetime of the retained source handle.

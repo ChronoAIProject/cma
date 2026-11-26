@@ -85,6 +85,10 @@ impl RoutedToolReplies {
         self.reply_inner(caller, event, message, delayed, idempotency_key, None)
             .await
     }
+    pub(crate) fn requires_retained_binding(&self) -> bool {
+        self.journal.partitions.is_some()
+    }
+
     pub(super) async fn reply_inner(
         &self,
         caller: AgentCaller,

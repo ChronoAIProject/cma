@@ -11,6 +11,13 @@ LEVELS = {"version-upgrade:" + level: level for level in ("major", "minor", "pat
 BASE_VERSION = "0.10.0"
 REPOSITORY = "ChronoAIProject/cma"
 SEMVER = r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
+# The reservations recorded in #2363 remain burned even if their refs are
+# pruned. The source prohibition applies only to the named component.
+RETIRED_RUNTIME_SOURCE = "730c1bfcb804e86531e838f84bd2133013a6f4a2"
+RELEASE_RETIREMENTS = {
+    "runtime": {RETIRED_RUNTIME_SOURCE: "0.10.1"},
+    "runtime-desktop": {RETIRED_RUNTIME_SOURCE: "0.10.1"},
+}
 
 
 @dataclass(frozen=True)
@@ -25,6 +32,26 @@ class VersionPlan:
 def version_tuple(version):
     require(matches(SEMVER, version) and len(version) <= 128, "Version must be a canonical stable semver")
     return tuple(int(part) for part in version.split("."))
+
+
+def version_floor(component):
+    burned = RELEASE_RETIREMENTS.get(component, {}).values()
+    return max((BASE_VERSION, *burned), key=version_tuple)
+
+
+def source_is_retired(component, source):
+    return source in RELEASE_RETIREMENTS.get(component, {})
+
+
+def require_publishable_source(component, source):
+    require(not source_is_retired(component, source), "Retired release source cannot be published")
+
+
+def require_publishable_release(identity):
+    component = identity["component"]
+    require_publishable_source(component, identity["source"])
+    require(identity["version"] not in RELEASE_RETIREMENTS.get(component, {}).values(),
+            "Burned release version cannot be reused")
 
 
 def bump(version, level):
@@ -72,8 +99,11 @@ def label_level(pr):
     require(isinstance(labels, list) and all(isinstance(label, dict) and isinstance(label.get("name"), str)
                                           for label in labels), "Version labels are malformed")
     upgrades = [label["name"] for label in labels if label["name"].startswith("version-upgrade:")]
+    # A merged PR can bypass the pre-merge label gate. Publish a patch in that case.
+    if not upgrades:
+        return "patch"
     require(len(upgrades) == 1 and upgrades[0] in LEVELS,
-            "Merged PR must carry exactly one supported version-upgrade label")
+            "Merged PR has conflicting or unsupported version-upgrade labels")
     return LEVELS[upgrades[0]]
 
 
@@ -85,10 +115,11 @@ def merged_pr_level(revision, request):
 def plan_version(component, level, tags, source_revision):
     require(component in DEPLOYABLES and matches(r"[0-9a-f]{40}", source_revision),
             "Deployable or source revision is invalid")
+    require_publishable_source(component, source_revision)
     require(isinstance(tags, list), "Version tag inventory is malformed")
     deployable = DEPLOYABLES[component]
     prefix = deployable + "/v"
-    highest, seen, published = BASE_VERSION, set(), []
+    highest, seen, published = version_floor(component), set(), []
     for tag in tags:
         require(isinstance(tag, dict) and isinstance(tag.get("name"), str), "Version tag inventory is malformed")
         if not tag["name"].startswith(prefix):
@@ -106,6 +137,7 @@ def plan_version(component, level, tags, source_revision):
             receipt = validate_receipt(tag.get("receipt"))
             require(receipt["tag"] == name and receipt["source"] == source_revision,
                     "Existing version receipt differs from its tag")
+            require_publishable_release(receipt["identity"])
             published.append(VersionPlan(component, current, name, receipt["repository"], receipt))
         if version_tuple(current) > version_tuple(highest):
             highest = current

@@ -68,6 +68,7 @@ async fn credential(supervisor: &Supervisor) {
             operation_id: "credential-authority-tests".into(),
             value: RuntimeCredential::new("test-credential"),
             custody_generation: Some(1),
+            github_route: None,
         }))
         .await;
     assert!(

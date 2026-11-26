@@ -110,6 +110,9 @@ export const publicProfile = (kind: ProfileKind) => ({
 });
 export function operatorClient() {
   const admin = {
+    searchActivityActors: vi
+      .fn<OperatorClient['admin']['searchActivityActors']>()
+      .mockResolvedValue([]),
     listWarmPools: vi.fn<OperatorClient['admin']['listWarmPools']>().mockResolvedValue({
       items: [warmPool],
       default_cpu_millis: 1000,
@@ -132,6 +135,7 @@ export function operatorClient() {
     listSandboxes: vi
       .fn<OperatorClient['admin']['listSandboxes']>()
       .mockResolvedValue({ items: [sandboxRow], next: null }),
+    bindingHolds: vi.fn<OperatorClient['admin']['bindingHolds']>(),
     readSandbox: vi.fn<OperatorClient['admin']['readSandbox']>().mockResolvedValue(detail),
     sandboxEvents: vi.fn<OperatorClient['admin']['sandboxEvents']>().mockResolvedValue([
       {
@@ -151,6 +155,12 @@ export function operatorClient() {
       .fn<OperatorClient['admin']['retireProfile']>()
       .mockResolvedValue({ ...profileRow, retired_at: now }),
     readSettings: vi.fn<OperatorClient['admin']['readSettings']>().mockResolvedValue(stored),
+    readSpend: vi
+      .fn<OperatorClient['admin']['readSpend']>()
+      .mockResolvedValue({ metering_enabled: false, settings_revision: 1 }),
+    recordSpendObservation: vi
+      .fn<OperatorClient['admin']['recordSpendObservation']>()
+      .mockResolvedValue({ metering_enabled: false, settings_revision: 1 }),
     replaceSettings: vi
       .fn<OperatorClient['admin']['replaceSettings']>()
       .mockImplementation(async (body) => ({

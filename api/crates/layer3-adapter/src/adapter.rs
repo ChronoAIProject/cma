@@ -1,8 +1,10 @@
 //! The kernel-neutral sandbox adapter contract.
 use crate::desktop_ownership::{challenge, open, DesktopOwnedRuntime};
+use crate::stale_turn::StaleTurnProducer;
 use tokio::sync::mpsc;
 mod runtime_inspection;
 mod runtime_provision;
+mod validation;
 use crate::{
     AdapterCapabilities, AgentCloseRequest, AgentHomeRemoveRequest, AgentHomeRequest,
     AgentOpenRequest, AgentSlot, CheckpointHoldReceipt, CheckpointHoldRequest, CheckpointReceipt,
@@ -13,9 +15,14 @@ use crate::{
     RuntimeProvisionRequest, SandboxSpec, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveRequest,
     WorkspaceRequest, WorkspaceSetupRequest, WorktreeReceipt, WorktreeRef, WorktreeRequest,
 };
+use validation::{require_admitted_context, unsupported};
 /// Drives the complete lifecycle of one sandbox and the agents inside it.
 #[async_trait::async_trait]
 pub trait SandboxAdapter: Send + Sync {
+    /// Advertise only for a qualified runtime producer seal.
+    fn stale_turn_producer(&self, _: &RuntimeHandle) -> Option<&dyn StaleTurnProducer> {
+        None
+    }
     fn browser(&self) -> Option<&dyn crate::BrowserAdapter> {
         None
     }
@@ -28,7 +35,6 @@ pub trait SandboxAdapter: Send + Sync {
     fn startup_binding_headroom(&self, _handles: &[RuntimeHandle]) -> Option<usize> {
         None
     }
-    /// Abilities proved for the admitted runtime contract.
     fn capabilities(&self) -> AdapterCapabilities;
     async fn open_desktop(&self, _: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         Err(unsupported("runtime desktop is unavailable"))
@@ -36,14 +42,12 @@ pub trait SandboxAdapter: Send + Sync {
     fn desktop_ownership(&self, _: &RuntimeHandle) -> Option<&dyn DesktopOwnedRuntime> {
         None
     }
-    /// Issue before Mongo acquisition so delayed confirmation cannot extend time.
     async fn desktop_ownership_challenge(
         &self,
         handle: &RuntimeHandle,
     ) -> Result<crate::DesktopOwnershipChallenge> {
         challenge(self.desktop_ownership(handle), handle).await
     }
-    /// Never fall back to an unfenced socket when ownership is required.
     async fn open_desktop_owned(
         &self,
         handle: &RuntimeHandle,
@@ -103,9 +107,16 @@ pub trait SandboxAdapter: Send + Sync {
     async fn verify_suspended_runtime(&self, _request: &RuntimeAdoptionRequest) -> Result<()> {
         Err(unsupported("runtime suspension observation is unavailable"))
     }
+    /// Optional startup policy control for an admitted retained home.
+    fn retained_startup_policy(&self) -> Option<&dyn crate::RetainedStartupPolicyControl> {
+        None
+    }
     /// Delete a persisted provider identity and all Pods without requiring a live process.
     async fn teardown_retained_runtime(&self, _handle: &RuntimeHandle) -> Result<()> {
         Err(unsupported("retained runtime deletion is unavailable"))
+    }
+    fn runtime_retirement(&self) -> Option<&dyn crate::RuntimeRetirement> {
+        None
     }
     /// Resume the same provider object with a reserved generation and admitted service scope.
     async fn resume_runtime(
@@ -414,11 +425,7 @@ pub trait SandboxAdapter: Send + Sync {
         operation_sequence: u64,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> Result<ConversationChannel> {
-        if operation_sequence == 0 {
-            return Err(unsupported(
-                "context recovery requires an admitted operation",
-            ));
-        }
+        require_admitted_context(operation_sequence)?;
         self.reconnect_agent(handle, authority_fence, request, conversation_id, updates)
             .await
     }
@@ -490,8 +497,4 @@ pub trait SandboxAdapter: Send + Sync {
     async fn resources(&self, handle: &RuntimeHandle) -> Result<ResourceReading>;
 
     async fn teardown(&self, handle: &RuntimeHandle) -> Result<()>;
-}
-
-fn unsupported(detail: &str) -> crate::AdapterError {
-    crate::AdapterError::Unsupported(detail.into())
 }

@@ -38,6 +38,7 @@ pub(crate) struct RuntimeConfig {
     pub machine_included: bool,
     pub extended_desktop_startup: bool,
     pub capacity_recovery_enabled: bool,
+    pub agent_process_restart_enabled: bool,
     pub legacy_journal_recovery_enabled: bool,
     pub preserve_file_mode: bool,
 }
@@ -91,6 +92,8 @@ impl RuntimeConfig {
         let extended_desktop_startup = env_flag(&process_env, DESKTOP_STARTUP_FLAG)?;
         let capacity_recovery_enabled =
             env_flag(&process_env, "CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED")?;
+        let agent_process_restart_enabled =
+            env_flag(&process_env, "CHRONO_RUNTIME_AGENT_PROCESS_RESTART_ENABLED")?;
         let legacy_journal_recovery_enabled = env_flag(
             &process_env,
             "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED",
@@ -179,6 +182,7 @@ impl RuntimeConfig {
             machine_included,
             extended_desktop_startup,
             capacity_recovery_enabled,
+            agent_process_restart_enabled,
             legacy_journal_recovery_enabled,
             preserve_file_mode,
         })
@@ -223,6 +227,7 @@ impl RuntimeConfig {
             machine_included: false,
             extended_desktop_startup: false,
             capacity_recovery_enabled: false,
+            agent_process_restart_enabled: false,
             legacy_journal_recovery_enabled: false,
             preserve_file_mode: false,
         }

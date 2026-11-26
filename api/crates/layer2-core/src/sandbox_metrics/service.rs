@@ -1,3 +1,4 @@
+mod initial;
 mod view;
 use super::*;
 use crate::{Caller, Capability};
@@ -6,6 +7,11 @@ use std::sync::Arc;
 
 #[async_trait]
 pub trait MetricsStore: Send + Sync {
+    /// Verify the exact complete Ready namespace and return its writer generation.
+    /// This observation alone does not authorize a report or any child read.
+    async fn initial_snapshot_generation(&self, _report: &Report) -> Result<u64> {
+        Err(MetricsError::Unavailable)
+    }
     async fn latest(
         &self,
         _scope: &Scope,
@@ -102,13 +108,22 @@ impl MetricsService {
     ) -> Result<Report> {
         let scope = authorize(caller, admin)?;
         let mut query = input.validate(now)?;
-        if !admin && query.filters.owner.is_some() {
+        self.select_resources(&scope, &mut query).await?;
+        let report = self.store.submit(scope.clone(), query, now).await?;
+        if report.scope != scope {
+            return Err(MetricsError::NotFound);
+        }
+        self.store.reauthorize(&report).await?;
+        Ok(report)
+    }
+    async fn select_resources(&self, scope: &Scope, query: &mut ReportQuery) -> Result<()> {
+        if !scope.admin && query.filters.owner.is_some() {
             return Err(MetricsError::Invalid(
                 "Owner parameters are forbidden on owner routes.".into(),
             ));
         }
         if let Some(agent) = &query.filters.agent_id {
-            let sandbox = self.store.resolve_agent(&scope, agent).await?;
+            let sandbox = self.store.resolve_agent(scope, agent).await?;
             if query
                 .filters
                 .sandbox_id
@@ -122,14 +137,9 @@ impl MetricsService {
             query.filters.sandbox_id = Some(sandbox);
         }
         if let Some(id) = &query.filters.sandbox_id {
-            self.store.authorize_sandbox(&scope, id).await?;
+            self.store.authorize_sandbox(scope, id).await?;
         }
-        let report = self.store.submit(scope.clone(), query, now).await?;
-        if report.scope != scope {
-            return Err(MetricsError::NotFound);
-        }
-        self.store.reauthorize(&report).await?;
-        Ok(report)
+        Ok(())
     }
     pub async fn report(&self, caller: &Caller, admin: bool, id: &str, now: u64) -> Result<Report> {
         let scope = authorize(caller, admin)?;

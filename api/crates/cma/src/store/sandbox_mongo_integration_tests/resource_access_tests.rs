@@ -2,6 +2,8 @@
 mod access_snapshot_session;
 #[path = "resource_access_tests/artifacts.rs"]
 mod artifacts;
+#[path = "resource_access_tests/backend_free.rs"]
+mod backend_free;
 #[path = "resource_access_tests/hierarchy.rs"]
 mod hierarchy;
 #[path = "resource_access_tests/history_measurement.rs"]
@@ -22,6 +24,8 @@ mod sandbox_inventory;
 mod sandbox_snapshot;
 #[path = "resource_access_tests/share_links.rs"]
 mod share_links;
+#[path = "resource_access_tests/share_transaction_contract.rs"]
+mod share_transaction_contract;
 #[path = "resource_access_tests/snapshot_reads.rs"]
 mod snapshot_reads;
 use layer2_core::resource_access::*;
@@ -386,6 +390,7 @@ async fn lost_commit_acknowledgment_recovers_the_original_share_and_audit_exactl
         .await
         .unwrap();
     assert_eq!(result, Err(ResourceAccessStoreError::Unavailable));
+    crate::store::test_visibility::majority_barrier(&admin, &name).await;
     let recovered = store.mutate_share(request.clone()).await.unwrap();
     assert_eq!(store.mutate_share(request).await.unwrap(), recovered);
     assert_eq!(
@@ -409,3 +414,6 @@ async fn lost_commit_acknowledgment_recovers_the_original_share_and_audit_exactl
     assert_eq!(after.fence().policy_revision, 1);
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "resource_access_tests/mutation_contention.rs"]
+mod mutation_contention;

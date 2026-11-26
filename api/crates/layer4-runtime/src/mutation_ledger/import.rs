@@ -11,7 +11,7 @@ use crate::config::RuntimeConfig;
 use crate::failure::Result;
 use crate::ledger_storage::Storage;
 use crate::mutation_authority::Record as Authority;
-use crate::mutation_journal::{Record, Status, Subject};
+use crate::mutation_journal::{process_history, Record, Status, Subject};
 
 pub(crate) struct HeldImport {
     storage: Storage,
@@ -153,25 +153,36 @@ impl HeldImport {
         }).await
     }
 
-    /// Recheck each original Open after every Close has been imported. Close
-    /// authority alone never counts as a successfully completed process close.
+    /// Recheck process lineage after all Opens and Closes have been imported.
     pub(crate) async fn verify_process(&self, scope: u64, bytes: Vec<u8>) -> Result<bool> {
         let config = self.scoped(scope)?;
         self.storage.call(move |db| {
             use rusqlite::OptionalExtension;
             let record = Record::decode(&bytes, &config)?;
-            let Subject::OpenAgent { agent_id, cwd, home } = record.operation().subject else {
+            let operation = record.operation();
+            let scope = scope.to_be_bytes();
+            if journal::scope(&config, &operation) != scope {
+                return Err(invalid());
+            }
+            process_history::validate(&operation, |id| journal::load_id(db, &config, &scope, id))?;
+            let Subject::OpenAgent { agent_id, .. } = operation.subject else {
                 return Ok(false);
             };
+            use layer3_adapter::AgentProcessAction::{Close, Open};
+            let incarnation = Open.incarnation(&agent_id, &operation.operation_id).ok_or_else(invalid)?;
             let closed: bool = db.query_row("SELECT EXISTS(SELECT 1 FROM operations WHERE scope=? AND operation_id=? AND status=2)",
-                params![scope.to_be_bytes().as_slice(),format!("agent:{agent_id}:close:v1")], |r| r.get(0))
+                params![scope.as_slice(),Close.operation_id(&agent_id, incarnation)], |r| r.get(0))
                 .map_err(|_| storage_error())?;
-            let expected = (record.status() != Status::Failed && !closed).then_some((cwd,home));
+            let expected_live = record.status() != Status::Failed && !closed;
+            let projected = processes::projected_open(db, &config, &scope, &agent_id)?;
+            if expected_live && projected.as_ref().is_none_or(|open| open.id != operation.operation_id) {
+                return Err(invalid());
+            }
             let actual: Option<(String,String)> = db.query_row("SELECT cwd,home FROM logical_processes WHERE scope=? AND agent=?",
-                params![scope.to_be_bytes().as_slice(),agent_id], |r| Ok((r.get(0)?,r.get(1)?)))
+                params![scope.as_slice(),agent_id], |r| Ok((r.get(0)?,r.get(1)?)))
                 .optional().map_err(|_| storage_error())?;
-            if actual != expected { return Err(invalid()); }
-            Ok(expected.is_some())
+            if actual != projected.map(|open| (open.cwd, open.home)) { return Err(invalid()); }
+            Ok(expected_live)
         }).await
     }
 

@@ -181,6 +181,77 @@ async fn eligible_machine_replay_preserves_identity_and_request_authority() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
+async fn machine_replay_retains_the_admitted_digest_after_the_default_changes() {
+    let (client, database, mut harness) = isolated_environment().await;
+    let body = json!({"name":"Retained machine", "machine_included":true});
+    let owner = SubjectId::new("owner");
+    let image_a = machine_image("a");
+    let image_b = machine_image("b");
+    let retained = retain_machine(&harness, &database, &client, &body, "machine-original").await;
+    assert_eq!(retained.owner, owner.as_str());
+    assert_eq!(
+        retained.input.resolved_image.as_deref(),
+        Some(image_a.as_str())
+    );
+    let counts = recovery::resource_counts(&database).await;
+    let runtimes = harness.backend.inventory().await.unwrap();
+
+    // Rebuild the service and its Mongo stores over the surviving database.
+    harness.store = Arc::new(
+        MongoSandboxStore::open(&client, database.name())
+            .await
+            .unwrap(),
+    );
+    harness.registry = Arc::new(LiveAgentRegistry::default());
+    let (service, drain) = configured_router_for_image(
+        &harness,
+        &database,
+        &client,
+        Some(task_experience_policy()),
+        true,
+        image_b.clone(),
+    )
+    .await;
+    let (status, receipt) = create(&service, &body, &retained.key).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+    assert_eq!(receipt["id"], retained.id);
+    let replay = waiting_record(&database, &retained.id, retained.attempts).await;
+    drain.drain(Duration::from_secs(5)).await.unwrap();
+    assert_eq!(replay.owner, retained.owner);
+    assert_eq!(replay.input.resolved_image, retained.input.resolved_image);
+    assert_eq!(recovery::resource_counts(&database).await, counts);
+    assert_eq!(harness.backend.inventory().await.unwrap(), runtimes);
+
+    let (service, drain) = configured_router_for_image(
+        &harness,
+        &database,
+        &client,
+        Some(task_experience_policy()),
+        true,
+        image_b.clone(),
+    )
+    .await;
+    let (status, receipt) = create(&service, &body, "machine-fresh").await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{receipt}");
+    let fresh_id = receipt["id"].as_str().unwrap();
+    assert_ne!(fresh_id, retained.id);
+    let fresh = waiting_record(&database, fresh_id, 0).await;
+    drain.drain(Duration::from_secs(5)).await.unwrap();
+    assert_eq!(fresh.owner, owner.as_str());
+    assert_eq!(fresh.input.resolved_image, Some(image_b));
+    let original = MongoAgentLifecycleStore::open(&database)
+        .await
+        .unwrap()
+        .read_for_owner(&owner, &retained.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(original.input.resolved_image, Some(image_a));
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
 async fn retained_machine_message_rechecks_task_home_but_nonmachine_replay_is_preserved() {
     let (client, database, harness) = isolated_environment().await;
     for machine in [true, false] {

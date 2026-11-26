@@ -35,6 +35,7 @@ fn grant(value: &mut Sandbox) -> SandboxServiceGrant {
 fn transaction(before: &Sandbox, next: Sandbox, grant: SandboxServiceGrant) -> SandboxTransaction {
     SandboxTransaction::SaveSandboxAndAppend {
         command_revival: None,
+        released_runtime: None,
         expected_revision: before.revision,
         sandbox: Box::new(next),
         event_at: NOW.into(),

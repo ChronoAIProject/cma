@@ -102,6 +102,14 @@ describe('public allowance guidance', () => {
 });
 
 describe('readableError', () => {
+  it('does not expose a cancellation message from another realm', () => {
+    expect(
+      readableError(
+        { name: 'AbortError', message: 'signal is aborted without reason' },
+        'fallback',
+      ),
+    ).toBe('The request was interrupted. Check the current status and try again.');
+  });
   it('keeps a service sentence written for people', () => {
     expect(readableError(new ApiError(409, 'The Sandbox is pausing.'), 'fallback')).toBe(
       'The Sandbox is pausing.',

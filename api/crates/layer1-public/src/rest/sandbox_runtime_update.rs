@@ -12,7 +12,8 @@ use axum::{
     Json,
 };
 use layer2_core::sandbox::{
-    Sandbox, SandboxRuntimeUpdateError, SandboxRuntimeUpdateService, SandboxStatus,
+    Sandbox, SandboxRuntimeImageOrigin, SandboxRuntimeUpdateError, SandboxRuntimeUpdateService,
+    SandboxStatus,
 };
 use layer2_core::{Capability, SandboxId};
 use serde::{Deserialize, Serialize};
@@ -27,6 +28,9 @@ pub struct UpdateSandboxRuntimeRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct SandboxRuntimeUpdateView {
     pub current_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub current_version_confirmed: Option<bool>,
+    pub image_origin: RuntimeUpdateImageOrigin,
     pub latest_version: String,
     pub update_available: bool,
     pub state: SandboxRuntimeUpdateStatus,
@@ -69,16 +73,44 @@ pub struct RuntimeUpdateFailureView {
     pub message: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeUpdateImageOrigin {
+    ManagedAgent,
+    ManagedDesktop,
+    ManagedMachine,
+    UserSelected,
+    Unknown,
+}
+
 impl SandboxRuntimeUpdateView {
     pub(super) fn new(sandbox: &Sandbox, service: &SandboxRuntimeUpdateService) -> Self {
+        // One release for the whole view, so its fields always agree.
+        let latest_version = service.latest_version_for(sandbox).unwrap_or_default();
         let current_version = sandbox
             .retained_runtime_binding()
             .map(|runtime| runtime.runtime_version.clone());
         let same_home = sandbox.supports_retained_runtime_update();
+        let can_update = service.can_update_to(sandbox, &latest_version);
+        let qualified = service.target_is_qualified(sandbox, &latest_version);
+        let current_confirmed = sandbox.managed_desktop_runtime_confirmed();
+        let image_origin = match sandbox.lifecycle.runtime_image_origin {
+            Some(SandboxRuntimeImageOrigin::ManagedDesktop) => {
+                RuntimeUpdateImageOrigin::ManagedDesktop
+            }
+            Some(SandboxRuntimeImageOrigin::ManagedMachine) => {
+                RuntimeUpdateImageOrigin::ManagedMachine
+            }
+            Some(SandboxRuntimeImageOrigin::UserSelected) => RuntimeUpdateImageOrigin::UserSelected,
+            None if sandbox.has_managed_runtime_image() => RuntimeUpdateImageOrigin::ManagedAgent,
+            None => RuntimeUpdateImageOrigin::Unknown,
+        };
         let update_available = same_home
+            && qualified
+            && current_confirmed
             && current_version
                 .as_deref()
-                .is_some_and(|version| version != service.latest_version());
+                .is_some_and(|version| version != latest_version);
         let request = sandbox.runtime_update_request();
         let pending = request.filter(|request| request.completed_at.is_none());
         let state = match pending {
@@ -88,8 +120,10 @@ impl SandboxRuntimeUpdateView {
             None if update_available => SandboxRuntimeUpdateStatus::Available,
             None => SandboxRuntimeUpdateStatus::UpToDate,
         };
-        let blocked_reason = if sandbox.profile.content.runtime_image.is_some() {
+        let blocked_reason = if image_origin == RuntimeUpdateImageOrigin::UserSelected {
             Some("This Sandbox uses a custom image. Automatic CMA runtime updates do not replace custom images.".into())
+        } else if image_origin == RuntimeUpdateImageOrigin::Unknown {
+            Some("The original source of this Sandbox image is unknown. Managed runtime updates require a confirmed origin.".into())
         } else if !same_home {
             Some("Runtime updates require a retained managed home and its original runtime identity.".into())
         } else if pending.is_some_and(|request| request.failure.is_none()) {
@@ -101,29 +135,80 @@ impl SandboxRuntimeUpdateView {
                 }
                 .into(),
             )
-        } else if !matches!(
-            sandbox.status,
-            SandboxStatus::Active | SandboxStatus::Paused
-        ) && pending.is_none()
-        {
-            Some("Wait for the current Sandbox operation to finish.".into())
+        } else if !current_confirmed && pending.is_none() {
+            Some("The current Desktop runtime could not be confirmed.".into())
+        } else if !qualified && pending.is_none() {
+            Some(
+                if image_origin == RuntimeUpdateImageOrigin::ManagedMachine {
+                    "A verified Machine runtime release is unavailable."
+                } else {
+                    "The latest Agent runtime has not been verified for Desktop."
+                }
+                .into(),
+            )
+        } else if pending.is_none() && !can_update {
+            runtime_update_lifecycle_reason(sandbox.status).map(str::to_owned)
         } else {
             None
         };
+        let failure = pending.and_then(|request| {
+            let failure = request.failure.as_ref()?;
+            let guidance = if can_update {
+                if service.retry_uses_latest(sandbox, &request.target_version, &latest_version) {
+                    "Retry the runtime update. Recovery can use the latest runtime on your retained home."
+                } else {
+                    "Retry the runtime update to continue with the requested runtime on your retained home."
+                }
+            } else if !same_home {
+                "Retry requires a confirmed retained managed home. Contact the deployment operator for recovery help."
+            } else if sandbox.work.lease.is_some() {
+                "Retry is currently unavailable. Check the Sandbox status again after the current work finishes."
+            } else {
+                "Retry is unavailable. Contact the deployment operator for help recovering your retained home."
+            };
+            Some(RuntimeUpdateFailureView {
+                code: failure.class.clone(),
+                message: format!("The runtime update stopped at its current step. {guidance}"),
+            })
+        });
         Self {
-            current_version, latest_version: service.latest_version().into(), update_available, state,
-            can_update: service.can_update(sandbox), preserves_home: same_home,
-            schedule: RuntimeUpdateScheduleView { timezone: "Asia/Singapore".into(), local_time: "02:00".into() },
-            blocked_reason, target_version: request.map(|request| request.target_version.clone()),
+            can_update,
+            current_version,
+            current_version_confirmed: sandbox
+                .has_managed_desktop_image()
+                .then_some(current_confirmed),
+            image_origin,
+            latest_version,
+            update_available,
+            state,
+            preserves_home: same_home,
+            schedule: RuntimeUpdateScheduleView {
+                timezone: "Asia/Singapore".into(),
+                local_time: "02:00".into(),
+            },
+            blocked_reason,
+            target_version: request.map(|request| request.target_version.clone()),
             requested_at: request.map(|request| request.requested_at.clone()),
             started_at: request.and_then(|request| request.started_at.clone()),
             completed_at: request.and_then(|request| request.completed_at.clone()),
-            failure: pending.and_then(|request| request.failure.as_ref()).map(|failure| RuntimeUpdateFailureView {
-                code: failure.class.clone(),
-                message: "The runtime update paused safely. Your home and conversations are retained. Retry the update to continue.".into(),
-            }),
+            failure,
         }
     }
+}
+
+pub(super) fn runtime_update_lifecycle_reason(status: SandboxStatus) -> Option<&'static str> {
+    Some(match status {
+        SandboxStatus::Provisioning => "Runtime updates are unavailable while the Sandbox is provisioning.",
+        SandboxStatus::Installing => "Runtime updates are unavailable while the Sandbox is installing software.",
+        SandboxStatus::Pausing => "Runtime updates are unavailable while the Sandbox is pausing.",
+        SandboxStatus::Reviving => "Runtime updates are unavailable while the Sandbox is resuming.",
+        SandboxStatus::CredentialRotating => "Runtime updates are unavailable during Sandbox credential rotation.",
+        SandboxStatus::Rotating => "Runtime updates are unavailable during Sandbox runtime rotation.",
+        SandboxStatus::Failed => "Runtime updates are blocked by the Sandbox failure. Open Technical details for the reported failure.",
+        SandboxStatus::Retiring => "The Sandbox is retiring. Runtime updates are unavailable.",
+        SandboxStatus::Retired => "The Sandbox is retired. Runtime updates are unavailable.",
+        SandboxStatus::Active | SandboxStatus::Paused => return None,
+    })
 }
 
 #[utoipa::path(post, path = "/api/v1/sandboxes/{id}/runtime-update", tag = "sandboxes",

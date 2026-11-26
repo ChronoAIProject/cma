@@ -78,14 +78,54 @@ fn all_complete_live_agents_must_be_strictly_older_than_the_threshold() {
 }
 
 #[test]
-fn durable_agent_logs_not_the_sandbox_summary_are_activity_authority() {
+fn recent_sandbox_activity_defers_pause_even_when_live_agent_logs_are_old() {
+    // The owner's Workspace/Agent creation is admitted on the Sandbox while
+    // the existing Agents stay quiet with old logs (#1330).
+    let mut sandbox = sandbox();
+    let activities = quiet_pair();
+    sandbox.last_activity_at = "2026-09-05T00:20:00Z".into();
+    for (now, eligible) in [
+        ("2026-09-05T00:34:59Z", false),
+        // The boundary is strict, as for Agent logs.
+        ("2026-09-05T00:35:00Z", false),
+        ("2026-09-05T00:35:01Z", true),
+    ] {
+        assert_eq!(
+            is_inactivity_pause_candidate(&sandbox, &activities, now, 900),
+            eligible,
+            "{now}"
+        );
+    }
+
+    // Each kind of evidence must be idle: a recent Agent log still defers
+    // after the Sandbox activity is old.
+    let mut recent_log = activities.clone();
+    recent_log[0].newest_log.as_mut().unwrap().appended_at = "2026-09-05T00:25:00Z".into();
+    assert!(!is_inactivity_pause_candidate(
+        &sandbox,
+        &recent_log,
+        "2026-09-05T00:35:01Z",
+        900,
+    ));
+
+    // Malformed Sandbox activity fails closed.
+    sandbox.last_activity_at = "not-a-time".into();
+    assert!(!is_inactivity_pause_candidate(
+        &sandbox,
+        &activities,
+        NOW,
+        900
+    ));
+}
+
+#[test]
+fn platform_stop_pause_keeps_its_zero_threshold_with_recent_sandbox_activity() {
     let mut sandbox = sandbox();
     sandbox.last_activity_at = NOW.into();
-    assert!(is_inactivity_pause_candidate(
+    assert!(is_platform_stop_pause_candidate(
         &sandbox,
         &quiet_pair(),
-        NOW,
-        900,
+        NOW
     ));
 }
 

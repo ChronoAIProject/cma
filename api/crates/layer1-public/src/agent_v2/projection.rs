@@ -3,6 +3,24 @@ use layer2_core::sandbox::{AgentEventStreamAuthorization, AgentReplayWindow};
 
 pub(super) const MAX_BYTES: usize = 4 * 1024 * 1024;
 
+pub(super) struct Preferences {
+    pub message_bindings: bool,
+    pub tool_output: bool,
+    pub retained_output: bool,
+    pub external_approval: bool,
+}
+
+impl Preferences {
+    pub fn from_headers(headers: &axum::http::HeaderMap) -> Self {
+        Self {
+            message_bindings: message_bindings(headers),
+            tool_output: tool_output(headers),
+            retained_output: retained_output(headers),
+            external_approval: preference(headers, super::external_approval::PREFERENCE),
+        }
+    }
+}
+
 pub(super) async fn window(
     state: &AgentV2State,
     authorization: &AgentEventStreamAuthorization,
@@ -104,7 +122,7 @@ pub(super) fn retained_output(headers: &axum::http::HeaderMap) -> bool {
     preference(headers, "cma-retained-output")
 }
 
-fn preference(headers: &axum::http::HeaderMap, requested: &str) -> bool {
+pub(super) fn preference(headers: &axum::http::HeaderMap, requested: &str) -> bool {
     headers.get_all("prefer").iter().any(|value| {
         value.to_str().is_ok_and(|value| {
             value

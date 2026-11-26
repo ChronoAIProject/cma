@@ -66,6 +66,7 @@ fn in_scope(path: &str) -> bool {
         path.split('/').next().unwrap(),
         "agents"
             | "sandboxes"
+            | "sandbox-creation-outcomes"
             | "sandbox-commands"
             | "commands"
             | "agent-delegations"
@@ -192,7 +193,14 @@ fn mounted_resource_paths_cannot_hide_outside_the_openapi_inventory() {
     let known: BTreeSet<_> = entries()
         .iter()
         .map(|e| e.operation.split_once(' ').unwrap().1)
-        .chain(["/api/v1/agents/{id}/history", "/api/v1/agent-tools"])
+        .chain([
+            "/api/v1/agents/{id}/history",
+            "/api/v1/agent-tools",
+            // The reviewed retirement executor uses a private operator contract.
+            // Its routes are exercised by the authorization tests in admin/always_on_tests.rs.
+            "/api/v1/admin/sandboxes/{id}/retire-reviewed",
+            "/api/v1/admin/sandboxes/{id}/retire-reviewed/{batch}/{member}",
+        ])
         .collect();
     let mut sources = Vec::new();
     walk(

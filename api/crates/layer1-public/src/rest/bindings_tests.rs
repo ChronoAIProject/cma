@@ -254,6 +254,33 @@ async fn binding_routes_require_authentication_and_both_management_capabilities(
 }
 
 #[tokio::test]
+async fn binding_route_refuses_missing_environment_and_allows_corrected_profile() {
+    let (app, store) = app();
+    let path = "/api/v1/cmaeg/bindings/binding-one";
+    let valid = body();
+    let mut invalid = valid.clone();
+    invalid["profile"]["environment"] = Value::Null;
+    invalid["profile_digest"] = json!(format!(
+        "sha256:{}",
+        content_digest(&invalid["profile"]).unwrap()
+    ));
+    let refused = app
+        .clone()
+        .oneshot(request("PUT", path, Some(invalid), Some(authority())))
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(json_body(refused).await["code"], "invalid_binding");
+    assert!(store.binding("binding-one").await.unwrap().is_none());
+    let accepted = app
+        .oneshot(request("PUT", path, Some(valid), Some(authority())))
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), StatusCode::OK);
+    assert_eq!(json_body(accepted).await["state"], "provisioning");
+}
+
+#[tokio::test]
 async fn binding_routes_replay_binding_and_conversation_and_acknowledge_retirement() {
     let (app, store) = app();
     let path = "/api/v1/cmaeg/bindings/binding-one";

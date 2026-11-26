@@ -295,6 +295,12 @@ async fn deletion_recovery_and_state_errors_have_actionable_distinct_details() {
             "Idempotency-Key",
         ),
         (
+            AccountDeletionError::VerificationRequired,
+            "store_failed",
+            "state",
+            "Idempotency-Key",
+        ),
+        (
             AccountDeletionError::Store("database unavailable".into()),
             "store_failed",
             "temporarily unavailable",

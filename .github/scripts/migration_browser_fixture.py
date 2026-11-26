@@ -29,12 +29,15 @@ class NoRedirect(HTTPRedirectHandler):
 
 
 class BrowserFixture:
+    defer_pending_callback = False
+
     def __init__(self, api, identity, state_file):
         self.api, self.identity = local_origin(api), local_origin(identity)
         self.state_file = Path(state_file)
         self.cookies = {}
         self.revoked_cookies = {}
         self.observations = []
+        self.pending_callback = None
         self.opener = build_opener(NoRedirect)
 
     def raw(self, method, url, headers=None):
@@ -148,10 +151,18 @@ class BrowserFixture:
             actual = self.check_session()
             if actual != state['session']:
                 raise RuntimeError('retained_browser_authority_changed')
-            self.complete(state['pending'], check_once=True)
+            if self.defer_pending_callback:
+                # Deferred commands bind the original sign-in incarnation.
+                # Verify them before a successful callback rotates that scope.
+                self.pending_callback = state['pending']
+            else:
+                self.complete(state['pending'], check_once=True)
         return self.cookies
 
     def finish(self, stage):
+        if self.pending_callback is not None:
+            self.complete(self.pending_callback, check_once=True)
+            self.pending_callback = None
         session = self.check_session()
         self.check_revoked_session()
         if stage in ('old-write', 'new-write'):

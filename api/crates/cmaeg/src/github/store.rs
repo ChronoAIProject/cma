@@ -9,6 +9,7 @@ use super::{
     schema::{runtime_role, COLLECTION},
     Error,
 };
+use crate::transaction_terminal::GuardedTerminal as _;
 use base64::Engine;
 use cmaeg_core::seal::{open_blob, seal_blob, MasterKeyRing};
 use futures_util::TryStreamExt;
@@ -181,10 +182,7 @@ impl Store {
             .start_session()
             .await
             .map_err(transaction_error)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+        crate::transaction_start::start_write(&self.database, &mut session, None)
             .await
             .map_err(transaction_error)?;
         self.records
@@ -196,10 +194,7 @@ impl Store {
             self.guard_integration(owner, integration, &mut session)
                 .await?;
         }
-        session
-            .commit_transaction()
-            .await
-            .map_err(transaction_error)?;
+        session.commit_guarded().await.map_err(transaction_error)?;
         Ok(())
     }
     pub async fn source(
@@ -316,10 +311,7 @@ impl Store {
             .start_session()
             .await
             .map_err(transaction_error)?;
-        session
-            .start_transaction()
-            .read_concern(ReadConcern::snapshot())
-            .write_concern(WriteConcern::builder().w(Acknowledgment::Majority).build())
+        crate::transaction_start::start_write(&self.database, &mut session, None)
             .await
             .map_err(transaction_error)?;
         let updated = self
@@ -341,10 +333,7 @@ impl Store {
             .map_err(transaction_error)?;
         self.guard_integration(owner, integration, &mut session)
             .await?;
-        session
-            .commit_transaction()
-            .await
-            .map_err(transaction_error)?;
+        session.commit_guarded().await.map_err(transaction_error)?;
         Ok(())
     }
     pub async fn read<T: DeserializeOwned>(

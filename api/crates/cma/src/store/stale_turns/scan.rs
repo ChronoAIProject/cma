@@ -1,0 +1,180 @@
+//! The scan lease fences only scheduling state. It grants no Agent authority.
+
+use std::time::Duration;
+
+use futures_util::TryStreamExt;
+use mongodb::{
+    bson::{self, doc, DateTime, Document},
+    options::{Hint, ReturnDocument},
+    Collection,
+};
+use serde::Deserialize;
+
+use super::{ScanError, StaleTurnStore};
+use crate::store::sandbox_mongo::{is_duplicate_key, DOCUMENT_SCHEMA_VERSION};
+
+const PAGE_SIZE: u32 = 128;
+// This outlasts the ten-second worker deadline and allows a one-second
+// scheduling margin around the next 30-second tick.
+const LEASE_MILLISECONDS: i64 = 29_000;
+pub(super) const QUERY_DEADLINE: Duration = Duration::from_secs(1);
+const SCAN_ID: &str = "stale-admitted-turns-v1";
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Lane {
+    #[default]
+    InProgress,
+    WaitingAction,
+}
+
+impl Lane {
+    fn status(self) -> &'static str {
+        match self {
+            Self::InProgress => "in_progress",
+            Self::WaitingAction => "waiting_action",
+        }
+    }
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub(crate) struct Position {
+    pub lane: Lane,
+    pub after: Option<String>,
+    pub wrapped_at: Option<DateTime>,
+}
+
+pub(crate) struct Lease {
+    token: String,
+    pub position: Position,
+    pub now: DateTime,
+}
+
+pub(crate) struct Page {
+    pub rows: Vec<Document>,
+    pub eof: bool,
+}
+
+impl StaleTurnStore {
+    pub(crate) async fn claim(&self) -> Result<Option<Lease>, ScanError> {
+        let token = uuid::Uuid::new_v4().to_string();
+        let expired = doc! {"$lte": [
+            {"$ifNull": ["$scan_expires_at", DateTime::from_millis(0)]}, "$$NOW",
+        ]};
+        let row = self
+            .state
+            .find_one_and_update(
+                doc! {"_id": {"scan": SCAN_ID}},
+                vec![doc! {"$replaceWith": {"$cond": [
+                    expired,
+                    {"$mergeObjects": ["$$ROOT", {
+                    // Replica startup checks every row in the owner collection.
+                    "document_schema_version": {"$ifNull": [
+                        "$document_schema_version", DOCUMENT_SCHEMA_VERSION,
+                    ]},
+                    "scan_token": {"$literal": &token},
+                    "scan_started_at": "$$NOW",
+                    "scan_expires_at": {"$add": ["$$NOW", LEASE_MILLISECONDS]},
+                    }]},
+                    "$$ROOT",
+                ]}}],
+            )
+            .upsert(true)
+            .return_document(ReturnDocument::After)
+            .max_time(QUERY_DEADLINE)
+            .await;
+        match row {
+            Ok(Some(row)) => {
+                if row.get_i64("document_schema_version").ok() != Some(DOCUMENT_SCHEMA_VERSION) {
+                    return Err(ScanError::Invalid);
+                }
+                if row.get_str("scan_token").ok() != Some(token.as_str()) {
+                    return Ok(None);
+                }
+                let now = row
+                    .get_datetime("scan_started_at")
+                    .map_err(|_| ScanError::Invalid)?;
+                let position =
+                    bson::deserialize_from_document(row.clone()).map_err(|_| ScanError::Invalid)?;
+                Ok(Some(Lease {
+                    token,
+                    position,
+                    now: *now,
+                }))
+            }
+            Ok(None) => Err(ScanError::Invalid),
+            Err(error) if is_duplicate_key(&error) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub(crate) async fn page(&self, lease: &Lease) -> Result<Page, ScanError> {
+        page(&self.store.agent_commands, &lease.position).await
+    }
+
+    /// Returning false means another replica may have taken the scan. Progress
+    /// from a stale holder must never overwrite the successor's position.
+    pub(crate) async fn advance(
+        &self,
+        lease: &Lease,
+        last_examined: Option<&str>,
+        eof: bool,
+    ) -> Result<bool, ScanError> {
+        let position = &lease.position;
+        let (lane, after, wrap) = match (eof, position.lane) {
+            (true, Lane::InProgress) => (Lane::WaitingAction, None, false),
+            (true, Lane::WaitingAction) => (Lane::InProgress, None, true),
+            (false, lane) => (lane, last_examined.or(position.after.as_deref()), false),
+        };
+        let fields = doc! {
+            "lane": lane.status(),
+            "after": {"$literal": after},
+            "wrapped_at": if wrap { "$$NOW" } else { "$wrapped_at" },
+        };
+        let result = self
+            .state
+            .update_one(
+                doc! {"_id": {"scan": SCAN_ID}, "scan_token": &lease.token,
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "$expr": {"$gt": ["$scan_expires_at", "$$NOW"]}},
+                vec![doc! {"$set": fields}, doc! {"$unset": "scan_token"}],
+            )
+            .await?;
+        if result.matched_count == 1 && wrap {
+            if let Some(previous) = position.wrapped_at {
+                let elapsed = lease.now.timestamp_millis() - previous.timestamp_millis();
+                metrics::histogram!("cma_stale_turn_full_traversal_seconds")
+                    .record(elapsed.max(0) as f64 / 1000.0);
+            }
+        }
+        Ok(result.matched_count == 1)
+    }
+}
+
+async fn page(collection: &Collection<Document>, position: &Position) -> Result<Page, ScanError> {
+    let mut filter = doc! {"status": position.lane.status()};
+    if let Some(after) = &position.after {
+        filter.insert("_id", doc! {"$gt": after});
+    }
+    let rows: Vec<_> = collection
+        .find(filter)
+        .sort(doc! {"_id": 1})
+        .hint(Hint::Name("agent_command_work_scan".into()))
+        .projection(doc! {
+            "_id": 1, "agent_id": 1, "status": 1, "record.receipt.envelope.command.type": 1,
+            "record.work.dispatch.fenced_at": 1, "record.work.dispatch.delivery": 1,
+            "record.work.observation.delivery": 1,
+            "record.work.dispatch.turn_sequence": 1, "record.work.dispatch.runtime_generation": 1,
+        })
+        .limit(-i64::from(PAGE_SIZE))
+        .batch_size(PAGE_SIZE)
+        .max_time(QUERY_DEADLINE)
+        .await?
+        .try_collect()
+        .await?;
+    Ok(Page {
+        eof: rows.len() < PAGE_SIZE as usize,
+        rows,
+    })
+}

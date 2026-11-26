@@ -328,4 +328,6 @@ impl AgentTitleGenerator for FencedTitleGenerator {
 
 #[cfg(test)]
 #[path = "title_worker_tests.rs"]
-mod tests;
+pub(super) mod tests;
+#[cfg(test)]
+pub(crate) use tests::fixtures::{scheduled_title_fixture, start_title_scheduler};

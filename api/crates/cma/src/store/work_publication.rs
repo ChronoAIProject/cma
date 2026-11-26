@@ -4,11 +4,12 @@ use layer2_core::sandbox::store::{ClaimedWork, SandboxStoreError, WorkAuthority}
 use mongodb::bson::{doc, Document};
 
 use super::sandbox_mongo::MongoSandboxStore;
+use super::work_claim_authority::without_ledger_maintenance;
 
 pub(super) mod workspace;
 
 pub(super) fn sandbox(filter: Document, id: &str) -> Result<Document, SandboxStoreError> {
-    constrain(filter, id, true)
+    constrain(without_ledger_maintenance(filter), id, true)
 }
 
 pub(super) fn workspace(filter: Document, id: &str) -> Result<Document, SandboxStoreError> {
@@ -78,7 +79,12 @@ pub(super) fn for_collection(
     rows: &mongodb::Collection<Document>,
     filter: Document,
 ) -> Result<Document, SandboxStoreError> {
-    let mut conditions = vec![super::work_schema::for_collection(rows, filter)];
+    let filter = super::work_schema::for_collection(rows, filter);
+    let mut conditions = vec![if rows.name() == "sandboxes" {
+        without_ledger_maintenance(filter)
+    } else {
+        filter
+    }];
     for authority in WorkAuthority::current()? {
         let (id, claim) = match authority.claimed() {
             ClaimedWork::Sandbox(row) if rows.name() == "sandboxes" => (
@@ -100,6 +106,44 @@ pub(super) fn for_collection(
     })
 }
 
+/// Preserve driver labels until the transaction root decides whether an abort
+/// permits a fresh snapshot. Domain authority refusals are never retry evidence.
+#[derive(Debug)]
+pub(super) enum FenceError {
+    Domain(SandboxStoreError),
+    Driver(mongodb::error::Error),
+}
+
+impl From<SandboxStoreError> for FenceError {
+    fn from(error: SandboxStoreError) -> Self {
+        Self::Domain(error)
+    }
+}
+
+impl From<mongodb::error::Error> for FenceError {
+    fn from(error: mongodb::error::Error) -> Self {
+        Self::Driver(error)
+    }
+}
+
+impl FenceError {
+    pub(super) fn into_domain(self) -> SandboxStoreError {
+        match self {
+            Self::Domain(error) => error,
+            Self::Driver(_) => {
+                SandboxStoreError::Unavailable("work authority fence unavailable".into())
+            }
+        }
+    }
+
+    fn into_driver(self) -> mongodb::error::Error {
+        match self {
+            Self::Domain(error) => mongodb::error::Error::custom(error),
+            Self::Driver(error) => error,
+        }
+    }
+}
+
 /// Each worker transaction writes its original authority row. This includes
 /// transactions that publish only to a parent/child or an event collection.
 /// A competing renewal/takeover then conflicts with the same transaction;
@@ -108,6 +152,16 @@ pub(super) async fn fence(
     store: &MongoSandboxStore,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), SandboxStoreError> {
+    fence_transaction(store, session)
+        .await
+        .map_err(FenceError::into_domain)
+}
+
+/// Typed transaction callers retain the original driver error and all labels.
+pub(super) async fn fence_transaction(
+    store: &MongoSandboxStore,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), FenceError> {
     for authority in WorkAuthority::current()? {
         let (rows, identity) = match authority.claimed() {
             ClaimedWork::Sandbox(row) => (
@@ -115,8 +169,8 @@ pub(super) async fn fence(
                 super::work_claim_authority::sandbox_claim(row)?,
             ),
             ClaimedWork::Workspace(row) => {
-                if !super::work_lease_parent::fence_parent(store, row, session).await? {
-                    return Err(SandboxStoreError::Conflict);
+                if !super::work_lease_parent::fence_parent_transaction(store, row, session).await? {
+                    return Err(SandboxStoreError::Conflict.into());
                 }
                 (
                     &store.workspaces,
@@ -134,10 +188,9 @@ pub(super) async fn fence(
                 doc! {"$inc":{"work_publication_fence":1_i64}},
             )
             .session(&mut *session)
-            .await
-            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+            .await?;
         if result.matched_count != 1 {
-            return Err(SandboxStoreError::Conflict);
+            return Err(SandboxStoreError::Conflict.into());
         }
     }
     Ok(())
@@ -158,9 +211,9 @@ pub(super) async fn fence_current(
     session: &mut mongodb::ClientSession,
 ) -> Result<(), mongodb::error::Error> {
     if let Ok(store) = STORE.try_with(Clone::clone) {
-        fence(&store, session)
+        fence_transaction(&store, session)
             .await
-            .map_err(mongodb::error::Error::custom)?;
+            .map_err(FenceError::into_driver)?;
     }
     Ok(())
 }

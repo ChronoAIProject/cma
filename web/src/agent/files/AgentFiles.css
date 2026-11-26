@@ -273,7 +273,7 @@
   padding: 12px 0 0;
   border-top: 1px solid var(--dsw-alias-border-l1);
 }
-.agent-files-panel .agent-files__preview:has(.agent-files__empty) {
+.agent-files-panel .agent-files__preview[data-file-selected='false'] {
   display: none;
 }
 .agent-files-panel .agent-files__row {

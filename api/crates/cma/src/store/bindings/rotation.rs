@@ -2,6 +2,7 @@ use super::*;
 use crate::sandbox::ManagedSandboxCredentials;
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
 use crate::store::sandboxes::{read_sandbox, sandbox_replacement_fields};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::binding::ProvidedCredential;
 use layer2_core::CoreError;
 
@@ -47,7 +48,7 @@ impl MongoBindingCredentials {
             Ok(())
         }.await;
         if let Err(error) = result {
-            let _ = session.abort_transaction().await;
+            let _ = session.abort_guarded().await;
             return Err(error);
         }
         match commit_transaction(&mut session).await {

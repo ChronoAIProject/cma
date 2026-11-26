@@ -27,6 +27,9 @@ function sources() {
   const base = installed.includes(after) ? installed.replace(after, before).replace(afterSelection, beforeSelection) : installed;
   const digest = (source) => createHash("sha256").update(source).digest("hex");
   const finalCompositions = {
+    "11c84d6c37f3b2e15020405a2301df3ed8c16ed2d9b05c3a3a43620bba78a7d4": "cfd3e1f0c011801525452a6897073921cf6d9c96c4d1d74f10e4865613db19fc",
+    "ddb625f66a5a14d94df3512a525c4a674a359e564602c09085769c8b61e2bca1": "c2d9dd0441dc8f8f04cb7196d930df03c19cd1daf912fff1edb62fe48a68d9ca",
+    e26bce27dbdcf4d665e081b4a81762542795e2af6453da2a2f050fab5110f484: "237032456955b9d9c2a3c583556f79ba8b8c986cf55e1a9c70131925881cfb1c",
     "8f0c023269496f9ad21aa2958491772fefe65011b9aebaf674c67d2aaa9fbcf4": "228381e866789e298b15a41c2506ce5db0824d7663da831eadf3fcd9c43ecdd4",
     "fc9f74358c6ce5aeda4ac164c1daf83c513fb0f18df4b75f3d20bd0816fc6fa7": "a5d96df5a0642b422311c603fee978274dab31f7751c16d81a5758c058f4d648",
     "ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66": "d24ec76d5ff372f7ab972c15e45ea0d227ede1d8aff4e3888406ef399cfdffc5",

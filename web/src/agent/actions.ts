@@ -1,20 +1,22 @@
-import { useCallback, useLayoutEffect, useMemo, useRef } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AgentActionOptions } from './actionOptions';
-import type { AgentCommand, ApprovalDecision } from './controller';
-import type { MessageAcceptance } from './controllerTypes';
+import type { InputErrorOwner } from './actionError';
+import type { AgentCommand, ApprovalDecision, MessageAcceptance } from './controllerTypes';
 import { ApiError, type AnswerContext } from '@cma/client';
+import { DraftBindingError } from './draftDelivery';
+import {
+  isLegacySuggestionRefusal,
+  isV2InputRefusal,
+  stoppedInputMessage,
+} from './controllerError';
+import { agentRestartReady } from './controlReadiness';
+import { runId } from './transport/runId';
 import { submitV2Control, recoverV2Control } from './transport/controls';
 import {
   submitV2Interruption,
   recoverV2Interruption,
   InterruptionNotSubmittedError,
 } from './transport/interruption';
-
-function runId(): string {
-  return typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `run-${String(Date.now())}-${String(Math.random()).slice(2)}`;
-}
 export function useAgentActions({
   agentId,
   client,
@@ -39,6 +41,7 @@ export function useAgentActions({
   onIdentityChange,
   options,
 }: AgentActionOptions) {
+  const [initialSend, setInitialSend] = useState(false);
   const context = useMemo(
     () => ({
       agentId,
@@ -76,10 +79,15 @@ export function useAgentActions({
         actionAbortRef.current !== undefined ||
         ((commandsBlocked || currentCommandsBlocked.current) && typeof approval !== 'string') ||
         !inputAvailability.allowed
-      )
+      ) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
         return;
+      }
       const current = stateRef.current;
-      if (current.status !== 'ready' || current.detail.id !== agentId) return;
+      if (current.status !== 'ready' || current.detail.id !== agentId) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
+        return;
+      }
       if (
         historyIncomplete &&
         typeof approval !== 'string' &&
@@ -108,22 +116,27 @@ export function useAgentActions({
       if (
         current.detail.status === 'starting' &&
         (session === undefined || typeof approval !== 'string')
-      )
+      ) {
+        if (typeof approval === 'string' && mode === 'send') onRefused?.();
         return;
+      }
       if (session === undefined) replayAbortRef.current?.abort();
       const controller = new AbortController();
       actionAbortRef.current = controller;
       const approving = typeof approval !== 'string';
       actionKindRef.current = approving ? 'approval' : 'send';
+      setInitialSend(!approving && mode === 'send');
       setPending(approving ? 'approval' : 'send');
       setActionError(undefined);
       let accepted = false;
       let recoveringInput = false;
       let legacyKey: string | undefined;
+      let retainedInput: InputErrorOwner | undefined;
       try {
         if (session !== undefined) {
           const sendInput = (text: string) => {
             recoveringInput = session.journal.read()?.state === 'pending';
+            setInitialSend(!recoveringInput);
             return session.send(
               text,
               (receipt) => {
@@ -137,6 +150,9 @@ export function useAgentActions({
                   onReceiptObserved?.(receipt);
               },
               answerContext,
+              (key) => {
+                retainedInput = { session, key };
+              },
             );
           };
           if (approving) {
@@ -199,6 +215,7 @@ export function useAgentActions({
           const previous = legacy.journal.legacySuggestion.read();
           const retained = legacy.journal.legacySuggestion.retain(approval, answerContext);
           if (previous?.state === 'pending') {
+            setInitialSend(false);
             const runId = await legacy.recoverLegacySuggestion(controller.signal);
             if (!runId) throw new Error('The original suggestion is still awaiting confirmation.');
             if (!controller.signal.aborted && currentContext.current === context)
@@ -267,10 +284,7 @@ export function useAgentActions({
           currentContext.current === context &&
           legacyKey &&
           !accepted &&
-          error instanceof ApiError &&
-          ((error.status === 422 &&
-            ['invalid_run_request', 'invalid_answer_context'].includes(error.code ?? '')) ||
-            (error.status === 409 && error.code === 'agent_not_ready'))
+          isLegacySuggestionRefusal(error)
         ) {
           legacy?.journal.legacySuggestion.refused(legacyKey);
           onRefused?.(error.status === 409 ? 'answer_changed' : undefined);
@@ -282,22 +296,9 @@ export function useAgentActions({
           !approving &&
           !accepted &&
           !recoveringInput &&
-          (error instanceof InterruptionNotSubmittedError ||
-            (error instanceof ApiError &&
-              ((error.status === 422 &&
-                [
-                  'invalid_response_input',
-                  'invalid_answer_context',
-                  'invalid_control_request',
-                  'invalid_interrupt_request',
-                  ...(mode === 'interrupt' ? ['capability_unsupported'] : []),
-                ].includes(error.code ?? '')) ||
-                (error.status === 409 &&
-                  [
-                    'response_control_not_admitted',
-                    'response_interrupt_not_admitted',
-                    'agent_command_not_admissible',
-                  ].includes(error.code ?? '')))))
+          (error instanceof DraftBindingError ||
+            error instanceof InterruptionNotSubmittedError ||
+            isV2InputRefusal(error, mode === 'interrupt'))
         )
           onRefused?.(
             answerContext &&
@@ -307,11 +308,16 @@ export function useAgentActions({
               : undefined,
           );
         if (!controller.signal.aborted && !onIdentityChange(error))
-          setActionError(errorMessage(error));
+          setActionError(
+            (!approving && !accepted && stoppedInputMessage(error, stateRef.current, agentId)) ||
+              errorMessage(error),
+            retainedInput,
+          );
       } finally {
         if (actionAbortRef.current === controller) {
           actionAbortRef.current = undefined;
           actionKindRef.current = undefined;
+          setInitialSend(false);
           setPending(undefined);
           setRequestRevision((value) => value + 1);
           if (session === undefined) setReplayRevision((value) => value + 1);
@@ -348,7 +354,11 @@ export function useAgentActions({
       requireStop = false,
     ) => {
       const mayPreemptSend = name === 'interrupt' && actionKindRef.current === 'send';
-      if (currentContext.current !== context || commandsBlocked || currentCommandsBlocked.current) {
+      const ready =
+        name === 'restart'
+          ? agentRestartReady(stateRef.current, agentId)
+          : !commandsBlocked && !currentCommandsBlocked.current;
+      if (currentContext.current !== context || !ready) {
         if (requireStop)
           throw new Error('Agent activity is still loading. Try again when it is available.');
         return;
@@ -444,6 +454,7 @@ export function useAgentActions({
     const controller = new AbortController();
     actionAbortRef.current = controller;
     actionKindRef.current = 'send';
+    setInitialSend(false);
     setPending('send');
     setActionError(undefined);
     try {
@@ -483,5 +494,5 @@ export function useAgentActions({
     }
   };
 
-  return { run, command, recoverPending };
+  return { run, command, recoverPending, initialSend };
 }

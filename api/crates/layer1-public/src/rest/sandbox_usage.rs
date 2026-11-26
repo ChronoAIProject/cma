@@ -164,9 +164,10 @@ pub(crate) struct UsageQuery {
     #[param(minimum = 1, maximum = 200, default = 50)]
     limit: Option<u16>,
     /// Continuation returned by this endpoint for the same caller and filters.
-    /// Signed continuations expire 15 minutes after the first page; on
-    /// invalid_query restart without a cursor. Pages read live data, not a
-    /// frozen snapshot. Legacy cursors are accepted only during transition.
+    /// Signed continuations expire 15 minutes after the first page. When
+    /// snapshot pagination is enabled, continuations keep the same read view
+    /// while its history is available. If the service returns invalid_query,
+    /// restart without a cursor. Legacy cursors are accepted during transition.
     #[param(max_length = 4096)]
     cursor: Option<String>,
 }
@@ -272,8 +273,9 @@ async fn list_response(
         .await
     {
         Ok(value) => {
-            let as_of = now();
+            let as_of = value.as_of.unwrap_or_else(now);
             let items = value
+                .page
                 .items
                 .into_iter()
                 .map(|value| SandboxUsageView::project(value, as_of))
@@ -281,7 +283,7 @@ async fn list_response(
             match items {
                 Ok(items) => Json(UsagePageView {
                     items,
-                    next: value.next,
+                    next: value.page.next,
                     as_of,
                 })
                 .into_response(),

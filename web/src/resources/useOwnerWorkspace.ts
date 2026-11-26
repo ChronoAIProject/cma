@@ -66,9 +66,7 @@ export function useOwnerWorkspace(client: CmaWebClient, workspaceId: string, rev
             poll,
             delay.next(
               JSON.stringify([sandboxPollKey(sandbox), workspace.status]),
-              ['preparing', 'removing'].includes(workspace.status)
-                ? 1500
-                : sandboxRefreshDelay(sandbox),
+              sandboxRefreshDelay(sandbox, ['preparing', 'removing'].includes(workspace.status)),
             ),
           );
         } catch (error) {

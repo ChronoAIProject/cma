@@ -1,5 +1,6 @@
 //! Public registration receipts and their transaction-fenced capacity counter.
 
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
@@ -269,11 +270,11 @@ impl RegistrationCapacity for MongoRegistrationCapacityStore {
                     }
                 },
                 Err(AttemptError::Unreadable) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     return Ok(false);
                 }
                 Err(AttemptError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     if is_transient(&error) || is_duplicate_key(&error) {
                         continue;
                     }
@@ -363,14 +364,16 @@ fn read_count(document: &Document) -> Result<u64, StoreError> {
 pub(crate) async fn is_public(
     admissions: &Collection<Document>,
     owner: &SubjectId,
-    session: &mut ClientSession,
+    session: Option<&mut ClientSession>,
 ) -> Result<bool, mongodb::error::Error> {
-    admissions
+    let query = admissions
         .find_one(registration_key(owner))
-        .projection(doc! {"_id":1})
-        .session(session)
-        .await
-        .map(|row| row.is_some())
+        .projection(doc! {"_id":1});
+    let receipt = match session {
+        Some(session) => query.session(session).await?,
+        None => query.await?,
+    };
+    Ok(receipt.is_some())
 }
 
 fn unavailable(message: &str) -> StoreError {

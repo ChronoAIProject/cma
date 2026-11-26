@@ -25,6 +25,8 @@ pub(super) struct Probe {
     dropped: AtomicUsize,
     polls: AtomicUsize,
     reconciles: AtomicUsize,
+    reconciliation_slices: AtomicUsize,
+    slices_to_yield: AtomicUsize,
     fail_poll: AtomicBool,
     block_poll: AtomicBool,
     block_reconcile: AtomicBool,
@@ -58,6 +60,7 @@ impl Probe {
             admitted: Arc::new(Notify::new()),
             parent_ready: Arc::new(Notify::new()),
             event_driven_reconciliation: false,
+            resume_reconciliation: false,
         }
     }
 }
@@ -108,6 +111,15 @@ impl AgentScheduleWork for Probe {
             ));
         }
         Ok(0)
+    }
+
+    async fn reconcile_slice(
+        &self,
+        _: SystemTime,
+        _: &mut ConnectionSweep,
+    ) -> Result<bool, SandboxStoreError> {
+        let slice = self.reconciliation_slices.fetch_add(1, Ordering::SeqCst);
+        Ok(slice >= self.slices_to_yield.load(Ordering::SeqCst))
     }
 
     async fn run_one(

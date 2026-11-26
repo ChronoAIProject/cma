@@ -1,0 +1,30 @@
+{
+  "content": {
+    "presentation": {
+      "title": "Pinned project",
+      "description": "",
+      "button_label": "open_in_cma",
+      "theme": "auto"
+    },
+    "target": {
+      "inline": {
+        "agent": {
+          "reasoning_effort": "high",
+          "permission_mode": "guarded",
+          "skills": [],
+          "system_prompt": "",
+          "services": []
+        },
+        "workspace": {
+          "repository": {
+            "url": "https://github.com/example/repository",
+            "ref": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        }
+      }
+    },
+    "reuse": { "sandbox": "always_new", "workspace": "always_new", "agent": "always_new" },
+    "first_message": "Review the project.",
+    "consent": { "always_review": true }
+  }
+}

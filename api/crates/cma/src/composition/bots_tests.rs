@@ -26,6 +26,7 @@ impl BotProfileResolver for NoExternalResolver {
 fn resolver(
     store: Arc<InMemoryProfileStore>,
     capacity: SandboxCapacity,
+    image_resolver: Arc<dyn ImageResolver>,
 ) -> Arc<InlineBotProfileResolver> {
     Arc::new(InlineBotProfileResolver {
         profiles: PrivateProfileCreationService::new(
@@ -38,7 +39,7 @@ fn resolver(
             },
             Arc::new([] as [String; 0]),
         ),
-        image_resolver: Arc::new(NoExternalResolver),
+        image_resolver,
         connections: Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         capacity,
         default_model: "gpt-6".into(),
@@ -59,7 +60,11 @@ fn input() -> CreateBot {
 async fn consumer_defaults_match_native_pool_and_admitted_replay_keeps_original_capacity() {
     let profiles = Arc::new(InMemoryProfileStore::default());
     let store = Arc::new(InMemoryBotStore::default());
-    let original = resolver(profiles.clone(), SandboxCapacity::default());
+    let original = resolver(
+        profiles.clone(),
+        SandboxCapacity::default(),
+        Arc::new(NoExternalResolver),
+    );
     let service = BotService::new(
         store.clone(),
         Arc::new(NoExternalResolver),
@@ -110,6 +115,7 @@ async fn consumer_defaults_match_native_pool_and_admitted_replay_keeps_original_
             cpu_millis: 2000,
             memory_mib: 4096,
         },
+        Arc::new(NoExternalResolver),
     );
     let service = BotService::new(store, Arc::new(NoExternalResolver), "cma_codex".into())
         .with_inline_profiles(changed.clone());
@@ -141,4 +147,67 @@ async fn consumer_defaults_match_native_pool_and_admitted_replay_keeps_original_
             .unwrap(),
         next
     );
+}
+
+struct PublishedImage(String);
+
+#[async_trait::async_trait]
+impl ImageResolver for PublishedImage {
+    async fn resolve(
+        &self,
+        _: Option<&str>,
+        _: &AgentLifecycleImageReference,
+    ) -> Result<String, AgentLifecycleProvisioningError> {
+        Ok(self.0.clone())
+    }
+}
+
+#[tokio::test]
+async fn retirement_refuses_fresh_bot_images_and_replays_an_admitted_pin() {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let store = Arc::new(InMemoryBotStore::default());
+    let caller = Caller::new(
+        SubjectId::new("owner"),
+        Authorization::new([Capability::ManageOwnBots]),
+    );
+    let reference = format!("registry.example/runtime@sha256:{}", "a".repeat(64));
+    let mut request = input();
+    request.image = Some(layer2_core::bots::BotImageReference {
+        id: "fixture-image".into(),
+        version: Some("fixture-version".into()),
+    });
+    let old = BotService::new(
+        store.clone(),
+        Arc::new(NoExternalResolver),
+        "cma_codex".into(),
+    )
+    .with_inline_profiles(resolver(
+        profiles.clone(),
+        SandboxCapacity::default(),
+        Arc::new(PublishedImage(reference.clone())),
+    ));
+    let admitted = old
+        .create(&caller, "admitted", request.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        admitted.profiles.sandbox.content.runtime_image.as_deref(),
+        Some(reference.as_str())
+    );
+
+    let retired =
+        crate::agent_lifecycle::ImageManagerResolver::new("http://127.0.0.1:1".into(), true)
+            .unwrap();
+    let new = BotService::new(store, Arc::new(NoExternalResolver), "cma_codex".into())
+        .with_inline_profiles(resolver(profiles, SandboxCapacity::default(), retired));
+    assert_eq!(
+        new.create(&caller, "admitted", request.clone())
+            .await
+            .unwrap(),
+        admitted
+    );
+    assert!(matches!(
+        new.create(&caller, "fresh", request).await,
+        Err(BotError::ImageSelectionUnsupported)
+    ));
 }

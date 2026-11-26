@@ -8,7 +8,7 @@ from pathlib import Path
 BUNDLE = Path(".github/scripts/image-secret-scanner")
 # Exact candidate source binding, including detector policy and cache tests.
 # Adoption of changed bytes requires independent review before merge.
-MANIFEST_SHA256 = "a3eb9041f1b920bda1f8b2bd63241ea5ed0c890f60841a7303670b35dbb384c3"
+MANIFEST_SHA256 = "4ad252394ac8d144da7b316f138c71f90ebf9578bce9f3d118b77bee7b8da11c"
 CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
@@ -16,20 +16,20 @@ APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
 APPROVED_CONTENT_POLICY = (
-    "3cfb89bf19c4ddda0fad950c284078852a88a13e3ec91b44183504b3f306d79e",
-    "9eae89fca11ab926dbf837cd1813dd1468cf83fed418fecf80f629e50d66f8bb",
+    "aafd541c0243e1931a0d2387e4de12d71e1c265f6986c78362f3c246b430233a",
+    "6e6a175226dc22d5f681780e10a4b2b5bbc9aac163859d61a4af1fcf9bb6d818",
 )
 PACKAGE_EVIDENCE = Path(".github/scripts/image-package-evidence.json")
 OMARCHY_PACKAGE_EVIDENCE = Path(".github/scripts/image-omarchy-package-evidence.json")
 # Independently reviewed evidence and verdict digests. Evidence gathered from
 # the candidate image cannot supply either pin.
 APPROVED_PACKAGE_EVIDENCE = (
-    "6ded51680dcec4fe4d8d9d1046dbd3bd51b7a3f05a6c0fa22520d0178f4026d9",
-    "a67ebb416b97f74659bf8f62476f5705f3ff9e55d7782ff90da7cadd9ef71829",
+    "e8959a2bd117052b27f71622a4b05fa63fa2a1716068119861b183618beb2341",
+    "8357c237798fae05330155831ef92daa64e6d0995ffb839a1c37b8f587e28c13",
 )
 APPROVED_OMARCHY_PACKAGE_EVIDENCE = (
-    "18d75ea3281dda89b594a36b5d4245ff15863bff9dc484074dcc258a411e8cab",
-    "a67ebb416b97f74659bf8f62476f5705f3ff9e55d7782ff90da7cadd9ef71829",
+    "7b41629625071530353bde2a701e3cc0182bb03327719ab55e32aaf8b182f065",
+    "8357c237798fae05330155831ef92daa64e6d0995ffb839a1c37b8f587e28c13",
 )
 # Runtime scope requires a new exact-manifest review before activation.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",

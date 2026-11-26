@@ -173,6 +173,56 @@ async fn captured(transport: &ProviderHostedControlTransport, endpoint: &str) ->
 }
 
 #[tokio::test]
+async fn failed_desktop_requires_an_exact_terminal_handshake_refusal() {
+    for (status, headers, terminal) in [
+        (503, vec![DESKTOP_STATE_FAILED], true),
+        (503, vec![], false),
+        (503, vec!["restarting"], false),
+        (503, vec![DESKTOP_STATE_FAILED, DESKTOP_STATE_FAILED], false),
+        (404, vec![DESKTOP_STATE_FAILED], false),
+    ] {
+        let listener = listener().await;
+        let address = listener.local_addr().unwrap();
+        let transport = ProviderHostedControlTransport::for_retained_opensandbox(
+            SandboxClient::new("http://unused.invalid", uuid::Uuid::new_v4().to_string()),
+        )
+        .unwrap();
+        let capture = captured(&transport, &format!("http://{address}")).await;
+        let authority = owner();
+        let control = Arc::new(control::Control::new(
+            transport.clone(),
+            capture.clone(),
+            authority.clone(),
+            Instant::now() + Duration::from_secs(3),
+        ));
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let request = request_text(read_request(&mut stream).await);
+            assert!(request.starts_with("GET /runtime/desktop HTTP/1.1"));
+            let mut response = format!("HTTP/1.1 {status} Refused\r\nContent-Length: 0\r\n");
+            for state in headers {
+                response.push_str(&format!("{DESKTOP_STATE_HEADER}: {state}\r\n"));
+            }
+            response.push_str("\r\n");
+            stream.write_all(response.as_bytes()).await.unwrap();
+        });
+        let result = capture.connect(&transport, &authority, control).await;
+        let Err(error) = result else {
+            panic!("fixture refused the upgrade")
+        };
+        assert_eq!(
+            error,
+            if terminal {
+                AdapterError::DesktopFailed
+            } else {
+                refused()
+            }
+        );
+        server.await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn changed_assignment_or_claim_refuses_before_confirm_and_lost_ack_is_not_replayed() {
     for fault in ["assignment", "runtime", "sandbox", "lost-ack"] {
         let listener = listener().await;

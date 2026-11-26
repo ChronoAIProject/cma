@@ -40,7 +40,7 @@ for (const width of [1440, 390]) {
                     ? 'Docs'
                     : restored === '/docs/event-gateway'
                       ? 'Event Gateway Protocol'
-                      : 'What should your Agent work on?',
+                      : /^Good (morning|afternoon|evening)\.$/,
                 exact: true,
               });
         await expect(destination).toBeVisible();

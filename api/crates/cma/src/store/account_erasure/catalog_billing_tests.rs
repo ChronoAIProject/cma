@@ -1,5 +1,49 @@
 use super::*;
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn ordinary_erasure_preserves_pending_and_acknowledged_usage_custody() {
+    let db = database().await;
+    let rows = [
+        doc! {"_id":"pending", "owner":"acct:a", "delivery_status":"unknown",
+        "record":{"source_event_id":"original-event", "payload":"frozen-evidence"}},
+        doc! {"_id":"acknowledged", "owner":"acct:a", "delivery_status":"acknowledged",
+        "record":{"receipt_id":"original-receipt", "payload":"frozen-evidence"}},
+        doc! {"_id":"foreign", "owner":"acct:b", "record":{"payload":"foreign-evidence"}},
+    ];
+    for collection in crate::store::sandbox_usage_export::COLLECTIONS {
+        for row in &rows {
+            put(&db, collection, row.clone()).await;
+        }
+    }
+    put(&db, "users", doc! {"_id":"acct:a"}).await;
+    put(&db, "users", doc! {"_id":"acct:b"}).await;
+    let deleted = drain(&db, "acct:a", &mut ErasureInventory::default()).await;
+    assert_eq!(deleted.get("users"), Some(&1));
+    for collection in crate::store::sandbox_usage_export::COLLECTIONS {
+        assert!(!deleted.contains_key(*collection));
+        assert_eq!(count(&db, collection).await, rows.len() as u64);
+        for row in &rows {
+            assert_eq!(
+                db.collection::<Document>(collection)
+                    .find_one(doc! {"_id":row.get_str("_id").unwrap()})
+                    .await
+                    .unwrap(),
+                Some(row.clone()),
+                "{collection}"
+            );
+        }
+    }
+    assert_eq!(
+        db.collection::<Document>("users")
+            .find_one(doc! {})
+            .await
+            .unwrap(),
+        Some(doc! {"_id":"acct:b"})
+    );
+    db.drop().await.unwrap();
+}
+
 fn orphan_billing_row(owner: &str, id: &str, pending: bool) -> Document {
     use crate::sandbox::funding::{ReserveRequest, SandboxBillingState};
     let mut sandbox = crate::store::sandbox_mongo_integration_tests::sandbox(id);

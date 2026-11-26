@@ -91,6 +91,13 @@ pub(crate) struct StartupTermination {
     pub finished_at: std::time::SystemTime,
 }
 
+/// Previous termination from the currently proved runtime container's history.
+#[derive(Clone, Debug)]
+pub(crate) struct StartupHistory {
+    pub class: RuntimeStartupFailureClass,
+    pub duration: std::time::Duration,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

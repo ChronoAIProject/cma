@@ -1,6 +1,7 @@
 import type { V2AgentEventItem, V2AgentEventKind, V2AgentStreamFrame } from '@cma/client';
 import { foldAgentEvent, foldLiveEvent } from '../conversation';
 import type { ConversationState } from '../model';
+import { foldExternalApproval } from './externalApprovalProjection';
 import { settleLiveRecovery } from '../liveRecovery';
 
 /** Adapt the safe common vocabulary to the existing durable conversation reducer. */
@@ -28,6 +29,13 @@ function normalized(kind: V2AgentEventKind) {
 
 export function foldV2Item(state: ConversationState, item: V2AgentEventItem): ConversationState {
   if (item.sequence <= state.cursor) return state;
+  if (
+    item.kind?.type === 'external_approval_requested' ||
+    item.kind?.type === 'external_approval_resolved'
+  ) {
+    const next = foldExternalApproval(state, item.kind, item.sequence);
+    return { ...next, cursor: item.sequence, agentCursor: item.cursor };
+  }
   let next =
     item.kind === null
       ? { ...state, cursor: item.sequence }
@@ -57,10 +65,14 @@ export function foldV2Item(state: ConversationState, item: V2AgentEventItem): Co
     );
     const commandId =
       item.message_command_id ?? (firstInput ? state.responseBinding?.commandId : undefined);
+    const responseId =
+      state.responseBinding?.commandId === commandId
+        ? state.responseBinding?.responseId
+        : undefined;
     next = {
       ...next,
       messages: next.messages.map((message) =>
-        message.id === `event:${item.sequence}` ? { ...message, commandId } : message,
+        message.id === `event:${item.sequence}` ? { ...message, commandId, responseId } : message,
       ),
     };
   }

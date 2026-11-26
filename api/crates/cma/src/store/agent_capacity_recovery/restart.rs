@@ -1,5 +1,6 @@
 //! A discovered completed carrier is a routing candidate, never an IO grant.
 use super::{discovery, receipts, transactions, RecoveryService};
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use crate::store::{
     agent_log_integrity::TransactionLogError,
     agent_log_segments::{read_format, transaction_scope::TransactionScope},
@@ -71,7 +72,7 @@ impl RecoveryService {
             Ok::<_, TransactionLogError>(RestartDecision::Deferred)
         }
         .await;
-        let _ = scope.release().abort_transaction().await;
+        let _ = scope.release().abort_guarded().await;
         result.map_err(transactions::error)
     }
 }

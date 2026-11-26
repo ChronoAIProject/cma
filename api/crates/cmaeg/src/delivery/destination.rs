@@ -21,12 +21,7 @@ pub enum DefaultDestination {
         sinks: Vec<WebhookDestination>,
     },
 }
-#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WebhookDestination {
-    pub url: String,
-    pub hmac_key_id: String,
-}
+pub use cmaeg_engine::WebhookDestination;
 impl DefaultDestination {
     /// Called during initial preparation. A restored turn retains these exact
     /// nonsecret addresses, while every send uses freshly resolved credentials.

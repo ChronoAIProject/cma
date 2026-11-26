@@ -273,6 +273,7 @@ async fn begin_and_resume_are_atomic_and_generic_writes_cannot_erase_debt() {
         store
             .commit(SandboxTransaction::SaveSandboxAndAppend {
                 command_revival: None,
+                released_runtime: None,
                 expected_revision: next.revision,
                 sandbox: Box::new(erased),
                 event_at: LATER.into(),

@@ -20,7 +20,7 @@ export function InlineTargetReview({ target }: { readonly target: TriggerInlineT
           <dd>
             {repository === undefined
               ? 'Empty workspace'
-              : `${repository.url}${repository.reference ? ` · ${repository.reference}` : ''}`}
+              : `${repository.url}${repository.ref ? ` · ${repository.ref}` : ''}`}
           </dd>
         </div>
         <div>

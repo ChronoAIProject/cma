@@ -57,10 +57,7 @@ pub fn opens_to(
     records: &RecordClient,
 ) -> Result<(), LinkError> {
     let pointer = id.open(keys).map_err(|_| LinkError::Malformed)?.payload;
-    let expected = records
-        .record_url(record.as_str())
-        .map_err(|_| LinkError::Mismatch)?;
-    if pointer.record_id != *record || pointer.record_url != expected.as_str() {
+    if pointer.record_id != *record || !records.names_record(&pointer.record_url, record.as_str()) {
         return Err(LinkError::Mismatch);
     }
     Ok(())

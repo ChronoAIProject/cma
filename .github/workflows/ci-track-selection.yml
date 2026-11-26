@@ -1,0 +1,65 @@
+name: "CI track selection"
+on:
+  workflow_call:
+    outputs:
+      repo:
+        value: "${{ jobs.changes.outputs.repo }}"
+      am:
+        value: "${{ jobs.changes.outputs.am }}"
+      eg:
+        value: "${{ jobs.changes.outputs.eg }}"
+      web:
+        value: "${{ jobs.changes.outputs.web }}"
+      approval_contract:
+        value: "${{ jobs.changes.outputs.approval_contract }}"
+      am_packages:
+        value: "${{ jobs.changes.outputs.am_packages }}"
+      eg_packages:
+        value: "${{ jobs.changes.outputs.eg_packages }}"
+      test_tracks:
+        value: "${{ jobs.changes.outputs.test_tracks }}"
+      deployables:
+        value: "${{ jobs.changes.outputs.deployables }}"
+permissions:
+  contents: "read"
+jobs:
+  changes:
+    name: "Select tracks"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    outputs:
+      repo: "${{ steps.select.outputs.repo }}"
+      am: "${{ steps.select.outputs.am }}"
+      eg: "${{ steps.select.outputs.eg }}"
+      web: "${{ steps.select.outputs.web }}"
+      approval_contract: "${{ steps.select.outputs.approval_contract }}"
+      am_packages: "${{ steps.select.outputs.am_packages }}"
+      eg_packages: "${{ steps.select.outputs.eg_packages }}"
+      test_tracks: "${{ steps.select.outputs.test_tracks }}"
+      deployables: "${{ steps.select.outputs.deployables }}"
+    steps:
+      -
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
+        with:
+          fetch-depth: 0
+      -
+        name: "Read pinned Rust toolchain"
+        id: "toolchain"
+        working-directory: "."
+        run: "python3 -c 'import os,tomllib; v=tomllib.load(open(\"api/rust-toolchain.toml\",\"rb\"))[\"toolchain\"][\"channel\"]; open(os.environ[\"GITHUB_OUTPUT\"],\"a\").write(\"channel=\"+v+\"\\n\")'"
+      -
+        uses: "dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca"
+        with:
+          toolchain: "${{ steps.toolchain.outputs.channel }}"
+          components: "rustfmt, clippy"
+      -
+        uses: "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
+        with:
+          python-version: "3.12"
+      -
+        name: "Install selector parsers"
+        run: "python3 -m pip install --disable-pip-version-check -r .github/scripts/ci_tracks/requirements.txt"
+      -
+        name: "Select from changed paths and Cargo dependencies"
+        id: "select"
+        run: "python3 -B .github/scripts/ci_tracks/selection.py --ci"

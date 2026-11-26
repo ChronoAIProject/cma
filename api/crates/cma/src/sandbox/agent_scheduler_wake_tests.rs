@@ -152,6 +152,47 @@ async fn event_driven_reconciliation_falls_back_after_a_missed_wake() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn agent_reconciliation_continuation_resumes_after_fallback_and_yields_capacity() {
+    let probe = Arc::new(Probe::default());
+    let mut scheduler = probe.scheduler(2).with_resumable_reconciliation(true);
+    scheduler.event_driven_reconciliation = true;
+    scheduler.budget = crate::background::BackgroundBudget::with_concurrency(1);
+    let between_slices = crate::background::BackgroundWork::new(
+        scheduler.budget.clone(),
+        "reconciliation_test_interleaving",
+        Duration::from_secs(1),
+        Duration::ZERO,
+    );
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = scheduler.spawn(signal);
+    settle().await;
+    assert_eq!(probe.reconciliation_slices.load(Ordering::SeqCst), 1);
+    assert_eq!(probe.reconciles.load(Ordering::SeqCst), 0);
+
+    // Work becomes visible without delivering a parent-readiness wake.
+    probe.slices_to_yield.store(2, Ordering::SeqCst);
+    tokio::time::advance(RECONCILIATION_FALLBACK_INTERVAL).await;
+    settle().await;
+    assert_eq!(probe.reconciliation_slices.load(Ordering::SeqCst), 2);
+    let foreground = between_slices.foreground();
+    assert_eq!(
+        between_slices.run(|| async { Ok(()) }).await.unwrap(),
+        Some(())
+    );
+    drop(foreground);
+
+    // Resume within the ordinary interval without waiting for another fallback.
+    tokio::time::advance(SWEEP_INTERVAL).await;
+    settle().await;
+    assert_eq!(probe.reconciliation_slices.load(Ordering::SeqCst), 3);
+    tokio::time::advance(SWEEP_INTERVAL).await;
+    settle().await;
+    assert_eq!(probe.reconciliation_slices.load(Ordering::SeqCst), 3);
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
 async fn event_driven_reconciliation_failure_does_not_stop_fallback() {
     let probe = Arc::new(Probe::default());
     let mut scheduler = probe.scheduler(2);

@@ -1,4 +1,5 @@
 //! Versioned segmented log readers and gated atomic publication.
+pub(in crate::store) mod active_proof;
 pub(in crate::store) mod admission;
 pub(in crate::store) mod audit;
 pub(in crate::store) mod audit_command;
@@ -16,7 +17,7 @@ pub(in crate::store) mod command_worker;
 mod digest;
 mod telemetry;
 pub(in crate::store) mod terminal;
-pub(in crate::store) use digest::{incarnation, incarnation_fields};
+pub(in crate::store) use digest::{incarnation, incarnation_fields, valid_digest};
 mod envelope;
 pub(in crate::store) mod ordinary;
 pub(in crate::store) mod projection;
@@ -38,7 +39,9 @@ pub(in crate::store) mod writer_reconcile;
 pub(in crate::store) use codec::{Head, Seal};
 pub(in crate::store) use envelope::{read_format, require_agent_version, validate_identity};
 use layer2_core::sandbox::store::SandboxStoreError;
-pub(in crate::store) use reads::{read_head, visit_range, LogRange};
+pub(in crate::store) use reads::{
+    read_head, retained_turn, verify_terminal_seal, visit_range, LogRange,
+};
 
 pub(in crate::store) const HEADS: &str = "agent_log_heads";
 pub(in crate::store) const SEGMENTS: &str = "agent_log_segments";
@@ -80,3 +83,6 @@ where
 
 #[cfg(test)]
 pub(in crate::store) mod mongo_tests;
+
+#[cfg(test)]
+mod durable_control_fixture;

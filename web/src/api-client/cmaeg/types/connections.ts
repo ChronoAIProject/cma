@@ -42,6 +42,8 @@ export const RelayAuthoringCapabilitiesSchema = object({
   custom_durable_execution_enabled: optional(nullable(boolean)),
   response_recovery_providers: optional(nullable(array(text))),
   native_telegram_message_events_enabled: optional(nullable(boolean)),
+  native_telegram_member_joins_enabled: optional(nullable(boolean)),
+  relay_telegram_member_joins_enabled: optional(nullable(boolean)),
   native_discord_thread_history_enabled: optional(nullable(boolean)),
   native_telegram_topic_lifecycle_enabled: optional(nullable(boolean)),
   native_telegram_topic_creation_enabled: optional(nullable(boolean)),

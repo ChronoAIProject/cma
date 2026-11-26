@@ -215,7 +215,14 @@ async fn commonmark_off_and_other_relay_platforms_keep_legacy_rendering_and_rout
         let sent = rec.http.sent();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].url.path(), "/api/v1/channel-relay/reply");
-        assert_eq!(sent[0].json()["reply"]["text"], r"\*\*bold\*\* \`path\_1\`");
+        // Lark shows plain text and Discord parses its own Markdown, so their
+        // legacy route keeps the source punctuation; others keep the escapes.
+        let expected = if matches!(platform, Platform::Discord | Platform::Lark) {
+            "**bold** `path_1`"
+        } else {
+            r"\*\*bold\*\* \`path\_1\`"
+        };
+        assert_eq!(sent[0].json()["reply"]["text"], expected);
         rec.finish().await;
     }
 }

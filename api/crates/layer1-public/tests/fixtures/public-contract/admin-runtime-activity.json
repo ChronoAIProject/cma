@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "admin-runtime-activity-unknown",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/runtime-update/activity",
+      "scenario": "admin_runtime_activity_operator",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "status": "unknown",
+          "reason": "unqualified_source"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-activity-anonymous",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/runtime-update/activity",
+      "scenario": "admin_runtime_activity_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-activity-ordinary",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/runtime-update/activity",
+      "scenario": "admin_runtime_activity_ordinary",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-activity-wrong-capability",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/runtime-update/activity",
+      "scenario": "admin_runtime_activity_wrong_capability",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-activity-unavailable",
+      "operation": "GET /api/v1/admin/sandboxes/{id}/runtime-update/activity",
+      "scenario": "admin_runtime_activity_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/sbx_route/runtime-update/activity",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

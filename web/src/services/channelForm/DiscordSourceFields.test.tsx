@@ -94,7 +94,7 @@ it('retains exact saved sources and blank credentials when authoring is disabled
   });
   expect(
     channelRequest(
-      { sources: [defaultSource('custom')] },
+      { sources: [{ ...defaultSource('custom'), auth: { type: 'nyxid_key', key_hashes: [] } }] },
       { agent_key: 'private-agent', discord_bot_token: 'stale-bot' },
       undefined,
       channel.record_id,
@@ -103,7 +103,7 @@ it('retains exact saved sources and blank credentials when authoring is disabled
   expect(
     JSON.stringify(
       channelRequest(
-        { sources: [defaultSource('custom')] },
+        { sources: [{ ...defaultSource('custom'), auth: { type: 'nyxid_key', key_hashes: [] } }] },
         { agent_key: 'private-agent', discord_bot_token: 'stale-bot' },
         undefined,
         channel.record_id,

@@ -18,10 +18,24 @@ pub use agent_client_protocol_schema::v1::{
 };
 
 pub fn reported_tool_text(fields: &ToolCallUpdateFields) -> Vec<std::borrow::Cow<'_, str>> {
+    if let Some(summary) = crate::codex::deliverable_output::failure_summary(
+        fields.status.as_ref(),
+        fields.raw_input.as_ref(),
+        fields.raw_output.as_ref(),
+    ) {
+        return vec![summary];
+    }
     reported_tool_text_parts(fields.content.as_deref(), fields.raw_output.as_ref())
 }
 
 pub fn reported_tool_call_text(call: &ToolCall) -> Vec<std::borrow::Cow<'_, str>> {
+    if let Some(summary) = crate::codex::deliverable_output::failure_summary(
+        Some(&call.status),
+        call.raw_input.as_ref(),
+        call.raw_output.as_ref(),
+    ) {
+        return vec![summary];
+    }
     reported_tool_text_parts(Some(&call.content), call.raw_output.as_ref())
 }
 
@@ -52,11 +66,15 @@ fn reported_tool_text_parts<'a>(
         .collect()
 }
 
-/// File edits can arrive in the initial call, before its completion update.
-pub fn has_reported_file_changes(call: &ToolCall) -> bool {
+/// File edits and historical terminal failures can arrive in the initial call.
+pub fn has_reported_initial_output(call: &ToolCall) -> bool {
     call.content
         .iter()
         .any(|content| matches!(content, ToolCallContent::Diff(_)))
+        || crate::codex::deliverable_output::is_failed_deliverable(
+            Some(&call.status),
+            call.raw_input.as_ref(),
+        )
 }
 
 /// Opaque adapter-owned route used to answer a durable permission request.
@@ -265,3 +283,7 @@ impl ConversationUpdate {
 #[cfg(test)]
 #[path = "conversation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "deliverable_output_tests.rs"]
+mod deliverable_output_tests;

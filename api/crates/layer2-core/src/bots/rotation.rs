@@ -26,7 +26,7 @@ impl BotWorker {
             return Err(BotError::Unavailable);
         }
         if !fresh {
-            self.step(bot, "restore_retained_binding").await?;
+            self.effect(bot, "restore_retained_binding").await?;
             let restored = self
                 .external
                 .configure_channel(
@@ -41,8 +41,9 @@ impl BotWorker {
                 return Err(BotError::Unavailable);
             }
             bot.resources.channel = Some(restored.channel);
+            self.settled(bot).await?;
             if bot.state != BotState::Disabled && bot.request.connection_ref.is_none() {
-                self.step(bot, "restore_retained_route_key").await?;
+                self.effect(bot, "restore_retained_route_key").await?;
                 self.external
                     .set_route_key(
                         bot,
@@ -57,6 +58,7 @@ impl BotWorker {
                             .ok_or(BotError::Unavailable)?,
                     )
                     .await?;
+                self.settled(bot).await?;
             }
             self.retire_unused_keys(bot, &bot.resources.credentials.clone())
                 .await?;
@@ -77,7 +79,7 @@ impl BotWorker {
             .await?
             .ok_or(BotError::Unavailable)?;
         if bot.request.connection_ref.is_none() {
-            self.step(bot, "set_replacement_callback").await?;
+            self.effect(bot, "set_replacement_callback").await?;
             self.external
                 .set_callback(
                     bot,
@@ -88,8 +90,9 @@ impl BotWorker {
                     &current.channel.callback_url,
                 )
                 .await?;
+            self.settled(bot).await?;
         }
-        self.step(bot, "replace_channel_keys").await?;
+        self.effect(bot, "replace_channel_keys").await?;
         let changed = self
             .external
             .configure_channel(
@@ -103,6 +106,8 @@ impl BotWorker {
         if !changed.uses(&replacement) {
             return Err(BotError::Unavailable);
         }
+        bot.resources.channel = Some(changed.channel.clone());
+        self.settled(bot).await?;
         self.finish_rotation(bot, changed, replacement).await
     }
     async fn finish_rotation(
@@ -113,7 +118,7 @@ impl BotWorker {
     ) -> Result<(), BotError> {
         // Reconcile even after a successful channel read: another interrupted
         // request may have reached the provider before failing its record write.
-        self.step(bot, "reconcile_replacement_binding").await?;
+        self.effect(bot, "reconcile_replacement_binding").await?;
         let current = self
             .external
             .configure_channel(
@@ -128,8 +133,9 @@ impl BotWorker {
             return Err(BotError::Unavailable);
         }
         bot.resources.channel = Some(current.channel);
+        self.settled(bot).await?;
         if bot.state != BotState::Disabled && bot.request.connection_ref.is_none() {
-            self.step(bot, "replace_route_key").await?;
+            self.effect(bot, "replace_route_key").await?;
             self.external
                 .set_route_key(
                     bot,
@@ -143,6 +149,7 @@ impl BotWorker {
                         .ok_or(BotError::Unavailable)?,
                 )
                 .await?;
+            self.settled(bot).await?;
         }
         self.retire_unused_keys(bot, &replacement).await?;
         bot.resources.credentials = replacement;
@@ -170,8 +177,9 @@ impl BotWorker {
                 && Some(key.id.as_str()) != retained.route_key_id.as_deref()
                 && Some(key.id.as_str()) != active_route_key.as_deref()
             {
-                self.step(bot, "revoke_obsolete_key").await?;
+                self.effect(bot, "revoke_obsolete_key").await?;
                 self.external.revoke(bot, &key.id).await?;
+                self.settled(bot).await?;
             }
         }
         Ok(())

@@ -41,12 +41,18 @@ enum Corruption {
     AuthorityFence,
 }
 
+enum RestartReply {
+    Conflict,
+    WrongConversation,
+}
+
 #[derive(Clone, Default)]
 struct CorruptingBackend {
     inner: InMemoryHostedBackend,
     next: Arc<Mutex<Option<Corruption>>>,
     expected_reconnect: Arc<Mutex<Option<String>>>,
     opens: Arc<std::sync::atomic::AtomicUsize>,
+    restart_reply: Arc<Mutex<Option<(crate::AgentRestartRuntime, RestartReply)>>>,
     opened_access: Arc<Mutex<Option<super::HostedAccessToolBinding>>>,
 }
 
@@ -149,6 +155,30 @@ impl HostedBackend for CorruptingBackend {
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
         self.opens.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Some((expected, reply)) = self.restart_reply.lock().unwrap().take() {
+            assert_eq!(launch.restart_runtime.as_ref(), Some(&expected));
+            return match reply {
+                RestartReply::Conflict => Err(AdapterError::OperationIdentityConflict(
+                    "restart fixture conflict".into(),
+                )),
+                RestartReply::WrongConversation => {
+                    let wrong = Some("another-conversation".into());
+                    let channel = ConversationChannel {
+                        input: crate::ConversationInputSender::spawn(1, |_| async { Ok(()) }),
+                        conversation_id: wrong.clone(),
+                    };
+                    let receipt = AgentOpenReceipt {
+                        operation_id: launch.request.operation_id,
+                        request_sha256: launch.request.request_sha256,
+                        agent_id: launch.request.agent_id,
+                        cwd: launch.request.cwd,
+                        home: launch.request.home,
+                        conversation_id: wrong,
+                    };
+                    Ok((channel, FencedReceipt::new(launch.authority_fence, receipt)))
+                }
+            };
+        }
         *self.opened_access.lock().unwrap() = settings.access_tool.clone();
         if let Some(expected) = self.expected_reconnect.lock().unwrap().as_deref() {
             assert_eq!(resume_conversation.as_deref(), Some(expected));
@@ -200,6 +230,7 @@ async fn ready_runtime(
                 operation_id: format!("credential-{workspace}"),
                 value: RuntimeCredential::new("opaque-runtime-credential"),
                 custody_generation: Some(1),
+                github_route: None,
             },
         )
         .await
@@ -332,6 +363,7 @@ async fn hosted_adapter_rejects_semantically_corrupt_runtime_receipts() {
                     operation_id: "credential-receipt-validation".into(),
                     value: RuntimeCredential::new("opaque-runtime-credential"),
                     custody_generation: Some(1),
+                    github_route: None,
                 },
             )
             .await,

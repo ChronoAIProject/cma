@@ -324,3 +324,36 @@ fn recorded_tool_blocks<'a>(
     }
     reported.then_some(super::RecordedToolOutput { text, truncated })
 }
+
+pub(super) fn settle_turn_policy(
+    agent: &mut Agent,
+    logs: &mut Vec<AgentLogKind>,
+) -> Result<(), AgentConversationError> {
+    if let Some(timeout) = agent
+        .conversation
+        .turn_timeout
+        .as_ref()
+        .filter(|timeout| timeout.is_open())
+    {
+        let superseded = timeout.supersede(timeout.revision()).map_err(|_| {
+            AgentConversationError::InvalidState("turn deadline settlement was refused")
+        })?;
+        let resolved = superseded
+            .approval_events_since(timeout)
+            .map_err(|_| AgentConversationError::InvalidState("approval resolution was refused"))?;
+        let position = logs
+            .iter()
+            .position(|kind| {
+                matches!(
+                    kind,
+                    AgentLogKind::TurnCompleted { .. }
+                        | AgentLogKind::TurnFailed { .. }
+                        | AgentLogKind::TurnInterrupted { .. }
+                )
+            })
+            .unwrap_or(logs.len());
+        logs.splice(position..position, resolved);
+        agent.conversation.turn_timeout = Some(superseded);
+    }
+    Ok(())
+}

@@ -282,13 +282,13 @@ it('keeps an explicit Operations jump when an enabled browser becomes available'
   );
   const { rerender } = render(view('activity'));
   await act(() => vi.advanceTimersByTimeAsync(1));
-  expect(onSelect).not.toHaveBeenCalledWith('browser');
+  expect(onSelect).not.toHaveBeenCalledWith('browser', 'activity');
   await act(() => vi.advanceTimersByTimeAsync(1));
   rerender(view(undefined));
   await act(() => vi.advanceTimersByTimeAsync(1));
   rerender(view('files'));
   await act(() => vi.advanceTimersByTimeAsync(1));
-  expect(onSelect).not.toHaveBeenCalledWith('browser');
+  expect(onSelect).not.toHaveBeenCalledWith('browser', 'activity');
   expect(onSelect).not.toHaveBeenCalled();
   expect(selected.terminalSnapshot()?.id).toBe('command-1');
 });
@@ -366,5 +366,5 @@ it('returns to Screen when a selected Operations tab is unavailable for the next
   );
   await act(async () => {});
   expect(screen.queryByRole('tab', { name: 'Operations' })).not.toBeInTheDocument();
-  expect(onSelect).toHaveBeenCalledExactlyOnceWith('browser');
+  expect(onSelect).toHaveBeenCalledExactlyOnceWith('browser', 'activity');
 });

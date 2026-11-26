@@ -1,6 +1,8 @@
 use super::*;
 use layer3_adapter::permanent_custody::{digest, CustodyPolicy, ObjectReceipt, PermanentCustody};
 use std::{collections::BTreeMap, sync::Mutex};
+#[path = "socket_tests.rs"]
+mod sockets;
 pub(crate) const OP: &str = "de98646f-1234-4234-8234-0123456789ab";
 #[derive(Default)]
 pub(crate) struct Custody(pub Mutex<BTreeMap<String, Vec<u8>>>);

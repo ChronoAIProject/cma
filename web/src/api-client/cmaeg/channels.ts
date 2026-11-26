@@ -2,12 +2,14 @@ import type { ResolvedConfig } from '../config.js';
 import { ValidationError } from '../errors.js';
 import { requestVoid, type OperationOptions } from '../http.js';
 import { input, query, read, segment } from '../resources.js';
+import { ownerHeaders } from './owner.js';
 import {
   ChannelPageSchema,
   PartitionInspectionSchema,
   ChannelCreateRequestSchema,
   ChannelUpdateRequestSchema,
   ChannelResponseSchema,
+  ChannelRecordManagementSchema,
   TestChannelResponseSchema,
   RekeyResponseSchema,
   SourceCheckResponseSchema,
@@ -25,6 +27,11 @@ export interface CreateChannelOptions extends OperationOptions {
 export interface ListChannelOptions extends OperationOptions {
   /** Opaque owner-scoped cursor returned by the previous page. */
   readonly after?: string;
+}
+
+export interface ChannelRecordManagementOptions extends OperationOptions {
+  /** Organization subject. Omit it to inspect the authenticated creator's records. */
+  readonly owner?: string;
 }
 
 export class CmaegChannels {
@@ -78,6 +85,31 @@ export class CmaegChannels {
       `/v1/channel-records/${segment(recordId)}`,
       ChannelResponseSchema,
       options,
+    );
+  }
+
+  getChannelRecordManagement(recordId: string, options: ChannelRecordManagementOptions = {}) {
+    return read(
+      this.config,
+      `/v1/channel-records/${segment(recordId)}/management`,
+      ChannelRecordManagementSchema,
+      { ...options, headers: ownerHeaders(options.owner) },
+    );
+  }
+
+  retireLegacyChannelRecord(
+    recordId: string,
+    expectedVersion: number,
+    options: ChannelRecordManagementOptions = {},
+  ) {
+    if (!Number.isSafeInteger(expectedVersion) || expectedVersion < 1)
+      throw new ValidationError('expectedVersion must be a positive safe integer');
+    return requestVoid(
+      this.config,
+      query(`/v1/channel-records/${segment(recordId)}/management`, {
+        expected_version: expectedVersion,
+      }),
+      { ...options, method: 'DELETE', expectedStatus: 204, headers: ownerHeaders(options.owner) },
     );
   }
 

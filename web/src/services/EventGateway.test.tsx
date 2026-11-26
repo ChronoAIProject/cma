@@ -8,7 +8,7 @@ afterEach(() => vi.unstubAllGlobals());
 it('keeps same-name channel rows concise and independently selectable with the keyboard', async () => {
   const owner = '00000000-0000-4000-8000-000000000383';
   const created_at = '2026-11-07T00:30:12.123456789Z';
-  const items = ['first', 'second'].map((record_id, index) => ({
+  const items = ['record-01', 'record-02'].map((record_id, index) => ({
     record_id,
     version: 1,
     provider: { slug: 'cma', level: 'L3' },
@@ -33,9 +33,11 @@ it('keeps same-name channel rows concise and independently selectable with the k
   const tree = screen.getByRole('tree', { name: 'Channels' });
   const rows = await within(tree).findAllByRole('treeitem');
   const date = new Date(created_at).toLocaleDateString([], { month: 'short', day: 'numeric' });
-  for (const row of rows) {
-    expect(row).toHaveAccessibleName(`Updates, Created ${date}`);
-    expect(within(row).getByRole('button')).toHaveAccessibleName(`Updates, Created ${date}`);
+  for (const [index, row] of rows.entries()) {
+    const label = `${items[index]!.record_id} · Updates`;
+    expect(row).toHaveAccessibleName(`${label}, Created ${date}`);
+    expect(within(row).getByRole('button')).toHaveAccessibleName(`${label}, Created ${date}`);
+    expect(within(row).getByText(`${label}`)).toBeVisible();
     expect(row).not.toHaveAttribute('aria-label');
     expect(row.querySelector('.sr-only')).toHaveTextContent(`, Created ${date}`);
     expect(row.querySelector('time')).toHaveTextContent(date);
@@ -53,19 +55,19 @@ it('keeps same-name channel rows concise and independently selectable with the k
   expect(within(rows[1]!).getByRole('button')).toHaveAttribute('aria-current', 'page');
   expect(
     await screen.findByRole('link', { name: 'Open existing channel console' }),
-  ).toHaveAttribute('href', '/event-gateway/legacy-console/channels/second');
+  ).toHaveAttribute('href', '/event-gateway/legacy-console/channels/record-02');
   await userEvent.keyboard('{ArrowUp}{Enter}');
   expect(rows[0]).toHaveFocus();
   expect(rows[0]).toHaveAttribute('aria-selected', 'true');
   expect(rows[1]).toHaveAttribute('aria-selected', 'false');
   expect(
     await screen.findByRole('link', { name: 'Open existing channel console' }),
-  ).toHaveAttribute('href', '/event-gateway/legacy-console/channels/first');
+  ).toHaveAttribute('href', '/event-gateway/legacy-console/channels/record-01');
   expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
     '/api/event-gateway/v1/channels',
     '/api/event-gateway/v1/channel-capabilities',
-    '/api/event-gateway/v1/channel-records/second',
-    '/api/event-gateway/v1/channel-records/first',
+    '/api/event-gateway/v1/channel-records/record-02',
+    '/api/event-gateway/v1/channel-records/record-01',
   ]);
 });
 

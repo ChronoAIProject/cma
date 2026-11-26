@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes, ReactNode } from 'react';
+import type { ComponentPropsWithRef, ReactNode } from 'react';
 import './Input.css';
 
 /**
@@ -14,7 +14,7 @@ import './Input.css';
  * search box growable.
  */
 
-interface InputProps extends Omit<InputHTMLAttributes<HTMLInputElement>, 'className'> {
+interface InputProps extends Omit<ComponentPropsWithRef<'input'>, 'className'> {
   /** A leading 16px glyph, drawn inside the field. */
   readonly icon?: ReactNode;
   /**

@@ -318,6 +318,12 @@ impl ProviderClient {
         Ok(TurnStream {
             trace: association,
             accepted,
+            recovery: handle
+                .entry
+                .paths
+                .recovery
+                .as_ref()
+                .map(|_| super::recovery::AcceptedRecovery::new(request.metadata)),
             events: TurnEvents(events),
             request_started,
         })
@@ -348,6 +354,11 @@ impl ProviderClient {
             card,
             latency: started.elapsed(),
         })
+    }
+
+    /// Refuse a provider that is not allowlisted, without contacting anyone.
+    pub(crate) fn require_allowlisted(&self, provider: &ProviderSlug) -> Result<(), ProviderError> {
+        self.handle(provider).map(|_| ())
     }
 
     pub(super) fn handle(&self, provider: &ProviderSlug) -> Result<&ProviderHandle, ProviderError> {

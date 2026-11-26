@@ -95,6 +95,7 @@ impl AgentAccessToolAdmission for Stub {
             services: proposal.services,
             reason: proposal.reason,
             error: None,
+            github_approval: None,
         })
     }
 }
@@ -341,6 +342,7 @@ async fn failed_attempt_returns_explicit_fresh_retry_without_claiming_owner_cons
         reason: "Read owner repository".into(),
         retry_of: None,
         error: Some("access_update_cannot_continue".into()),
+        github_approval: None,
     });
     let response = body(
         stub.router()
@@ -406,6 +408,7 @@ fn legacy_proposals_keep_their_digest_and_terminal_denial_has_no_retry_instructi
         reason: "Read owner repository".into(),
         retry_of: None,
         error: None,
+        github_approval: None,
     };
     for status in [
         AgentAccessStatus::Denied,

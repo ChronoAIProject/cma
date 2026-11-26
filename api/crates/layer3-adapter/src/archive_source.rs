@@ -12,6 +12,7 @@ use std::{
 mod attributes;
 mod directory;
 mod restore;
+mod socket;
 use directory::Directory;
 pub use restore::RestoreTree;
 pub const CHUNK_BYTES: usize = 4 * 1024 * 1024;
@@ -24,9 +25,9 @@ pub fn read_private_file(path: &Path, limit: usize) -> Result<Vec<u8>> {
     use std::os::unix::ffi::OsStrExt;
     let parent = Directory::root(path.parent().ok_or(INVALID)?)?;
     let file = parent.file(path.file_name().ok_or(INVALID)?.as_bytes())?;
-    private_bytes(file, limit)
+    private_bytes(&file, limit)
 }
-fn private_bytes(file: File, limit: usize) -> Result<Vec<u8>> {
+fn private_bytes(file: &File, limit: usize) -> Result<Vec<u8>> {
     let metadata = file.metadata().map_err(|_| INVALID)?;
     if metadata.mode() & 0o077 != 0
         || metadata.uid() != unsafe { libc::geteuid() }
@@ -47,6 +48,15 @@ fn private_bytes(file: File, limit: usize) -> Result<Vec<u8>> {
 /// Create immutable private evidence through its retained parent descriptor.
 /// A retry may reconcile identical bytes but cannot overwrite an earlier result.
 pub fn publish_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
+    publish_private_file_with_sync(path, bytes, File::sync_all, Directory::sync)
+}
+
+fn publish_private_file_with_sync(
+    path: &Path,
+    bytes: &[u8],
+    sync_file: impl FnOnce(&File) -> std::io::Result<()>,
+    sync_parent: impl FnOnce(&Directory) -> Result<()>,
+) -> Result<()> {
     use std::{io::Write, os::unix::ffi::OsStrExt};
     let parent = Directory::root(path.parent().ok_or(INVALID)?)?;
     let metadata = parent.metadata()?;
@@ -54,14 +64,18 @@ pub fn publish_private_file(path: &Path, bytes: &[u8]) -> Result<()> {
         return Err(INVALID);
     }
     let name = path.file_name().ok_or(INVALID)?.as_bytes();
-    if let Some(mut file) = parent.create_private(name)? {
-        file.write_all(bytes)
-            .and_then(|()| file.sync_all())
-            .map_err(|_| INVALID)?;
-    } else if private_bytes(parent.file(name)?, bytes.len())? != bytes {
-        return Err(INVALID);
-    }
-    parent.sync()
+    let file = if let Some(mut file) = parent.create_private(name)? {
+        file.write_all(bytes).map_err(|_| INVALID)?;
+        file
+    } else {
+        let file = parent.file(name)?;
+        if private_bytes(&file, bytes.len())? != bytes {
+            return Err(INVALID);
+        }
+        file
+    };
+    sync_file(&file).map_err(|_| INVALID)?;
+    sync_parent(&parent)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

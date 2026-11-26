@@ -10,9 +10,10 @@ from unittest.mock import Mock, patch
 
 from staging_cd_clock import timestamp
 from staging_cd_history import DevelopHistory
+from staging_cd_promotion import proof
 from staging_cd_receipts import canonical
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
-from staging_cd_set import release_set
+from staging_cd_set import ALREADY_VERIFIED, private_document, release_set
 import staging_cd_resolve as resolver
 import staging_cd_set_report as report
 
@@ -79,6 +80,16 @@ class SetEntryTests(unittest.TestCase):
                     self.assertEqual(resolver.main(), 0)
                 self.assertTrue((root / "output").read_text().endswith("changed=false\n"))
                 self.assertIsNone(json.loads(artifact.read_text())["release_set"])
+                artifact.unlink()
+                (root / "output").unlink()
+                prior = {"web": {"writer": "a" * 40, "stamp": proof(private_document(value)["components"])}}
+                with patch("staging_cd_promotion.available_proofs", return_value=prior), \
+                        patch.dict(os.environ, dict(auto, CD_PROMOTION_LANE="web", CD_STAGING_ENVIRONMENT="staging"), clear=True):
+                    self.assertEqual(resolver.main(), 0)
+                outputs = dict(line.split("=", 1) for line in (root / "output").read_text().splitlines())
+                self.assertEqual((outputs["changed"], outputs["disposition"]), ("false", ALREADY_VERIFIED))
+                self.assertNotIn("release_set", outputs)
+                self.assertEqual(json.loads(artifact.read_text())["release_set"], value)
                 with patch.dict(os.environ, dict(verify_env, GITHUB_EVENT_NAME="push", CD_DEPLOY_MODE="bootstrap"), clear=True):
                     self.assertEqual(resolver.main(), 1)
 

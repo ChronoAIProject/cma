@@ -13,7 +13,7 @@ const messages: Readonly<Record<string, string>> = {
   forbidden: 'You do not have permission to create this resource.',
   invalid_sandbox_name: 'Use a nonempty sandbox name no longer than 64 bytes.',
   sandbox_name_conflict: 'A sandbox already has this name. Choose another name.',
-  workspace_name_conflict: 'This workspace name is already in use. Choose another profile.',
+  workspace_name_conflict: 'This workspace name is already in use. Choose another workspace name.',
   sandbox_not_ready: 'The sandbox is not ready. Wait for preparation or choose another sandbox.',
   workspace_not_ready:
     'The workspace is not ready. Wait for preparation or choose another workspace.',
@@ -35,17 +35,23 @@ const messages: Readonly<Record<string, string>> = {
     'Choose the profile again and review its commands before confirming trust.',
 };
 
-export function creationFailure(error: unknown): CreationFailure {
+export function creationFailure(error: unknown, unresolved = false): CreationFailure {
   const failure = profileFailure(error);
   const code =
     typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'string'
       ? error.code
       : '';
+  const recoveryMessage =
+    unresolved && !failure.uncertain
+      ? 'This retry was refused. The original creation is still unresolved. Retry uses the same request.'
+      : undefined;
   return {
     ...failure,
+    uncertain: unresolved || failure.uncertain,
     credentialSetupRequired:
       needsSandboxCredentialSetup(error) || error instanceof CredentialAccountError,
     message:
+      recoveryMessage ??
       (error instanceof CredentialAccountError
         ? error.message
         : needsSandboxCredentialSetup(error)

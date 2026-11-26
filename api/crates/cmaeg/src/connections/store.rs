@@ -1,6 +1,6 @@
 //! Durable CAS records; no gateway replica is an authority for pending setup.
 use super::{model::*, Error};
-use crate::records::{ReadFailure, RecordClient, RecordError};
+use crate::records::{CreateConnectionClaim, ReadFailure, RecordClient, RecordError};
 use cmaeg_core::{
     ids::RecordId,
     seal::{open_connection, seal_connection, MasterKeyRing},
@@ -33,7 +33,20 @@ impl Store {
                 Error::Unavailable
             })?
             .payload;
-        let record = serde_json::from_slice(&bytes).map_err(|_| {
+        let value_json: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| {
+            self.read_failed("decode", "record_decode", None);
+            Error::Unavailable
+        })?;
+        // Other stores (Discord inbox, reaction and fence state) keep records in
+        // this kind under the same owner. A JSON object without this store's tag
+        // is theirs, not a corrupt connection; an unknown tag still fails closed.
+        if value_json
+            .as_object()
+            .is_some_and(|object| !object.contains_key("record_kind"))
+        {
+            return Err(Error::NotFound);
+        }
+        let record = serde_json::from_value(value_json).map_err(|_| {
             self.read_failed("decode", "record_decode", None);
             Error::Unavailable
         })?;
@@ -52,8 +65,7 @@ impl Store {
         value: &Stored,
         expected: Option<u64>,
     ) -> Result<u64, Error> {
-        let bytes = serde_json::to_vec(value).map_err(|_| Error::Unavailable)?;
-        let blob = seal_connection(&self.keys, id, &bytes).map_err(|_| Error::Unavailable)?;
+        let blob = self.seal(id, value)?;
         self.records
             .put(
                 &RecordId::new(id).map_err(|_| Error::Invalid("invalid record ID"))?,
@@ -64,6 +76,25 @@ impl Store {
             .await
             .map_err(map_error)
     }
+    fn seal(&self, id: &str, value: &Stored) -> Result<Vec<u8>, Error> {
+        let bytes = serde_json::to_vec(value).map_err(|_| Error::Unavailable)?;
+        seal_connection(&self.keys, id, &bytes).map_err(|_| Error::Unavailable)
+    }
+
+    pub(crate) fn prepare_create_claim(
+        &self,
+        value: Connection,
+        expected_revision: u64,
+    ) -> Result<CreateConnectionClaim, Error> {
+        let record_id = value.id.clone();
+        let sealed_payload = self.seal(&record_id, &Stored::Connection(Box::new(value)))?;
+        Ok(CreateConnectionClaim {
+            record_id,
+            expected_revision,
+            sealed_payload,
+        })
+    }
+
     pub async fn save_connection(
         &self,
         value: &Connection,

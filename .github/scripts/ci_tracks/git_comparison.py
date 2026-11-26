@@ -1,5 +1,6 @@
 """Read exact comparison identities even at a shallow clone boundary."""
 
+import io
 import re
 import subprocess
 
@@ -19,9 +20,36 @@ def first_parent(root, revision):
     # rev-parse HEAD^1 cannot traverse the graft at a shallow boundary. The
     # immutable commit still records its actual parent; never invent a base.
     raw = git(root, 'cat-file', 'commit', check_sha(revision))
-    parents = [line[7:].decode('ascii') for line in raw.split(b'\n\n', 1)[0].splitlines()
-               if line.startswith(b'parent ')]
-    return check_sha(parents[0]) if parents else None
+    return commit_first_parent(raw)
+
+
+def commit_first_parent(raw):
+    for line in raw.split(b'\n\n', 1)[0].splitlines():
+        if line.startswith(b'parent '):
+            return check_sha(line[7:].decode('ascii'))
+    return None
+
+
+def first_parents(root, revisions):
+    """Read each raw commit's parent in one Git process, including shallow grafts."""
+    requests = [check_sha(revision).encode('ascii') for revision in revisions]
+    raw = subprocess.run(['git', 'cat-file', '--batch'], cwd=root,
+                         input=b'\n'.join(requests) + b'\n', check=True,
+                         capture_output=True, timeout=60).stdout
+    parents = {}
+    with io.BytesIO(raw) as stream:
+        for revision in requests:
+            header = stream.readline().split()
+            if len(header) != 3 or header[:2] != [revision, b'commit'] or not header[2].isdigit():
+                raise ValueError('batch response is not the requested commit')
+            size = int(header[2])
+            commit = stream.read(size)
+            if len(commit) != size or stream.read(1) != b'\n':
+                raise ValueError('truncated commit batch')
+            parents[revision.decode('ascii')] = commit_first_parent(commit)
+        if stream.read(1):
+            raise ValueError('unexpected extra commit batch data')
+    return parents
 
 
 def shallow(root):

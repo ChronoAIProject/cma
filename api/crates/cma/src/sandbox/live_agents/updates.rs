@@ -22,12 +22,23 @@ mod tests;
 pub(crate) fn spawn_update_task(
     registry: Weak<LiveAgentRegistry>,
     activated: oneshot::Receiver<LiveAgentAttachmentIdentity>,
-    mut updates: mpsc::Receiver<ConversationUpdate>,
+    updates: mpsc::Receiver<ConversationUpdate>,
     recorder: Arc<dyn AgentUpdateRecorder>,
 ) -> AbortHandle {
+    spawn_observed(registry, activated, updates, recorder).0
+}
+
+pub(super) fn spawn_observed(
+    registry: Weak<LiveAgentRegistry>,
+    activated: oneshot::Receiver<LiveAgentAttachmentIdentity>,
+    mut updates: mpsc::Receiver<ConversationUpdate>,
+    recorder: Arc<dyn AgentUpdateRecorder>,
+) -> (AbortHandle, oneshot::Receiver<()>) {
     let authority = layer2_core::agent_ownership::execution_authority();
     let cleanup = registry.clone();
+    let (finished, stopped) = oneshot::channel();
     let task = tokio::spawn(async move {
+        let _finished = finished;
         let recording = async move {
             let Ok(attachment) = activated.await else {
                 return;
@@ -108,7 +119,7 @@ pub(crate) fn spawn_update_task(
             None => recording.await,
         }
     });
-    task.abort_handle()
+    (task.abort_handle(), stopped)
 }
 
 async fn restore_assembly(

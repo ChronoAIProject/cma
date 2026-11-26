@@ -137,6 +137,63 @@ describe('the page frame', () => {
     expect(tracks()).toBe(`${SIDEBAR_DEFAULT}px ${1440 - SIDEBAR_DEFAULT}px 0px`);
   });
 
+  it('draws its first measured width at once and eases only later changes', () => {
+    // Easing out of the zero-width placeholder grew the centre in on every
+    // mount. Its controls slid under the pointer, and a press released over
+    // another element never became a click.
+    const resolved: { tracks: string; measuring: boolean }[] = [];
+    let width = 1440;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      if (this.classList.contains('frame'))
+        resolved.push({
+          tracks: this.style.gridTemplateColumns,
+          measuring: this.hasAttribute('data-measuring'),
+        });
+      return { width, height: 800 } as DOMRect;
+    });
+
+    renderFrame(false);
+
+    const measured = `${SIDEBAR_DEFAULT}px ${1440 - SIDEBAR_DEFAULT}px 0px`;
+    expect(resolved).toContainEqual({ tracks: measured, measuring: true });
+    const frame = document.querySelector('.frame');
+    expect(frame).not.toHaveAttribute('data-measuring');
+    expect(tracks()).toBe(measured);
+
+    width = 900;
+    act(() => {
+      window.dispatchEvent(new Event('resize'));
+      vi.advanceTimersByTime(20);
+    });
+    expect(tracks()).toBe(`${SIDEBAR_COLLAPSED}px ${900 - SIDEBAR_COLLAPSED}px 0px`);
+    expect(frame).not.toHaveAttribute('data-measuring');
+
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
+    expect(css).toMatch(/\.frame\[data-measuring\]\s*\{[^}]*transition: none/);
+    expect(css).toMatch(/\.frame\[data-measuring\] \.frame__handle\s*\{[^}]*transition: none/);
+  });
+
+  it('keeps easing off until a frame mounted without a width is first measured', () => {
+    let width = 0;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      () => ({ width, height: 800 }) as DOMRect,
+    );
+    renderFrame(false);
+    const frame = document.querySelector('.frame');
+    expect(frame).toHaveAttribute('data-measuring');
+
+    width = 1440;
+    act(() => {
+      observed?.();
+      vi.advanceTimersByTime(20);
+    });
+
+    expect(tracks()).toBe(`${SIDEBAR_DEFAULT}px ${1440 - SIDEBAR_DEFAULT}px 0px`);
+    expect(frame).not.toHaveAttribute('data-measuring');
+  });
+
   it('writes the solved widths as its own tracks', () => {
     renderFrame();
     measure(1600);
@@ -407,6 +464,36 @@ describe('the page frame', () => {
       />,
     );
     expect(screen.getByText('surface')).toBe(center);
+  });
+
+  it('does not treat an unmeasured frame as compact or move focus into its details', () => {
+    let width = 0;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      () => ({ width, height: 800 }) as DOMRect,
+    );
+    render(
+      <AppFrame
+        detailsOpen
+        compactDetailsOverlay
+        onDetailsClose={() => {}}
+        sidebar={<p>navigation</p>}
+        center={<p>surface</p>}
+        details={<button type="button">panel action</button>}
+      />,
+    );
+    const frame = document.querySelector('.frame');
+    const action = screen.getByRole('button', { name: 'panel action' });
+    expect(frame).not.toHaveAttribute('data-details-overlay');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(action).not.toHaveFocus();
+
+    width = 900;
+    act(() => {
+      observed?.();
+      vi.advanceTimersByTime(20);
+    });
+    expect(frame).toHaveAttribute('data-details-overlay');
+    expect(action).toHaveFocus();
   });
 
   it('offers no details handle when there is no details column', () => {

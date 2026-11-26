@@ -1,3 +1,4 @@
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::resource_access::{ResourceAccessError, ResourceAccessStoreError};
 use layer2_core::sandbox::agent_artifacts::*;
@@ -76,7 +77,7 @@ impl AgentArtifactStore for MongoSandboxStore {
             let record = match publish(self, request, &mut session).await {
                 Ok(record) => record,
                 Err(error) => {
-                    let _ = session.abort_transaction().await;
+                    let _ = session.abort_guarded().await;
                     match error {
                         ArtifactStoreFailure::Access(error) => return Err(error),
                         ArtifactStoreFailure::Driver(error)
@@ -91,7 +92,7 @@ impl AgentArtifactStore for MongoSandboxStore {
                 }
             };
             if let Err(error) = request.require_current() {
-                let _ = session.abort_transaction().await;
+                let _ = session.abort_guarded().await;
                 return Err(error);
             }
             match commit_transaction(&mut session).await {

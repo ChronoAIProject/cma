@@ -8,8 +8,9 @@ use axum::{
 };
 use layer2_core::profiles::{
     ProfilePageRequest, ProfileStoreError, ProfileVisibility, SandboxProfile,
+    SandboxProfileRevision, SandboxProfileStore,
 };
-use layer2_core::{Capability, SubjectId};
+use layer2_core::{Caller, Capability, SandboxProfileId, SubjectId};
 
 use super::idempotency::{IdempotencyKey, RequestBody};
 use super::profiles::{
@@ -363,32 +364,39 @@ pub(super) async fn read_revision(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path((id, revision)): Path<(String, u32)>,
 ) -> Result<Json<SandboxProfileRevisionView>, ProfileProblem> {
-    super::profiles::require_revision_read(&caller)?;
-    if id != layer2_core::DEFAULT_SANDBOX_PROFILE_ID && !generated_id_is_valid(&id, "sbp_") {
+    let revision = readable_revision(state.sandboxes.as_ref(), &caller, &id, revision).await?;
+    Ok(Json(revision.into()))
+}
+
+pub(super) async fn readable_revision(
+    store: &dyn SandboxProfileStore,
+    caller: &Caller,
+    id: &str,
+    revision: u32,
+) -> Result<SandboxProfileRevision, ProfileProblem> {
+    super::profiles::require_revision_read(caller)?;
+    if id != layer2_core::DEFAULT_SANDBOX_PROFILE_ID && !generated_id_is_valid(id, "sbp_") {
         return Err(ProfileProblem::NotFound);
     }
-    let profile = state
-        .sandboxes
-        .sandbox_profile(&layer2_core::SandboxProfileId(id))
+    let profile = store
+        .sandbox_profile(&SandboxProfileId(id.to_owned()))
         .await
         .map_err(|error| ProfileProblem::from_store(error, "content"))?
         .filter(|profile| {
             !profile.internal
                 && super::profiles::revision_visible(
-                    &caller,
+                    caller,
                     &profile.owner,
                     profile.visibility,
                     profile.retired_at.is_some(),
                 )
         })
         .ok_or(ProfileProblem::NotFound)?;
-    let revision = state
-        .sandboxes
+    store
         .sandbox_profile_revision(&profile.id, revision)
         .await
         .map_err(|error| ProfileProblem::from_store(error, "content"))?
-        .ok_or(ProfileProblem::NotFound)?;
-    Ok(Json(revision.into()))
+        .ok_or(ProfileProblem::NotFound)
 }
 
 #[utoipa::path(

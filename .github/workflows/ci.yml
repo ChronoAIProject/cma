@@ -3,34 +3,29 @@ on:
   push:
     branches:
       - "develop"
-  pull_request:
-    branches:
-      - "develop"
-      - "main"
-    types:
-      - "opened"
-      - "reopened"
-      - "synchronize"
-      - "edited"
-      - "labeled"
-      - "unlabeled"
+      - "tl/release/**"
   # Required checks must also report on the develop merge queue's group refs.
   # Each entry's ref is unique, so a PR or push run never cancels it.
   merge_group:
     types:
       - "checks_requested"
+  schedule:
+    - cron: "17 */2 * * *"
+  workflow_dispatch: {}
 concurrency:
-  group: "ci-${{ github.workflow }}-${{ github.ref }}"
-  # A develop push run is the only writer of the image and cargo caches every
-  # PR restores, so a newer merge must not cancel it mid-build (14 of 15 were
-  # cancelled on 20 Nov). The group still runs one at a time, and a newer
-  # pending run still replaces an older pending one. PRs and release refs
-  # keep cancelling superseded runs.
-  cancel-in-progress: "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"
+  # Verification keeps its own active run and latest pending snapshot.
+  # Develop pushes retain their separate cache-writer group.
+  group: "ci-${{ github.workflow }}-${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'verification-' || '' }}${{ github.ref }}"
+  cancel-in-progress: "${{ github.ref != 'refs/heads/develop' }}"
 permissions:
   contents: "read"
+  actions: "read"
+  # ci-images.yml and ci-omarchy.yml request it for the runtime vulnerability
+  # gate's tracking-issue lookup; a called workflow cannot exceed its caller.
+  issues: "read"
 jobs:
   changes:
+    if: "(github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop'"
     name: "Select tracks"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
@@ -39,13 +34,14 @@ jobs:
       am: "${{ steps.select.outputs.am }}"
       eg: "${{ steps.select.outputs.eg }}"
       web: "${{ steps.select.outputs.web }}"
+      approval_contract: "${{ steps.select.outputs.approval_contract }}"
       am_packages: "${{ steps.select.outputs.am_packages }}"
       eg_packages: "${{ steps.select.outputs.eg_packages }}"
       test_tracks: "${{ steps.select.outputs.test_tracks }}"
       deployables: "${{ steps.select.outputs.deployables }}"
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
         with:
           fetch-depth: 0
       -
@@ -54,12 +50,12 @@ jobs:
         working-directory: "."
         run: "python3 -c 'import os,tomllib; v=tomllib.load(open(\"api/rust-toolchain.toml\",\"rb\"))[\"toolchain\"][\"channel\"]; open(os.environ[\"GITHUB_OUTPUT\"],\"a\").write(\"channel=\"+v+\"\\n\")'"
       -
-        uses: "dtolnay/rust-toolchain@stable"
+        uses: "dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca"
         with:
           toolchain: "${{ steps.toolchain.outputs.channel }}"
           components: "rustfmt, clippy"
       -
-        uses: "actions/setup-python@v6"
+        uses: "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1"
         with:
           python-version: "3.12"
       -
@@ -76,12 +72,14 @@ jobs:
     name: "CI / Version label"
     needs:
       - "changes"
-    if: "always()"
+    # Superseded workflows must not turn cancelled selection into a label error.
+    # Active selector failures still reach the validator and fail closed.
+    if: "!cancelled() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         env:
           DEPLOYABLES: "${{ needs.changes.outputs.deployables }}"
@@ -89,16 +87,32 @@ jobs:
           GH_TOKEN: "${{ github.token }}"
         run: "python3 -B .github/scripts/ci_tracks/version_label.py"
   repo:
+    if: "(github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop'"
     name: "Repo checks"
     uses: "./.github/workflows/ci-repo.yml"
   rust-test-build:
     name: "Rust test build"
     needs:
       - "changes"
-    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
+    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true' || needs.changes.outputs.approval_contract == 'true'"
     uses: "./.github/workflows/ci-rust-archive.yml"
+  approval-contract:
+    name: "External approval contract"
+    permissions:
+      contents: "read"
+      actions: "read"
+    needs:
+      - "changes"
+      - "rust-test-build"
+    if: "needs.changes.outputs.approval_contract == 'true'"
+    uses: "./.github/workflows/ci-approval-contract.yml"
   am:
     name: "Agent Manager checks"
+    # A called workflow cannot hold more than this: its Rust jobs restore the
+    # shared test archive through the artifacts API.
+    permissions:
+      contents: "read"
+      actions: "read"
     needs:
       - "changes"
       - "rust-test-build"
@@ -109,6 +123,11 @@ jobs:
       packages: "${{ needs.changes.outputs.am_packages }}"
   eg:
     name: "Event Gateway checks"
+    # A called workflow cannot hold more than this: its Rust jobs restore the
+    # shared test archive through the artifacts API.
+    permissions:
+      contents: "read"
+      actions: "read"
     needs:
       - "changes"
       - "rust-test-build"
@@ -131,6 +150,7 @@ jobs:
     uses: "./.github/workflows/ci-images.yml"
     with:
       components: "[\"api\"]"
+      changed_deployables: "${{ needs.changes.outputs.deployables }}"
   eg-images:
     name: "EG images"
     needs:
@@ -155,24 +175,27 @@ jobs:
     uses: "./.github/workflows/ci-images.yml"
     with:
       components: "[\"runtime\"]"
+      changed_deployables: "${{ needs.changes.outputs.deployables }}"
   omarchy:
     name: "Runtime Omarchy"
     needs:
       - "changes"
     if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
     uses: "./.github/workflows/ci-omarchy.yml"
+    with:
+      staging_lane_changed: ${{ contains(fromJSON(needs.changes.outputs.deployables), 'cma-runtime-omarchy') }}
   gate-repo:
     name: "CI / Repo"
     needs:
       - "changes"
       - "repo"
       - "version-label"
-    if: "always()"
+    if: "always() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         name: "Validate track result"
         env:
@@ -183,16 +206,17 @@ jobs:
     needs:
       - "changes"
       - "rust-test-build"
+      - "approval-contract"
       - "am"
       - "am-images"
       - "runtime-images"
       - "omarchy"
-    if: "always()"
+    if: "always() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         name: "Validate track result"
         env:
@@ -207,12 +231,12 @@ jobs:
       - "eg-images"
       - "runtime-images"
       - "omarchy"
-    if: "always()"
+    if: "always() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         name: "Validate track result"
         env:
@@ -224,12 +248,12 @@ jobs:
       - "changes"
       - "web"
       - "web-images"
-    if: "always()"
+    if: "always() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5
     steps:
       -
-        uses: "actions/checkout@v5"
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
       -
         name: "Validate track result"
         env:

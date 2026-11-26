@@ -135,3 +135,12 @@ fn hold() -> RuntimeError {
         "runtime retirement dependency requires verification",
     )
 }
+
+/// Validate captured descriptor authority; database readiness is not assessed.
+pub(crate) fn inspect_descriptor(
+    config: &RuntimeConfig,
+    bytes: &[u8],
+    active_digest: Option<&str>,
+) -> Result<u8> {
+    Descriptor::decode(config, bytes, active_digest).map(|descriptor| descriptor.version)
+}

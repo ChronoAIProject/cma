@@ -1,14 +1,26 @@
 //! Agent Manager's exact schema authority. Legacy names retain existing data IDs.
+use super::retained_consents;
 use layer2_core::StoreError;
 use mongodb::{
     bson::{doc, Document},
     Database,
 };
 use std::collections::{BTreeMap, BTreeSet};
+mod observation;
+#[cfg(test)]
+use observation::validate_observation_grants;
+pub(crate) use observation::verify_observation;
 pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
     "account_deletions",
     "account_deletion_events",
+    retained_consents::COLLECTION,
+    super::migrations::measured_custody::COLLECTION,
+    super::migrations::measured_batches::COLLECTION,
+    super::migrations::measured_index::PROJECTIONS,
+    super::migrations::measured_index::MANIFESTS,
+    super::migrations::measured_index::BATCHES,
+    super::agent_log_segments::active_proof::COLLECTION,
     super::budget::COLLECTION,
     super::agent_observation::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
@@ -18,6 +30,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::usage_reports::JOBS,
     super::usage_reports::ROWS,
     super::usage_reports::CHARTS,
+    super::migrations::usage_projections::COLLECTION,
     super::usage_reports::CONTROL,
     super::request_limits::COLLECTION,
     "visitor_launch_days",
@@ -132,10 +145,15 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "provider_binding_preparations",
     "provider_tool_opens",
     "provider_tool_relays",
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
     "resource_policies",
+    "resource_revocation_operations_v1",
     "resource_share_commands",
     "resource_shares",
     "sandbox_admissions",
+    super::creation_outcomes::COLLECTION,
     super::sandbox_mongo::SANDBOX_BILLING,
     super::sandbox_colors::COLLECTION,
     "sandbox_controls",
@@ -145,6 +163,11 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_events",
     super::sandbox_usage::STATES,
     super::sandbox_usage::EVENTS,
+    super::sandbox_usage_export::CAPTURES,
+    super::sandbox_usage_export::EVIDENCE,
+    super::sandbox_usage_export::OUTBOX,
+    super::sandbox_usage_export::STREAMS,
+    super::sandbox_usage_export::INVENTORY,
     "sandbox_profile_revisions",
     "sandbox_profiles",
     "sandbox_retained_availability",
@@ -165,15 +188,46 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "workspace_profiles",
     "workspaces",
     "worktrees",
+    super::released_runtimes::COLLECTION,
+    super::released_runtimes::TRANSITIONS_COLLECTION,
 ];
-// These derived stores are activated separately. Existing credentials must
-// still start while the feature is disabled; partial grants remain invalid.
+// These stores activate separately. Existing credentials still start while disabled.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    super::migrations::usage_projections::COLLECTION,
+    retained_consents::COLLECTION,
+    super::migrations::measured_custody::COLLECTION,
+    super::migrations::measured_batches::COLLECTION,
+    super::migrations::measured_index::PROJECTIONS,
+    super::migrations::measured_index::MANIFESTS,
+    super::migrations::measured_index::BATCHES,
+    super::agent_log_segments::active_proof::COLLECTION,
+    super::sandbox_usage_export::CAPTURES,
+    super::sandbox_usage_export::EVIDENCE,
+    super::sandbox_usage_export::OUTBOX,
+    super::sandbox_usage_export::STREAMS,
+    super::sandbox_usage_export::INVENTORY,
     super::home_backups::SCHEDULES_COLLECTION,
     super::home_backups::BACKUPS_COLLECTION,
     super::allocation_buckets::COLLECTION,
     super::agent_observation::COLLECTION,
+    super::released_runtimes::COLLECTION,
+    super::released_runtimes::TRANSITIONS_COLLECTION,
+    super::creation_outcomes::COLLECTION,
+    // Resource execution reads its activation record on ordinary share and
+    // revocation paths; credentials issued before it still start.
+    "resource_execution_effects_v1",
+    "resource_execution_grants_v1",
+    "resource_execution_records_v1",
+    "resource_revocation_operations_v1",
 ];
+const USAGE_PROJECTIONS: &str = super::migrations::usage_projections::COLLECTION;
+const USAGE_PROJECTION_ACTIONS: &[&str] = &["find", "insert", "remove", "listIndexes"];
+mod measured;
+#[cfg(test)]
+use measured::MEASURED_CUSTODY;
+use measured::{MEASURED_APPEND_ONLY, MEASURED_MANIFESTS};
+pub(super) const MEASURED_MANIFEST_ACTIONS: &[&str] = &["find", "insert", "update", "listIndexes"];
+pub(super) const MEASURED_CUSTODY_ACTIONS: &[&str] = &["find", "insert", "listIndexes"];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];
 // Existing AM stores initialize their own indexes and schemas at startup.
@@ -205,34 +259,9 @@ pub(crate) fn activity_index_job_role(database: &str) -> Document {
     role_with_index_operation(database, &["activity"], true, true)
 }
 
-fn role_with_index_operation(
-    database: &str,
-    metadata_collections: &[&str],
-    migration_ledger: bool,
-    include_optional: bool,
-) -> Document {
-    let mut grants: Vec<_> = COLLECTIONS
-        .iter()
-        .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
-        .map(|name| {
-            let mut actions = ACTIONS.to_vec();
-            if *name == "binding_conversations" {
-                actions.push("dropIndex");
-            }
-            if metadata_collections.contains(name) {
-                actions.extend_from_slice(ACTIVITY_INSPECTION_ACTIONS);
-            }
-            doc! {"resource":{"db":database,"collection":*name},"actions":actions}
-        })
-        .collect();
-    if migration_ledger {
-        grants.push(
-            doc! {"resource":{"db":database,"collection":MIGRATION_COLLECTION},"actions":MIGRATION_ACTIONS},
-        );
-    }
-    grants.push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
-    doc! {"createRole":"cma_am_runtime","privileges":grants,"roles":[]}
-}
+mod runtime_role;
+use runtime_role::role_with_index_operation;
+
 pub(crate) fn validate(status: &Document, database: &str) -> Result<(), StoreError> {
     validate_index_role(status, database, &[], false)
 }
@@ -297,6 +326,14 @@ fn validate_index_role(
                 action == "listCollections"
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
+            } else if collection == USAGE_PROJECTIONS {
+                USAGE_PROJECTION_ACTIONS.contains(&action)
+            } else if MEASURED_APPEND_ONLY.contains(&collection) {
+                MEASURED_CUSTODY_ACTIONS.contains(&action)
+            } else if collection == MEASURED_MANIFESTS {
+                MEASURED_MANIFEST_ACTIONS.contains(&action)
+            } else if collection == retained_consents::COLLECTION {
+                retained_consents::ACTIONS.contains(&action)
             } else if migration_ledger && collection == MIGRATION_COLLECTION {
                 MIGRATION_ACTIONS.contains(&action)
             } else if metadata_collections.contains(&collection)
@@ -325,23 +362,47 @@ fn validate_index_role(
     {
         return Err(denied());
     }
-    if !COLLECTIONS.iter().all(|name| {
-        (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
-            || ACTIONS
-                .iter()
-                .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
-    }) || !metadata_collections.iter().all(|collection| {
-        grants.get(*collection).is_some_and(|actions| {
-            ACTIVITY_INSPECTION_ACTIONS
+    if grants
+        .get(retained_consents::COLLECTION)
+        .is_some_and(|actions| {
+            !retained_consents::ACTIONS
                 .iter()
                 .all(|action| actions.contains(*action))
         })
-    }) || (migration_ledger
-        && !grants.get(MIGRATION_COLLECTION).is_some_and(|actions| {
-            MIGRATION_ACTIONS
-                .iter()
-                .all(|action| actions.contains(*action))
-        }))
+    {
+        return Err(denied());
+    }
+    if grants.get(USAGE_PROJECTIONS).is_some_and(|actions| {
+        !USAGE_PROJECTION_ACTIONS
+            .iter()
+            .all(|action| actions.contains(*action))
+    }) {
+        return Err(denied());
+    }
+    if !measured::complete(&grants)
+        || !COLLECTIONS.iter().all(|name| {
+            *name == retained_consents::COLLECTION
+                || *name == MEASURED_MANIFESTS
+                || *name == USAGE_PROJECTIONS
+                || MEASURED_APPEND_ONLY.contains(name)
+                || (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
+                || ACTIONS
+                    .iter()
+                    .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
+        })
+        || !metadata_collections.iter().all(|collection| {
+            grants.get(*collection).is_some_and(|actions| {
+                ACTIVITY_INSPECTION_ACTIONS
+                    .iter()
+                    .all(|action| actions.contains(*action))
+            })
+        })
+        || (migration_ledger
+            && !grants.get(MIGRATION_COLLECTION).is_some_and(|actions| {
+                MIGRATION_ACTIONS
+                    .iter()
+                    .all(|action| actions.contains(*action))
+            }))
         || !grants
             .get("binding_conversations")
             .is_some_and(|actions| actions.contains("dropIndex"))
@@ -387,16 +448,6 @@ pub(crate) async fn verify_with_authority(
     }
 }
 
-#[cfg(test)]
-pub(crate) fn verify_activity_index_authority(
-    status: &Document,
-    database: &str,
-    authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
-    build: bool,
-) -> Result<(), StoreError> {
-    verify_index_operation_authority(status, database, authority, &["activity"], build)
-}
-
 pub(crate) fn verify_index_operation_authority(
     status: &Document,
     database: &str,
@@ -432,6 +483,9 @@ mod allocation_tests;
 #[path = "lifecycle_children_contract.rs"]
 mod lifecycle_children_contract;
 #[cfg(test)]
+#[path = "isolation/measured_tests.rs"]
+mod measured_tests;
+#[cfg(test)]
 #[path = "profile_internal_contract.rs"]
 mod profile_internal_contract;
 #[cfg(test)]
@@ -441,39 +495,3 @@ mod segments;
 mod shared_schema_contract;
 #[cfg(test)]
 mod tests;
-
-/// Required only by the enabled read service; installation remains additive.
-pub(crate) async fn verify_observation(database: &Database) -> Result<(), StoreError> {
-    let status = database
-        .run_command(doc! {"connectionStatus": 1, "showPrivileges": true})
-        .await
-        .map_err(|_| StoreError::Unavailable("cannot verify observation grants".into()))?;
-    validate_observation_grants(&status, database.name())
-}
-fn validate_observation_grants(status: &Document, database: &str) -> Result<(), StoreError> {
-    let role = doc! {"privileges": [{"resource": {"db": database, "collection": super::agent_observation::COLLECTION}, "actions": ACTIONS}]};
-    cma_service_auth::mongodb_authority::verify_shared_schema(status, database, &role)
-        .map_err(|error| StoreError::Unavailable(error.into()))
-}
-#[cfg(test)]
-mod observation_grants_tests {
-    use super::*;
-    #[test]
-    fn observation_grants_are_optional_when_closed_and_required_when_enabled() {
-        let mut grants = role("cma").get_array("privileges").unwrap().clone();
-        let status = |grants| doc! {"authInfo": {"authenticatedUsers": [{"user": "manager", "db": "cma"}], "authenticatedUserPrivileges": grants}};
-        validate_observation_grants(&status(grants.clone()), "cma").unwrap();
-        grants.retain(|grant| {
-            grant
-                .as_document()
-                .unwrap()
-                .get_document("resource")
-                .unwrap()
-                .get_str("collection")
-                .unwrap()
-                != super::super::agent_observation::COLLECTION
-        });
-        validate(&status(grants.clone()), "cma").unwrap();
-        assert!(validate_observation_grants(&status(grants), "cma").is_err());
-    }
-}

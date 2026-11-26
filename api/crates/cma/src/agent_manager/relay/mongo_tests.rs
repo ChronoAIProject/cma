@@ -8,8 +8,14 @@ use layer3_adapter::{
 };
 use std::sync::Mutex;
 
+#[path = "settings_http_tests.rs"]
+mod settings;
+
 #[path = "drain_tests.rs"]
 mod drain;
+
+#[path = "tests/file_handoff.rs"]
+mod file_handoff;
 
 #[path = "shared_stream_tests.rs"]
 mod shared_streams;
@@ -136,3 +142,6 @@ async fn maintenance_control_uses_owner_and_captures_epoch_with_real_mongo_linea
         mongo.database(&name).drop().await.unwrap();
     }
 }
+
+#[path = "tests/file_read_retry/mod.rs"]
+mod file_read_retry;

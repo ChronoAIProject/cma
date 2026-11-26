@@ -75,6 +75,7 @@ fn source_config(request: &HomeSnapshotExportRequest) -> Result<RuntimeConfig> {
         extended_desktop_startup: false,
         capacity_recovery_enabled: false,
         legacy_journal_recovery_enabled: false,
+        agent_process_restart_enabled: false,
         preserve_file_mode: false,
     })
 }

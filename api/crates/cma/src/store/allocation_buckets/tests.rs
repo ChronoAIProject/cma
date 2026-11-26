@@ -90,21 +90,21 @@ fn daily_and_hourly_buckets_equal_original_raw_fold_for_1_7_30_days() {
                 .collect();
             let b = materialize::build(&state, &matching, range).unwrap();
             assert_projection(
-                &b.total.projection,
+                &b.total().projection,
                 &allocation::project(&state, &matching, range),
             );
-            for hour in &b.hours {
+            for hour in b.hours() {
                 assert_projection(
                     &hour.projection,
                     &allocation::project(&state, &matching, hour.range),
                 );
             }
             assert_eq!(
-                DayBucket::read(&b.document().unwrap()).unwrap().revision,
+                DayBucket::read(&b.document().unwrap()).unwrap().revision(),
                 state.revision
             );
             raw.merge(&allocation::project(&state, &matching, range).period);
-            prepared.merge(&b.total.projection.period);
+            prepared.merge(&b.total().projection.period);
         }
         assert_eq!(raw, prepared);
     }
@@ -138,10 +138,10 @@ fn gaps_overlaps_baselines_and_projected_tails_preserve_raw_failure_semantics() 
         };
         let b = materialize::build(&s, &events, range).unwrap();
         assert_projection(
-            &b.total.projection,
+            &b.total().projection,
             &allocation::project(&s, &events, range),
         );
-        assert!(!b.total.projection.period.complete);
+        assert!(!b.total().projection.period.complete);
         let mut next = s.clone();
         next.revision += 1;
         assert!(!b.validate_source(&next).unwrap());
@@ -189,10 +189,25 @@ fn immutable_coverage_reuses_later_heads_but_rejects_same_revision_drift() {
     assert!(!b.validate_source(&next).unwrap());
     next.source_seq -= 1;
     assert!(b.validate_source(&next).is_err());
-    assert!(b.baseline_matches(s.revision - 1, false).is_err());
-    let mut incomplete = b;
-    incomplete.complete_lifecycle = false;
-    assert!(incomplete.baseline_matches(s.revision + 1, true).is_err());
+    next = s.clone();
+    next.revision -= 1;
+    next.complete_lifecycle = false;
+    assert!(b.validate_source(&next).is_err());
+    let incomplete = materialize::build(
+        &SandboxUsage {
+            complete_lifecycle: false,
+            ..s.clone()
+        },
+        &[event(&s, 1, from, from + DAY)],
+        Range {
+            from,
+            to: from + DAY,
+        },
+    )
+    .unwrap();
+    next = s;
+    next.revision += 1;
+    assert!(incomplete.validate_source(&next).is_err());
 }
 
 #[test]
@@ -221,9 +236,17 @@ fn schema_digest_and_order_checks_refuse_corrupt_evidence() {
         document.insert(field, "bad");
         assert!(DayBucket::read(&document).is_err(), "{field}");
     }
-    let mut b = b;
-    b.total.projection.period.cpu_core_hours = f64::NAN;
-    assert!(b.document().is_err());
+    let mut malformed = mongodb::bson::serialize_to_document(&b).unwrap();
+    malformed
+        .get_document_mut("total")
+        .unwrap()
+        .get_document_mut("projection")
+        .unwrap()
+        .get_document_mut("period")
+        .unwrap()
+        .insert("cpu_core_hours", f64::NAN);
+    let malformed: DayBucket = mongodb::bson::deserialize_from_document(malformed).unwrap();
+    assert!(malformed.document().is_err());
     assert!(materialize::build(
         &s,
         &[],
@@ -262,9 +285,9 @@ fn compact_daily_summary_is_exact_and_independently_validated() {
     projected.remove("record");
     projected.remove("content_sha256");
     let summary = DayBucket::read_summary(&projected).unwrap();
-    assert!(summary.hours.is_empty());
+    assert!(summary.hours().is_empty());
     assert!(summary.validate_source(&s).unwrap());
-    assert_projection(&summary.total.projection, &bucket.total.projection);
+    assert_projection(&summary.total().projection, &bucket.total().projection);
     assert!(DayBucket::read(&projected).is_err());
     for field in [
         "summary_record",

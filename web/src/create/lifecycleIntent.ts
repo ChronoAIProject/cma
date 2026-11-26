@@ -1,6 +1,7 @@
 import { refreshSandboxCapacity } from '../sandbox/useSandboxCapacity';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ApiError, ProtocolError } from '@cma/client';
+import { ProtocolError } from '@cma/client';
+import { readGate, retryLifecycleRead } from '../api/readRetry';
 import { AgentLifecycleCreateError } from '../api/client';
 import { discardSubmittedTaskDraft } from './taskDraft';
 import { lifecycleFailure, type LifecycleFailure } from './lifecycleFailure';
@@ -25,6 +26,7 @@ export function useLifecycleIntent(
   workspaceId?: string,
   sandboxId?: string,
   binding?: AgentBinding,
+  enabled = true,
 ) {
   const storageScope = { owner, workspaceId, sandboxId };
   const scope = JSON.stringify([owner ?? null, workspaceId ?? null, sandboxId ?? null, binding]);
@@ -32,6 +34,8 @@ export function useLifecycleIntent(
   const [saved, setSaved] = useState(() => loadLifecycleIntent(storageScope, binding));
   const current = useRef(saved.intent);
   const active = useRef<AbortController | undefined>(undefined);
+  const submitVersion = useRef(0);
+  const observedWait = useRef<AgentLifecycleOperationView | undefined>(undefined);
   const [pending, setPending] = useState(false);
   const [failure, setFailure] = useState<LifecycleFailure>();
   const [operation, setOperation] = useState<AgentLifecycleOperationView>();
@@ -53,20 +57,21 @@ export function useLifecycleIntent(
   }, [saved.intent]);
   // An unsettled request belongs to the scope that sent it. Leaving that scope
   // abandons only its response; its key stays retained there for recovery.
-  const generation = useMemo(() => ({ scope, client }), [scope, client]);
+  const generation = useMemo(() => ({ scope, client, enabled }), [scope, client, enabled]);
   const live = useRef<typeof generation | undefined>(undefined);
   useLayoutEffect(() => {
-    live.current = generation;
+    live.current = generation.enabled ? generation : undefined;
     return () => {
       if (live.current === generation) live.current = undefined;
       active.current?.abort();
       active.current = undefined;
+      observedWait.current = undefined;
     };
   }, [generation]);
-  const retain = (expected: Intent | undefined, intent?: Intent) => {
+  const retain = (expected: Intent | undefined, intent?: Intent, beforeRemove?: () => void) => {
     if (live.current !== generation) return false;
     try {
-      retainLifecycleIntent(storageScope, expected, intent);
+      retainLifecycleIntent(storageScope, expected, intent, beforeRemove);
       current.current = intent;
       setSaved({ intent });
       return true;
@@ -81,7 +86,7 @@ export function useLifecycleIntent(
   };
   const receipt = saved.intent?.receipt;
   useEffect(() => {
-    if (!receipt || !client.readAgentLifecycle) return;
+    if (!enabled || !receipt || !client.readAgentLifecycle) return;
     const abort = new AbortController();
     const requestKey = current.current?.key;
     const currentRequest = () =>
@@ -92,10 +97,14 @@ export function useLifecycleIntent(
     let phase: string | undefined;
     let phaseStartedAt = Date.now();
     let retryDelay = 500;
+    const gate = readGate(client, JSON.stringify(['lifecycle', scope, receipt.id]));
     const poll = async () => {
       const readStartedAt = Date.now();
+      const version = submitVersion.current;
       try {
-        const value = await client.readAgentLifecycle!(receipt.id, { signal: abort.signal });
+        const value = await gate.run(abort.signal, (signal) =>
+          client.readAgentLifecycle!(receipt.id, { signal }),
+        );
         if (!currentRequest()) return;
         if (
           value.id !== receipt.id ||
@@ -107,6 +116,12 @@ export function useLifecycleIntent(
           phaseStartedAt = Date.now();
         }
         setOperation(value);
+        observedWait.current =
+          version === submitVersion.current &&
+          !active.current &&
+          value.status === 'waiting_for_connection'
+            ? value
+            : undefined;
         if (owner && value.status === 'failed' && value.failure?.code === 'sandbox_limit_reached')
           void refreshSandboxCapacity(client, owner);
         setFailure(undefined);
@@ -122,13 +137,11 @@ export function useLifecycleIntent(
         }
       } catch (error: unknown) {
         if (!currentRequest()) return;
+        observedWait.current = undefined;
         setFailure(
           lifecycleFailure(error, 'status', current.current?.body.initial_message !== undefined),
         );
-        if (
-          error instanceof ProtocolError ||
-          (error instanceof ApiError && !error.isRetryable && error.status !== 408)
-        ) {
+        if (!retryLifecycleRead(error, abort.signal)) {
           // Lost access or identity invalidates the visible observation, but
           // never erases the retained command or submits a replacement.
           setOperation(undefined);
@@ -144,7 +157,7 @@ export function useLifecycleIntent(
       abort.abort();
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [client, receipt, pollVersion, owner, scope]);
+  }, [client, receipt, pollVersion, owner, scope, enabled]);
   const submit = async (body?: AgentLifecycleCreateInput, draftRevision?: string) => {
     if (
       live.current !== generation ||
@@ -153,7 +166,8 @@ export function useLifecycleIntent(
       saved.error
     )
       return;
-    if (body && current.current) return;
+    // A delayed connection action may only continue the request it was opened for.
+    if (body ? current.current : saved.intent?.key !== current.current?.key) return;
     const intent =
       current.current ??
       (body
@@ -162,6 +176,8 @@ export function useLifecycleIntent(
     if (!intent || !retain(current.current, intent)) return;
     const abort = new AbortController();
     active.current = abort;
+    submitVersion.current += 1;
+    observedWait.current = undefined;
     setPending(true);
     setFailure(undefined);
     try {
@@ -201,6 +217,18 @@ export function useLifecycleIntent(
       if (!abort.signal.aborted) setPending(false);
     }
   };
+  const waitingIntent =
+    owner &&
+    !pending &&
+    !failure &&
+    !saved.error &&
+    saved.intent?.receipt?.id === operation?.id &&
+    !saved.intent?.agentId &&
+    !operation?.agent_id &&
+    operation?.status === 'waiting_for_connection' &&
+    operation.connection?.target.type === 'sandbox_profile'
+      ? saved.intent
+      : undefined;
   return {
     intent: saved.intent,
     pending,
@@ -208,9 +236,38 @@ export function useLifecycleIntent(
       saved.error === undefined ? failure : { kind: 'message' as const, message: saved.error },
     operation,
     connection,
-    setConnection,
+    setConnection: (value: AgentLifecycleOperationView['connection']) => {
+      if (live.current === generation && saved.intent?.key === current.current?.key)
+        setConnection(value);
+    },
     submit,
-    retryStatus: () => setPollVersion((value) => value + 1),
+    retryStatus: () => {
+      observedWait.current = undefined;
+      setPollVersion((value) => value + 1);
+    },
+    canDiscardWaiting: waitingIntent !== undefined,
+    discardWaiting: () => {
+      if (
+        !owner ||
+        !waitingIntent ||
+        current.current !== waitingIntent ||
+        active.current ||
+        observedWait.current !== operation ||
+        !retain(waitingIntent, undefined, () =>
+          discardSubmittedTaskDraft(
+            owner,
+            waitingIntent.body,
+            waitingIntent.draftRevision,
+            'discarded',
+          ),
+        )
+      )
+        return false;
+      observedWait.current = undefined;
+      setOperation(undefined);
+      setConnection(undefined);
+      return true;
+    },
     clear: () => {
       const intent = saved.intent;
       if (!intent || !retain(intent)) return false;

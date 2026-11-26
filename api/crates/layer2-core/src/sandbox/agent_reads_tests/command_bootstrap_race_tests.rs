@@ -4,6 +4,9 @@ use crate::sandbox::store::{SandboxAdmission, SandboxAdmissionName, SandboxAdmis
 #[path = "command_bootstrap_retry_results_tests.rs"]
 mod retry_results;
 
+#[path = "queued_edit_retry_tests.rs"]
+mod queued_edits;
+
 #[path = "command_prepared_admission_tests.rs"]
 mod prepared;
 
@@ -11,12 +14,14 @@ mod prepared;
 enum Progress {
     Parent,
     Agent,
+    TwoAgentRevisions,
     PreparedReady,
     ModelChange,
     Stop,
     Policy,
     EveryAttempt,
     SlowRefresh,
+    SlowFirstPreparation,
     ChangedScope,
 }
 
@@ -36,6 +41,9 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
         owner: &AgentOwner,
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
+        if call == 0 && matches!(self.progress, Progress::SlowFirstPreparation) {
+            tokio::time::sleep(Duration::from_secs(14)).await;
+        }
         if call > 0 && matches!(self.progress, Progress::SlowRefresh) {
             tokio::time::sleep(Duration::from_secs(16)).await;
         }
@@ -47,9 +55,15 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
                 grant_revision: None,
             });
         }
-        if call == 0 || matches!(self.progress, Progress::EveryAttempt) {
+        if call == 0
+            || matches!(self.progress, Progress::EveryAttempt)
+            || (call == 1 && matches!(self.progress, Progress::TwoAgentRevisions))
+        {
             match self.progress {
-                Progress::Agent | Progress::PreparedReady | Progress::Stop => {
+                Progress::Agent
+                | Progress::TwoAgentRevisions
+                | Progress::PreparedReady
+                | Progress::Stop => {
                     let mut agent = self
                         .store
                         .get_agent(&AgentId("agent".into()))
@@ -71,6 +85,7 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
                     }
                     self.store.save_agent(revision, agent).await.unwrap();
                 }
+                Progress::SlowFirstPreparation => {}
                 Progress::ModelChange => prepared::complete_then_change_model(&self.store).await,
                 Progress::Policy => {
                     share(&self.store, None).await;

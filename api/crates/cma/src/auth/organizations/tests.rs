@@ -180,6 +180,7 @@ async fn live_role_changes_and_removal_affect_the_next_lookup_without_a_cache() 
         *fixture.control.reply.write().await = (StatusCode::OK, json!({"your_role":role}));
         let started = SystemTime::now();
         let context = fixture.lookup("org-a").await.unwrap();
+        let finished = SystemTime::now();
         let access = AccessDecision::evaluate(
             &context,
             &scope(),
@@ -187,14 +188,16 @@ async fn live_role_changes_and_removal_affect_the_next_lookup_without_a_cache() 
             AccessPurpose::Mutation {
                 started_at: started,
             },
-            SystemTime::now(),
+            finished,
         )
         .unwrap();
         assert_eq!(access.allows(ResourceCapability::Interact), interact);
         assert!(access.allows(ResourceCapability::ViewHistory));
-        assert!(
-            context.memberships[0].expires_at
-                <= started + MAX_MEMBERSHIP_AGE + Duration::from_millis(10)
+        let evidence = &context.memberships[0];
+        assert!((started..=finished).contains(&evidence.observed_at));
+        assert_eq!(
+            evidence.expires_at,
+            evidence.observed_at + MAX_MEMBERSHIP_AGE
         );
     }
     assert_eq!(fixture.control.lookups.load(Ordering::SeqCst), 3);

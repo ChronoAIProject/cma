@@ -166,6 +166,7 @@ export function ManagedConnectionFields({
           ) : null}
           {!hideAdmission ? (
             <AdmissionFields
+              path="/connection_admission"
               label="Connection admission"
               value={value.connection_admission}
               onChange={(connection_admission) => onChange({ ...value, connection_admission })}

@@ -137,9 +137,10 @@ impl Sandbox {
     ) -> Result<(), SandboxModelError> {
         if let SandboxEventKind::ServiceAccessRevised { scope } = event {
             let mut expected = self.clone();
-            let actual = expected.revise_live_service_access(
+            let actual = expected.revise_live_service_access_with_connection(
                 &scope.authorized_by,
                 &scope.services,
+                scope.connection.clone(),
                 at.into(),
             )?;
             return if &actual == scope.as_ref() && &expected == next {

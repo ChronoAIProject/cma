@@ -1,4 +1,7 @@
 use super::*;
+use crate::store::agent_log_integrity::{
+    scan_complete_log_with_snapshot_policy, IntegrityFailurePolicy,
+};
 
 pub(super) async fn legacy_initial(
     store: &MongoSandboxStore,
@@ -25,13 +28,27 @@ pub(super) async fn legacy_initial(
             )
             .await?;
         }
-        ReplayRead::Snapshot => {
-            scan_complete_log_with_snapshot_session(
-                ScanCaller::CommandAdmission,
+        ReplayRead::Snapshot | ReplayRead::UncertainSnapshot => {
+            // Proof for an uncertain reuse commit is read-only: refuse corrupt
+            // or missing evidence without quarantine or repair writes.
+            let (caller, policy) = if matches!(read, ReplayRead::UncertainSnapshot) {
+                (
+                    ScanCaller::UnknownCommitProof,
+                    IntegrityFailurePolicy::ReportOnly,
+                )
+            } else {
+                (
+                    ScanCaller::CommandAdmission,
+                    IntegrityFailurePolicy::Quarantine,
+                )
+            };
+            scan_complete_log_with_snapshot_policy(
+                caller,
                 store,
                 &agent.id,
                 last_seq,
                 session,
+                policy,
                 |entry| {
                     if initial_log.is_none() {
                         initial_log = Some(entry);

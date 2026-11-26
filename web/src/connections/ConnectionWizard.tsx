@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { StateDot } from '../ui/StateDot';
-import { Button } from '../ui/Button';
-import { Modal } from '../ui/Modal';
+import {
+  navigateToServiceAuthorization,
+  startServiceAuthorization,
+} from '../auth/serviceAuthorization';
 import {
   connectionClient,
   connectionUrl,
@@ -11,7 +12,13 @@ import {
   type ConnectionTarget,
   type StartedConnection,
 } from './client';
+import { ConnectionWizardView } from './ConnectionWizardView';
+import { ConnectionIntentRecovery, savedConnection } from './intentRecovery';
+import { needsManualGitHubRepair } from './RepositoryConnectionRepair';
+import { rememberSameTabReturn } from './sameTabReturn';
 import './Connections.css';
+
+export { RepositoryConnectionRepair } from './RepositoryConnectionRepair';
 
 const POLL_MS = 2000;
 
@@ -24,26 +31,25 @@ interface WizardProps {
   readonly presentation?: 'inline' | 'dialog';
   readonly dialogTitle?: string;
   readonly description?: string;
+  readonly repositoryRecovery?: boolean;
   readonly client?: ConnectionClient;
-}
-
-/**
- * A connection's name as the person reads it.
- *
- * The subscription row's recorded name carries the agent provider's product
- * name, which CMA copy never shows; the person signs in to ChatGPT, so that is
- * what the row says.
- */
-function connectionName(row: { readonly service: string; readonly display_name: string }) {
-  return row.service === subscriptionService ? 'Your ChatGPT subscription' : row.display_name;
 }
 
 export function ConnectionWizard(props: WizardProps) {
   const [retry, setRetry] = useState(0);
+  // Rechecking this wizard cannot rearm the action that opened it.
+  const recoverySelected = useRef(false);
   return (
     <ConnectionSequence
-      key={`${JSON.stringify(props.target)}:${props.forceSubscription === true}:${retry}`}
+      key={`${JSON.stringify(props.target)}:${props.forceSubscription === true}:${props.expectedOwner ?? ''}:${retry}`}
       {...props}
+      onRecoverySelected={() => {
+        recoverySelected.current = true;
+      }}
+      onReady={(report) => {
+        if (recoverySelected.current) props.onCancel?.();
+        else props.onReady(report);
+      }}
       onRetry={() => setRetry((value) => value + 1)}
     />
   );
@@ -54,14 +60,20 @@ function ConnectionSequence({
   onReady,
   onCancel,
   onRetry,
+  onRecoverySelected,
   forceSubscription = false,
   expectedOwner,
+  repositoryRecovery = false,
   presentation = 'inline',
   dialogTitle = 'Connect required services',
   description = 'Connect the accounts this sandbox needs. CMA verifies each connection automatically, then continues opening your Sandbox.',
   client = connectionClient,
-}: WizardProps & { readonly onRetry: () => void }) {
+}: WizardProps & { readonly onRetry: () => void; readonly onRecoverySelected: () => void }) {
   const key = JSON.stringify(target);
+  const recoveryEnabled = import.meta.env.VITE_CONNECTION_INTENT_RECOVERY_ENABLED === 'true';
+  const [intentRecovery] = useState(
+    () => new ConnectionIntentRecovery(`${key}:${forceSubscription}`, recoveryEnabled),
+  );
   const [report, setReport] = useState<ConnectionReport>();
   const [handoff, setHandoff] = useState<StartedConnection>();
   const [running, setRunning] = useState(false);
@@ -83,6 +95,8 @@ function ConnectionSequence({
   const sequence = useRef(false);
   const generation = useRef(0);
   const cancelled = useRef(false);
+  const recovery = useRef<AbortController | null>(null);
+  const recoveryPopup = useRef<Window | null>(null);
 
   const persist = (value: StartedConnection | undefined) => {
     attempt.current = value;
@@ -121,22 +135,25 @@ function ConnectionSequence({
 
   const startNext = async (current: ConnectionReport) => {
     if (starting.current || !sequence.current || !live.current) return;
-    const next = current.services.find(
-      (row) =>
-        row.state !== 'satisfied' || (!forceDone.current && row.service === subscriptionService),
-    );
+    if (repositoryRecovery && needsManualGitHubRepair(current)) return;
+    const next =
+      current.services.find((row) => row.service === intentRecovery.pending?.service_id) ??
+      current.services.find(
+        (row) =>
+          row.state !== 'satisfied' || (!forceDone.current && row.service === subscriptionService),
+      );
     if (next === undefined) return;
     starting.current = true;
     const epoch = generation.current;
     setBusy(true);
     setError(undefined);
     try {
-      const pending = { service_id: next.service, intent_id: crypto.randomUUID() };
-      const created = await client.start(
-        target,
-        pending,
+      const prepared = intentRecovery.prepare(
+        next.service,
         !forceDone.current && next.service === subscriptionService,
       );
+      const pending = { service_id: prepared.service_id, intent_id: prepared.intent_id };
+      const created = await client.start(target, pending, prepared.force);
       if (!live.current || epoch !== generation.current || cancelled.current) {
         void client.cancel(target, created).catch(() => undefined);
         return;
@@ -150,10 +167,16 @@ function ConnectionSequence({
       const url = connectionUrl(created.hosted_url);
       if (url === undefined || !Number.isFinite(Date.parse(created.expires_at)))
         throw new Error('The sign-in link is unavailable. Please try again.');
+      intentRecovery.acknowledge({ ...created, hosted_url: url });
       persist({ ...created, hosted_url: url });
       navigatePopup(url);
     } catch (cause) {
       if (!live.current || epoch !== generation.current) return;
+      try {
+        intentRecovery.interrupt(false);
+      } catch {
+        /* Keep the in-memory fence on storage failure. */
+      }
       sequence.current = false;
       setRunning(false);
       setError(
@@ -165,6 +188,29 @@ function ConnectionSequence({
         if (live.current) setBusy(false);
       }
     }
+  };
+
+  const cancelConnection = (mode: 'cancel' | 'repair', saved?: StartedConnection) => {
+    generation.current += 1;
+    cancelled.current = true;
+    starting.current = false;
+    recovery.current?.abort();
+    recovery.current = null;
+    recoveryPopup.current?.close();
+    recoveryPopup.current = null;
+    setBusy(false);
+    sequence.current = false;
+    setRunning(false);
+    const active = attempt.current ?? intentRecovery.pending ?? saved;
+    if (active !== undefined) void client.cancel(target, active).catch(() => undefined);
+    try {
+      intentRecovery.interrupt(true, mode === 'cancel');
+    } catch {
+      /* Cancellation remains fenced in memory. */
+    }
+    persist(undefined);
+    popup.current?.close();
+    popup.current = null;
   };
 
   useEffect(() => {
@@ -180,33 +226,44 @@ function ConnectionSequence({
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
-    let saved: StartedConnection | undefined;
-    try {
-      const stored = sessionStorage.getItem(`cma.connection.${key}`);
-      if (stored !== null) {
-        const value = JSON.parse(stored) as StartedConnection;
-        if (
-          typeof value.owner === 'string' &&
-          typeof value.intent_id === 'string' &&
-          typeof value.service_id === 'string' &&
-          connectionUrl(value.hosted_url) !== undefined &&
-          Date.parse(value.expires_at) > Date.now()
-        )
-          saved = value;
-      }
-    } catch {
-      /* Expired or malformed browser recovery is discarded. */
-    }
+    let saved = savedConnection(key, recoveryEnabled);
     const poll = async () => {
       if (controller.signal.aborted || completed.current) return;
+      if (recovery.current !== null) {
+        timer = setTimeout(() => void poll(), POLL_MS);
+        return;
+      }
       try {
         // First establish the current owner before restoring browser recovery.
-        const active = attempt.current;
+        const active = attempt.current ?? intentRecovery.pending;
         const result = await client.check(target, active, controller.signal);
         if (controller.signal.aborted || cancelled.current) return;
+        if (recovery.current !== null) {
+          timer = setTimeout(() => void poll(), POLL_MS);
+          return;
+        }
         if (owner.current !== undefined && result.owner !== owner.current)
           throw new Error('Your CMA account changed. Reopen this connection step to continue.');
         owner.current = result.owner;
+        intentRecovery.bind(result, forceSubscription ? undefined : saved);
+        if (repositoryRecovery && needsManualGitHubRepair(result)) {
+          onRecoverySelected();
+          cancelConnection('repair', saved?.owner === result.owner ? saved : undefined);
+          setReport(result);
+          return;
+        }
+        if (recoveryEnabled) {
+          if (saved !== undefined && intentRecovery.pending === undefined) persist(undefined);
+          saved = undefined;
+        }
+        if (recoveryEnabled && active === undefined && intentRecovery.pending !== undefined) {
+          persist(intentRecovery.pending.started);
+          sequence.current = !intentRecovery.needsResume;
+          setRunning(sequence.current);
+          setReport(result);
+          timer = setTimeout(() => void poll(), 0);
+          return;
+        }
         if (saved !== undefined) {
           const restore =
             saved.owner === result.owner &&
@@ -225,23 +282,40 @@ function ConnectionSequence({
           }
         }
         // A sign-in started while this read was in flight; verify that exact intent next.
-        if (attempt.current?.intent_id !== active?.intent_id || starting.current) {
+        if (
+          (attempt.current ?? intentRecovery.pending)?.intent_id !== active?.intent_id ||
+          starting.current
+        ) {
           timer = setTimeout(() => void poll(), POLL_MS);
           return;
         }
         failures = 0;
         setError(undefined);
         setReport(result);
-        const current = attempt.current;
+        const current = attempt.current ?? intentRecovery.pending;
         if (current !== undefined) {
           const row = result.services.find((row) => row.service === current.service_id);
-          if (row?.state === 'satisfied') {
-            if (current.service_id === subscriptionService) forceDone.current = true;
-            persist(undefined);
-          } else if (
-            Date.parse(current.expires_at) <= Date.now() ||
-            ['expired', 'cancelled', 'failed'].includes(result.active_state ?? '')
+          const started = attempt.current;
+          const terminal = ['expired', 'cancelled', 'failed'].includes(result.active_state ?? '');
+          const expired = started !== undefined && Date.parse(started.expires_at) <= Date.now();
+          if (
+            recoveryEnabled &&
+            (terminal ||
+              (expired && result.active_state !== 'pending' && result.active_state !== 'satisfied'))
           ) {
+            sequence.current = false;
+            setRunning(false);
+            intentRecovery.interrupt(true);
+            persist(undefined);
+            setError('This sign-in did not finish. Connect again to retry.');
+          } else if (
+            row?.state === 'satisfied' &&
+            (!recoveryEnabled || result.active_state !== 'pending')
+          ) {
+            if (current.service_id === subscriptionService) forceDone.current = true;
+            intentRecovery.settle();
+            persist(undefined);
+          } else if (!recoveryEnabled && (expired || terminal)) {
             sequence.current = false;
             setRunning(false);
             persist(undefined);
@@ -250,7 +324,13 @@ function ConnectionSequence({
             );
           }
         }
-        if (result.ready && forceDone.current && attempt.current === undefined) {
+        if (
+          result.ready &&
+          forceDone.current &&
+          attempt.current === undefined &&
+          intentRecovery.pending === undefined &&
+          !intentRecovery.needsResume
+        ) {
           completed.current = true;
           setDone(true);
           sequence.current = false;
@@ -259,11 +339,17 @@ function ConnectionSequence({
           ready.current(result);
           return;
         }
-        if (sequence.current && attempt.current === undefined) await startNext(result);
+        if (
+          sequence.current &&
+          attempt.current === undefined &&
+          intentRecovery.pending === undefined
+        )
+          await startNext(result);
         if (attempt.current !== undefined && (popup.current === null || popup.current.closed))
           setBlocked(true);
       } catch (cause) {
         if (controller.signal.aborted) return;
+        if (recoveryEnabled) setReport(undefined);
         failures += 1;
         setError(
           cause instanceof Error
@@ -279,17 +365,35 @@ function ConnectionSequence({
       live.current = false;
       generation.current += 1;
       controller.abort();
+      recovery.current?.abort();
+      recovery.current = null;
+      recoveryPopup.current?.close();
+      recoveryPopup.current = null;
       clearTimeout(timer);
       popup.current?.close();
       popup.current = null;
     };
     // The serialized target makes this lifecycle independent of parent renders.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, client, forceSubscription, expectedOwner]);
+  }, [key, client, forceSubscription, expectedOwner, repositoryRecovery]);
 
   const connect = () => {
     if (busy || report === undefined) return;
     cancelled.current = false;
+    if (
+      intentRecovery.needsResume &&
+      report.ready &&
+      forceDone.current &&
+      intentRecovery.pending === undefined
+    ) {
+      try {
+        intentRecovery.confirm();
+        setError(undefined);
+      } catch {
+        setError('Browser recovery could not be saved. Please try again.');
+      }
+      return;
+    }
     openPopup();
     sequence.current = true;
     setRunning(true);
@@ -298,127 +402,94 @@ function ConnectionSequence({
     else void startNext(report);
   };
   const cancel = () => {
-    generation.current += 1;
-    cancelled.current = true;
-    starting.current = false;
-    setBusy(false);
-    sequence.current = false;
-    setRunning(false);
-    if (attempt.current !== undefined)
-      void client.cancel(target, attempt.current).catch(() => undefined);
-    persist(undefined);
-    popup.current?.close();
-    popup.current = null;
+    cancelConnection('cancel');
     onCancel?.();
   };
-  const connected = report?.services.filter((row) => row.state === 'satisfied').length ?? 0;
-  const missing = report?.services.filter((row) => row.state !== 'satisfied') ?? [];
-  const content = (
-    <section
-      className="connection-wizard"
-      aria-label="Required connections"
-      aria-busy={busy || report === undefined}
-    >
-      <p>{description}</p>
-      {report === undefined ? (
-        <p role="status">Checking your connections…</p>
-      ) : (
-        <>
-          <p className="connection-wizard__count" role="status">
-            {connected} of {report.services.length} connections verified
-          </p>
-          {(['nyxid', 'codex'] as const).map((kind) => (
-            <div className="connection-wizard__group" key={kind}>
-              <h3>{kind === 'nyxid' ? 'NyxID services' : 'Model subscription'}</h3>
-              {report.services
-                .filter((row) => row.kind === kind)
-                .map((row) => (
-                  <div className="connection-wizard__row" key={row.service}>
-                    <StateDot
-                      size={10}
-                      state={
-                        row.state === 'satisfied'
-                          ? 'done'
-                          : row.service === handoff?.service_id
-                            ? 'ongoing'
-                            : 'warning'
-                      }
-                    />
-                    <span>{connectionName(row)}</span>
-                    <small>
-                      {row.state === 'satisfied'
-                        ? 'Connected'
-                        : row.service === handoff?.service_id
-                          ? 'Waiting for sign-in'
-                          : 'Connection needed'}
-                    </small>
-                  </div>
-                ))}
-              {kind === 'nyxid' && !report.services.some((row) => row.kind === kind) ? (
-                <p>No additional services required.</p>
-              ) : null}
-            </div>
-          ))}
-        </>
-      )}
-      {handoff === undefined ? null : (
-        <div className="connection-wizard__handoff">
-          {handoff.user_code === undefined ? null : (
-            <>
-              <p>Sign in to your ChatGPT subscription using this one-time code:</p>
-              <strong className="connection-wizard__code">{handoff.user_code}</strong>
-              <p>
-                Enter it on the OpenAI page. Your subscription stays connected to your CMA account.
-              </p>
-            </>
-          )}
-          <p role="status">
-            {blocked
-              ? 'Open the sign-in window to continue. CMA will keep checking here.'
-              : 'Finish sign-in in the other window. CMA is checking automatically…'}
-          </p>
-        </div>
-      )}
-      {error === undefined ? null : (
-        <p role="alert" className="connection-wizard__error">
-          {error}
-        </p>
-      )}
-      <div className="connection-wizard__actions">
-        {done ? (
-          <p>All connections verified.</p>
-        ) : (
-          <Button variant="primary" onClick={connect} disabled={busy || report === undefined}>
-            {busy
-              ? 'Preparing sign-in…'
-              : handoff !== undefined
-                ? 'Open sign-in window'
-                : forceSubscription
-                  ? 'Sign in to your ChatGPT subscription again'
-                  : missing.length === 1 && missing[0]?.service === subscriptionService
-                    ? 'Sign in to your ChatGPT subscription'
-                    : 'Connect all'}
-          </Button>
-        )}
-        {error === undefined ? null : <Button onClick={onRetry}>Verify again</Button>}
-        {running || onCancel !== undefined ? <Button onClick={cancel}>Cancel</Button> : null}
-      </div>
-    </section>
-  );
-  if (presentation === 'inline') return content;
-  // Check connected sessions without moving focus. Open recovery only when
-  // the server reports work to do, or verification needs a retry.
-  return (
-    <Modal
-      open={
-        !done &&
-        (error !== undefined ||
-          (report !== undefined && (!report.ready || forceSubscription || handoff !== undefined)))
+  const authorize = async () => {
+    if (busy || report === undefined || recovery.current !== null) return;
+    onRecoverySelected();
+    const authorizationWindow = window.open('about:blank', '_blank', 'popup,width=580,height=760');
+    if (authorizationWindow === null) {
+      setError('Allow pop-ups to authorize required services. Your draft is still here.');
+      return;
+    }
+    authorizationWindow.opener = null;
+    recoveryPopup.current = authorizationWindow;
+    const controller = new AbortController();
+    recovery.current = controller;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const location = window.location;
+      const destination = await startServiceAuthorization(
+        target,
+        report.owner,
+        location.pathname + location.search,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      // Leave the draft tab open while the separate window requests consent.
+      recoveryPopup.current = null;
+      cancel();
+      if (!authorizationWindow.closed)
+        navigateToServiceAuthorization(authorizationWindow, destination);
+    } catch {
+      if (!controller.signal.aborted) {
+        authorizationWindow.close();
+        recoveryPopup.current = null;
+        setError('Service authorization could not start. Your draft is still here.');
+        setBusy(false);
       }
-      title={dialogTitle}
-      onClose={cancel}
-    >
-      {content}
-    </Modal>
+    } finally {
+      if (recovery.current === controller) recovery.current = null;
+    }
+  };
+  const sameTabUrl =
+    recoveryEnabled &&
+    target.type === 'launch' &&
+    blocked &&
+    !busy &&
+    !intentRecovery.needsResume &&
+    handoff !== undefined &&
+    report?.owner === handoff.owner &&
+    report.services.some((row) => row.service === handoff.service_id && row.kind === 'nyxid')
+      ? handoff.hosted_url
+      : undefined;
+  const continueInSameTab = () => {
+    if (
+      sameTabUrl !== undefined &&
+      handoff !== undefined &&
+      target.type === 'launch' &&
+      rememberSameTabReturn(target.id, handoff.expires_at)
+    )
+      return true;
+    setError('Your return to CMA could not be saved. Allow pop-ups or try again.');
+    return false;
+  };
+  return (
+    <ConnectionWizardView
+      {...{
+        report,
+        handoff,
+        running,
+        busy,
+        blocked,
+        sameTabUrl,
+        continueInSameTab,
+        error,
+        done,
+        forceSubscription,
+        description,
+        presentation,
+        dialogTitle,
+        onCancel,
+        onRetry,
+        connect,
+        cancel,
+        authorize,
+        repositoryRepair: repositoryRecovery ? target : undefined,
+        resumeRequired: intentRecovery.needsResume,
+      }}
+    />
   );
 }

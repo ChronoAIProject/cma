@@ -318,12 +318,12 @@ async fn forward(
     }
     // Negotiation is covered by the same proof as the exact caller and URI.
     headers.insert(admission::HEADER, admission::VERSION.parse().unwrap());
-    let proof = match relay.authentication.sign(
+    let headers = match relay.authentication.signed_headers(
         &relay.coordinator.instance_id,
         &wire_token(&destination),
         request.method(),
         request.uri(),
-        &headers,
+        headers,
         body,
     ) {
         Ok(value) => value,
@@ -343,7 +343,6 @@ async fn forward(
             .client
             .request(request.method().clone(), url)
             .headers(headers)
-            .header(PROOF, proof)
             .body(body.to_vec())
             .send(),
     )

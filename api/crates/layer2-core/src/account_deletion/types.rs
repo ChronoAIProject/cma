@@ -148,6 +148,8 @@ pub enum AccountDeletionError {
     InvalidIdempotencyKey,
     #[error("account deletion lease is stale")]
     StaleFence,
+    #[error("account deletion completion requires an independently verified proof")]
+    VerificationRequired,
     #[error("replay the same request to reconcile its commit")]
     RecoveryRequired,
     #[error("account deletion is in progress")]

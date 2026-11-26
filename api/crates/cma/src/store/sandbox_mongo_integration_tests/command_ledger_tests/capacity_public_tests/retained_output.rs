@@ -1,10 +1,8 @@
 use super::*;
-#[path = "retained_output/home.rs"]
-mod home;
 #[path = "retained_output/measurement.rs"]
 mod measurement;
 use crate::store::sandbox_mongo_integration_tests::capacity_fixtures::fill_to;
-use home::native_home;
+use crate::store::sandbox_mongo_integration_tests::native_home_fixture::native_home;
 use layer2_core::sandbox::{AgentConversationError, AgentOperationService, AgentService};
 use measurement::{Counts, Meter};
 

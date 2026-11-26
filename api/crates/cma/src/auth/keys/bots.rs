@@ -3,6 +3,7 @@ use super::*;
 impl KeyIssuer {
     /// Exact Bot namespace and optional relay callback; an empty grant is only
     /// permitted for a route key with every broad grant explicitly disabled.
+    #[cfg(test)]
     pub(crate) async fn mint_bot(
         &self,
         name: &str,
@@ -10,6 +11,21 @@ impl KeyIssuer {
         services: &[ServiceId],
         callback: Option<&str>,
         owner: &layer2_core::resource_access::ResourceOwner,
+    ) -> Result<MintedKey, KeyIssuerError> {
+        self.mint_bot_admitted(name, token, services, callback, owner, || true)
+            .await
+    }
+
+    /// Mint a Bot key, invoking the caller's reservation fence immediately
+    /// before the consuming key POST after all authority reads complete.
+    pub(crate) async fn mint_bot_admitted<F: Fn() -> bool>(
+        &self,
+        name: &str,
+        token: &str,
+        services: &[ServiceId],
+        callback: Option<&str>,
+        owner: &layer2_core::resource_access::ResourceOwner,
+        check: F,
     ) -> Result<MintedKey, KeyIssuerError> {
         let allowed = if callback.is_some() && services.is_empty() {
             Vec::new()
@@ -31,6 +47,11 @@ impl KeyIssuer {
             body["callback_url"] = callback.into();
             // NyxID API-key platform describes the client, not the channel.
             body["platform"] = "generic".into();
+        }
+        if !check() {
+            return Err(KeyIssuerError::Unavailable(
+                "bot key admission deadline elapsed".into(),
+            ));
         }
         let response = self
             .http

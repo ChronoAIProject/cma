@@ -85,6 +85,7 @@ pub fn definition(record: &RecordId, owner: &str, name: &str) -> ChannelDefiniti
             topic_creation: false,
             message_events: false,
             channel_posts: false,
+            member_join_chat_ids: Vec::new(),
             bot_id: "7000000001".into(),
             bot_username: Some("fixture_bot".into()),
             admission: AdmissionPolicy::All {},
@@ -101,6 +102,7 @@ pub fn definition(record: &RecordId, owner: &str, name: &str) -> ChannelDefiniti
             verify_raw_event: false,
             lark_message_effects: None,
             lark_resources: None,
+            member_join_chat_ids: Vec::new(),
             admission: AdmissionPolicy::Scoped {
                 bot_messages: Default::default(),
                 senders: IdentityAdmission::Allowlist(vec!["ou_sender_fixture_1".into()]),
@@ -197,6 +199,7 @@ impl ChannelReader for FakeReader {
                 return Err(ManagementError::NotFound);
             }
             Ok(RecordedChannel {
+                retirement_expected_version: None,
                 definition: definition.clone(),
                 version: *version,
                 record_bytes: 12_288,

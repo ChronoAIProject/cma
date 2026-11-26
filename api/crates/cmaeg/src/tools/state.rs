@@ -39,7 +39,7 @@ pub struct ToolsState {
     pub discord_conversation_history: Option<Arc<super::DiscordConversationHistory>>,
     /// Match the delivery engine's complete ordinary relay mode and wait budget.
     pub complete_replies_enabled: bool,
-    pub commonmark_relay_enabled: bool,
+    pub commonmark_relay: crate::config::CommonmarkRelay,
     pub telegram_effects_issuance_enabled: bool,
     pub native_telegram_media_controls_enabled: bool,
     pub native_telegram_media_control_edits_enabled: bool,
@@ -346,7 +346,7 @@ impl ToolsState {
         let timeout = delivery_timeout::for_command(
             &command,
             self.complete_replies_enabled,
-            self.commonmark_relay_enabled,
+            self.commonmark_relay,
         );
         let (channel, event_id) = match &command {
             DeliveryCommand::DurableReply(reply) => {
@@ -361,7 +361,8 @@ impl ToolsState {
                 message_ref,
                 ..
             } => (channel.id.as_str(), message_ref.event_id.as_str()),
-            DeliveryCommand::StreamOutcome { turn, .. } => {
+            DeliveryCommand::StreamOutcome { turn, .. }
+            | DeliveryCommand::RetireStream { turn } => {
                 (turn.channel.id.as_str(), turn.activity.event_id.as_str())
             }
         };

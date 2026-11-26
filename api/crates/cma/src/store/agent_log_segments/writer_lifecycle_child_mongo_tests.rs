@@ -104,7 +104,9 @@ async fn lifecycle_child_success_uncertainty_abort_and_foreign_receipt_are_exact
     );
     let mut session = transaction(&f).await;
     let scope = TransactionScope::start(&mut session).await.unwrap();
-    let original = apply_lifecycle(&f.store, &mutation, scope).await.unwrap();
+    let original = apply_lifecycle(&f.store, &mutation, scope, None)
+        .await
+        .unwrap();
     assert_eq!(original.segmented.len(), 1);
     session.abort_transaction().await.unwrap();
     let mut snapshot = f.client.start_session().snapshot(true).await.unwrap();

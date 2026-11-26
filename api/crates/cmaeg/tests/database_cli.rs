@@ -1,4 +1,5 @@
 //! CLI diagnostics must never echo database configuration or sealed record bytes.
+use mongodb::bson::{doc, Document};
 use std::{ffi::OsStr, path::PathBuf, process::Output};
 
 const DATABASE: &str = "CMAEG_MONGODB_DATABASE";
@@ -6,6 +7,7 @@ const URI: &str = "CMAEG_MONGODB_URI";
 const LOCAL_URI: &str = "mongodb://127.0.0.1:1/?serverSelectionTimeoutMS=1";
 const COMMANDS: &[&[&str]] = &[
     &["--migrate"],
+    &["--migrate-activity-history"],
     &["--migrate-whatsapp-forms"],
     &["--migrate-media-continuations"],
     &["--import-legacy-records", "SYNTHETIC_PRIVATE_EXPORT_PATH"],
@@ -174,6 +176,26 @@ fn valid_export_checks_writer_authority_even_when_every_record_is_expired() {
     );
 }
 
+fn expected_optional_role(mut component_role: Document, migration: bool) -> serde_json::Value {
+    if migration {
+        // The CLI adds custody of the execution ledger and catalog discovery
+        // without broadening the component's collection permissions.
+        component_role.get_array_mut("privileges").unwrap().extend([
+            doc! {
+                "resource": {"db": "fixture", "collection": "eg_migration_ledger"},
+                "actions": ["find", "insert", "update", "createCollection"],
+            }
+            .into(),
+            doc! {
+                "resource": {"db": "fixture", "collection": ""},
+                "actions": ["listCollections"],
+            }
+            .into(),
+        ]);
+    }
+    serde_json::to_value(component_role).unwrap()
+}
+
 #[test]
 fn optional_forms_roles_are_additive_and_never_grant_runtime_delete() {
     for (command, migration) in [
@@ -186,17 +208,17 @@ fn optional_forms_roles_are_additive_and_never_grant_runtime_delete() {
         let role: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(
             role,
-            serde_json::to_value(cmaeg::records::mongo::whatsapp_flows_role(
-                "fixture", migration
-            ))
-            .unwrap()
+            expected_optional_role(
+                cmaeg::records::mongo::whatsapp_flows_role("fixture", migration),
+                migration,
+            )
         );
         assert!(!role.to_string().contains("remove"));
     }
 }
 
 #[test]
-fn optional_media_continuation_roles_stay_inside_gateway_collections() {
+fn optional_media_continuation_roles_stay_inside_the_gateway_database() {
     for (command, migration) in [
         ("--print-media-continuations-runtime-role", false),
         ("--print-media-continuations-migration-role", true),
@@ -207,14 +229,14 @@ fn optional_media_continuation_roles_stay_inside_gateway_collections() {
         let role: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(
             role,
-            serde_json::to_value(cmaeg::records::mongo::media_continuations_role(
-                "fixture", migration
-            ))
-            .unwrap()
+            expected_optional_role(
+                cmaeg::records::mongo::media_continuations_role("fixture", migration),
+                migration,
+            )
         );
         let grants = role["privileges"].as_array().unwrap();
-        assert_eq!(grants.len(), if migration { 2 } else { 1 });
-        for grant in grants {
+        assert_eq!(grants.len(), if migration { 4 } else { 1 });
+        for grant in grants.iter().take(if migration { 2 } else { 1 }) {
             assert_eq!(grant["resource"]["db"], "fixture");
             assert!(["eg_media_continuation_records", "eg_schema_migrations"]
                 .contains(&grant["resource"]["collection"].as_str().unwrap()));

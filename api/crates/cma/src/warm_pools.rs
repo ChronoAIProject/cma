@@ -1,5 +1,5 @@
 //! Operator-owned native pool targets; Kubernetes observations never replace durable authority.
-use std::{collections::BTreeMap, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use layer1_public::rest::admin::warm_pools::{
@@ -8,18 +8,26 @@ use layer1_public::rest::admin::warm_pools::{
 };
 use layer2_core::{Caller, Capability};
 use layer3_adapter::{
-    agent_sandbox::{NativePoolBinding, NativePoolConfiguration, NativePoolSpec, NativePoolStatus},
+    agent_sandbox::{
+        NativePoolBinding, NativePoolConfiguration, NativePoolDrain, NativePoolSpec,
+        NativePoolStatus,
+    },
     HomeVolumePolicy, RuntimeImage, SandboxAdapter,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod candidate;
 mod current;
 mod defaults;
+mod holds;
+pub(crate) use holds::DefaultPoolHolds;
+mod released;
 mod retirement;
-mod startup;
+pub(crate) mod startup;
 mod supervision;
-mod telemetry;
+pub(crate) mod telemetry;
+mod view;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {
@@ -61,50 +69,29 @@ pub(crate) struct OperatorReplicas {
     pub at: mongodb::bson::DateTime,
 }
 
-impl PoolTarget {
-    pub fn view(&self, live: Option<&NativePoolStatus>, available: bool) -> WarmPoolView {
-        let exact = live.filter(|status| self.binding.as_ref() == Some(&status.binding));
-        let observed = exact.is_some_and(|status| {
-            status.observed && status.desired_replicas == self.target_replicas
-        });
-        let ready = exact
-            .filter(|_| observed)
-            .map(|status| status.ready_replicas);
-        let status = if !available || self.error.is_some() {
-            "unavailable"
-        } else if self.applied_revision != self.revision || !observed {
-            "pending"
-        } else if self.target_replicas == 0 && ready == Some(0) {
-            "disabled"
-        } else if ready.is_some_and(|count| count >= self.target_replicas) {
-            "ready"
-        } else {
-            "pending"
-        };
-        WarmPoolView {
-            id: self.id.clone(),
-            revision: self.revision as u64,
-            image: self.plan.spec.image.uri.clone(),
-            config_sha256: self.plan.config_sha256.clone(),
-            cpu_millis: self.plan.spec.cpu_millis,
-            memory_mib: self.plan.spec.memory_mib,
-            target_replicas: self.target_replicas,
-            ready_replicas: ready,
-            observed,
-            status: status.into(),
-            resource_name: self.binding.as_ref().map(|binding| binding.name.clone()),
-            error: self.error.clone().or_else(|| {
-                (!available).then(|| "Native warm pool inventory is unavailable.".into())
-            }),
-            machine: self.machine,
-        }
-    }
-}
-
 #[async_trait]
 pub(crate) trait PoolTargetStore: Send + Sync {
+    async fn candidate_protected(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn begin_candidate_effect(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn candidate_pending(&self, _target: &PoolTarget) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn confirm_candidate_barrier(&self, _target: &PoolTarget) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn activate(&self, _id: &str) -> Result<(), WarmPoolError> {
         Err(WarmPoolError::Unavailable)
+    }
+    async fn default_pin_conflicts(
+        &self,
+        _plan: &NativePoolConfiguration,
+        _machine: bool,
+    ) -> Result<bool, WarmPoolError> {
+        Ok(false)
     }
     async fn retirement_homes(
         &self,
@@ -117,7 +104,7 @@ pub(crate) trait PoolTargetStore: Send + Sync {
         &self,
         _target: &PoolTarget,
         _image: &str,
-    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
     async fn begin_retirement(&self, _target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
@@ -163,23 +150,7 @@ pub(crate) trait PoolTargetStore: Send + Sync {
 /// Build metadata for the deployment-owned pinned CMA runtime, never a user image.
 /// Both cold allocation and administrated warm pools use this same contract.
 pub(crate) fn deployment_image(uri: String) -> RuntimeImage {
-    RuntimeImage {
-        uri,
-        labels: BTreeMap::from([
-            (
-                layer3_adapter::RUNTIME_CONTRACT_LABEL.into(),
-                layer3_adapter::RUNTIME_CONTRACT_VERSION.to_string(),
-            ),
-            (
-                layer3_adapter::runtime_bootstrap::RUNTIME_BOOTSTRAP_LABEL.into(),
-                "1".into(),
-            ),
-            (
-                layer3_adapter::runtime_bootstrap::RUNTIME_HOME_LAYOUT_LABEL.into(),
-                "2".into(),
-            ),
-        ]),
-    }
+    layer3_adapter::released_image(uri)
 }
 
 const SYSTEM_ACTOR: &str = "cma-system";
@@ -193,12 +164,14 @@ pub(crate) const RELEASE_SETTLE: Duration = Duration::from_secs(120);
 pub(crate) struct NativeWarmPools {
     store: Arc<dyn PoolTargetStore>,
     adapter: Arc<dyn SandboxAdapter>,
-    image: RuntimeImage,
+    released: Arc<dyn layer3_adapter::ReleasedRuntimeSource>,
     home: Option<HomeVolumePolicy>,
     default_capacity: layer3_adapter::SandboxCapacity,
     default_target: u32,
-    machine: Option<(RuntimeImage, u32)>,
+    machine_target: u32,
     target_fencing: bool,
+    allow_empty_startup: bool,
+    default_holds: Arc<DefaultPoolHolds>,
 }
 
 impl NativeWarmPools {
@@ -211,15 +184,18 @@ impl NativeWarmPools {
         default_target: u32,
         machine: Option<(String, u32)>,
     ) -> Arc<Self> {
+        let (released, machine_target) = released::pinned(image, machine);
         Arc::new(Self {
             store,
             adapter,
-            image: deployment_image(image),
+            released,
             home,
             default_capacity,
             default_target,
-            machine: machine.map(|(image, target)| (deployment_image(image), target)),
+            machine_target,
             target_fencing: false,
+            allow_empty_startup: false,
+            default_holds: Arc::default(),
         })
         .with_target_fencing(false)
     }
@@ -229,31 +205,9 @@ impl NativeWarmPools {
         Arc::make_mut(&mut self).target_fencing = enabled;
         self
     }
-
-    async fn reconcile_one(&self) -> Result<bool, WarmPoolError> {
-        let Some(provider) = self.adapter.native_pools() else {
-            return Ok(false);
-        };
-        let Some(target) = self.store.claim().await? else {
-            return Ok(false);
-        };
-        if target.retiring || !self.current_plan(&target)? {
-            return self.retire_claimed(provider, target).await;
-        }
-        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing).await
-    }
-
-    fn default_config_sha256(&self) -> Option<String> {
-        default_config_sha256(
-            self.adapter.native_pools(),
-            &self.image,
-            self.home.as_ref(),
-            &self.default_capacity,
-        )
-    }
 }
 
-fn default_config_sha256(
+pub(super) fn default_config_sha256(
     provider: Option<&dyn layer3_adapter::agent_sandbox::NativePoolControl>,
     image: &RuntimeImage,
     home: Option<&HomeVolumePolicy>,
@@ -261,6 +215,7 @@ fn default_config_sha256(
 ) -> Option<String> {
     provider?
         .plan(&NativePoolSpec {
+            cold_canary: false,
             image: image.clone(),
             cpu_millis: capacity.cpu_millis,
             memory_mib: capacity.memory_mib,
@@ -274,6 +229,8 @@ fn default_config_sha256(
 impl WarmPoolAdministration for NativeWarmPools {
     async fn list(&self, caller: &Caller) -> Result<WarmPoolList, WarmPoolError> {
         authorize(caller)?;
+        let released = self.released_images();
+        let default_config_sha256 = self.default_config_sha256(&released.agent);
         let targets = self.store.list().await?;
         let inventory = match self.adapter.native_pools() {
             Some(provider) if self.home.is_some() => {
@@ -296,12 +253,12 @@ impl WarmPoolAdministration for NativeWarmPools {
                     target.view(status, available)
                 })
                 .collect(),
-            default_image: self.image.uri.clone(),
+            default_image: released.agent.uri,
             default_cpu_millis: self.default_capacity.cpu_millis,
             default_memory_mib: self.default_capacity.memory_mib,
-            default_config_sha256: self.default_config_sha256(),
+            default_config_sha256,
             available,
-            machine_image: self.machine.as_ref().map(|(image, _)| image.uri.clone()),
+            machine_image: released.machine.map(|(image, _)| image.uri),
         })
     }
 
@@ -325,13 +282,17 @@ impl WarmPoolAdministration for NativeWarmPools {
         if let Some(existing) = self.store.find(&id).await? {
             return replay(existing, &body).map(|target| target.view(None, true));
         }
+        if self.default_holds.lane(false) {
+            return Err(WarmPoolError::Conflict);
+        }
         let provider = self
             .adapter
             .native_pools()
             .ok_or(WarmPoolError::Unavailable)?;
         let plan = provider
             .plan(&NativePoolSpec {
-                image: self.image.clone(),
+                cold_canary: false,
+                image: self.released_images().agent,
                 cpu_millis: body.cpu_millis,
                 memory_mib: body.memory_mib,
                 home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
@@ -376,17 +337,17 @@ impl WarmPoolAdministration for NativeWarmPools {
         }
         // Only a resize of the current machine plan is the operator's desired
         // machine count; zeroing superseded capacity merely drains it.
+        let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
+        if self.default_holds.lane(target.machine) {
+            return Err(WarmPoolError::Conflict);
+        }
         let operator_choice = if body.target_replicas > 0 {
-            let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
             if !self.current_plan(&target)? {
                 return Err(WarmPoolError::Conflict);
             }
             target.machine
         } else {
-            match self.store.find(id).await? {
-                Some(target) => target.machine && matches!(self.current_plan(&target), Ok(true)),
-                None => false,
-            }
+            target.machine && matches!(self.current_plan(&target), Ok(true))
         };
         let target = self.store.resize(id, &body, operator_choice).await?;
         Ok(target.view(None, true))
@@ -447,7 +408,25 @@ async fn reconcile_one(
     let Some(target) = store.claim().await? else {
         return Ok(false);
     };
-    reconcile_claimed(store, provider, target, false).await
+    reconcile_claimed(store, provider, target, false)
+        .await
+        .map(|_| true)
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PoolApply {
+    Settled,
+    ConfigurationDrift,
+    Failed,
+}
+
+fn provider_apply_error(error: layer3_adapter::AdapterError) -> WarmPoolError {
+    match error {
+        layer3_adapter::AdapterError::NativePoolConfigurationDrift => {
+            WarmPoolError::ProviderConfigurationDrift
+        }
+        _ => WarmPoolError::Unavailable,
+    }
 }
 
 async fn reconcile_claimed(
@@ -455,7 +434,7 @@ async fn reconcile_claimed(
     provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
     mut target: PoolTarget,
     target_fencing: bool,
-) -> Result<bool, WarmPoolError> {
+) -> Result<PoolApply, WarmPoolError> {
     if target.retiring {
         return Err(WarmPoolError::Conflict);
     }
@@ -484,14 +463,20 @@ async fn reconcile_claimed(
         } else {
             provider.resize(binding, target.target_replicas).await
         }
-        .map_err(|_| WarmPoolError::Unavailable)?;
+        .map_err(provider_apply_error)?;
         Ok::<(), WarmPoolError>(())
     };
-    let success = matches!(
-        tokio::time::timeout(Duration::from_secs(30), result).await,
-        Ok(Ok(()))
-    );
+    let result = tokio::time::timeout(Duration::from_secs(30), result).await;
+    let success = matches!(result, Ok(Ok(())));
     store.finish(&target, success).await?;
     telemetry::applied(&target, success);
-    Ok(true)
+    Ok(
+        if matches!(result, Ok(Err(WarmPoolError::ProviderConfigurationDrift))) {
+            PoolApply::ConfigurationDrift
+        } else if success {
+            PoolApply::Settled
+        } else {
+            PoolApply::Failed
+        },
+    )
 }

@@ -1,5 +1,5 @@
 //! Gateway-owned sealed record persistence. No Agent Manager collections.
-use super::{AuthorityGuard, RecordError, RecordHead, RecordKind, RecordValue};
+use super::{RecordError, RecordHead, RecordKind, RecordValue};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, spec::BinarySubtype, Binary, DateTime, Document},
@@ -10,6 +10,10 @@ use serde::{Deserialize, Serialize};
 
 #[path = "mongo_admission_index.rs"]
 mod admission_index;
+#[path = "mongo_create_fences.rs"]
+mod create_fences;
+#[path = "mongo_guarded_admission.rs"]
+mod guarded_admission;
 #[path = "mongo_replica_observation.rs"]
 mod replica_observation;
 #[path = "mongo_replica_retry.rs"]
@@ -18,6 +22,13 @@ mod replica_retry;
 mod replicas;
 #[path = "mongo_versions.rs"]
 mod versions;
+pub(crate) use create_fences::{CancelCreate, CreateConnectionClaim, CreateFenceIdentity};
+#[path = "mongo_create_fences_floor.rs"]
+mod create_fences_floor;
+pub(crate) use create_fences_floor::inspect_migration as inspect_create_fence_floor_migration;
+pub(crate) use create_fences_floor::verify as check_create_fence_floor;
+pub(crate) use create_fences_floor::verify_runtime as verify_create_fence_floor;
+pub use create_fences_floor::{migrate as migrate_create_fence_floor, role as create_fence_role};
 pub(crate) use replicas::{
     LeaseCondition, ReplicaGuard, ReplicaKind, ReplicaProjection, ReplicaWrite,
 };
@@ -72,6 +83,14 @@ impl MongoRecords {
             worker_credentials: None,
             replica_attempt_fixture: None,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_worker_tracking(
+        &mut self,
+        tracking: crate::worker_credentials::WorkerCredentials,
+    ) {
+        self.worker_credentials = Some(tracking);
     }
 
     pub(crate) fn database(&self) -> Database {
@@ -158,107 +177,6 @@ impl MongoRecords {
             .await
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub(crate) async fn guarded_insert_interaction(
-        &self,
-        id: &str,
-        owner: &str,
-        blob: &[u8],
-        expires_at: i64,
-        channel_record_id: &str,
-        channel_version: u64,
-        authority_guards: &[AuthorityGuard],
-        projection: Option<ReplicaProjection>,
-    ) -> Result<u64, RecordError> {
-        if self.kind != RecordKind::Interaction
-            || id.is_empty()
-            || owner.is_empty()
-            || blob.is_empty()
-            || blob.len() > 65_536
-        {
-            return Err(RecordError::Rejected("invalid guarded interaction".into()));
-        }
-        let expiry = DateTime::from_millis(
-            expires_at
-                .checked_mul(1000)
-                .ok_or_else(|| RecordError::Rejected("invalid interaction expiry".into()))?,
-        );
-        let mut session = self.db.client().start_session().await.map_err(failure)?;
-        session
-            .start_transaction()
-            .read_concern(mongodb::options::ReadConcern::snapshot())
-            .write_concern(
-                mongodb::options::WriteConcern::builder()
-                    .w(mongodb::options::Acknowledgment::Majority)
-                    .build(),
-            )
-            .await
-            .map_err(failure)?;
-        let channel = self.db.collection::<Document>(RECORDS);
-        let guarded = channel
-            .update_one(
-                doc! {
-                    "_id": channel_record_id,
-                    "owner": owner,
-                    "version": i64::try_from(channel_version)
-                        .map_err(|_| RecordError::Rejected("invalid channel version".into()))?,
-                },
-                doc! {"$inc":{"guard_revision":1_i64}},
-            )
-            .session(&mut session)
-            .await
-            .map_err(failure)?;
-        if guarded.matched_count != 1 {
-            return Err(RecordError::GuardConflict {
-                scope: "channel",
-                expected: channel_version,
-            });
-        }
-        let authorities = self.db.collection::<Document>("eg_automation_records");
-        for guard in authority_guards {
-            let changed = authorities
-                .update_one(
-                    doc! {
-                        "_id": &guard.id,
-                        "owner": &guard.owner,
-                        "kind": guard.kind,
-                        "version": i64::try_from(guard.version).map_err(|_| {
-                            RecordError::Rejected("invalid authority version".into())
-                        })?,
-                    },
-                    doc! {"$inc":{"guard_revision":1_i64}},
-                )
-                .session(&mut session)
-                .await
-                .map_err(failure)?;
-            if changed.matched_count != 1 {
-                return Err(RecordError::GuardConflict {
-                    scope: guard.kind,
-                    expected: guard.version,
-                });
-            }
-        }
-        let row = Record {
-            id: id.into(),
-            owner: owner.into(),
-            blob: Binary {
-                subtype: BinarySubtype::Generic,
-                bytes: blob.to_vec(),
-            },
-            version: 1,
-            schema_version: 1,
-            guard_revision: 0,
-            replica: projection,
-            expires_at: Some(expiry),
-        };
-        self.records
-            .insert_one(row)
-            .session(&mut session)
-            .await
-            .map_err(failure)?;
-        session.commit_transaction().await.map_err(failure)?;
-        Ok(1)
-    }
     pub(super) async fn put_with_retention(
         &self,
         id: &str,
@@ -273,7 +191,11 @@ impl MongoRecords {
         }
         if self.kind == RecordKind::Channel {
             if let Some(tracking) = &self.worker_credentials {
-                tracking.record_blob(blob).await?;
+                let version = expected
+                    .unwrap_or(0)
+                    .checked_add(1)
+                    .ok_or_else(|| RecordError::Rejected("invalid record revision".into()))?;
+                tracking.record_blob(id, version, blob).await?;
             }
         }
         if retention == super::retention::InteractionRetention::WhatsappReaction
@@ -452,8 +374,8 @@ fn failure(_: mongodb::error::Error) -> RecordError {
 
 #[path = "mongo_schema.rs"]
 mod schema;
-pub(crate) use schema::migration_validator;
 pub use schema::{guard_migration_required, migrate, role, verify, verify_with_authority};
+pub(crate) use schema::{migration_predecessors, migration_validator};
 #[path = "mongo_replica_schema.rs"]
 mod replica_schema;
 pub use replica_schema::migrate as migrate_replicas;

@@ -117,6 +117,32 @@ export function removeAgentDraft(
 ) {
   storage.removeItem(agentDraftKey(owner, agentId));
 }
+
+/** Import only into a readable empty destination; existing drafts are never replaced. */
+export function importEmptyAgentDraft(
+  owner: string,
+  agentId: string,
+  content: string,
+  current: () => boolean,
+  storage: DraftStorage = sessionStorage,
+): DraftValue | undefined {
+  const empty = (value: DraftValue) =>
+    !value.content && value.attachments.length === 0 && !value.commandKey;
+  if (!content || !current() || !empty(readAgentDraft(owner, agentId, storage))) return;
+  const value: DraftValue = { revision: crypto.randomUUID(), content, attachments: [] };
+  if (!current() || !empty(readAgentDraft(owner, agentId, storage))) return;
+  saveAgentDraft(owner, agentId, value, storage);
+  const saved = readAgentDraft(owner, agentId, storage);
+  if (
+    !current() ||
+    saved.revision !== value.revision ||
+    saved.content !== content ||
+    saved.attachments.length !== 0 ||
+    saved.commandKey !== undefined
+  )
+    throw new Error(draftWriteError);
+  return saved;
+}
 export function clearOwnerDrafts(owner: string, storage: DraftStorage = sessionStorage) {
   // Invalidate mounted callbacks even when the browser refuses deletion.
   for (const notify of listeners) notify(owner);

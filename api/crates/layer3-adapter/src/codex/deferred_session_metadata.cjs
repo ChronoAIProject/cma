@@ -4,7 +4,7 @@ const { readFileSync, writeFileSync } = require("node:fs");
 const { bridgePath } = require("./persist_conversations.cjs");
 const { createDeferredMetadata } = require("./deferred_metadata_runtime.cjs");
 
-const sourceSha256 = "ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66";
+const sourceSha256 = "ed2ce5c01e53b0a991bab1fd6ccbd44d0182967b3eda44ab21538881be27dc4c";
 const method = `  cmaDeferLoadMetadata(state, generation) {
     this.cmaLoadMetadata ??= (${createDeferredMetadata.toString()})({
       current: (state, generation) => this.goalPublishIsCurrent(state, generation),

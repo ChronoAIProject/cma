@@ -21,17 +21,30 @@ jobs:
         name: "Track selection and workflow regressions"
         run: |
           python3 -B -m unittest discover -s .github/scripts/ci_tracks -p "test_*.py"
+          python3 -B -m unittest discover -s .github/scripts -p 'mongo_flaky_retry_tests.py'
           ruby .github/scripts/ci-tracks-workflow-tests.rb
+          python3 -B .github/scripts/omarchy-ci-scan-tests.py
       -
         name: "Staging publication and deployment contracts"
         run: |
           python3 -m venv "$RUNNER_TEMP/staging-cd-tests"
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'staging_cd_*_tests.py'
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/release_candidate_packet_tests.py
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_retry_tests.py'
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_artifact_download_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'runtime_image_*tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/image-secret-gate-tests.py
           ruby .github/scripts/staging_cd_workflows_tests.rb
+      -
+        name: "Omarchy package bundle regressions"
+        run: "python3 -B .github/scripts/omarchy-package-bundle-tests.py"
+      -
+        name: "Omarchy package bundle retention regressions"
+        run: "ruby .github/scripts/omarchy-package-retention-tests.rb"
+      -
+        name: "Omarchy package bundle is never deleted"
+        run: "ruby .github/scripts/omarchy-package-retention.rb"
       -
         name: "Source file size validator regressions"
         run: ".github/scripts/check-file-size-tests.sh"
@@ -39,18 +52,33 @@ jobs:
         name: "Source files stay within size limits"
         run: ".github/scripts/check-file-size.sh"
       -
+        name: "Pinned image pull retry regressions"
+        run: "bash .github/scripts/pull-pinned-image-tests.sh"
+      -
         uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38" # v6
         with:
           node-version: 26
       -
         name: "Synthetic authority and observer regressions"
-        run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs"
+        run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/connection-journey-evidence.test.mjs .github/scripts/connection-campaign.test.mjs .github/scripts/deployment-observer.test.mjs"
+      -
+        name: "Agent-log activation evidence regressions"
+        run: "node --test .github/scripts/agent-log-activation-evidence.test.mjs"
+      -
+        name: "TC-117 evidence consistency regressions"
+        run: "node --test .github/scripts/visitor-abuse-campaign.test.mjs .github/scripts/visitor-abuse-authority.test.mjs .github/scripts/visitor-abuse-consistency.test.mjs"
       -
         name: "Synthetic home restore evidence regressions"
         run: "node --test .github/scripts/home-backup/*.test.mjs"
       -
+        name: "Desktop qualification runner regressions"
+        run: "node --test .github/scripts/desktop-replica-contract.test.mjs .github/scripts/desktop-replica-results.test.mjs"
+      -
         name: "Audit exception policy regressions"
         run: "node --test .github/scripts/audit-policy.test.mjs"
+      -
+        name: "Resource revocation trace contract regressions"
+        run: "node --test .github/scripts/resource-revocation-contracts.test.mjs"
       -
         name: "Public repository boundary regressions"
         run: "ruby .github/scripts/check-public-tree-tests.rb"
@@ -63,7 +91,7 @@ jobs:
       -
         name: "Root contains only permitted entries"
         run: |
-          allowed=".git .github api web CLAUDE.md AGENTS.md CONTRIBUTING.md README.md .gitignore .dockerignore"
+          allowed=".git .github api web CLAUDE.md AGENTS.md CONTRIBUTING.md README.md LICENSE NOTICE .gitignore .dockerignore"
           fail=0
           shopt -s dotglob nullglob
           for entry in *; do
@@ -128,6 +156,7 @@ jobs:
       -
         uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" # v5
         with:
+          ref: "${{ github.sha }}"
           fetch-depth: 0
       -
         name: "gitleaks"
@@ -150,4 +179,50 @@ jobs:
         run: |
           python3 -B .github/scripts/image-scanner-policy-tests.py
           python3 -B .github/scripts/image_scanner_policy.py
-          PATH="$RUNNER_TEMP:$PATH" bash .github/scripts/image-secret-scanner/self-test.sh
+  scanner-tests:
+    name: "Frozen image scanner tests (${{ matrix.shard }})"
+    needs: ["secrets"]
+    runs-on: "ubuntu-latest"
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    outputs:
+      shard_0: "${{ steps.tests.outputs.shard_0 }}"
+      shard_1: "${{ steps.tests.outputs.shard_1 }}"
+    steps:
+      -
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" # v5
+        with:
+          ref: "${{ github.sha }}"
+      -
+        name: "Install pinned image secret scanner"
+        timeout-minutes: 5
+        run: "bash .github/scripts/install-image-gitleaks.sh"
+      -
+        id: tests
+        name: "Run frozen image scanner test shard"
+        working-directory: ".github/scripts/image-secret-scanner"
+        shell: bash
+        env:
+          SHARD: "${{ matrix.shard }}"
+        run: |
+          umask 077
+          python3 -B ../ci_tracks/repo_secrets.py --shard "$SHARD"
+          printf 'shard_%s=%s\n' "$SHARD" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+  result:
+    name: "Repo result"
+    if: "always()"
+    needs: ["structure", "secrets", "scanner-tests"]
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09" # v5
+        with:
+          ref: "${{ github.sha }}"
+      -
+        name: "Validate repository job results"
+        env:
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/repo_secrets.py --check-gate"

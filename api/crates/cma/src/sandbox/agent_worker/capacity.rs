@@ -135,7 +135,15 @@ impl AgentWorker {
                 .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
                 .ok_or_else(|| SandboxStoreError::Corrupt("invalid agent update time".into()))?;
             let at = (now + started.elapsed()).max(durable_at);
-            if !same_capacity_claim(claimed, &current, &self.config.holder, at) {
+            let claim_matches = if crate::store::CLEANUP_RETRY_DEADLINE
+                .try_with(|_| ())
+                .is_ok()
+            {
+                super::cleanup_retry::same_cleanup_claim(claimed, &current, &self.config.holder, at)
+            } else {
+                same_capacity_claim(claimed, &current, &self.config.holder, at)
+            };
+            if !claim_matches {
                 return Err(SandboxStoreError::Conflict);
             }
             let fence = current.work.lease.as_ref().expect("claim checked").fence;

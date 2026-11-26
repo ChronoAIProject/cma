@@ -7,6 +7,7 @@ import { ProtocolError, ValidationError } from './errors.js';
 import type { OperationOptions } from './http.js';
 import { identity, input, query, read, segment } from './resources.js';
 import { eventStream } from './streaming.js';
+import { commandStreamInput } from './command-stream-input.js';
 import { conversationId, v2Request } from './responses-v2/requests.js';
 import { v2ResponseFrames } from './responses-v2/stream.js';
 import * as controls from './responses-v2/controls.js';
@@ -247,9 +248,11 @@ export class ResponsesV2 {
     options: V2ResponseStreamOptions,
     agent?: string,
   ): Promise<V2ResponseObject> {
+    // JSON serialization can omit fields that the original request must reject.
     input((value) => v2Request(value, agent), body);
-    const headers = responseKeyHeaders(options.idempotencyKey);
-    const conversation = agent ?? conversationId(body.conversation);
+    const { body: snapshot, headers } = commandStreamInput(body, options.idempotencyKey);
+    input((value) => v2Request(value, agent), snapshot);
+    const conversation = agent ?? conversationId(snapshot.conversation);
     const stream = eventStream(
       this.config,
       path,
@@ -260,7 +263,7 @@ export class ResponsesV2 {
           onReceipt: options.onReceipt,
         }),
       'Responses v2',
-      body,
+      snapshot,
       headers,
     );
     let outcome: V2ResponseObject | undefined;

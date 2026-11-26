@@ -27,7 +27,7 @@ for (const [file, name] of [
   ['open_completion', 'openCompletion'],
 ]) source = require(path.join(root, file + '.cjs'))[name](source);
 require('node:assert/strict').equal(require('node:crypto').createHash('sha256').update(source).digest('hex'),
-  'ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66');
+  'ed2ce5c01e53b0a991bab1fd6ccbd44d0182967b3eda44ab21538881be27dc4c');
 fs.writeFileSync(dest, source);
 JS
 export CMA_TEST_RUNTIME_BINARY="$repository/api/target/debug/layer4-runtime"

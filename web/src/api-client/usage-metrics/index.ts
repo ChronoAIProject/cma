@@ -1,3 +1,20 @@
+import {
+  createInitial,
+  readInitial,
+  latestInitial,
+  type UsageInitialCreate,
+  type UsageInitialViewInput,
+  type UsageInitialProjection,
+} from './initial.js';
+export type {
+  UsageInitialCreate,
+  UsageInitialViewInput,
+  UsageInitialProjection,
+  UsageInitialReport,
+  UsageInitialView,
+  UsageInitialData,
+} from './initial.js';
+export { isUsageInitialUnavailable } from './initial.js';
 import { latestView, type UsageMetricViewQuery } from './view.js';
 export { isUsageViewUnavailable, type UsageMetricViewQuery, type UsageMetricView } from './view.js';
 import type { ResolvedConfig } from '../config.js';
@@ -61,6 +78,16 @@ export interface UsageMetricSeriesOptions extends OperationOptions {
 }
 /** Measured CPU/working-set/PVC history. Estimates never change allocated billing. */
 export class SandboxMetrics {
+  createInitial(input: UsageInitialCreate, options: OperationOptions = {}) {
+    return createInitial(this.config, this.admin, input, options);
+  }
+  initialReport(id: string, projection: UsageInitialProjection, options: OperationOptions = {}) {
+    return readInitial(this.config, this.admin, id, projection, options);
+  }
+  latestInitial(input: UsageInitialViewInput, options: OperationOptions = {}) {
+    return latestInitial(this.config, this.admin, input, options);
+  }
+
   /** Return a committed snapshot immediately; refreshes run in leased workers. */
   latest(input: UsageMetricViewQuery = {}, options: OperationOptions = {}) {
     return latestView(this.config, this.admin, input, options);

@@ -11,7 +11,10 @@ use std::{
 #[path = "model_credit_test_authority.rs"]
 mod authority;
 
-pub(in crate::sandbox) use authority::Ledger;
+pub(in crate::sandbox) use authority::{BeginReply, Ledger};
+
+#[path = "model_credit_dispatch_tests.rs"]
+mod dispatch;
 
 pub(in crate::sandbox) fn units(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap()

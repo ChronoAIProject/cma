@@ -1,5 +1,6 @@
 //! Read-only service snapshot for runtime retirement preview. Never opens stores
 //! through startup initialization or writes Mongo lifecycle state.
+use crate::store::transaction_terminal::GuardedTerminal as _;
 use std::{io::Write, os::unix::fs::OpenOptionsExt, path::Path, time::Duration};
 
 use layer2_core::sandbox::{store::SandboxStoreError, Agent, SandboxHierarchyRecord};
@@ -33,7 +34,11 @@ pub(crate) async fn command(sandbox: &str, destination: &Path) -> Result<()> {
     let authority = cma_service_auth::mongodb_authority::MongoAuthorityMode::parse(mode.as_deref())
         .map_err(|_| INVALID)?;
     let snapshot = tokio::time::timeout(Duration::from_secs(60), async {
-        let client = Client::with_uri_str(uri).await.map_err(|_| INVALID)?;
+        let mut options = mongodb::options::ClientOptions::parse(uri)
+            .await
+            .map_err(|_| INVALID)?;
+        super::transaction_barrier::bind(&mut options, &database);
+        let client = Client::with_options(options).map_err(|_| INVALID)?;
         let database = client.database(&database);
         super::isolation::verify_with_authority(&database, authority)
             .await
@@ -77,7 +82,7 @@ pub(super) async fn observe(
         .map_err(|_| INVALID)?;
     let result = read(database, sandbox, &mut session).await;
     // A read-only transaction is always aborted, including successful output.
-    let aborted = session.abort_transaction().await.map_err(|_| INVALID);
+    let aborted = session.abort_guarded().await.map_err(|_| INVALID);
     aborted?;
     result
 }

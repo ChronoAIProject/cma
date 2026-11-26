@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import ci_retry
-from ci_tracks.git_comparison import comparison_details, shallow
+from ci_tracks.git_comparison import comparison_details, first_parents, shallow
 from staging_cd_behind_fixture import Develop
 from staging_cd_common import Refusal
 from staging_cd_compatibility import GROUP, RECIPE, VERSION_FILE
@@ -298,16 +298,25 @@ class NewestFinalTests(unittest.TestCase):
             with self.subTest(token=token):
                 self.assertEqual(read_finals(Path.cwd(), token, chain, runner=listed),
                                  (COMMITS[9], dict.fromkeys(LANES, (None, "denied"))))
-        # A newer develop head than this plan's makes the run stale: no tag object is read.
+        # Only a verified first-parent advance lets planning skip the event.
         listed = Mock(return_value=subprocess.CompletedProcess([], 0, Tags(develop=COMMITS[15]).advertisement(), ""))
-        with patch("staging_cd_plan_window.GitHub", side_effect=AssertionError):
+        with patch.object(DevelopHistory, "from_head", return_value=history(16)), \
+                patch("staging_cd_plan_window.GitHub", side_effect=AssertionError):
             self.assertEqual(read_finals(Path.cwd(), "fixture", chain, runner=listed), (COMMITS[15], None))
-        # A develop head this plan already contains is not newer: its finals are read.
-        for develop in (COMMITS[9], COMMITS[7]):
-            with self.subTest(develop=develop):
-                listed = Mock(return_value=subprocess.CompletedProcess([], 0, Tags(develop=develop).advertisement(), ""))
-                self.assertEqual(read_finals(Path.cwd(), "fixture", chain, runner=listed),
-                                 (develop, dict.fromkeys(LANES, (None, "new"))))
+        clock = Clock()
+        with patch.object(DevelopHistory, "from_head", return_value=DevelopHistory(COMMITS[15], [COMMITS[15]])):
+            self.assertEqual(read_finals(Path.cwd(), "fixture", chain, runner=listed, clock=clock, sleep=clock.sleep),
+                             (None, dict.fromkeys(LANES, (None, "unreadable"))))
+        self.assertTrue(clock.waits)
+
+    def test_lagging_advertisement_is_retried_before_reading_finals(self):
+        older, current = (subprocess.CompletedProcess([], 0, Tags(develop=head).advertisement(), "")
+                          for head in (COMMITS[7], COMMITS[9]))
+        clock = Clock()
+        runner = Mock(side_effect=[older, current])
+        self.assertEqual(read_finals(Path.cwd(), "fixture", history(), runner=runner, clock=clock, sleep=clock.sleep),
+                         (COMMITS[9], dict.fromkeys(LANES, (None, "new"))))
+        self.assertEqual((runner.call_count, len(clock.waits)), (2, 1))
 
 
 # Every lane is in the manifest from the start of these histories.
@@ -639,7 +648,8 @@ class ReleaseQueueWindowTests(unittest.TestCase):
                 tree = Path(directory)
                 (tree / MANIFEST).parent.mkdir(parents=True)
                 (tree / MANIFEST).write_text(json.dumps({name: manifest[name] for name in names}))
-                result = subprocess.run([sys.executable, "-B", "-c", script, str(Path(queue.__file__).parent / "ci_tracks"),
+                # This manifest check also runs in the parser-free staging CI environment.
+                result = subprocess.run([sys.executable, "-S", "-B", "-c", script, str(Path(queue.__file__).parent / "ci_tracks"),
                                          str(tree)], capture_output=True, text=True, timeout=60, check=True)
                 self.assertEqual(result.stdout.strip(), expected)
 
@@ -677,6 +687,9 @@ class ReleaseQueueWindowTests(unittest.TestCase):
             self.assertTrue(shallow(clone))
             anchor = repo.commits[2]
             self.assertEqual(comparison_details(clone, {"after": anchor}, "push")[2], "shallow-history")
+            self.assertEqual(first_parents(clone, [anchor]), {anchor: repo.commits[1]})
+            with self.assertRaises(ValueError):
+                first_parents(clone, [repo.commits[0]])
             self.assertEqual(comparison_details(clone, {"after": anchor}, "push", allow_shallow_parent=True),
                              (repo.commits[1], anchor, None))
         selector = (Path(queue.__file__).parent / "ci_tracks/batch_selection.py").read_text()

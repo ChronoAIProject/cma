@@ -3,7 +3,7 @@ const { createHash } = require("node:crypto");
 const { readFileSync, writeFileSync } = require("node:fs");
 const { bridgePath } = require("./persist_conversations.cjs");
 
-const sourceSha256 = "fc9f74358c6ce5aeda4ac164c1daf83c513fb0f18df4b75f3d20bd0816fc6fa7";
+const sourceSha256 = "108600341d392534b2ef4a90fc6857f4fadedb5ee6c365b46484102294996c27";
 const method = `  async cmaSessionWithModels(open) {
     // Discovery reads process configuration, not the returned thread. Keep it
     // request-local and behind authorization and required skill refresh.
@@ -49,6 +49,7 @@ function sessionOpenOverlap(source) {
 }
 
 function withoutSessionOpenOverlap(source) {
+  source = require("./prompt_output_identity.cjs").withoutPromptOutputIdentity(source);
   if (!source.includes(method)) {
     assert(!source.includes("cmaSessionWithModels"), "Unexpected session overlap implementation");
     return source;

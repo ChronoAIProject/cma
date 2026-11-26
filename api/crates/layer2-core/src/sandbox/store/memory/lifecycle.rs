@@ -214,6 +214,10 @@ impl SandboxWorkerStore for InMemorySandboxStore {
         let mut state = self.lock();
         let sandbox = state.sandboxes.get(id).ok_or(SandboxStoreError::NotFound)?;
         if sandbox.retirement_archive_pending()
+            || state
+                .agents
+                .values()
+                .any(|agent| &agent.sandbox_id == id && agent.conversation.turn_timeout.is_some())
             || sandbox.revision != expected_revision
             || sandbox.status != SandboxStatus::Retired
             || !sandbox.credential.revoke_debt.is_empty()

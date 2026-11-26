@@ -16,6 +16,7 @@ export interface SettingsEditorAdapter<View, Proposal, Body> {
   body(view: View, proposal: Proposal): Body;
   equal(left: Proposal, right: Proposal): boolean;
   pending(view: View): boolean;
+  readonly mergeFields?: readonly (keyof Proposal)[];
   retention?: {
     journal(): SettingsIntentJournal<Body>;
     proposal(body: Body): Proposal;
@@ -33,6 +34,7 @@ interface EditorState<View, Proposal, Body> {
   readonly snapshot?: View;
   readonly proposal?: Proposal;
   readonly editRevision: number;
+  readonly editsDuringRead?: ReadonlySet<keyof Proposal>;
   readonly intent?: Intent<Proposal, Body>;
   readonly failure?: SettingsFailure;
   readonly refreshRequired: boolean;
@@ -60,6 +62,7 @@ function hideDeniedContent<View, Proposal, Body>(
     ...state,
     snapshot: undefined,
     proposal: undefined,
+    editsDuringRead: undefined,
     intent: undefined,
     failure: state.failure && {
       ...state.failure,
@@ -74,6 +77,28 @@ function hideDeniedContent<View, Proposal, Body>(
   } catch {
     return { ...hidden, storageBlocked: true };
   }
+}
+
+function refreshedProposal<View, Proposal, Body>(
+  adapter: SettingsEditorAdapter<View, Proposal, Body>,
+  state: EditorState<View, Proposal, Body>,
+  fresh: Proposal,
+  editRevision: number,
+): Proposal | undefined {
+  const { snapshot, proposal } = state;
+  if (snapshot !== undefined && proposal !== undefined) {
+    const baseline = adapter.proposal(snapshot);
+    if (adapter.mergeFields && proposal != null && baseline != null && fresh != null) {
+      const merged = { ...fresh };
+      for (const field of adapter.mergeFields) {
+        if (proposal[field] !== baseline[field] || state.editsDuringRead?.has(field))
+          merged[field] = proposal[field];
+      }
+      return merged;
+    }
+    if (!adapter.equal(proposal, baseline)) return proposal;
+  }
+  return state.editRevision !== editRevision ? proposal : fresh;
 }
 
 export function useSettingsEditor<View, Proposal, Body>(
@@ -159,11 +184,6 @@ export function useSettingsEditor<View, Proposal, Body>(
         if (signal.aborted) return;
         const proposal = adapter.proposal(next);
         publish((previous) => {
-          const dirty =
-            previous.editRevision !== editRevision ||
-            (previous.proposal !== undefined &&
-              previous.snapshot !== undefined &&
-              !adapter.equal(previous.proposal, adapter.proposal(previous.snapshot)));
           const intent = previous.intent;
           const confirmed =
             intent?.phase === 'pending' &&
@@ -175,9 +195,8 @@ export function useSettingsEditor<View, Proposal, Body>(
             proposal: intent
               ? (previous.proposal ??
                 (intent.phase === 'reenter' ? adapter.retention?.emptyReentry : intent.proposal))
-              : dirty
-                ? previous.proposal
-                : proposal,
+              : refreshedProposal(adapter, previous, proposal, editRevision),
+            editsDuringRead: undefined,
             intent: confirmed ? undefined : previous.intent,
             confirmed: confirmed || previous.confirmed,
             storageBlocked:
@@ -369,12 +388,23 @@ export function useSettingsEditor<View, Proposal, Body>(
       (current.current.intent && current.current.intent.phase !== 'reenter')
     )
       return;
-    publish((previous) => ({
-      ...previous,
-      proposal,
-      editRevision: previous.editRevision + 1,
-      confirmed: false,
-    }));
+    publish((previous) => {
+      const before = previous.proposal;
+      let editsDuringRead = previous.editsDuringRead;
+      if (previous.reading && before != null && proposal != null && adapter.mergeFields) {
+        // A field changed during the read can return to its old value while the
+        // server changes it concurrently. Keep that edit until a read succeeds.
+        const changed = adapter.mergeFields.filter((field) => before[field] !== proposal[field]);
+        editsDuringRead = new Set([...(editsDuringRead ?? []), ...changed]);
+      }
+      return {
+        ...previous,
+        proposal,
+        editRevision: previous.editRevision + 1,
+        editsDuringRead,
+        confirmed: false,
+      };
+    });
   };
   const waiting = state.retryAt > 0;
   const pending =

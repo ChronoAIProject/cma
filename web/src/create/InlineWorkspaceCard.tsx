@@ -7,6 +7,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Presence } from '../ui/Presence';
 import { useConnectionGate } from '../connections/useConnectionGate';
+import { validRepository } from './repository';
 import { useCreationCommand } from './transaction';
 import './Create.css';
 
@@ -29,11 +30,16 @@ export function InlineWorkspaceCard({
   const [sourceType, setSourceType] = useState<InlineSourceType>(EMPTY_SOURCE);
   const [name, setName] = useState('workspace');
   const [url, setUrl] = useState('');
+  const [repositoryTouched, setRepositoryTouched] = useState(false);
   const [reference, setReference] = useState('');
   const command = useCreationCommand(onCreated);
   const connections = useConnectionGate();
-  const repositoryReady = sourceType === EMPTY_SOURCE || url.trim().length > 0;
-  const ready = repositoryReady && (sourceType === GIT_SOURCE || name.trim().length > 0);
+  const repositoryUrl = url.trim();
+  // The Workspace API checks the raw authority before URL normalization.
+  const repositoryReady =
+    repositoryUrl.startsWith('https://github.com/') && validRepository(repositoryUrl);
+  const repositoryError = repositoryTouched && !repositoryReady;
+  const ready = sourceType === GIT_SOURCE ? repositoryReady : name.trim().length > 0;
 
   const submit = () => {
     if (!ready) return;
@@ -42,7 +48,7 @@ export function InlineWorkspaceCard({
         ? ({ type: 'empty' } as const)
         : {
             type: GIT_SOURCE,
-            url: url.trim(),
+            url: repositoryUrl,
             ...(reference.trim() === '' ? {} : { reference: reference.trim() }),
           };
     connections.run(
@@ -126,9 +132,17 @@ export function InlineWorkspaceCard({
                 value={url}
                 disabled={command.locked}
                 onChange={(event) => setUrl(event.target.value)}
+                onBlur={() => setRepositoryTouched(true)}
+                aria-invalid={repositoryError || undefined}
+                aria-describedby={repositoryError ? 'inline-workspace-url-error' : undefined}
                 placeholder="https://github.com/org/repository"
                 required
               />
+              {repositoryError ? (
+                <p id="inline-workspace-url-error" className="field__error" role="alert">
+                  Enter an HTTPS GitHub repository URL.
+                </p>
+              ) : null}
             </div>
             <div className="create-form__field">
               <label htmlFor="inline-workspace-reference">Branch or ref (optional)</label>

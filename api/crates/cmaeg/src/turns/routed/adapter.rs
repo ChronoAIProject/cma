@@ -267,6 +267,15 @@ impl ExecutionPort for HttpExecutionPort {
         binding: &'a ProviderBinding,
         credential: &'a Secret,
     ) -> BoxFuture<'a, StartResult> {
+        self.start_observed(body, binding, credential, None)
+    }
+    fn start_observed<'a>(
+        &'a self,
+        body: &'a FrozenTurn,
+        binding: &'a ProviderBinding,
+        credential: &'a Secret,
+        timing: Option<crate::telemetry::timing::IngressTiming>,
+    ) -> BoxFuture<'a, StartResult> {
         Box::pin(async move {
             match self
                 .providers
@@ -276,7 +285,7 @@ impl ExecutionPort for HttpExecutionPort {
                     &body.idempotency_key,
                     &body.metadata,
                     credential,
-                    self.providers.nyxid_trace_contract(binding),
+                    (self.providers.nyxid_trace_contract(binding), timing),
                 )
                 .await
             {

@@ -1,5 +1,6 @@
 import type { ReadOptions } from './client';
 import type { AgentEnvironment } from '@cma/client';
+import type { ReadRetryMetadata } from './readRetry';
 
 export interface AgentFileEntry {
   readonly path: string;
@@ -39,9 +40,19 @@ export class AgentFileError extends Error {
     message: string,
     readonly status: number,
     readonly code?: string,
+    readonly problem?: ReadRetryMetadata,
   ) {
     super(message);
     this.name = 'AgentFileError';
+  }
+  get retryable(): boolean | undefined {
+    return this.problem?.retryable;
+  }
+  get retryAfterMs(): number | undefined {
+    return this.problem?.retryAfterMs;
+  }
+  get requestId(): string | undefined {
+    return this.problem?.requestId;
   }
 }
 export const MAX_FILE_BYTES = 32 * 1024 * 1024;

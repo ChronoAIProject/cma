@@ -39,6 +39,10 @@ class TransientError(Exception):
     `after` is the wait in seconds the server asked for, when it said so.
     """
 
+    # A subclass that also derives from another exception may never reach
+    # __init__; it then asked for no wait rather than lacking the attribute.
+    after = None
+
     def __init__(self, *args, after=None):
         super().__init__(*args)
         self.after = after

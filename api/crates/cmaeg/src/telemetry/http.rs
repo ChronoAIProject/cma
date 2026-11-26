@@ -16,8 +16,7 @@ use tracing::Instrument;
 struct Observed;
 #[derive(Clone)]
 pub(crate) struct EventOutcome(pub &'static str);
-#[derive(Clone)]
-pub(crate) struct RefusalReason(pub String);
+pub(crate) use cmaeg_engine::RefusalReason;
 
 pub fn instrument(router: Router) -> Router {
     router

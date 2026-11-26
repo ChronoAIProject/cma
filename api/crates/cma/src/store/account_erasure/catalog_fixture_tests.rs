@@ -160,6 +160,10 @@ fn fixtures(subject: &str, suffix: &str) -> Vec<(&'static str, Document)> {
             doc! {"_id":{"subject":subject,"operation":"fixture","key":&id}},
         ),
         (
+            "sandbox_creation_proofs",
+            doc! {"_id": &id,"owner":subject},
+        ),
+        (
             "provider_tool_opens",
             doc! {"_id":&id,"record":{"scope":{"agent_id":&agent}}},
         ),
@@ -312,3 +316,47 @@ async fn allocation_buckets_follow_owner_without_losing_recovery_authority() {
 
 #[path = "catalog_residue_tests.rs"]
 mod residue;
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn usage_projection_erasure_discovers_mixed_report_after_source_rows_are_gone() {
+    use crate::store::migrations::usage_projections::{self, COLLECTION};
+
+    let db = database().await;
+    for (collection, index) in usage_projections::inspect(&db).await.unwrap() {
+        db.run_command(doc! {"createIndexes":collection,"indexes":[index]})
+            .await
+            .unwrap();
+    }
+    for report in ["mixed-report", "other-report"] {
+        put(
+            &db,
+            "sandbox_usage_reports",
+            doc! {"_id":report,"principal":"unrelated-admin"},
+        )
+        .await;
+        put(
+            &db,
+            COLLECTION,
+            doc! {"_id":format!("p:{report}"),"report_id":report,"generation":1_i64,
+            "kind":"chart_total","metric":0_i64,"series":"","chunk":0_i64},
+        )
+        .await;
+        put(&db, COLLECTION, doc! {"_id":format!("z:{report}:b"),"report_id":report,"generation":1_i64,
+            "kind":"contributor","contributor":"acct:b","metric":0_i64,"series":"acct:b","chunk":0_i64}).await;
+    }
+    put(
+        &db,
+        COLLECTION,
+        doc! {"_id":"z:mixed-report:a","report_id":"mixed-report","generation":1_i64,
+        "kind":"contributor","contributor":"acct:a","metric":0_i64,"series":"acct:a","chunk":0_i64},
+    )
+    .await;
+    assert_eq!(count(&db, "sandbox_usage_report_rows").await, 0);
+    let deleted = drain(&db, "acct:a", &mut ErasureInventory::default()).await;
+    assert_eq!(deleted.get(COLLECTION), Some(&3));
+    assert_eq!(deleted.get("sandbox_usage_reports"), Some(&1));
+    assert_eq!(count(&db, COLLECTION).await, 2);
+    assert_eq!(count(&db, "sandbox_usage_reports").await, 1);
+    db.drop().await.unwrap();
+}

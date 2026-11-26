@@ -32,6 +32,12 @@ export default function Documents({
       onNavigate={onNavigate}
     />
   ) : (
-    <DocumentRegistry client={client} canCreate={!user.visitor} onNavigate={onNavigate} />
+    <DocumentRegistry
+      key={user.id}
+      client={client}
+      viewer={user.id}
+      canCreate={!user.visitor}
+      onNavigate={onNavigate}
+    />
   );
 }

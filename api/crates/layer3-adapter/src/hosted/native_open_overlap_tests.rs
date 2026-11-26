@@ -2,6 +2,9 @@
 use super::*;
 use crate::hosted::HostedControlTransport;
 
+#[path = "native_open_receiver_tests.rs"]
+mod receiver;
+
 async fn fixture(transport_mode: NativeRuntimeTransport) -> Fixture {
     let fixture = Fixture::start(Mode::Persistent, transport_mode).await;
     fixture
@@ -45,6 +48,7 @@ fn start(
                 &handle(),
                 &endpoint,
                 &launch(),
+                None,
                 &mut crate::hosted::startup_timing::StartupTiming::new(),
                 RuntimeWorkloadClass::Ordinary,
             )

@@ -26,18 +26,19 @@
 
 .deletion-progress__row {
   display: grid;
-  gap: 4px;
+  gap: 8px;
   min-width: 0;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--dsw-alias-border-l1);
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 12px;
+  background: var(--dsw-alias-bg-layer-1);
 }
 
 .deletion-progress__name,
 .deletion-progress__identifier {
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
 
 .deletion-progress__name {
@@ -69,4 +70,27 @@
 
 .deletion-progress__full {
   user-select: text;
+}
+
+.deletion-progress__state {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.deletion-progress__state svg {
+  flex: none;
+}
+
+.deletion-progress__note {
+  margin: 0;
+  font: var(--dsw-font-xs-13);
+}
+
+.deletion-progress[data-navigation-footer] {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 60%;
+  overflow: auto;
 }

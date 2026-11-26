@@ -190,7 +190,7 @@ async fn prepared_open_ready_parent_write_conflicts_after_snapshot_read() {
         .await
         .unwrap();
     assert!(
-        matches!(apply_publication_observed(&store,&completion(&agent,&observed.worktree),Some(&observed),None,&mut publication_history::AttemptHistory::default(),None,scope).await,Err(ApplyError::Driver(error)) if is_transient(&error))
+        matches!(apply_publication_observed(&store,&completion(&agent,&observed.worktree),Some(&observed),None,&mut publication_history::AttemptHistory::default(),PublicationGuards::default(),scope).await,Err(ApplyError::Driver(error)) if is_transient(&error))
     );
     session.abort_transaction().await.unwrap();
     assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
@@ -210,7 +210,7 @@ async fn prepared_open_ready_unknown_commit_requires_complete_atomic_evidence() 
         Some(&observed),
         None,
         &mut publication_history::AttemptHistory::default(),
-        None,
+        PublicationGuards::default(),
         scope,
     )
     .await
@@ -229,7 +229,7 @@ async fn prepared_open_ready_unknown_commit_requires_complete_atomic_evidence() 
         Some(&observed),
         None,
         &mut publication_history::AttemptHistory::default(),
-        None,
+        PublicationGuards::default(),
         scope,
     )
     .await

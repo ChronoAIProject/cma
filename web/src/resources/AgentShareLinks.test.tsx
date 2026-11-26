@@ -68,7 +68,15 @@ function fixture(initial: AgentShareLink[] = []) {
   });
   const client = createClient({ baseUrl: 'https://cma.example', fetch });
   const draw = () =>
-    render(<AgentShareLinksDialog client={client} agentId="agent-one" open onClose={vi.fn()} />);
+    render(
+      <AgentShareLinksDialog
+        client={client}
+        ownerId={owner.subject}
+        agentId="agent-one"
+        open
+        onClose={vi.fn()}
+      />,
+    );
   return { state, requests, fetch, client, draw };
 }
 

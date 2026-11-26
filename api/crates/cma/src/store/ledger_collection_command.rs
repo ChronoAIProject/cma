@@ -38,9 +38,11 @@ pub(crate) async fn command(request: &Path, destination: &Path) -> Result<()> {
     let authority = cma_service_auth::mongodb_authority::MongoAuthorityMode::parse(mode.as_deref())
         .map_err(|_| UNAVAILABLE)?;
     let observation = tokio::time::timeout(Duration::from_secs(10), async {
-        let client = mongodb::Client::with_uri_str(uri)
+        let mut options = mongodb::options::ClientOptions::parse(uri)
             .await
             .map_err(|_| UNAVAILABLE)?;
+        crate::store::transaction_barrier::bind(&mut options, &name);
+        let client = mongodb::Client::with_options(options).map_err(|_| UNAVAILABLE)?;
         let database = client.database(&name);
         crate::store::isolation::verify_with_authority(&database, authority)
             .await

@@ -1,6 +1,7 @@
 //! Exact owner scope revisions retain runtime, home and conversation identity.
 use crate::{seconds_from_rfc3339, ServiceId, SubjectId};
 
+use super::credential::ServiceConnectionSelection;
 use super::{
     Sandbox, SandboxModelError, SandboxServiceScopeRevision, SandboxStatus, SandboxWorkStep,
 };
@@ -14,6 +15,10 @@ impl Sandbox {
             || scope.revision == 0
             || scope.authorized_by != self.owner
             || !valid_services(&scope.services)
+            || scope
+                .connection
+                .as_ref()
+                .is_some_and(|connection| !connection.matches_scope(&scope.services))
             || !scope.services.windows(2).all(|pair| pair[0] < pair[1])
             || !super::lifecycle_execution_support::valid_runtime_binding(
                 &scope.runtime,
@@ -57,10 +62,26 @@ impl Sandbox {
         services: &[ServiceId],
         at: String,
     ) -> Result<SandboxServiceScopeRevision, SandboxModelError> {
+        self.revise_live_service_access_with_connection(owner, services, None, at)
+    }
+
+    /// Adopt an explicit connection choice in the same revision that fences its
+    /// credential issuance. A later scope edit preserves a retained choice
+    /// until the owner changes it or removes that service.
+    pub fn revise_live_service_access_with_connection(
+        &mut self,
+        owner: &SubjectId,
+        services: &[ServiceId],
+        connection: Option<ServiceConnectionSelection>,
+        at: String,
+    ) -> Result<SandboxServiceScopeRevision, SandboxModelError> {
         self.validate()?;
         if owner != &self.owner
             || !self.credential.source.is_managed()
             || !valid_services(services)
+            || connection
+                .as_ref()
+                .is_some_and(|selection| !selection.matches_scope(services))
             || self.status != SandboxStatus::Active
             || self.runtime.as_ref().is_none_or(|runtime| {
                 runtime
@@ -91,6 +112,12 @@ impl Sandbox {
         if services.windows(2).any(|pair| pair[0] == pair[1]) {
             return Err(invalid());
         }
+        let connection = connection.or_else(|| {
+            self.credential
+                .selected_connection()
+                .filter(|selection| selection.matches_scope(&services))
+                .cloned()
+        });
         let runtime = self.runtime.as_ref().ok_or_else(invalid)?;
         let scope = SandboxServiceScopeRevision {
             revision: self
@@ -101,6 +128,7 @@ impl Sandbox {
                 .checked_add(1)
                 .ok_or_else(invalid)?,
             services,
+            connection,
             authorized_by: owner.clone(),
             authorized_at: at.clone(),
             // Skip a generation any expired pre-revision worker may mint.

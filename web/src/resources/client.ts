@@ -4,4 +4,7 @@ import type { Cma } from '@cma/client';
 export type ResourceViewsClient = Pick<
   Cma,
   'agents' | 'resourceAccess' | 'sandboxes' | 'workspaces'
-> & { readonly agentEventsV2?: Pick<Cma['agentEventsV2'], 'head'> };
+> & {
+  readonly agentEventsV2?: Pick<Cma['agentEventsV2'], 'head'>;
+  readonly resourceRevocations?: Cma['resourceRevocations'];
+};

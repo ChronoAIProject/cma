@@ -68,6 +68,11 @@ it('waits for discovery, submits the automatic choice, and retains exact uncerta
   fireEvent.click(screen.getByRole('button', { name: 'Producer 1 connection type' }));
   fireEvent.click(screen.getByRole('menuitemradio', { name: 'Custom event' }));
   fireEvent.change(screen.getByLabelText('HMAC key ID'), { target: { value: 'test-key-id' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add HMAC credential' }));
+  fireEvent.change(screen.getByLabelText('HMAC 1 key ID'), { target: { value: 'test-key-id' } });
+  fireEvent.change(screen.getByLabelText('HMAC 1 secret'), {
+    target: { value: btoa('synthetic signing material') },
+  });
   expect(screen.getByRole('button', { name: 'Checking support…' })).toBeDisabled();
   expect(screen.queryByRole('checkbox', { name: /reliable delivery/i })).not.toBeInTheDocument();
   expect(fetcher).not.toHaveBeenCalled();

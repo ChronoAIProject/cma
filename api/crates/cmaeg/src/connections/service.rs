@@ -46,6 +46,15 @@ impl ConnectionService {
                 "suggested_name must contain 1..=64 printable bytes",
             ));
         }
+        if !self.management.managed_telegram_setup_enabled {
+            match self.owned(owner, &request.record_id).await {
+                Ok(_) => {}
+                Err(Error::NotFound) => {
+                    return Err(Error::Forbidden("managed_telegram_setup_disabled"))
+                }
+                Err(error) => return Err(error),
+            }
+        }
         let reference: EventRef = request
             .event_ref
             .parse()

@@ -3,7 +3,7 @@ use axum::{http::StatusCode, routing::post, Json, Router};
 use serde_json::Value;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-async fn serve_fixture(
+pub(super) async fn serve_fixture(
     router: Router,
 ) -> (String, oneshot::Sender<()>, tokio::task::JoinHandle<()>) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -20,7 +20,7 @@ async fn serve_fixture(
     (base, stop, task)
 }
 
-async fn record_probe(
+pub(super) async fn record_probe(
     state: &mut ManagementState,
     status: StatusCode,
 ) -> (
@@ -46,7 +46,7 @@ async fn record_probe(
     (calls, stop, task)
 }
 
-async fn problem(response: reqwest::Response, status: u16, code: &str) -> Value {
+pub(super) async fn problem(response: reqwest::Response, status: u16, code: &str) -> Value {
     assert_eq!(response.status(), status);
     assert_eq!(
         response.headers()["content-type"],

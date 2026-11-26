@@ -41,7 +41,7 @@ module CIContract
 
   def self.artifact(job, condition, prefix)
     upload = step(job, "Retain runtime image evidence", nil, condition)
-    expected = prefix.start_with?("release-") ? "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" : "actions/upload-artifact@v4"
+    expected = prefix.start_with?("release-") ? "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" : "actions/upload-artifact@v4"
     require!(upload["uses"] == expected, "runtime evidence uploader changed")
     require!(upload["with"] == {
       "name" => "#{prefix}-${{ github.run_id }}-${{ github.run_attempt }}",
@@ -61,7 +61,20 @@ module CIContract
       "path" => "${{ runner.temp }}/ci-native-image/",
       "if-no-files-found" => "error", "compression-level" => 0, "retention-days" => 1,
     }, "native images must remain exact, required and short-lived")
-    order(images, ["Vulnerability scan", "Require passing runtime image evidence", "Export tested native image", "Retain tested native image"])
+    # The exported CI image gets the staging publication secret scan before it
+    # is retained, so a blocking finding fails the pull request or merge group.
+    scan_if = "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+    install = step(images, "Install pinned image secret scanner",
+      "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n", scan_if)
+    require!(install["timeout-minutes"] == 5 && install["env"] == {
+      "CD_COMPONENT" => "${{ matrix.component == 'api' && 'am' || matrix.component == 'cmaeg' && 'eg' || matrix.component }}",
+    }, "image scanner install must keep its component and bound")
+    scan = step(images, "Scan tested image as staging publication does",
+      'python3 -B .github/scripts/ci_image_secret_scan.py "$IMAGE_COMPONENT" "$RUNNER_TEMP/ci-native-image" "$GITHUB_SHA"', scan_if)
+    require!(scan["timeout-minutes"] == 30 && scan["env"] == { "IMAGE_COMPONENT" => "${{ matrix.component }}" },
+      "CI image secret scan must keep its component and bound")
+    order(images, ["Vulnerability scan", "Require passing runtime image evidence", "Export tested native image",
+      "Install pinned image secret scanner", "Scan tested image as staging publication does", "Retain tested native image"])
   end
 
   def self.api_cargo_cache(ci, images)
@@ -74,7 +87,7 @@ module CIContract
       "github.event_name == 'push' && github.ref == 'refs/heads/develop' && #{base} && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'")
     require!(extract["id"] == "api-cargo-cache-export", "API cache extraction output changed")
     require!([inject, extract].all? { |row| row["timeout-minutes"] == 3 }, "API cache transfers must be bounded")
-    revision = "0057852bfaa89a56745cba8c7296529d2fc39830"
+    revision = "caa296126883cff596d87d8935842f9db880ef25"
     shared = { "path" => "${{ runner.temp }}/cma-api-cargo-cache/data",
       "key" => "${{ steps.api-cargo-cache.outputs.key }}", "enableCrossOsArchive" => false }
     expected = [
@@ -165,7 +178,7 @@ module CIContract
       "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
       "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
       "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
-      "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+      "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
       "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
       "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
       "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
@@ -189,9 +202,10 @@ module CIContract
       end
     end
     publications = %w[web am eg runtime runtime_omarchy].map { |component| "release_#{component}" }
-    allowed = %w[publish:images staging-release:publish] + publications.map { |id| "staging-cd:#{id}" }
+    allowed = %w[publish:images staging-release:publish omarchy-package-bundle:bundle] + publications.map { |id| "staging-cd:#{id}" }
     require!(grants.sort == allowed.sort,
       "only the reviewed release entry points may grant package write")
+    omarchy_package_bundle_authority(inputs.fetch("omarchy-package-bundle"))
     staging = inputs.fetch("staging-cd")
     staging_events = staging["on"] || staging[true]
     require!(staging_events == { "push" => { "branches" => ["develop"] } },
@@ -204,6 +218,81 @@ module CIContract
     require!(writer["permissions"] == { "contents" => "read", "pull-requests" => "read", "actions" => "read", "packages" => "write" } &&
       writer["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'",
       "staging publisher authority changed")
+  end
+
+  BUNDLE_ABSENT = 'python3 -B .github/scripts/omarchy-package-bundle.py absent --repository "$REPOSITORY" --tag "$TAG"'
+  BUNDLE_PUSH = 'skopeo copy --preserve-digests --dest-authfile /auth/config.json "oci:/output/layout:$TAG" "docker://ghcr.io/$REPOSITORY:$TAG"'
+
+  # The package bundle writes one new tag of one package, on an explicit
+  # dispatch from develop only, with exactly the reviewed pinned actions.
+  # Every step runs and fails the run on failure. The tag is proved absent
+  # before the build and again on the line before the only push, which goes
+  # to the job-level repository.
+  def self.omarchy_package_bundle_authority(workflow)
+    events = workflow["on"] || workflow[true]
+    require!(events.is_a?(Hash) && events.keys == ["workflow_dispatch"] &&
+      events.dig("workflow_dispatch", "inputs").keys == ["snapshot"], "package bundle runs only on dispatch")
+    require!(workflow["permissions"] == {} && workflow.fetch("jobs").keys == ["bundle"], "package bundle authority changed")
+    bundle = workflow.dig("jobs", "bundle")
+    require!(bundle["permissions"] == { "contents" => "read", "packages" => "write" } &&
+      bundle["if"] == "github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'" &&
+      bundle["runs-on"] == "ubuntu-24.04" && bundle.dig("env", "REPOSITORY") == "chronoaiproject/cma-omarchy-packages",
+      "package bundle publisher authority changed")
+    require!(bundle.fetch("steps").map { |row| row["uses"] }.compact == [
+      "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+      "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
+    ], "every action with package write authority must remain pinned")
+    steps = bundle.fetch("steps")
+    require!(!bundle.key?("continue-on-error") && steps.none? { |row| row.key?("continue-on-error") || row.key?("if") },
+      "every package bundle step must run, and any failure must fail the run")
+    redirected = steps.any? do |row|
+      env = row.fetch("env", {})
+      !env.is_a?(Hash) || env.key?("REPOSITORY") || row["run"].to_s.match?(/\bREPOSITORY\s*=/)
+    end
+    require!(!redirected, "package bundle publishes only to its job-level repository")
+    refuse, publish = "Refuse an existing tag before building", "Publish the exact verified layout"
+    order(bundle, ["Resolve the bundle tag from the committed lock", refuse, "Download, verify and lay out the bundle", publish])
+    require!(step(bundle, refuse)["run"].to_s.strip == BUNDLE_ABSENT, "package bundle must prove its tag absent before building")
+    commands = step(bundle, publish)["run"].to_s.gsub(/[ \t]*\\\n[ \t]*/, " ").lines.map(&:strip)
+    script = steps.map { |row| row["run"].to_s }.join("\n")
+    require!(commands.count(BUNDLE_PUSH) == 1 && script.scan(/\bskopeo copy\b/).size == 1 &&
+      script.scan(%r{docker://[^\s"']*}).uniq == ["docker://ghcr.io/$REPOSITORY:$TAG"],
+      "package bundle must push once, and only to ghcr.io/$REPOSITORY:$TAG")
+    push = commands.index(BUNDLE_PUSH)
+    require!(commands.first == "set -euo pipefail" && commands.count(BUNDLE_ABSENT) == 1 && push.positive? &&
+      commands[push - 1] == BUNDLE_ABSENT && script.scan(/omarchy-package-bundle\.py absent /).size == 2,
+      "package bundle must prove its tag absent immediately before pushing")
+  end
+
+  KEY_EXPIRY_STEPS = [
+    { "uses" => "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", "with" => { "persist-credentials" => false } },
+    { "name" => "Check Arch packager key expiry",
+      "run" => "python3 -B .github/scripts/omarchy_key_expiry.py --verify-record --fail-days 30" },
+  ].freeze
+
+  # The weekly key expiry check fails by name once a key that signs a pinned
+  # Omarchy package expires within 30 days, so the failed-run notification
+  # reaches someone (#3040), and fails when the committed signing-key record
+  # no longer matches the one derived from the locked URLs. It only reads the
+  # repository and public package servers, runs on its schedule or an explicit
+  # dispatch, and every step runs so that its failure fails the run.
+  def self.omarchy_key_expiry_authority(inputs)
+    workflow = inputs.fetch("omarchy-key-expiry")
+    events = workflow["on"] || workflow[true]
+    schedule = events.is_a?(Hash) ? events["schedule"] : nil
+    require!(events.is_a?(Hash) && events.keys.sort == %w[schedule workflow_dispatch] && events["workflow_dispatch"] == {} &&
+      schedule.is_a?(Array) && schedule.length == 1 && schedule.first.keys == ["cron"] &&
+      schedule.first["cron"].to_s.match?(/\A[0-5]?[0-9] (?:1?[0-9]|2[0-3]) \* \* [0-6]\z/),
+      "key expiry check runs only weekly or on dispatch")
+    require!(workflow["permissions"] == { "contents" => "read" } && workflow.fetch("jobs").keys == ["expiry"],
+      "key expiry check authority changed")
+    check = job(workflow, "expiry", "Arch packager key expiry")
+    require!(check.keys.sort == %w[if name permissions runs-on steps timeout-minutes] &&
+      check["if"] == "github.repository == 'ChronoAIProject/cma'" && check["permissions"] == { "contents" => "read" } &&
+      check["runs-on"] == "ubuntu-24.04" && check["timeout-minutes"].is_a?(Integer) && check["timeout-minutes"].between?(1, 30),
+      "key expiry check must stay read-only, bounded and on a hosted runner")
+    require!(check.fetch("steps") == KEY_EXPIRY_STEPS,
+      "key expiry check must run exactly the pinned checkout and the unconditional check")
   end
 
   def self.provider(inputs)

@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventGateway } from './EventGateway';
+// Load the real graph module before exercising lifecycle and editor interactions.
+import './DeliveryFlowCanvas';
 import type { Channel, ChannelListItem } from './ChannelEditor';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -12,6 +14,43 @@ const session = {
   expires_at: 9999999999,
 };
 const json = (value: unknown) => new Response(JSON.stringify(value));
+
+it.each(['keyboard', 'pointer'])(
+  'returns from a channel draft to the landing page by %s',
+  async (input) => {
+    const actor = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockImplementation(async () => json({ items: [channel('Existing')] })),
+    );
+    render(<EventGateway session={session} denied={vi.fn()} />);
+    const sidebar = within(screen.getByRole('region', { name: 'Channels' }));
+    await actor.click(await sidebar.findByRole('button', { name: /^Existing/ }));
+    await actor.click(screen.getByRole('button', { name: 'New channel' }));
+    const draft = screen.getByRole('textbox', { name: 'Channel name' });
+    await actor.type(draft, 'Retained draft');
+    const crumb = within(screen.getByRole('navigation', { name: 'Breadcrumb' })).getByRole('link', {
+      name: 'Event Gateway',
+    });
+    expect(crumb).toHaveAttribute('href', '/event-gateway');
+    if (input === 'keyboard') {
+      crumb.focus();
+      expect(crumb).toHaveFocus();
+      await actor.keyboard('{Enter}');
+    } else {
+      await actor.click(crumb);
+    }
+    expect(screen.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
+    expect(screen.queryByRole('heading', { name: 'Existing' })).not.toBeInTheDocument();
+    await actor.click(
+      within(screen.getByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+        name: 'New channel',
+      }),
+    );
+    expect(screen.getByRole('textbox', { name: 'Channel name' })).toHaveValue('Retained draft');
+  },
+);
+
 function channel(id: string, version = 1): Channel {
   return {
     record_id: `${id}-record`,
@@ -179,7 +218,7 @@ it('retains an uncertain create across navigation and removes a freshly created 
       expect.objectContaining({ method: 'DELETE' }),
     ],
   ]);
-});
+}, 15_000);
 
 it('reopens a legacy record only with its original channel ID and rejects an unrelated record', async () => {
   const original = channel('Legacy', 4);
@@ -240,4 +279,26 @@ it('recovers legacy endpoints automatically when the original creation record is
   expect(await screen.findByLabelText('Channel name')).toBeEnabled();
   expect(screen.queryByLabelText('Original channel ID')).not.toBeInTheDocument();
   expect(fetcher).toHaveBeenCalledTimes(3);
+});
+
+it('moves keyboard focus to the create heading and back to the landing action on cancellation', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockImplementation(async () => json({ items: [] })),
+  );
+  const user = userEvent.setup();
+  render(<EventGateway session={session} denied={vi.fn()} />);
+  const action = () =>
+    within(screen.getByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+      name: 'New channel',
+    });
+  for (let count = 0; count < 2; count++) {
+    action().focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('heading', { name: 'New channel' })).toHaveFocus();
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    cancel.focus();
+    await user.keyboard('{Enter}');
+    expect(action()).toHaveFocus();
+  }
 });

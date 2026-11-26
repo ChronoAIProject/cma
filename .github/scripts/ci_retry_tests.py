@@ -181,6 +181,21 @@ class ClassifierTests(unittest.TestCase):
                           honour_retry_after=True)
         self.assertEqual(clock.waits, [])
 
+    def test_a_mixed_in_transient_error_without_its_initializer_asked_for_no_wait(self):
+        class Refused(ValueError):
+            def __init__(self, *args):
+                super().__init__(*args)  # Never reaches TransientError.__init__.
+
+        class TransientRefusal(Refused, ci_retry.TransientError):
+            pass
+        error = TransientRefusal("read failed")
+        self.assertIsNone(error.after)
+        self.assertIsNone(ci_retry.requested_wait(error))
+        try:
+            raise TransientRefusal("read failed") from ci_retry.status_cause(429, {"retry-after": "12"})
+        except TransientRefusal as chained:
+            self.assertEqual(ci_retry.requested_wait(chained), 12)
+
     def test_http_statuses(self):
         for code in (408, 425, 429, 500, 502, 503, 504):
             self.assertEqual(ci_retry.http_status(code), TRANSIENT, code)

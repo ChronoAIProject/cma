@@ -1,9 +1,49 @@
 use super::*;
-use layer2_core::sandbox::store::{SandboxImageRotationRequest, SandboxMaintenanceStore};
+use layer2_core::sandbox::store::{
+    SandboxAdmission, SandboxAdmissionName, SandboxAdmissionResult, SandboxAdmissionStore,
+    SandboxImageRotationRequest, SandboxMaintenanceStore,
+};
+
+#[path = "runtime_update_reopen_refusal_tests.rs"]
+mod reopen_refusal;
+pub(crate) use reopen_refusal::exercise_runtime_update_reopen_http;
 
 async fn active() -> (Fixture, Sandbox, SystemTime) {
+    active_with_image_origin(false).await
+}
+
+async fn active_with_image_origin(managed_desktop: bool) -> (Fixture, Sandbox, SystemTime) {
     let mut f = Fixture::native().await;
-    let created = f.harness.create().await;
+    let created = if managed_desktop {
+        let seed = Harness::new(vec![], 0, Duration::from_secs(60)).await;
+        let mut created = seed.create().await;
+        created.origin = layer2_core::sandbox::SandboxOrigin::Lifecycle {
+            operation_id: "desktop-fixture".into(),
+        };
+        created.profile.content.runtime_image = Some(format!(
+            "registry.example/runtime@sha256:{}",
+            "a".repeat(64)
+        ));
+        created.profile.digest =
+            layer2_core::profiles::content_digest(&created.profile.content).unwrap();
+        created.lifecycle.runtime_image_origin =
+            Some(layer2_core::sandbox::SandboxRuntimeImageOrigin::ManagedDesktop);
+        let admission = SandboxAdmission::new(
+            created.clone(),
+            SandboxAdmissionName::Allocate(created.name),
+            10,
+            created.created_at,
+        )
+        .unwrap();
+        let SandboxAdmissionResult::Created(created) =
+            f.harness.store.admit_sandbox(admission).await.unwrap()
+        else {
+            panic!("expected a newly admitted Desktop Sandbox");
+        };
+        created
+    } else {
+        f.harness.create().await
+    };
     let mut now = start_time(&created);
     let value = f
         .drive(
@@ -48,8 +88,88 @@ async fn update(f: &Fixture, sandbox: &Sandbox, target: &str, now: SystemTime) {
 }
 
 #[tokio::test]
-async fn runtime_update_worker_reopens_original_conversation_on_same_pvc_after_lost_ack() {
+async fn retained_transition_worker_never_suspends_a_restarted_predecessor() {
+    use layer3_adapter::hosted::HostedBackend;
+
     let (f, active, mut now) = active().await;
+    let paused = f.pause(&active, &mut now).await;
+    let binding = paused.lifecycle.suspended_runtime.as_deref().unwrap();
+    let request =
+        crate::sandbox::runtime_attachment::retained_runtime_request(&paused, binding, "test")
+            .unwrap();
+    let predecessor = f
+        .adapter(&runtime_image())
+        .retained_startup_policy()
+        .unwrap()
+        .inspect_retained_startup_policy(&request)
+        .await
+        .unwrap();
+    let mut admitted = paused.clone();
+    let receipt = admitted
+        .begin_retained_runtime_transition(
+            layer2_core::sandbox::RetainedRuntimeTransitionRequest {
+                sandbox_id: paused.id.clone(),
+                owner: paused.owner.clone(),
+                expected_revision: paused.revision,
+                grant_id: "retained-restarted-predecessor".into(),
+                policy_revision: 1,
+                target_image: predecessor.image.clone(),
+                target_config_digest: format!("sha256:{}", "c".repeat(64)),
+                journal_recovery: true,
+                predecessor,
+            },
+            &[],
+            rfc3339_at(now),
+        )
+        .unwrap();
+    f.harness
+        .store
+        .save_sandbox(paused.revision, admitted)
+        .await
+        .unwrap();
+
+    let previous = f.backend.request().await;
+    f.backend
+        .resume(&request.handle, &previous, &previous)
+        .await
+        .unwrap();
+    let before = f.backend.calls.snapshot().len();
+    now += Duration::from_secs(6);
+    f.step(&paused.id, now, &runtime_image()).await;
+
+    let calls = f.backend.calls.snapshot();
+    assert!(calls[before..]
+        .iter()
+        .any(|call| call == "inspect-retained-predecessor"));
+    assert!(!calls[before..]
+        .iter()
+        .any(|call| matches!(call.as_str(), "suspend" | "upgrade" | "resume")));
+    assert_eq!(f.backend.snapshot().await.request, previous);
+    let pending = f.harness.stored(&paused.id).await;
+    assert_eq!(
+        pending.admitted_retained_runtime_transition(),
+        Some(&receipt)
+    );
+    assert!(pending.lifecycle.runtime_provision.is_none());
+    assert_eq!(pending.lifecycle.home, paused.lifecycle.home);
+    assert_eq!(
+        pending.lifecycle.suspended_runtime,
+        paused.lifecycle.suspended_runtime
+    );
+}
+
+#[tokio::test]
+async fn runtime_update_worker_reopens_original_conversation_on_same_pvc_after_lost_ack() {
+    exercise_retained_update(false).await;
+}
+
+#[tokio::test]
+async fn managed_desktop_update_reopens_original_conversation_on_same_pvc_after_lost_ack() {
+    exercise_retained_update(true).await;
+}
+
+async fn exercise_retained_update(managed_desktop: bool) {
+    let (f, active, mut now) = active_with_image_origin(managed_desktop).await;
     let agent = lifecycle_recovery_tests::prepare_agent(&f.harness, &active, now, 1).await;
     let original = f.backend.snapshot().await;
     let target = "registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
@@ -60,6 +180,11 @@ async fn runtime_update_worker_reopens_original_conversation_on_same_pvc_after_l
         .drive(&active.id, &mut now, SandboxStatus::Active, target)
         .await;
     assert_eq!(updated.id, active.id);
+    assert_eq!(updated.profile, active.profile);
+    assert_eq!(
+        updated.lifecycle.runtime_image_origin,
+        active.lifecycle.runtime_image_origin
+    );
     assert_eq!(updated.lifecycle.home, active.lifecycle.home);
     assert_eq!(
         updated.runtime.as_ref().unwrap().runtime_id,

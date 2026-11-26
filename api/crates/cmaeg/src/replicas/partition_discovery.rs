@@ -186,6 +186,10 @@ pub(crate) struct Frontier {
     pub plans: PlanStore,
 }
 impl RecoverySource for Frontier {
+    fn start_measurement(&self) -> Option<crate::telemetry::provider_start::Measurement> {
+        self.plans.start_measurement()
+    }
+
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,

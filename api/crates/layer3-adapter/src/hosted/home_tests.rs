@@ -151,6 +151,7 @@ async fn reattachment_and_credentials_require_the_original_disk_and_teardown_pre
                 operation_id: "credential-fixture".into(),
                 value: crate::RuntimeCredential::new("opaque-sandbox-key"),
                 custody_generation: Some(1),
+                github_route: None,
             }
         )
         .await
@@ -220,6 +221,39 @@ async fn retained_v3_runtime_without_live_removal_protocol_cannot_claim_capabili
         crate::wire::RequestFrame::RuntimeStatus(_)
             | crate::wire::RequestFrame::WorkspaceRemovalSupport(_)
     )));
+}
+
+#[tokio::test]
+async fn retained_runtime_without_github_route_support_receives_no_new_credential() {
+    let (adapter, backend) = CodexAdapter::in_memory(CodexSandboxSpec::default());
+    let adapter = adapter.with_home_volumes(Arc::new(Storage::default()));
+    let handle = adapter.provision(&spec()).await.unwrap();
+    adapter
+        .run_install(&handle, &crate::InstallRequest::new("install", vec![]))
+        .await
+        .unwrap();
+    let frame = crate::CredentialFrame {
+        operation_id: "exact-github-route".into(),
+        value: crate::RuntimeCredential::new("synthetic-credential"),
+        custody_generation: Some(1),
+        github_route: Some(crate::GithubCredentialRoute {
+            service_id: "repository-connection".into(),
+            catalog_id: "github-catalog".into(),
+            repository_scope: None,
+            other_services: Vec::new(),
+        }),
+    };
+    assert!(matches!(
+        adapter.deliver_credential(&handle, frame).await,
+        Err(AdapterError::Unsupported(_))
+    ));
+    assert!(backend.requests().await.iter().all(|(_, request)| {
+        !matches!(
+            request,
+            crate::wire::RequestFrame::Credential(_)
+                | crate::wire::RequestFrame::CredentialForReceiver { .. }
+        )
+    }));
 }
 
 #[path = "resume_tests.rs"]

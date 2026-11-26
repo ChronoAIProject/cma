@@ -27,6 +27,6 @@ export function deliveryLabel(delivery: ActivityDelivery): string {
 
 export function deliveryTime(delivery: ActivityDelivery): string | null {
   return delivery.outcome === 'confirmed' || delivery.step.startsWith('platform_')
-    ? delivery.confirmed_at
+    ? (delivery.confirmed_at ?? null)
     : delivery.observed_at;
 }

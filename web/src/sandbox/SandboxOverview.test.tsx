@@ -172,3 +172,24 @@ it('keeps the exception visible and reports a failed relinquishment', async () =
   expect(screen.getByRole('alert')).toHaveTextContent('Revision changed');
   expect(screen.getByRole('button', { name: 'Turn off Always on' })).toBeEnabled();
 });
+
+it.each([
+  ['retired', 'This environment is no longer running. Live resource usage is no longer available.'],
+  ['retiring', 'Live resource usage is unavailable while this environment is retiring.'],
+] as const)(
+  'does not invite a new Agent to obtain live resources in a %s environment',
+  (status, message) => {
+    render(
+      <SandboxOverview
+        sandbox={sandboxFixture(status)}
+        settingsLoaded
+        busy={false}
+        onRetry={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(message)).toBeVisible();
+    expect(
+      screen.queryByText('Resources are available when this Sandbox has an Agent.'),
+    ).not.toBeInTheDocument();
+  },
+);

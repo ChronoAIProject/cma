@@ -69,6 +69,7 @@ async fn transaction(
         .unwrap();
     SandboxTransaction::SaveSandboxAndAppend {
         command_revival: Some(proof),
+        released_runtime: None,
         expected_revision,
         sandbox: Box::new(parent),
         event_at,
