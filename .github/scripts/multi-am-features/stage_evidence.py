@@ -10,6 +10,11 @@ FAILURES = {'conflict_unclassified', 'store_unavailable', 'stored_data_invalid',
             'domain_refusal', 'task_panicked', 'task_cancelled'}
 PUBLICATION_FAILURES = {'known_aborted_cas', 'owner_authority_refused',
                         'work_lease_changed', 'unknown_commit'}
+WORK_STEPS = {'install_skill', 'wait_for_workspace', 'add_worktree', 'materialize_home', 'open_conversation',
+              'publish_ready', 'publish_connection', 'dispatch_first_message', 'fence_interaction',
+              'close_process', 'publish_stopped', 'ensure_process_closed', 'remove_home',
+              'remove_worktree', 'publish_deleted', 'restart_conversation', 'restart_teardown', 'none'}
+FIELDS = ('phase', 'failure', 'next_step')
 
 
 def fields(line):
@@ -28,11 +33,11 @@ def fields(line):
         if not isinstance(value, dict):
             return {}
         # Keep raw messages, identities and caller spans inside the private log.
-        return {name: value[name] for name in ['phase', 'failure'] if name in value}
+        return {name: value[name] for name in FIELDS if name in value}
     if re.search(r'\b' + TARGET + r':', line) is None:
         return None
     value = {}
-    for name in ['phase', 'failure']:
+    for name in FIELDS:
         match = re.search(r'(?:^|\s)' + name + r'=(?:"([a-z_]+)"|([a-z_]+))(?:\s|$)', line)
         if match:
             value[name] = match[1] or match[2]
@@ -63,10 +68,16 @@ def summarize(directory):
                     or phase not in PHASES or failure not in allowed):
                 rejected += 1
                 continue
-            counts[am, phase, failure] += 1
+            next_step = value.get('next_step', '')
+            if 'next_step' in value and (phase != 'publication' or not isinstance(next_step, str)
+                    or next_step not in WORK_STEPS):
+                rejected += 1
+                continue
+            counts[am, phase, failure, next_step] += 1
     return {'schema': 'multi-am-stage-evidence-v1', 'scope': 'final_bounded_log_samples',
             'classification': 'emitted_typed_scheduler_fields_only',
             'root_cause_inferred': False, 'complete_history': False,
             'files': files, 'unrecognized_scheduler_events': rejected,
-            'occurrences': [{'am': am, 'phase': phase, 'failure': failure, 'count': count}
-                            for (am, phase, failure), count in sorted(counts.items())]}
+            'occurrences': [{'am': am, 'phase': phase, 'failure': failure, 'count': count,
+                             **({'next_step': next_step} if next_step else {})}
+                            for (am, phase, failure, next_step), count in sorted(counts.items())]}

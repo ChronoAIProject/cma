@@ -20,6 +20,7 @@ pub(super) fn diagnose(mutation: &AgentWorkMutation, failure: PublicationFailure
         target: "agent_scheduler_failure",
         phase = "publication",
         failure,
+        next_step = mutation.agent.work.step.operation_name(),
         agent_sha256 = %format_args!("{:x}", Sha256::digest(mutation.agent.id.as_str().as_bytes())),
         "Agent publication boundary"
     );

@@ -91,6 +91,22 @@ class StageEvidenceTests(unittest.TestCase):
                         'phase': 'execution', 'failure': 'task_cancelled', 'count': 2}])
                     self.assertNotIn('private', json.dumps(result))
 
+    def test_publication_classifications_are_counted_at_each_known_next_step(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            records = ['agent_scheduler_failure: phase="publication" failure="known_aborted_cas" next_step="open_conversation"']
+            for step in ['publish_connection', 'private-operation', []]:
+                records.append(json.dumps({'target': 'agent_scheduler_failure', 'fields': {
+                    'phase': 'publication', 'failure': 'known_aborted_cas', 'next_step': step,
+                    'agent_sha256': 'a' * 64}}))
+            (root / 'am-a-0.full.private.log').write_text('\n'.join(records))
+            result = summarize(root)
+            self.assertEqual(result['unrecognized_scheduler_events'], 2)
+            self.assertEqual([(row['next_step'], row['count']) for row in result['occurrences']],
+                             [('open_conversation', 1), ('publish_connection', 1)])
+            self.assertNotIn('private-operation', json.dumps(result))
+            self.assertNotIn('a' * 64, json.dumps(result))
+
     def test_fields_projects_only_stage_and_failure(self):
         event = {'target': 'agent_scheduler_failure', 'fields': {
             'phase': 'discovery', 'failure': 'store_unavailable',
