@@ -482,3 +482,30 @@ async fn status_capability_opt_in_is_present_on_new_and_reused_native_http() {
     fixture.transport.retire(&handle()).await.unwrap();
     fixture.drained().await;
 }
+
+#[tokio::test]
+async fn workspace_prepare_observation_records_native_truncated_body_without_retrying() {
+    use crate::workspace_prepare_observation::{observe, Code, Observation, Stage};
+
+    let fixture = fixture().await;
+    fixture.state.fault.store(2, Ordering::SeqCst);
+    let request = RequestFrame::PrepareWorkspace(crate::WorkspaceRequest::new(
+        "workspace:wks-native:prepare:v1",
+        "wks-native",
+        "native",
+        crate::WorkspaceSource::Init,
+    ));
+    let (result, observation) = observe(fixture.transport.exchange(&handle(), request)).await;
+    assert!(matches!(result, Err(AdapterError::Unavailable(_))));
+    assert_eq!(
+        observation,
+        Some(Observation {
+            stage: Stage::PrepareRpc,
+            code: Code::Transport,
+            wire_retryable: None,
+        })
+    );
+    assert_eq!(fixture.state.requests.lock().unwrap().len(), 1);
+    fixture.transport.retire(&handle()).await.unwrap();
+    fixture.drained().await;
+}
