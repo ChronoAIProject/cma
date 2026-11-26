@@ -8,6 +8,7 @@ use layer2_core::sandbox::{Agent, AgentWorkReceipt, AgentWorkStep};
 use serde_json::json;
 mod faults;
 mod negatives;
+mod preclose;
 pub(super) mod records;
 mod support;
 use support::*;
@@ -24,10 +25,6 @@ pub(crate) async fn exercise_native_retirement_finality() {
     faults::recovery_between_admission_and_dispatch_returns_to_graceful_stop().await;
     faults::provider_retirement_refuses_a_child_writer_that_wins_admission().await;
     faults::disabled_admission_preserves_legacy_absent_runtime_retirement().await;
-    for credential_hold in [false, true] {
-        faults::recovered_dispatch_resumes_graceful_stop_with_admission_disabled(credential_hold)
-            .await;
-    }
 }
 
 async fn retirement_case6_healthy_siblings_complete() {

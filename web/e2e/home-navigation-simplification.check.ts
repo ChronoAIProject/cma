@@ -2,6 +2,49 @@ import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 import { navigation, noEffects, taskAdmission } from './resource-lifecycle.fixture';
 
+test('LOCAL the last live environment scrolls fully into view in a short sidebar', async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 420 });
+  const boundary = new LocalStartup();
+  const sandboxes = Array.from({ length: 10 }, (_, index) => ({
+    ...boundary.sandbox,
+    id: `sbx_scroll_${index + 1}`,
+    name: index < 5 ? `Live environment ${index + 1}` : `Retiring environment ${index - 4}`,
+    status: index < 5 ? 'active' : 'retiring',
+    workspaces: [],
+    workspace_count: 0,
+    worktree_count: 0,
+    agent_count: 0,
+  }));
+  await boundary.route(page, baseURL!);
+  await page.route('**/api/v1/sandboxes?*', (route) =>
+    route.fulfill({ json: { items: sandboxes } }),
+  );
+  for (const sandbox of sandboxes)
+    await page.route(`**/api/v1/sandboxes/${sandbox.id}`, (route) =>
+      route.fulfill({ json: sandbox }),
+    );
+
+  await page.goto('/agent-manager');
+  await navigation(page, true);
+  const sidebar = page.getByRole('complementary', { name: 'Application navigation' });
+  const environments = sidebar.getByRole('button', { name: 'Environments', exact: true });
+  await environments.click();
+  await sidebar.locator('[data-navigation-footer] summary').click();
+  await environments.focus();
+  const last = sidebar.getByRole('tree', { name: 'Live sandboxes' }).getByRole('treeitem').last();
+  await expect(last).toContainText('Live environment 5');
+  await expect(last).not.toBeInViewport({ ratio: 1 });
+  const list = (await sidebar.locator('.manager-navigation__list').boundingBox())!;
+  const row = (await last.boundingBox())!;
+  await page.mouse.move(list.x + 24, list.y + 10);
+  await page.mouse.wheel(0, Math.ceil(row.y - list.y));
+  await expect(last).toBeInViewport({ ratio: 1 });
+  noEffects(boundary);
+});
+
 function parked() {
   const boundary = new LocalStartup();
   boundary.sandbox = {

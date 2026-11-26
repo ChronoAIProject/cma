@@ -8,6 +8,7 @@ import { join } from 'node:path';
 const standingPermission = 'auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure';
 const activeProofOperator = 'package(=cma) and test(=store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role)';
 
+const fixedPinMachine = 'package(=cma) and test(=store::native_warm_pools::retirement::machine_selection::tests::fixed_pin_machine_selection_works_without_released_runtime_grant)';
 const gatewayResetJourneys = 'package(=cma) and (test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) or test(=store::bindings::reset_tests::gateway_reset_tests::profile_reset_receipt_replays_after_a_later_channel_revision))';
 
 // Independent inventory of every invocation, including replica delivery and
@@ -52,6 +53,7 @@ const selections = [
   ['package(=cma) and test(~sender_context_tests::)', 'only', true],
   [gatewayResetJourneys, 'only', true],
   [`package(=cma) and test(=${standingPermission})`, 'only', true],
+  [fixedPinMachine, 'only', true],
   [activeProofOperator, 'only', true],
 ];
 
@@ -109,7 +111,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 40);
+      assert.equal(selections.length, 41);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
@@ -122,7 +124,7 @@ for (const reuse of [false, true]) {
       }
       for (const row of calls) {
         const isActiveProofOperator = row.command === 'cargo' && row.args.includes(activeProofOperator);
-        const needsStore = row.command === 'cargo' && (isActiveProofOperator || row.args.includes('package(=cma) and test(~sender_context_tests::)') || row.args.includes(gatewayResetJourneys));
+        const needsStore = row.command === 'cargo' && (isActiveProofOperator || row.args.includes('package(=cma) and test(~sender_context_tests::)') || row.args.includes(gatewayResetJourneys) || row.args.includes(fixedPinMachine));
         assert.equal(row.caller, needsStore ? row.uri : undefined, 'only M1 store contracts receive the owned fixture URI');
         assert.equal(row.cma, isActiveProofOperator ? join(f.metadata, '..', 'debug', 'cma') : undefined);
         assert.equal(row.failpoint, undefined);

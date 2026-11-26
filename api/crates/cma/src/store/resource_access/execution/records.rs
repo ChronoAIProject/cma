@@ -1,4 +1,8 @@
 use super::*;
+use layer2_core::resource_access::{ResourceOwner, ResourceTarget};
+use layer2_core::SubjectId;
+use mongodb::bson;
+use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
 const MAX_RECORD_BYTES: usize = 64 * 1024;
@@ -24,6 +28,71 @@ pub(super) fn decode<T: DeserializeOwned>(document: &Document) -> ExecutionResul
     serde_json::from_str(text).map_err(|_| ExecutionError::Corrupt)
 }
 
+const ERASURE_KEYS: &str = "erasure_keys_v1";
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ErasureKeys {
+    sandbox_id: wire::OpaqueId,
+    actor_subject: Option<wire::OpaqueId>,
+    owner_subject: Option<wire::OpaqueId>,
+    share_id: Option<wire::OpaqueId>,
+}
+
+impl ErasureKeys {
+    fn check_basis(&self, basis: &wire::ExecutionBasisV1) -> ExecutionResult<()> {
+        if self.share_id.as_ref() != basis.family().map(|family| &family.share_id) {
+            return Err(ExecutionError::Corrupt);
+        }
+        use wire::ExecutionBasisV1::{Independent, IndependentOwner, Share};
+        let owner = match basis {
+            IndependentOwner { owner, .. } => {
+                if self.actor_subject.is_none() || self.actor_subject != self.owner_subject {
+                    return Err(ExecutionError::Corrupt);
+                }
+                owner
+            }
+            Independent {
+                authority: wire::IndependentAuthorityV1::ExternalBinding { .. },
+                owner,
+                ..
+            } => owner,
+            _ if self.actor_subject.is_none() => return Err(ExecutionError::Corrupt),
+            Share { .. } => return Ok(()),
+            Independent { owner, .. } => owner,
+        };
+        if let Some(subject) = &self.owner_subject {
+            let subject = SubjectId::new(subject.as_str());
+            if hash(&ResourceOwner::Person { subject })? != *owner {
+                return Err(ExecutionError::Corrupt);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn read_keys(document: &Document, mut expected: Document) -> ExecutionResult<Option<ErasureKeys>> {
+    let fields = match document.get(ERASURE_KEYS) {
+        None if expected == *document => return Ok(None),
+        Some(bson::Bson::Document(fields)) => fields,
+        _ => return Err(ExecutionError::Corrupt),
+    };
+    if fields.len() > 4
+        || fields.iter().any(|(name, value)| {
+            name.len() > 13 || value.as_str().is_none_or(|text| text.len() > 128)
+        })
+    {
+        return Err(ExecutionError::Corrupt);
+    }
+    expected.insert(ERASURE_KEYS, fields.clone());
+    if expected != *document {
+        return Err(ExecutionError::Corrupt);
+    }
+    bson::deserialize_from_document(fields.clone())
+        .map(Some)
+        .map_err(|_| ExecutionError::Corrupt)
+}
+
 pub(super) fn grant_document(value: &GrantControlV1) -> ExecutionResult<Document> {
     value.validate()?;
     let mut document = encode(value.key.origin.as_str(), value)?;
@@ -32,7 +101,10 @@ pub(super) fn grant_document(value: &GrantControlV1) -> ExecutionResult<Document
 }
 pub(super) fn read_grant(document: &Document) -> ExecutionResult<GrantControlV1> {
     let value = decode(document)?;
-    if grant_document(&value)? != *document {
+    let keys = read_keys(document, grant_document(&value)?)?;
+    if keys.is_some_and(|keys| {
+        keys.actor_subject.is_some() || keys.share_id.as_ref() != Some(&value.key.share_id)
+    }) {
         return Err(ExecutionError::Corrupt);
     }
     Ok(value)
@@ -56,8 +128,11 @@ pub(super) fn grant_pair(
     match (control, receipt) {
         (None, None) => Ok(None),
         (Some(control), Some(receipt)) => {
+            let keys = control.get(ERASURE_KEYS);
             let control = read_grant(control)?;
-            if control.key.origin != *origin || grant_receipt(&control) != *receipt {
+            let mut expected = grant_receipt(&control);
+            expected.extend(keys.map(|keys| (ERASURE_KEYS.to_owned(), keys.clone())));
+            if control.key.origin != *origin || expected != *receipt {
                 return Err(ExecutionError::Corrupt);
             }
             Ok(Some(control))
@@ -78,8 +153,13 @@ pub(super) fn member_document(value: &ExecutionRecordV1) -> ExecutionResult<Docu
 }
 pub(super) fn read_member(document: &Document) -> ExecutionResult<ExecutionRecordV1> {
     let value = decode(document)?;
-    if member_document(&value)? != *document {
-        return Err(ExecutionError::Corrupt);
+    if let Some(keys) = read_keys(document, member_document(&value)?)? {
+        keys.check_basis(&value.basis)?;
+        if matches!(&value.target, ResourceTarget::Sandbox { sandbox_id }
+            if sandbox_id.as_str() != keys.sandbox_id.as_str())
+        {
+            return Err(ExecutionError::Corrupt);
+        }
     }
     Ok(value)
 }
@@ -98,8 +178,20 @@ pub(super) fn operation_document(value: &RevocationOperationV1) -> ExecutionResu
 }
 pub(super) fn read_operation(document: &Document) -> ExecutionResult<RevocationOperationV1> {
     let value = decode(document)?;
-    if operation_document(&value)? != *document {
-        return Err(ExecutionError::Corrupt);
+    if let Some(keys) = read_keys(document, operation_document(&value)?)? {
+        let intent = &value.intent;
+        let actor = intent.actor.ordinary_subject().map(SubjectId::as_str);
+        let owner = match &intent.owner {
+            ResourceOwner::Person { subject } => Some(subject.as_str()),
+            ResourceOwner::Organization { .. } => None,
+        };
+        if keys.share_id.as_ref() != Some(&value.key.family.share_id)
+            || keys.sandbox_id.as_str() != intent.sandbox_id.as_str()
+            || keys.owner_subject.as_ref().map(wire::OpaqueId::as_str) != owner
+            || keys.actor_subject.as_ref().map(wire::OpaqueId::as_str) != actor
+        {
+            return Err(ExecutionError::Corrupt);
+        }
     }
     Ok(value)
 }
@@ -127,8 +219,8 @@ pub(super) fn effect_document(value: &EffectRecordV1) -> ExecutionResult<Documen
 }
 pub(super) fn read_effect(document: &Document) -> ExecutionResult<EffectRecordV1> {
     let value = decode(document)?;
-    if effect_document(&value)? != *document {
-        return Err(ExecutionError::Corrupt);
+    if let Some(keys) = read_keys(document, effect_document(&value)?)? {
+        keys.check_basis(&value.permission.intent.grant)?;
     }
     Ok(value)
 }

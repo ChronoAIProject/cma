@@ -60,6 +60,7 @@ pub(crate) struct FeatureFlags {
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
+    pub native_retirement_capture_enabled: bool,
     pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
@@ -210,6 +211,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
+            native_retirement_capture_enabled: flag(lookup, gates::RETIREMENT_CAPTURE)?,
             reviewed_sandbox_retirement_enabled: flag(
                 lookup,
                 "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",
@@ -428,12 +430,10 @@ mod document_maintenance_tests;
 #[cfg(test)]
 mod live_buffer_tests;
 #[cfg(test)]
-#[path = "features/native_create_retry_tests.rs"]
 mod native_create_retry_tests;
 #[cfg(test)]
 mod observation_tests;
 #[cfg(test)]
-#[path = "features/ownership_retry_hint_tests.rs"]
 mod ownership_retry_hint_tests;
 #[cfg(test)]
 mod paged_event_tests;

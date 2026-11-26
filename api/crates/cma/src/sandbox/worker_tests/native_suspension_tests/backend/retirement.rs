@@ -7,6 +7,28 @@ pub(in super::super) struct RetirementProbePause {
 }
 
 impl NativeBackend {
+    pub(super) fn retirement_exchange(
+        &self,
+        handle: &RuntimeHandle,
+        request: &RequestFrame,
+    ) -> Option<(
+        Arc<layer3_adapter::hosted::ProviderHostedControlTransport>,
+        RuntimeHandle,
+    )> {
+        match request {
+            RequestFrame::RuntimeStatus(_) => {
+                let transport = self.inspection_transport.lock().unwrap().clone()?;
+                Some((transport, handle.clone()))
+            }
+            RequestFrame::CloseAgent(_) => {
+                let transport = self.close_transport.lock().unwrap().clone()?;
+                self.calls.push("receiver-close-attempt");
+                Some((transport, RuntimeHandle::new("local-runtime")))
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn check_retirement_fixture_pod(
         &self,
         pod: &layer3_adapter::RetirementPod,
