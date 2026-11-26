@@ -39,8 +39,8 @@ async fn legacy_archive_and_guard_acknowledgement_failures_never_erase_the_origi
                 .admit_keyed_inner(
                     &setup.plan,
                     setup.target(),
-                    b.clone(),
-                    hash.clone(),
+                    (b.clone(), hash.clone(), None),
+                    Kind::Tool,
                     true,
                     false,
                 )
@@ -64,8 +64,8 @@ async fn legacy_archive_and_guard_acknowledgement_failures_never_erase_the_origi
                         .admit_keyed_inner(
                             &setup.plan,
                             setup.target(),
-                            b.clone(),
-                            hash.clone(),
+                            (b.clone(), hash.clone(), None),
+                            Kind::Tool,
                             true,
                             false,
                         )

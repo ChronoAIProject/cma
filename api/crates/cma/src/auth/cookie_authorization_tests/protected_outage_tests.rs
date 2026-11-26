@@ -119,10 +119,12 @@ async fn protected_reads_preserve_classified_timeouts_and_upstream_outages_then_
     for cookie in [false, true] {
         for fault in ["headers_timeout", "http_502", "http_503"] {
             let mut fixture = Fixture::new().await;
-            Arc::get_mut(&mut fixture.auth).unwrap().http = reqwest::Client::builder()
-                .timeout(Duration::from_millis(200))
-                .build()
-                .unwrap();
+            Arc::get_mut(&mut fixture.auth).unwrap().set_fixture_http(
+                reqwest::Client::builder()
+                    .timeout(Duration::from_millis(200))
+                    .build()
+                    .unwrap(),
+            );
             let retained = fixture.seed().await;
             fixture.auth.metadata().await.unwrap();
             let credentials = credentials(&fixture, cookie).await;
@@ -177,10 +179,12 @@ async fn malformed_partial_and_unknown_failures_never_gain_retry_permission() {
                 continue;
             }
             let mut fixture = Fixture::new().await;
-            Arc::get_mut(&mut fixture.auth).unwrap().http = reqwest::Client::builder()
-                .timeout(Duration::from_millis(200))
-                .build()
-                .unwrap();
+            Arc::get_mut(&mut fixture.auth).unwrap().set_fixture_http(
+                reqwest::Client::builder()
+                    .timeout(Duration::from_millis(200))
+                    .build()
+                    .unwrap(),
+            );
             fixture.seed().await;
             fixture.auth.metadata().await.unwrap();
             let credentials = credentials(&fixture, cookie).await;
@@ -266,7 +270,11 @@ async fn two_replicas_reject_outages_and_revocation_without_reusing_prior_succes
         let fixture = Fixture::new().await;
         fixture.seed().await;
         let credentials = credentials(&fixture, cookie).await;
-        let second = AuthState::with_store(fixture.auth.mode.clone(), None, fixture.store.clone());
+        let second = AuthState::with_store(
+            fixture.auth.fixture_mode().clone(),
+            None,
+            fixture.store.clone(),
+        );
         let calls = Arc::new(AtomicUsize::new(0));
         let apps = [
             application(fixture.auth.clone(), calls.clone()),

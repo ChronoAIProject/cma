@@ -1,4 +1,3 @@
-import { chooseOptionValue } from '../test/select';
 import { useState } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -7,15 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { AppRoute } from '../routing/routes';
 import type { TriggerPublisherClient } from './client';
 import { TriggerPublisherPage } from './TriggerPublisherPage';
-import {
-  content,
-  descriptor,
-  draft,
-  placement,
-  profiles,
-  published,
-  publisherFixture,
-} from './fixtures';
+import { content, descriptor, draft, placement, published, publisherFixture } from './fixtures';
 
 function RoutedPublisher({
   client,
@@ -44,24 +35,6 @@ async function next(user: ReturnType<typeof userEvent.setup>) {
   const button = screen.getByRole('button', { name: 'Next' });
   await waitFor(() => expect(button).toBeEnabled());
   await user.click(button);
-}
-
-async function selectTargets(user: ReturnType<typeof userEvent.setup>) {
-  const inlineImage = screen.queryByRole('button', { name: 'Image' });
-  if (inlineImage !== null) {
-    await waitFor(() => expect(inlineImage).toBeEnabled());
-    return;
-  }
-  for (const kind of ['sandbox', 'workspace', 'agent'] as const) {
-    const select = screen.getByRole('button', { name: `${kind} profile` });
-    await waitFor(() => expect(select).toBeEnabled());
-    await chooseOptionValue(
-      user,
-      select,
-      `${profiles[kind].id}:${String(profiles[kind].revision)}`,
-    );
-  }
-  await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
 }
 
 async function toPresentation(user: ReturnType<typeof userEvent.setup>) {
@@ -149,7 +122,7 @@ describe('Trigger publisher flow', () => {
     const user = userEvent.setup();
     const test = publisherFixture();
     render(<RoutedPublisher client={test.client} />);
-    await selectTargets(user);
+    await screen.findByRole('heading', { name: 'What it opens' });
     expect(
       screen.getByText(
         'Visitors get an inline Agent from the system default image in an empty workspace.',
@@ -302,7 +275,7 @@ describe('Trigger publisher flow', () => {
     const user = userEvent.setup();
     const test = publisherFixture();
     render(<RoutedPublisher client={test.client} />);
-    await selectTargets(user);
+    await screen.findByRole('heading', { name: 'What it opens' });
     await toPresentation(user);
     await user.type(screen.getByRole('textbox', { name: 'title' }), 'trureturing');
     await next(user);
@@ -325,7 +298,7 @@ describe('Trigger publisher flow', () => {
     const test = publisherFixture();
     const navigate = vi.fn();
     render(<TriggerPublisherPage client={test.client} onNavigate={navigate} />);
-    await selectTargets(user);
+    await screen.findByRole('heading', { name: 'What it opens' });
     await toPresentation(user);
     await user.type(screen.getByRole('textbox', { name: 'title' }), 'Saved draft');
     await user.click(screen.getByRole('button', { name: 'Save draft' }));

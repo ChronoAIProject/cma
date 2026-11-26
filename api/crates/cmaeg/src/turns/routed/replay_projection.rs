@@ -19,6 +19,8 @@ pub(super) struct ReplayProjection {
     projection: Projection,
     thread_reply: bool,
     answer_attempted: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    primary_committed: bool,
     tool_replied: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
@@ -41,6 +43,7 @@ impl ReplayProjection {
             projection: Projection::default(),
             thread_reply: false,
             answer_attempted: false,
+            primary_committed: false,
             tool_replied: false,
         }
     }
@@ -185,9 +188,12 @@ impl ReplayProjection {
                 body.delivery.auto_final && !self.tool_replied,
             )
         });
+        let primary = frame.raw["item"]["cmaeg_delivery"].as_str() == Some("primary_v1")
+            && matches!(outcome, Some(TurnOutcome::MessageCommitted { .. }));
+        self.primary_committed |= primary;
         let text = match outcome {
             Some(TurnOutcome::MessageCommitted { text })
-                if body.delivery.auto_final && !self.tool_replied =>
+                if body.delivery.auto_final && (!self.tool_replied || primary) =>
             {
                 self.answer_attempted = true;
                 Some(text)
@@ -199,7 +205,7 @@ impl ReplayProjection {
                 final_text
             }
             Some(TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. })
-                if !self.tool_replied =>
+                if !self.tool_replied && !self.primary_committed =>
             {
                 Some(failure_text.to_owned())
             }

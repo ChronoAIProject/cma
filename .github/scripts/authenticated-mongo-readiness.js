@@ -2,7 +2,7 @@
 // entrypoint also starts an authenticated temporary server while creating root;
 // successful authentication alone does not mean that final mongod is ready.
 (async () => {
-const replicaName = 'cma-im-contract';
+const replicaName = 'cma-authenticated-contract';
 await db.auth(process.env.MONGO_INITDB_ROOT_USERNAME, process.env.MONGO_INITDB_ROOT_PASSWORD);
 const users = (await db.runCommand({connectionStatus: 1})).authInfo?.authenticatedUsers;
 if (users?.length !== 1 || users[0].user !== process.env.MONGO_INITDB_ROOT_USERNAME

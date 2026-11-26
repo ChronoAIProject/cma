@@ -79,9 +79,9 @@ async fn standing_gate_actor_link_renewal_reaches_other_owner_after_full_deletin
         deleting.push(row);
     }
     let standing = Arc::new(BatchStanding::default());
-    let auth = AuthState::with_store(f.auth.mode.clone(), None, f.store.clone())
+    let auth = AuthState::with_store(f.auth.fixture_mode().clone(), None, f.store.clone())
         .with_account_standing(standing.clone());
-    *auth.metadata.write().await = f.auth.metadata.read().await.clone();
+    *auth.fixture_metadata().write().await = f.auth.fixture_metadata().read().await.clone();
     auth.credential_for_grant(&healthy.link_id, &healthy.actor)
         .await
         .unwrap();

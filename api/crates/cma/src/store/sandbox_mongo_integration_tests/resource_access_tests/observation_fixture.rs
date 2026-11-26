@@ -1,4 +1,6 @@
 use super::*;
+use futures_util::StreamExt;
+use tokio::sync::watch;
 
 pub(super) struct Server {
     pub address: String,
@@ -28,7 +30,7 @@ pub(super) async fn servers_with_capacity(
     enabled: bool,
     capacity: crate::config::RelayCapacityConfig,
 ) -> Vec<Server> {
-    start_servers(f, enabled, enabled, capacity).await
+    start_servers(f, enabled, enabled, capacity, None).await
 }
 
 async fn start_servers(
@@ -36,6 +38,7 @@ async fn start_servers(
     shared_observation: bool,
     bounded_responses: bool,
     capacity: crate::config::RelayCapacityConfig,
+    idle_start: Option<watch::Receiver<bool>>,
 ) -> Vec<Server> {
     let (auth, identity_server) = identity().await;
     let source = Arc::new(
@@ -56,8 +59,9 @@ async fn start_servers(
     }
     let mut servers = Vec::new();
     for index in 0..2 {
-        let replica_auth = crate::auth::AuthState::in_memory(auth.mode.clone(), None);
-        *replica_auth.metadata.write().await = auth.metadata.read().await.clone();
+        let replica_auth = crate::auth::AuthState::in_memory(auth.fixture_mode().clone(), None);
+        *replica_auth.fixture_metadata().write().await =
+            auth.fixture_metadata().read().await.clone();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = format!("http://{}", listener.local_addr().unwrap());
         let coordinator = OwnershipCoordinator::register(
@@ -133,7 +137,18 @@ async fn start_servers(
                 .with_event_wake(false, Duration::from_secs(1)),
         );
         let agui = super::agui_budget_tests::app_with_reads(f, reads.clone(), updates.clone());
-        let router = relay.authenticated_routes(v2.merge(agui).merge(responses), replica_auth);
+        let mut events = v2.merge(agui);
+        if let Some(start) = idle_start.clone() {
+            // The relay must send its admission record before the ingress can
+            // return public headers. Gate only the inner event body.
+            events = events.layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let start = start.clone();
+                    async move { defer_idle_polls(next.run(request).await, start) }
+                },
+            ));
+        }
+        let router = relay.authenticated_routes(events.merge(responses), replica_auth);
         let stall = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let delay = stall.clone();
         let router = router.layer(axum::middleware::from_fn(
@@ -170,13 +185,41 @@ async fn start_servers(
     servers
 }
 
+fn defer_idle_polls(
+    response: axum::response::Response,
+    start: watch::Receiver<bool>,
+) -> axum::response::Response {
+    use axum::http::header::CONTENT_TYPE;
+
+    if !response.status().is_success()
+        || response
+            .headers()
+            .get(CONTENT_TYPE)
+            .is_none_or(|value| value != "text/event-stream")
+    {
+        return response;
+    }
+    // Opening the response has already validated and sought its history.
+    // Polling its body also starts that observer's steady-state Mongo reads.
+    let (parts, body) = response.into_parts();
+    let body = futures_util::stream::unfold(
+        (body.into_data_stream(), start),
+        |(mut body, mut start)| async move {
+            start.wait_for(|ready| *ready).await.ok()?;
+            body.next().await.map(|frame| (frame, (body, start)))
+        },
+    );
+    axum::response::Response::from_parts(parts, axum::body::Body::from_stream(body))
+}
+
 pub(super) async fn budget_servers(f: &Fixture) -> Vec<Server> {
-    budget_servers_with_observation(f, true).await
+    budget_servers_with_observation(f, true, None).await
 }
 
 pub(super) async fn budget_servers_with_observation(
     f: &Fixture,
     shared_observation: bool,
+    idle_start: Option<watch::Receiver<bool>>,
 ) -> Vec<Server> {
     // Production admission deadline; exactly 100 slots detects double admission.
     start_servers(
@@ -187,6 +230,7 @@ pub(super) async fn budget_servers_with_observation(
             limit: 100,
             control_reserve: 0,
         },
+        idle_start,
     )
     .await
 }
@@ -281,7 +325,7 @@ async fn identity() -> (Arc<crate::auth::AuthState>, tokio::task::JoinHandle<()>
         },
         None,
     );
-    *auth.metadata.write().await = Some(serde_json::from_value(json!({
+    *auth.fixture_metadata().write().await = Some(serde_json::from_value(json!({
         "authorization_endpoint":format!("{base}/authorize"), "token_endpoint":format!("{base}/token"),
         "userinfo_endpoint":format!("{base}/userinfo"), "introspection_endpoint":format!("{base}/introspect"),
     })).unwrap());

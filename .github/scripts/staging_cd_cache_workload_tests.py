@@ -20,7 +20,8 @@ RUN = {"id": 42, "run_attempt": 2, "head_sha": SOURCE, "status": "completed", "c
 
 def idle_inventory(*, allocate="success"):
     conclusions = dict.fromkeys(PROVEN_SKIP, "skipped")
-    conclusions.update({"plan": "success", "allocate": allocate, "Report component outcomes": "success"})
+    conclusions.update({"plan": "success", "allocate": allocate, "Publish journey probe": "success",
+                        "Report component outcomes": "success"})
     jobs = [{"id": index, "name": name, "run_id": RUN["id"], "run_attempt": RUN["run_attempt"],
              "head_sha": SOURCE, "status": "completed", "conclusion": conclusions[name]}
             for index, name in enumerate(sorted(conclusions), 1)]
@@ -67,6 +68,9 @@ class CacheWorkloadTests(unittest.TestCase):
 
         for name, job_changes in (
             ("infrastructure", {"conclusion": "success"}),
+            ("Publish protected Web", {"conclusion": "success"}),
+            ("Publish protected Web", {"name": "Publish protected Web / Protect Web rollout / Publish", "conclusion": "success"}),
+            ("Publish journey probe", {"conclusion": "failure"}),
             ("Release am", {"name": "Release am / Publish", "conclusion": "success"}),
             ("Release eg", {"run_attempt": 1}),
             ("Promote web", {"run_id": True}),

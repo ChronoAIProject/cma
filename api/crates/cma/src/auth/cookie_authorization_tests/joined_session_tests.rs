@@ -4,7 +4,7 @@ async fn joined_fixture() -> (Fixture, HeaderMap) {
     let mut fixture = Fixture::new().await;
     Arc::get_mut(&mut fixture.auth)
         .unwrap()
-        .browser_session_join_enabled = true;
+        .enable_fixture_browser_session_join();
     fixture.seed().await;
     fixture.auth.metadata().await.unwrap();
     let cookie = fixture

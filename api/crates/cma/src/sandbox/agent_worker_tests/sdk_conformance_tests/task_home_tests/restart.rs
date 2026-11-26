@@ -14,6 +14,7 @@ struct RuntimeBoundary {
     close_proofs: Option<Arc<AtomicUsize>>,
     restart_supported: Arc<AtomicBool>,
     close_refusal: Arc<Mutex<Option<&'static str>>>,
+    replay_restart_history: bool,
 }
 
 #[async_trait::async_trait]
@@ -90,10 +91,18 @@ impl HostedBackend for RuntimeBoundary {
         settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        let replay_history = self.replay_restart_history && launch.restart_runtime.is_some();
         let (channel, receipt) = self
             .backend
-            .open_agent(handle, launch, resume, settings, updates)
+            .open_agent(handle, launch, resume, settings, updates.clone())
             .await?;
+        if replay_history {
+            owner_stop::replay_retained_history(
+                channel.conversation_id.as_deref().unwrap(),
+                &updates,
+            )
+            .await?;
+        }
         let prompts = self.prompts.clone();
         let lose_response = self.lose_prompt_response;
         let input = ConversationInputSender::spawn(1, move |input| {
@@ -178,6 +187,7 @@ async fn exercise_restart(phase: &str) {
             close_proofs: None,
             restart_supported: Arc::new(AtomicBool::new(false)),
             close_refusal: Arc::new(Mutex::new(None)),
+            replay_restart_history: false,
         }),
         CodexSandboxSpec::default(),
     ));

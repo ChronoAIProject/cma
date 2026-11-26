@@ -20,7 +20,12 @@ async fn local_capacity_survives_cookie_and_bearer_public_projection(cookie: boo
     let f = Fixture::new().await;
     let state = f.seed().await;
     f.auth.metadata().await.unwrap();
-    let permits = f.auth.verification_slots.acquire_many(64).await.unwrap();
+    let permits = f
+        .auth
+        .fixture_verification_slots()
+        .acquire_many(64)
+        .await
+        .unwrap();
     let before = f.control.requests.load(Ordering::SeqCst);
     let (result, failure) = capture(request(&f, &state, cookie)).await;
     assert!(matches!(result, Err(StoreError::Unavailable(_))));
@@ -52,17 +57,17 @@ async fn local_fence_capacity_survives_cookie_and_bearer_public_projection(cooki
     let state = f.seed().await;
     let mut fences = Vec::new();
     for index in 0..1024 {
-        let key = f
-            .auth
-            .identity_store
-            .key(&format!("synthetic-fence-{index}"));
-        fences.push(f.auth.identity_store.token_epoch(&key).unwrap());
+        fences.push(
+            f.auth
+                .fixture_token_epoch(&format!("synthetic-fence-{index}"))
+                .unwrap(),
+        );
     }
     let before = f.control.requests.load(Ordering::SeqCst);
     let (result, failure) = capture(request(&f, &state, cookie)).await;
     assert!(matches!(result, Err(StoreError::Unavailable(_))));
     assert_eq!(f.control.requests.load(Ordering::SeqCst), before);
-    assert_eq!(f.auth.verification_slots.available_permits(), 64);
+    assert_eq!(f.auth.fixture_verification_slots().available_permits(), 64);
     assert_eq!(
         failure,
         Some(Failure::new(Dependency::Local, Reason::Capacity))
@@ -126,7 +131,7 @@ async fn shared_failure_is_retained_in_each_callers_own_context(cookie: bool, ma
     }
     assert!(futures_util::poll!(second.as_mut()).is_pending());
     if !malformed {
-        f.auth.identity_store.invalidate_token(TOKEN);
+        f.auth.invalidate_fixture_token(TOKEN);
     }
     gate.release.notify_one();
     let (first, second) = tokio::join!(first, second);
@@ -194,7 +199,7 @@ async fn shorter_cookie_waiter_deadline_does_not_poison_the_leader() {
     assert!(result.unwrap().is_some());
     assert_eq!(failure, None);
     assert_eq!(hash.as_ref(), "leader-hash");
-    assert_eq!(f.auth.verification_slots.available_permits(), 64);
+    assert_eq!(f.auth.fixture_verification_slots().available_permits(), 64);
 }
 
 #[tokio::test]
@@ -270,7 +275,12 @@ async fn capacity_keeps_public_refusal_and_emits_one_local_counter_per_failed_ca
                     f.auth.clone(),
                     crate::auth::attach_subject,
                 ));
-            let permits = f.auth.verification_slots.acquire_many(64).await.unwrap();
+            let permits = f
+                .auth
+                .fixture_verification_slots()
+                .acquire_many(64)
+                .await
+                .unwrap();
             let before = f.control.requests.load(Ordering::SeqCst);
             let mut request = Request::get("/protected").body(Body::empty()).unwrap();
             *request.headers_mut() = headers.clone();

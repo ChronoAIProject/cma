@@ -1,0 +1,131 @@
+use std::collections::BTreeMap;
+
+const BUNDLE: &str = "CHRONO_FEATURE_SWITCHES";
+
+// Each switch uses the startup lookup on its serving path. Switches that also
+// drive independent environment readers, such as role generation, stay standalone.
+const SUPPORTED: &[&str] = &[
+    "CHRONO_ACCESS_SNAPSHOT_SESSION_ENABLED",
+    "CHRONO_ACCOUNT_DELETION_ENABLED",
+    "CHRONO_ACCOUNT_PRIVACY_EXPORT_ENABLED",
+    "CHRONO_ADMISSION_CEILINGS_WRITES_ENABLED",
+    "CHRONO_ADMISSION_CONTROL_WRITES_ENABLED",
+    "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED",
+    "CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED",
+    "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED",
+    "CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED",
+    "CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED",
+    "CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED",
+    "CHRONO_AGENT_LOG_ACTIVE_PROOFS_ENABLED",
+    "CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED",
+    "CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED",
+    "CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED",
+    "CHRONO_AGENT_MODEL_CREDIT_REQUIRED",
+    "CHRONO_AGENT_OUTPUT_QUIET_COALESCE_ENABLED",
+    "CHRONO_AGENT_RECONCILIATION_VALIDATION_REUSE_ENABLED",
+    "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED",
+    "CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED",
+    "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED",
+    "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED",
+    "CHRONO_AGENT_SESSION_GUIDANCE_V6_ENABLED",
+    "CHRONO_AGENT_SESSION_GUIDANCE_V7_ENABLED",
+    "CHRONO_AGENT_SHARED_OBSERVATION_ENABLED",
+    "CHRONO_AGENT_SKILL_UPGRADE_ENABLED",
+    "CHRONO_AGENT_STARTUP_SIBLING_HOLD_ENABLED",
+    "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED",
+    "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED",
+    "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL",
+    "CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED",
+    "CHRONO_CMAEG_CONTEXT_DIAGNOSTICS_ENABLED",
+    "CHRONO_DOCUMENT_DELETION_ENABLED",
+    "CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED",
+    "CHRONO_DOCUMENT_QUOTAS_ENABLED",
+    "CHRONO_DOCUMENT_RECLAIM_ENABLED",
+    "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
+    "CHRONO_DOCUMENT_SOURCE_COMMITS_ENABLED",
+    "CHRONO_DOCUMENT_STORAGE_RESILIENCE_ENABLED",
+    "CHRONO_GITHUB_CONNECTION_APPROVAL_ENABLED",
+    "CHRONO_GITHUB_CONNECTION_RECOVERY_ENABLED",
+    "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED",
+    "CHRONO_HOME_BACKUP_ENABLED",
+    "CHRONO_HOME_BACKUP_EXPIRY_ENABLED",
+    // Accepted for already-deployed bundles after the service retirement.
+    "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED",
+    "CHRONO_INGRESS_COORDINATOR_ENABLED",
+    "CHRONO_MODEL_BUDGET_WRITES_ENABLED",
+    "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED",
+    "CHRONO_NATIVE_CLOSE_AGENT_LANE_ENABLED",
+    "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED",
+    "CHRONO_PENDING_HOME_RECONCILIATION_ENABLED",
+    "CHRONO_PLATFORM_COUNTER_SHARDS_ENABLED",
+    "CHRONO_PLATFORM_SPEND_WRITES_ENABLED",
+    "CHRONO_PUBLIC_REPOSITORY_SNAPSHOT_ENABLED",
+    "CHRONO_READ_FRAME_BUDGET_ENABLED",
+    "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED",
+    "CHRONO_RETAINED_REOPEN_ENABLED",
+    "CHRONO_RETAINED_REPEAT_REOPEN_ENABLED",
+    "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED",
+    "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",
+    "CHRONO_RUNTIME_IMAGE_ORIGIN_ENABLED",
+    "CHRONO_RUNTIME_MIGRATION_ENABLED",
+    "CHRONO_RUNTIME_POINTER_ENABLED",
+    "CHRONO_RUNTIME_UPDATE_RELAY_BOUNDED_ENABLED",
+    "CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED",
+    "CHRONO_SANDBOX_BATCHED_READS_ENABLED",
+    "CHRONO_SANDBOX_CREATION_OUTCOME_LEGACY_CUSTODY",
+    "CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED",
+    "CHRONO_SANDBOX_RECONCILIATION_RESERVED_LANE_ENABLED",
+    "CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED",
+    "CHRONO_SERVER_RATE_CONTROL_ENABLED",
+    "CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED",
+    "CHRONO_SERVICE_AUTHORIZATION_ENABLED",
+    "CHRONO_SILENT_SIGN_IN_ENABLED",
+    "CHRONO_STALE_TURN_TERMINAL_ENABLED",
+    "CHRONO_STRICT_INACTIVITY_SESSION_EVIDENCE_ENABLED",
+    "CHRONO_USAGE_METRICS_ENABLED",
+    "CHRONO_USAGE_SNAPSHOT_CURSORS_ENABLED",
+    "CHRONO_V2_UI_TRANSPORT_ENABLED",
+    "CHRONO_VISITOR_TWO_SANDBOX_DEFAULTS_ENABLED",
+];
+
+/// Read the optional bundle once, then let each existing reader parse its
+/// effective value. An explicitly set standalone value takes precedence.
+pub(super) fn with_bundle(
+    mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<impl FnMut(&str) -> Result<Option<String>, String>, String> {
+    let raw = lookup(BUNDLE)?.unwrap_or_default();
+    let bundled = parse(raw.trim())?;
+    Ok(move |key: &str| Ok(lookup(key)?.or_else(|| bundled.get(key).map(bool::to_string))))
+}
+
+fn parse(raw: &str) -> Result<BTreeMap<String, bool>, String> {
+    let mut switches = BTreeMap::new();
+    if raw.is_empty() {
+        return Ok(switches);
+    }
+    for (index, entry) in raw.split(',').enumerate() {
+        let invalid = || {
+            format!(
+                "{BUNDLE} entry {} must be CHRONO switch=true or switch=false",
+                index + 1
+            )
+        };
+        let (name, value) = entry.split_once('=').ok_or_else(invalid)?;
+        let name = name.trim();
+        if !SUPPORTED.contains(&name) {
+            return Err(format!(
+                "{BUNDLE} entry {} has an unsupported switch",
+                index + 1
+            ));
+        }
+        let value = match value.trim() {
+            "true" => true,
+            "false" => false,
+            _ => return Err(invalid()),
+        };
+        if switches.insert(name.to_owned(), value).is_some() {
+            return Err(format!("{BUNDLE} entry {} repeats a switch", index + 1));
+        }
+    }
+    Ok(switches)
+}

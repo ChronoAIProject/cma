@@ -82,7 +82,7 @@ async fn legacy_identity_header_preserves_independently_verified_bearers_and_key
         )
         .with_agent_key_service(Some("cma-service".into()))
         .with_resource_request_enabled(enabled);
-        *auth.metadata.write().await = Some(ProviderMetadata {
+        *auth.fixture_metadata().write().await = Some(ProviderMetadata {
             authorization_endpoint: format!("{base}/authorize"),
             token_endpoint: format!("{base}/token"),
             introspection_endpoint: Some(format!("{base}/introspect")),

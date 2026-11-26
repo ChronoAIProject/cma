@@ -105,7 +105,7 @@ describe('Agent navigation during environment updates', () => {
       const onAction = vi.fn();
       const { container } = render(tree({ items: items({ status }), onNavigate, onAction }));
       expect(screen.queryByRole('group', { name: 'Needs attention' })).not.toBeInTheDocument();
-      expect(screen.getByText('1 updates failed · Fix')).toBeVisible();
+      expect(screen.getByText('1 update failed · Fix')).toBeVisible();
       const row = within(
         screen.getByRole('list', { name: 'Environments with failed updates' }),
       ).getByRole('treeitem');
@@ -143,16 +143,16 @@ describe('Agent navigation during environment updates', () => {
     }));
     const mixed = [...items({ status: 'working' }), ...starting];
     const { rerender } = render(tree({ items: mixed, statusFilter: 'all' }));
-    expect(screen.getByText('1 updates failed · Fix').closest('details')).not.toHaveAttribute(
+    expect(screen.getByText('1 update failed · Fix').closest('details')).not.toHaveAttribute(
       'open',
     );
-    await userEvent.click(screen.getByText('1 updates failed · Fix'));
+    await userEvent.click(screen.getByText('1 update failed · Fix'));
     expect(
       screen.getByRole('treeitem', { name: /Agent one.*Runtime update failed/ }),
     ).toBeVisible();
     expect(screen.getByRole('treeitem', { name: /Starting Agent.*Preparing/ })).toBeVisible();
 
-    await userEvent.click(screen.getByText('1 updates failed · Fix'));
+    await userEvent.click(screen.getByText('1 update failed · Fix'));
     rerender(tree({ items: mixed, statusFilter: 'needs_attention' }));
     const failedAgent = screen.getByRole('treeitem');
     expect(failedAgent).toHaveAccessibleName(/Agent one.*Runtime update failed/);
@@ -180,7 +180,7 @@ describe('Agent navigation during environment updates', () => {
     expect(selectedAgent('Agent one')).toHaveAttribute('aria-selected', 'true');
     expect(selectedAgent('Agent one')).toBeVisible();
 
-    await user.click(screen.getByText('1 updates failed · Fix'));
+    await user.click(screen.getByText('1 update failed · Fix'));
     expect(selectedAgent('Agent one')).not.toBeVisible();
 
     view.rerender(draw('agt_two'));

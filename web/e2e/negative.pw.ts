@@ -54,15 +54,12 @@ test('SECURITY-negative visitor cannot create Sandboxes, profiles or Triggers', 
       },
     },
   ];
-  const selected = h.fixture.publicJourneys.owners.owner.image;
-  const image = { id: selected.id, version: selected.version, reference: selected.reference };
   requests.push(
     {
       path: '/api/v1/agents',
       data: {
         name: 'Scoped current refusal probe',
         initial_message: 'Reply once.',
-        image: { id: image.id, version: image.version },
         profile: {
           model: h.fixture.publicJourneys.owners.owner.model,
           reasoning_effort: 'high',

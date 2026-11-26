@@ -99,7 +99,7 @@ def run(binary, application, directory, test_name):
     environment["CMAEG_HOST_APPLICATION"] = str(application)
     environment.update(MONGO_INITDB_ROOT_USERNAME="contract-admin",
                        MONGO_INITDB_ROOT_PASSWORD=secrets.token_hex(24),
-                       CMA_IM_REPLICA_KEY=secrets.token_hex(64))
+                       CMA_AUTHENTICATED_REPLICA_KEY=secrets.token_hex(64))
     started = time.monotonic()
     digest = hashlib.sha256()
     with binary.open("rb") as handle:
@@ -131,10 +131,10 @@ def run(binary, application, directory, test_name):
                  "--pids-limit", "256", "--tmpfs", "/data/db:rw,size=1073741824",
                  "--tmpfs", "/data/configdb:rw,size=16777216",
                  "--env", "MONGO_INITDB_ROOT_USERNAME", "--env", "MONGO_INITDB_ROOT_PASSWORD",
-                 "--env", "CMA_IM_REPLICA_KEY", "--entrypoint", "sh", IMAGE, "-c",
-                 'umask 077; printf "%s" "$CMA_IM_REPLICA_KEY" > /tmp/replica-key; '
+                 "--env", "CMA_AUTHENTICATED_REPLICA_KEY", "--entrypoint", "sh", IMAGE, "-c",
+                 'umask 077; printf "%s" "$CMA_AUTHENTICATED_REPLICA_KEY" > /tmp/replica-key; '
                  'chown mongodb:mongodb /tmp/replica-key; exec docker-entrypoint.sh mongod '
-                 '--replSet cma-im-contract --keyFile /tmp/replica-key '
+                 '--replSet cma-authenticated-contract --keyFile /tmp/replica-key '
                  '--wiredTigerCacheSizeGB 0.25 --oplogSize 64'],
                 environment, timeout=60)
         phase = "mongo_initialize"
@@ -155,7 +155,7 @@ def run(binary, application, directory, test_name):
         if host != "127.0.0.1" or not port.isdigit():
             raise FixtureError("nonlocal_mongo_refused")
         password = environment["MONGO_INITDB_ROOT_PASSWORD"]
-        environment["CMA_IM_TEST_MONGODB_URI"] = f"mongodb://contract-admin:{password}@{endpoint}/admin?directConnection=true"
+        environment["CMA_AUTHENTICATED_TEST_MONGODB_URI"] = f"mongodb://contract-admin:{password}@{endpoint}/admin?directConnection=true"
         phase = "test_spawn"
         temporary = tempfile.mkdtemp(prefix="process-fixture-", dir=directory)
         environment["TMPDIR"] = temporary

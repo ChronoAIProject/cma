@@ -5,13 +5,10 @@ export function currentTriggerTarget(
   fixture: StagingFixtures,
   role: PublisherRole,
   systemPrompt = '',
-  managedImage = false,
 ): TriggerInlineTarget {
   const owner = fixture.publicJourneys.owners[role];
-  const { id, version, reference } = owner.image;
   const repository = fixture.publicJourneys.repository;
   return {
-    ...(managedImage ? {} : { image: { id, version, reference } }),
     agent: {
       model: owner.model,
       reasoning_effort: role === 'owner' ? 'high' : 'medium',

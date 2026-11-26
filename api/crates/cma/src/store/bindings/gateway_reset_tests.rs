@@ -167,8 +167,8 @@ mod gateway_reset_tests {
                 "roles":[{"role":"cma_eg_runtime","db":database.name()}]})
                 .await
                 .unwrap();
-            let uri = std::env::var("CMA_IM_TEST_MONGODB_URI")
-                .expect("run image-manager-mongo-contract.sh am for authenticated Mongo");
+            let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI")
+                .expect("run authenticated-mongo-contract.sh am for authenticated Mongo");
             let mut uri = reqwest::Url::parse(&uri).expect("valid authenticated Mongo fixture URI");
             uri.set_username("runtime").unwrap();
             uri.set_password(Some(&password)).unwrap();
@@ -331,7 +331,7 @@ mod gateway_reset_tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires image-manager-mongo-contract.sh am and the compiled gateway"]
+    #[ignore = "requires authenticated-mongo-contract.sh am and the compiled gateway"]
     async fn configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors() {
         let (client, database, store, binding, old) = super::fixture().await;
         let mut scope = binding.clone();

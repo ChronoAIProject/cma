@@ -161,7 +161,7 @@ impl<S: FixtureStore> BootstrapHarness<S> {
         created.creation().agent.clone()
     }
 
-    async fn ready(&self) {
+    async fn activate_sandbox(&self) {
         let h = &self.harness;
         // Publishing a ready Workspace requires an installing or active Sandbox.
         let current = h
@@ -176,6 +176,11 @@ impl<S: FixtureStore> BootstrapHarness<S> {
             .save_sandbox(current.revision, parent)
             .await
             .unwrap();
+    }
+
+    async fn ready(&self) {
+        self.activate_sandbox().await;
+        let h = &self.harness;
         let current = h
             .store
             .get_workspace(&h.workspace.id)

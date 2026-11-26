@@ -4,7 +4,9 @@ use super::support::{
 };
 use super::*;
 use layer2_core::sandbox::store::{AgentWorkMutation, AgentWorkPublication, VersionedWorktree};
-use layer2_core::sandbox::{Sandbox, SandboxStatus, Workspace, WorkspaceStatus, Worktree};
+use layer2_core::sandbox::{
+    AgentStatus, Sandbox, SandboxStatus, Workspace, WorkspaceOrigin, WorkspaceStatus, Worktree,
+};
 
 impl AgentWorker {
     pub(super) async fn unstarted_lineage(
@@ -44,14 +46,22 @@ impl AgentWorker {
             let changed = readiness.notified();
             tokio::pin!(changed);
             changed.as_mut().enable();
-            let at = now + started.elapsed();
             let Some(current) = self.dependencies.store.get_agent(&agent.id).await? else {
                 return Ok(());
             };
-            if !same_publication_claim(&agent, &current, &self.config.holder, at) {
+            if !same_publication_claim(
+                &agent,
+                &current,
+                &self.config.holder,
+                now + started.elapsed(),
+            ) {
                 return Ok(());
             }
             let (parent, workspace, worktree) = self.unstarted_lineage(&current).await?;
+            let at = now + started.elapsed();
+            if !same_publication_claim(&agent, &current, &self.config.holder, at) {
+                return Ok(());
+            }
             if matches!(
                 parent.status,
                 SandboxStatus::Failed | SandboxStatus::Retiring | SandboxStatus::Retired
@@ -75,24 +85,28 @@ impl AgentWorker {
                     )
                     .await;
             }
-            let ready = parent.status == SandboxStatus::Active
-                && parent.credential.delivered
-                && parent.lifecycle.operation.is_none()
-                && parent.lifecycle.checkpoint_capture.is_none()
-                && workspace.status == WorkspaceStatus::Ready;
             let parents = PublicationParents {
                 sandbox: parent,
                 workspace,
                 worktree,
             };
-            if ready {
+            if workspace_can_bind(&parents) {
                 return self.bind_workspace(current, parents, at).await;
             }
             let remaining = budget.saturating_sub(started.elapsed());
             if remaining.is_zero() {
                 // The bounded observation already paced this expected wait. Keep
                 // it due so committed parent readiness can wake it.
-                return self.defer_workspace(current, parents, at, false).await;
+                return match self
+                    .defer_workspace(current.clone(), parents.clone(), at, false)
+                    .await
+                {
+                    Err(SandboxStoreError::Conflict) => {
+                        self.recover_workspace_wait(current, parents, now + started.elapsed())
+                            .await
+                    }
+                    result => result,
+                };
             }
             tokio::select! {
                 _ = &mut changed => {},
@@ -100,6 +114,63 @@ impl AgentWorker {
                 _ = tokio::time::sleep(Duration::from_millis(250).min(remaining)) => {},
             }
         }
+    }
+
+    async fn recover_workspace_wait(
+        &self,
+        original: Agent,
+        observed: PublicationParents,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let started = tokio::time::Instant::now();
+        let mut requeue_parent = observed.clone();
+        // Credential delivery, Workspace readiness and Sandbox activation can
+        // publish on different replicas while the original wait is requeued.
+        for _ in 0..3 {
+            let Some(current) = self.dependencies.store.get_agent(&original.id).await? else {
+                return Ok(());
+            };
+            if !same_publication_claim(
+                &original,
+                &current,
+                &self.config.holder,
+                now + started.elapsed(),
+            ) {
+                return Ok(());
+            }
+            let (sandbox, workspace, worktree) = self.unstarted_lineage(&current).await?;
+            let at = now + started.elapsed();
+            if !same_publication_claim(&original, &current, &self.config.holder, at) {
+                return Ok(());
+            }
+            let parents = PublicationParents {
+                sandbox,
+                workspace,
+                worktree,
+            };
+            // A bind can reuse this claim only under its original authority.
+            // The fallback below publishes only an effect-free lease release.
+            if workspace_can_bind(&parents) && observed.workspace_became_ready(&parents, &current) {
+                return self.bind_workspace(current, parents, at).await;
+            }
+            if !bootstrap_advanced(&requeue_parent, &parents, &current) {
+                return Err(SandboxStoreError::Conflict);
+            }
+            tracing::debug!(
+                agent_id = %current.id,
+                sandbox_revision = parents.sandbox.revision,
+                workspace_revision = parents.workspace.revision,
+                "Requeueing Agent startup after concurrent parent preparation"
+            );
+            match self
+                .defer_workspace(current, parents.clone(), at, false)
+                .await
+            {
+                Err(SandboxStoreError::Conflict) => requeue_parent = parents,
+                result => return result,
+            }
+        }
+        Err(SandboxStoreError::Conflict)
     }
 
     async fn defer_workspace(
@@ -201,4 +272,73 @@ impl AgentWorker {
             }
         }
     }
+}
+
+fn workspace_can_bind(parents: &PublicationParents) -> bool {
+    let sandbox = &parents.sandbox;
+    sandbox.status == SandboxStatus::Active
+        && sandbox.credential.delivered
+        && sandbox.lifecycle.operation.is_none()
+        && sandbox.lifecycle.checkpoint_capture.is_none()
+        && parents.workspace.status == WorkspaceStatus::Ready
+}
+
+// Only the original cold-start lineage can become due again on these fresh
+// observations. The next claim repeats all authority checks before binding.
+fn bootstrap_advanced(
+    observed: &PublicationParents,
+    current: &PublicationParents,
+    agent: &Agent,
+) -> bool {
+    let before = &observed.sandbox;
+    let after = &current.sandbox;
+    let workspace = &current.workspace;
+    matches!(
+        (before.status, after.status),
+        (
+            SandboxStatus::Provisioning,
+            SandboxStatus::Provisioning | SandboxStatus::Installing | SandboxStatus::Active
+        ) | (
+            SandboxStatus::Installing,
+            SandboxStatus::Installing | SandboxStatus::Active
+        ) | (SandboxStatus::Active, SandboxStatus::Active)
+    ) && agent.status == AgentStatus::Starting
+        && agent.work.step == AgentWorkStep::WaitForWorkspace
+        && after.lifecycle.operation.is_none()
+        && after.lifecycle.checkpoint_capture.is_none()
+        && after.lifecycle.suspended_runtime.is_none()
+        && after.retired_at.is_none()
+        && after.failure.is_none()
+        && (after.status != SandboxStatus::Active || after.credential.delivered)
+        && after.origin == before.origin
+        && after.profile == before.profile
+        && !after.retirement_archive_pending()
+        && before
+            .runtime
+            .as_ref()
+            .is_none_or(|runtime| after.runtime.as_ref() == Some(runtime))
+        && (!before.credential.delivered || after.credential.delivered)
+        && matches!(workspace.origin, WorkspaceOrigin::SandboxProfile { .. })
+        && workspace.origin_matches_sandbox_profile(after)
+        && workspace.origin == observed.workspace.origin
+        && workspace.profile == observed.workspace.profile
+        && workspace.source == observed.workspace.source
+        && observed
+            .workspace
+            .resolved_commit
+            .as_ref()
+            .is_none_or(|commit| workspace.resolved_commit.as_ref() == Some(commit))
+        && (observed.workspace.status != WorkspaceStatus::Ready
+            || workspace.status == WorkspaceStatus::Ready)
+        && matches!(
+            workspace.status,
+            WorkspaceStatus::Preparing | WorkspaceStatus::Ready
+        )
+        && workspace.failed.is_none()
+        && workspace.removed_at.is_none()
+        && current.worktree == observed.worktree
+        && current.worktree.base_commit.is_empty()
+        && after.revision >= before.revision
+        && workspace.revision >= observed.workspace.revision
+        && (after.revision > before.revision || workspace.revision > observed.workspace.revision)
 }

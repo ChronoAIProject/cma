@@ -1,6 +1,26 @@
 {
   "components": {
     "schemas": {
+      "AcceptedAnswerRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "item_id": {
+            "type": "string"
+          },
+          "message": {
+            "$ref": "#/components/schemas/OutboundMessage"
+          },
+          "response_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "response_id",
+          "item_id",
+          "message"
+        ],
+        "type": "object"
+      },
       "AcceptedStatus": {
         "enum": [
           "accepted"
@@ -780,6 +800,103 @@
           "destructive",
           "idempotent",
           "open_world"
+        ],
+        "type": "object"
+      },
+      "AnswerDispatch": {
+        "enum": [
+          "not_dispatched",
+          "attempted",
+          "indeterminate"
+        ],
+        "type": "string"
+      },
+      "AnswerOutcome": {
+        "enum": [
+          "confirmed",
+          "rejected",
+          "unknown"
+        ],
+        "type": "string"
+      },
+      "AnswerReason": {
+        "enum": [
+          "platform_confirmed",
+          "refused_before_dispatch",
+          "platform_refused",
+          "partial_delivery",
+          "delivery_unconfirmed"
+        ],
+        "type": "string"
+      },
+      "AnswerReceipt": {
+        "properties": {
+          "answer": {
+            "$ref": "#/components/schemas/AnswerReceiptLookup"
+          },
+          "result": {
+            "$ref": "#/components/schemas/AnswerReceiptResult"
+          }
+        },
+        "required": [
+          "answer",
+          "result"
+        ],
+        "type": "object"
+      },
+      "AnswerReceiptLookup": {
+        "additionalProperties": false,
+        "properties": {
+          "binding_id": {
+            "$ref": "#/components/schemas/BindingId"
+          },
+          "channel_id": {
+            "$ref": "#/components/schemas/ChannelId"
+          },
+          "event_id": {
+            "$ref": "#/components/schemas/EventId"
+          },
+          "item_id": {
+            "type": "string"
+          },
+          "response_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel_id",
+          "binding_id",
+          "event_id",
+          "response_id",
+          "item_id"
+        ],
+        "type": "object"
+      },
+      "AnswerReceiptResult": {
+        "properties": {
+          "delivery_id": {
+            "type": "string"
+          },
+          "dispatch": {
+            "$ref": "#/components/schemas/AnswerDispatch"
+          },
+          "outcome": {
+            "$ref": "#/components/schemas/AnswerOutcome"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/AnswerReason"
+          },
+          "settled_at": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "delivery_id",
+          "settled_at",
+          "dispatch",
+          "outcome",
+          "reason"
         ],
         "type": "object"
       },
@@ -10982,6 +11099,51 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/accepted-answer-receipts/lookup": {
+      "post": {
+        "operationId": "readAcceptedAnswerReceipt",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerReceiptLookup"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnswerReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "provider integration"
+        ]
+      }
+    },
     "/callbacks/{channel_id}": {
       "post": {
         "operationId": "receiveRelayCallback",
@@ -15448,6 +15610,61 @@
         ],
         "tags": [
           "connections"
+        ]
+      }
+    },
+    "/reply-targets/{reply_target_ref}/accepted-answer": {
+      "post": {
+        "operationId": "replyAcceptedAnswerToTarget",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reply_target_ref",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AcceptedAnswerRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentReceipt"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "agentBearer": []
+          }
+        ],
+        "tags": [
+          "provider integration"
         ]
       }
     },

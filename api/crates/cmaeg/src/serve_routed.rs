@@ -87,6 +87,8 @@ pub(crate) async fn compose(
     let mut journal = Journal::new((*state.records).clone(), state.master_keys.clone())
         .with_activity(state.activity.clone())
         .with_execution_verifiers(state.providers.execution_verifiers.clone());
+    journal.accepted_answer_receipts =
+        config.routing.accepted_answer_receipts_enabled && deps.partitions.is_some();
     if let Some(partitions) = &deps.partitions {
         plans = plans.with_admission_queue(Arc::new(partitions.clone()));
         journal = journal.with_partitions(partitions.clone());
