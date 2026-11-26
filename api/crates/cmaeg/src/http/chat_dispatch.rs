@@ -7,6 +7,7 @@ use crate::ingress::{
     admission::Refusal,
     launch::{LaunchOutcome, LaunchRequest},
     relay::{facts::CallbackFacts, VerificationError},
+    routed::TARGET_UNKNOWN,
     IngressState,
 };
 use crate::telemetry::timing::IngressTiming;
@@ -15,7 +16,12 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use cmaeg_core::problem::ProblemCode;
+use cmaeg_core::{
+    activity::SourceKind,
+    channel::Platform,
+    problem::ProblemCode,
+    seal::{EventRef, ReplyAddress},
+};
 use tokio::sync::OwnedSemaphorePermit;
 /// Everything an admitted chat turn needs once its request has been released.
 ///
@@ -124,6 +130,26 @@ pub(crate) async fn dispatch(
             error.detail.unwrap_or_default(),
         );
     }
+    let telegram_refusal = matches!(
+        request.activity.source,
+        SourceKind::NyxidRelay {
+            platform: Platform::Telegram,
+            ..
+        }
+    )
+    .then(|| {
+        let definition = &request.channel.definition;
+        let notice = definition
+            .routing
+            .as_ref()
+            .filter(|policy| policy.addressing.command && policy.addressing.unknown_target_notice)
+            .map(|_| request.event_ref.clone());
+        (
+            definition.record_id.clone(),
+            request.activity.event_id.clone(),
+            notice,
+        )
+    });
     request.timing = Some(timing);
     let event_id = request.activity.event_id.to_string();
     let conversation_id = request.conversation_id.to_string();
@@ -147,6 +173,18 @@ pub(crate) async fn dispatch(
         )
             .into_response(),
         LaunchOutcome::Refused(error) => {
+            if error.code == ProblemCode::AdmissionRefused
+                && error.detail.as_deref() == Some(TARGET_UNKNOWN)
+            {
+                if let Some((record, event, notice)) = telegram_refusal {
+                    state
+                        .activity
+                        .refused(&record, "nyxid_relay", Some(&event), TARGET_UNKNOWN);
+                    if let Some(reference) = notice {
+                        explain_unknown_target(&state, &reference).await;
+                    }
+                }
+            }
             let retry = error.code == ProblemCode::ProviderBusy;
             let mut response = problem_document(error);
             if retry {
@@ -157,4 +195,41 @@ pub(crate) async fn dispatch(
             response
         }
     }
+}
+
+async fn explain_unknown_target(state: &IngressState, reference: &EventRef) {
+    use crate::delivery::relay_client::Credential;
+
+    let (Some(relay), Ok(_permit)) = (&state.routing_notice_relay, state.inflight.try_acquire())
+    else {
+        return;
+    };
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let Ok(opened) = reference.open(&state.master_keys, now) else {
+        return;
+    };
+    let address = &opened.payload.reply;
+    let ReplyAddress::NyxidRelay {
+        platform: Platform::Telegram,
+        reply_token,
+        reply_token_expires_at,
+        ..
+    } = address
+    else {
+        return;
+    };
+    if *reply_token_expires_at <= now {
+        return;
+    }
+    let outcome = relay
+        .send(
+            address,
+            Credential::ReplyToken(reply_token),
+            "Unknown target. Check the Consumer name and try again.",
+        )
+        .await;
+    tracing::debug!(
+        outcome = outcome.kind(),
+        "Telegram routing notice completed"
+    );
 }
