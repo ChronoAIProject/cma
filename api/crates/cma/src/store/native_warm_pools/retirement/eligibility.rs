@@ -27,6 +27,16 @@ pub(super) fn owned_home(
     {
         return Ok(Owned::Blocked);
     }
+    // Two Desktop sizing plans can use the same image. Once a durable home
+    // has selected another exact pool, its image alone does not reserve spare
+    // capacity from the superseded plan.
+    if target.machine && target.plan.spec.image.uri == image {
+        if let Some(native) = home.and_then(|home| home.native_pool.as_ref()) {
+            if selected_other_pool(target, &native.request.pool)? {
+                return Ok(Owned::Unrelated);
+            }
+        }
+    }
     // A completed cold-canary home uses its own pool even when its image
     // matches an ordinary target. Keep the image fence for incomplete homes.
     if !target.plan.spec.cold_canary
@@ -101,19 +111,48 @@ pub(super) fn owned_home(
         .ok_or(WarmPoolError::Conflict)
 }
 
-pub(super) fn warm_blocks(warm: &WarmSandbox, target: &PoolTarget) -> bool {
+fn selected_other_pool(
+    target: &PoolTarget,
+    pool: &NativePoolBinding,
+) -> Result<bool, WarmPoolError> {
+    if pool.config_sha256 == target.plan.config_sha256 {
+        return Ok(false);
+    }
+    if target
+        .binding
+        .as_ref()
+        .is_some_and(|binding| binding.uid == pool.uid || binding.name == pool.name)
+    {
+        return Err(WarmPoolError::Conflict);
+    }
+    Ok(true)
+}
+
+pub(super) fn warm_blocks(
+    warm: &WarmSandbox,
+    target: &PoolTarget,
+    image: &str,
+) -> Result<bool, WarmPoolError> {
     if matches!(
         warm.state,
         WarmSandboxState::Claimed | WarmSandboxState::Retired
     ) {
-        return false;
+        return Ok(false);
     }
-    warm.plan.runtime_version == target.plan.spec.image.uri
-        || warm
-            .home
-            .as_ref()
-            .and_then(|h| h.native_pool.as_ref())
-            .is_some_and(|n| n.request.pool.config_sha256 == target.plan.config_sha256)
+    let native = warm
+        .home
+        .as_ref()
+        .and_then(|home| home.native_pool.as_ref());
+    if target.machine && target.plan.spec.image.uri == image {
+        if let Some(native) = native {
+            if selected_other_pool(target, &native.request.pool)? {
+                return Ok(false);
+            }
+        }
+    }
+    Ok(warm.plan.runtime_version == target.plan.spec.image.uri
+        || native
+            .is_some_and(|native| native.request.pool.config_sha256 == target.plan.config_sha256))
 }
 
 /// An adopted home cannot consume another spare. Its original definitions may
