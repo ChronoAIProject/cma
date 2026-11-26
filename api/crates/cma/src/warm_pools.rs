@@ -20,6 +20,8 @@ use sha2::{Digest, Sha256};
 mod candidate;
 mod current;
 mod defaults;
+mod holds;
+pub(crate) use holds::DefaultPoolHolds;
 mod released;
 mod retirement;
 pub(crate) mod startup;
@@ -83,6 +85,13 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     }
     async fn activate(&self, _id: &str) -> Result<(), WarmPoolError> {
         Err(WarmPoolError::Unavailable)
+    }
+    async fn default_pin_conflicts(
+        &self,
+        _plan: &NativePoolConfiguration,
+        _machine: bool,
+    ) -> Result<bool, WarmPoolError> {
+        Ok(false)
     }
     async fn retirement_homes(
         &self,
@@ -162,6 +171,7 @@ pub(crate) struct NativeWarmPools {
     machine_target: u32,
     target_fencing: bool,
     allow_empty_startup: bool,
+    default_holds: Arc<DefaultPoolHolds>,
 }
 
 impl NativeWarmPools {
@@ -185,6 +195,7 @@ impl NativeWarmPools {
             machine_target,
             target_fencing: false,
             allow_empty_startup: false,
+            default_holds: Arc::default(),
         })
         .with_target_fencing(false)
     }
@@ -193,27 +204,6 @@ impl NativeWarmPools {
     pub(crate) fn with_target_fencing(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
         Arc::make_mut(&mut self).target_fencing = enabled;
         self
-    }
-
-    async fn reconcile_one(&self) -> Result<bool, WarmPoolError> {
-        let Some(provider) = self.adapter.native_pools() else {
-            return Ok(false);
-        };
-        let Some(target) = self.store.claim().await? else {
-            return Ok(false);
-        };
-        if target.retiring {
-            return self.retire_claimed(provider, target).await;
-        }
-        if !self.current_plan(&target)? {
-            if !self.store.candidate_protected(&target).await? {
-                return self.retire_claimed(provider, target).await;
-            }
-            return self.reconcile_candidate(provider, target).await;
-        }
-        reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing)
-            .await
-            .map(|_| true)
     }
 }
 
@@ -292,6 +282,9 @@ impl WarmPoolAdministration for NativeWarmPools {
         if let Some(existing) = self.store.find(&id).await? {
             return replay(existing, &body).map(|target| target.view(None, true));
         }
+        if self.default_holds.lane(false) {
+            return Err(WarmPoolError::Conflict);
+        }
         let provider = self
             .adapter
             .native_pools()
@@ -344,17 +337,17 @@ impl WarmPoolAdministration for NativeWarmPools {
         }
         // Only a resize of the current machine plan is the operator's desired
         // machine count; zeroing superseded capacity merely drains it.
+        let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
+        if self.default_holds.lane(target.machine) {
+            return Err(WarmPoolError::Conflict);
+        }
         let operator_choice = if body.target_replicas > 0 {
-            let target = self.store.find(id).await?.ok_or(WarmPoolError::NotFound)?;
             if !self.current_plan(&target)? {
                 return Err(WarmPoolError::Conflict);
             }
             target.machine
         } else {
-            match self.store.find(id).await? {
-                Some(target) => target.machine && matches!(self.current_plan(&target), Ok(true)),
-                None => false,
-            }
+            target.machine && matches!(self.current_plan(&target), Ok(true))
         };
         let target = self.store.resize(id, &body, operator_choice).await?;
         Ok(target.view(None, true))

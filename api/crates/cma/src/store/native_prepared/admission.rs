@@ -33,6 +33,9 @@ pub(in crate::store) async fn claim_ready(
         .environment_variables
         .iter()
         .any(|e| e.name == "CMA_MACHINE_INCLUDED" && e.value == "1");
+    if store.default_pool_holds.lane(machine) {
+        return Ok(ClaimOutcome::Miss("miss_default_pool_held"));
+    }
     let target_id = if machine { "machine-target" } else { "target" };
     let Some(target) = store
         .native_prepared

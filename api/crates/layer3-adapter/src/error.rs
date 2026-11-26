@@ -35,6 +35,9 @@ pub enum AdapterError {
     NativeClaimNotReady(crate::agent_sandbox::NativeClaimGuardReason),
     #[error("runtime rejected request: {0}")]
     Rejected(String),
+    /// The admitted identity is intact, but the provider's current spec differs.
+    #[error("Sandbox spec differs from its admitted configuration")]
+    AdmittedSandboxSpecDrift,
     #[error("native pool or template differs from its recorded configuration")]
     NativePoolConfigurationDrift,
     #[error("recorded native definitions absent (pool={pool}, template={template})")]
@@ -96,6 +99,7 @@ impl AdapterError {
             held @ Self::RuntimeStartupHold(_) => held,
             guarded @ Self::NativeClaimNotReady(_) => guarded,
             Self::Rejected(message) => context(Self::Rejected, message, detail),
+            Self::AdmittedSandboxSpecDrift => Self::AdmittedSandboxSpecDrift,
             Self::NativePoolConfigurationDrift => Self::NativePoolConfigurationDrift,
             absent @ Self::NativePoolDefinitionAbsent { .. } => absent,
             Self::AccessRevoked => Self::AccessRevoked,
