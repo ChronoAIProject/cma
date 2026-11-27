@@ -333,9 +333,9 @@ pub use conversation::{
     AgentUpdateRecorder, MAX_DURABLE_AGENT_MESSAGE_BYTES,
 };
 pub use conversation_recorder::{
-    AgentHeadSubscription, AgentLiveDelivery, AgentLiveError, AgentLiveFragment,
-    AgentLiveFragmentKind, AgentLivePublisher, AgentLiveSource, AgentLiveSubscription,
-    AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
+    AgentHeadSubscription, AgentLiveDelivery, AgentLiveError, AgentLiveEvent, AgentLiveFragment,
+    AgentLiveFragmentKind, AgentLiveInterruption, AgentLivePublisher, AgentLiveSource,
+    AgentLiveSubscription, AgentOutputCoalescePolicy, DurableAgentUpdateRecorder,
 };
 pub use credential::{
     InitialServiceConnection, RepositoryCredentialRequirement, SandboxCredentialAuthority,

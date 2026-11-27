@@ -177,10 +177,54 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 2, steps[index.call('Retain complete layer detector evidence')]['timeout-minutes']
   end
 
+  def test_native_image_handoff_precedes_publisher_with_read_only_authority
+    release = workflow('staging-release').fetch('jobs')
+    producer = release.fetch('native')
+    assert_equal './.github/workflows/staging-native-image.yml', producer.fetch('uses')
+    condition = producer.fetch('if')
+    output, status = Open3.capture2e('node', '-e', <<~JS)
+      for (const component of ['am', 'runtime', 'runtime-omarchy', 'web', 'eg']) {
+        for (const bounded of ['true', 'false']) {
+          for (const writer of ['true', 'false']) {
+            const vars = { CMA_STAGING_RELEASE_ARCHIVE_HANDOFF: 'true',
+              CMA_BOUNDED_LAYER_CACHE: bounded, CMA_LAYER_CACHE_WRITER_FLOOR: writer };
+            const inputs = { component, protected_web: false };
+            const runtime = component.startsWith('runtime');
+            const expected = component === 'am' || (runtime && (bounded === 'false' || writer === 'false'));
+            if (Boolean(#{condition}) !== expected) throw new Error([component, bounded, writer]);
+          }
+        }
+      }
+    JS
+    assert status.success?, output
+    assert_equal({ 'contents' => 'read', 'actions' => 'read' }, producer.fetch('permissions'))
+    publish = release.fetch('publish')
+    assert_equal 'native', publish.fetch('needs')
+    assert_includes publish.fetch('if'), "needs.native.result == 'success'"
+    local = publish.fetch('steps').find { |step| step['id'] == 'producer' }
+    assert_includes local.fetch('if'), "needs.native.outputs.artifact == ''"
+    publication = publish.fetch('steps').find { |step| step['id'] == 'publication' }
+    assert_equal '${{ needs.native.outputs.artifact }}', publication.dig('env', 'CD_NATIVE_IMAGE_ARTIFACT')
+
+    workflow_job = workflow('staging-native-image').fetch('jobs').fetch('build')
+    assert_includes workflow_job.fetch('if'), '.github/workflows/staging-cd.yml@refs/heads/develop'
+    assert_equal '${{ github.sha }}', workflow_job.fetch('steps').first.dig('with', 'ref')
+    steps = workflow_job.fetch('steps')
+    tested = steps.index { |step| step['id'] == 'producer' }
+    upload = steps.index { |step| step['id'] == 'upload' }
+    assert_operator tested, :<, upload
+    assert_equal "steps.producer.outputs.native_path != ''", steps[upload]['if']
+    assert_equal '${{ steps.producer.outputs.native_name }}', steps[upload].dig('with', 'name')
+    assert_equal '${{ steps.producer.outputs.native_path }}', steps[upload].dig('with', 'path')
+    refute steps[upload].dig('with', 'overwrite')
+  end
+
   # A setup step with no bound once held the staging queue for five hours: the
   # publish job allows 300 minutes for builds, and a stalled apt mirror used it all.
   def test_every_release_step_is_bounded_well_inside_its_job
     workflow('staging-release')['jobs'].each do |name, job|
+      next if job.key?('uses')
+
       limit = job.fetch('timeout-minutes').to_i
       job.fetch('steps').each do |step|
         label = step['name'] || step['uses']

@@ -101,6 +101,15 @@ async fn run() -> Result<(), String> {
 thread_local! { static TRAP_SERVING_STARTUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
+    if arguments.len() == 1 && arguments[0] == "--print-build-info" {
+        let version = option_env!("CHRONO_BUILD").ok_or("Runtime build version is missing")?;
+        let source_sha = option_env!("CHRONO_BUILD_SHA").ok_or("Runtime source SHA is missing")?;
+        println!(
+            "{}",
+            serde_json::json!({"version": version, "source_sha": source_sha})
+        );
+        return Ok(());
+    }
     if arguments
         .first()
         .is_some_and(|arg| arg == "--inspect-restored-home")

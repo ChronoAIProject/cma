@@ -295,7 +295,9 @@ class ProducerTests(unittest.TestCase):
         release = yaml.safe_load((workflows / 'staging-release.yml').read_text())
         publisher = release['jobs']['publish']
         self.assertEqual(publisher['cache-mode'], 'read')
-        self.assertEqual(set(release['jobs']), {'publish', 'finalize'})
+        self.assertEqual(set(release['jobs']), {'native', 'publish', 'finalize'})
+        self.assertEqual(release['jobs']['native']['permissions'], {'contents': 'read', 'actions': 'read'})
+        self.assertEqual(publisher['needs'], 'native')
         step = next(s for s in publisher['steps'] if s.get('id') == 'seal-layer-archive')
         self.assertIn("vars.CMA_BOUNDED_LAYER_CACHE == 'true'", step['if'])
         self.assertIn('success()', step['if'])

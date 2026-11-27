@@ -27,7 +27,7 @@ impl SandboxResourceReader for MissingResourceAccess {
     }
 }
 
-async fn share(f: &Fixture) -> ResourceShare {
+pub(super) async fn share(f: &Fixture) -> ResourceShare {
     f.access
         .change_share(
             &context("owner-a"),
@@ -197,12 +197,12 @@ async fn live_fragments_require_exact_runtime_turn_and_caught_up_anchor() {
             _ => unreachable!(),
         }
         open.held = Some(value.into());
-        open.queue_live();
+        open.queue_live(false);
         assert!(open.pending.is_empty(), "{fault}");
         assert_eq!(open.held.is_some(), fault == "future");
     }
     open.held = Some(valid.into());
-    open.queue_live();
+    open.queue_live(false);
     assert_eq!(open.pending.len(), 1);
     assert!(open.pending[0].live);
 }
@@ -232,7 +232,7 @@ async fn live_observation_time_is_real_and_negotiated_without_changing_old_frame
         open.live_timestamps = preferred;
         let before = layer2_core::now_rfc3339();
         open.held = Some(fragment(&open).into());
-        open.queue_live();
+        open.queue_live(false);
         let after = layer2_core::now_rfc3339();
         let mut body = response(open).into_body().into_data_stream();
         let bytes = body.next().await.unwrap().unwrap();
@@ -266,7 +266,7 @@ async fn live_observation_time_is_real_and_negotiated_without_changing_old_frame
 async fn buffered_live_text_survives_a_commit_and_follows_durable_catch_up() {
     let (mut open, f) = following().await;
     open.held = Some(fragment(&open).into());
-    open.queue_live();
+    open.queue_live(false);
     let frame = open.pending.pop_front().unwrap();
     append(
         &f.store,
@@ -358,7 +358,7 @@ async fn deferred_live_batch_preserves_current_first_and_coalesced_order() {
 async fn deferred_fill_failure_reaches_the_typed_stream_error() {
     let (mut open, f) = following().await;
     open.held = Some(fragment(&open).into());
-    open.queue_live();
+    open.queue_live(false);
     let frame = open.pending.pop_front().unwrap();
     append(
         &f.store,
@@ -378,7 +378,7 @@ async fn deferred_fill_failure_reaches_the_typed_stream_error() {
 
 async fn defer_live(open: &mut Following, f: &Fixture) {
     open.held = Some(fragment(open).into());
-    open.queue_live();
+    open.queue_live(false);
     let frame = open.pending.pop_front().unwrap();
     append(
         &f.store,
@@ -458,7 +458,7 @@ async fn deferred_live_rechecks_committed_messages_and_preserves_remaining_order
         value.delta = delta.into();
         value.kind = AgentLiveFragmentKind::Thought;
         open.held = Some(value.into());
-        open.queue_live();
+        open.queue_live(false);
         open.deferred_live.extend(std::mem::take(&mut open.pending));
     }
     append(

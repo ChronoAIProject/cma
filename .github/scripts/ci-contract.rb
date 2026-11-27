@@ -218,10 +218,20 @@ module CIContract
     end
     check_journey_publication_authority(staging.fetch("jobs").fetch("release_journey_probe"))
     check_web_publication_authority(inputs)
-    writer = inputs.fetch("staging-release").fetch("jobs").fetch("publish")
+    release = inputs.fetch("staging-release").fetch("jobs")
+    writer = release.fetch("publish")
     require!(writer["permissions"] == { "contents" => "read", "pull-requests" => "read", "actions" => "read", "packages" => "write" } &&
-      writer["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'",
+      writer["needs"] == "native" &&
+      writer["if"] == "!cancelled() && (needs.native.result == 'success' || needs.native.result == 'skipped') && github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'",
       "staging publisher authority changed")
+    native = release.fetch("native")
+    producer = inputs.fetch("staging-native-image")
+    permissions = { "contents" => "read", "actions" => "read" }
+    require!(native["uses"] == "./.github/workflows/staging-native-image.yml" && native["permissions"] == permissions &&
+      !native.key?("secrets") && (producer["on"] || producer[true]).keys == ["workflow_call"] &&
+      producer["permissions"] == permissions && producer.fetch("jobs").keys == ["build"] &&
+      !producer.dig("jobs", "build").key?("environment") && !producer.dig("jobs", "build").key?("permissions"),
+      "native image producer must retain read-only release authority")
   end
 
   def self.check_journey_publication_authority(job)

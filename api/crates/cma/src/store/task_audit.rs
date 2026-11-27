@@ -4,13 +4,14 @@ use super::sandbox_mongo::MongoSandboxStore;
 use crate::config::task_audit::Selection;
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
+use layer2_core::{sandbox::agent_io::AdmittedAgentCommand, AgentId};
 use mongodb::{
     bson::{doc, Binary},
     options::{Hint, ReadConcern},
     ClientSession, Database,
 };
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -112,7 +113,8 @@ async fn read(
         .session(&mut *session)
         .await
         .map_err(|_| "database")?;
-    let mut report = Report::new(selection.clone(), from, to, observed, accepted);
+    let mut entries = Vec::new();
+    let mut dispatched: BTreeMap<AgentId, Vec<(usize, AdmittedAgentCommand)>> = BTreeMap::new();
     let mut ids = BTreeSet::new();
     let mut keys = BTreeSet::new();
     let mut used = 0;
@@ -150,18 +152,32 @@ async fn read(
             let identity = (command.scope(), command.key_sha256.clone());
             if !keys.insert(identity) {
                 entry.result = "duplicate_admission";
+            } else if command.work.dispatch.is_none() {
+                entry.result = evidence::undispatched(&command);
             } else {
-                entry.result = evidence::classify(store, &command, session).await?;
+                dispatched
+                    .entry(command.receipt.envelope.agent_id.clone())
+                    .or_default()
+                    .push((entries.len(), command));
             }
         }
+        entries.push(entry);
+    }
+    if count != accepted {
+        return Err("invalid_snapshot");
+    }
+    // Keep admission order in the private report while sharing each Agent's
+    // evidence reads inside the same read-only snapshot.
+    for (agent_id, commands) in dispatched {
+        evidence::classify_agent(store, &agent_id, &commands, &mut entries, session).await?;
+    }
+    let mut report = Report::new(selection.clone(), from, to, observed, accepted);
+    for mut entry in entries {
         entry.overdue = !entry.has_terminal()
             && entry
                 .age_seconds
                 .is_some_and(|age| age >= selection.overdue_seconds);
         report.push(entry);
-    }
-    if count != accepted {
-        return Err("invalid_snapshot");
     }
     report.operation_time_watermark = session.operation_time().map(|at| (at.time, at.increment));
     Ok(report)

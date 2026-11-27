@@ -88,6 +88,36 @@ describe('native warm pool controls', () => {
       }
     }
   });
+  it('preserves a drained pool with a zero provider target and rejects malformed values', async () => {
+    const t = transport();
+    const drained = {
+      ...pool,
+      target_replicas: 0,
+      provider_target_replicas: 0,
+      ready_replicas: 0,
+      observed: true,
+      status: 'disabled',
+      retirement_status: 'drained',
+    };
+    const inventory = {
+      items: [drained],
+      default_image: 'next-image',
+      default_cpu_millis: 1000,
+      default_memory_mib: 1024,
+      available: true,
+    };
+    t.answer(inventory);
+    expect((await t.client.admin.listWarmPools()).items).toEqual([drained]);
+    for (const fields of [
+      { provider_target_replicas: null },
+      { provider_target_replicas: -1 },
+      { retirement_status: null },
+      { retirement_status: 'disabled' },
+    ]) {
+      t.answer({ ...inventory, items: [{ ...drained, ...fields }] });
+      await expect(t.client.admin.listWarmPools()).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
   it('sends idempotent create and revision guarded disable commands', async () => {
     const t = transport();
     t.answer(pool, 202);
