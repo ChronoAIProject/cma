@@ -103,6 +103,8 @@ def run(args):
         # credentials, resource identities or raw API/fixture payloads.
         (private / 'error.private.txt').write_text(type(error).__name__ + ': ' + str(error))
         result['failure_class'] = type(error).__name__
+        if fixture and result['stage'] == 'two_am_initialization':
+            result['initialization_step'] = fixture.initialization_step
         if initialization_timeout(error):
             result['failure_code'] = initialization_timeout(error)
         elif isinstance(error, urllib.error.HTTPError):

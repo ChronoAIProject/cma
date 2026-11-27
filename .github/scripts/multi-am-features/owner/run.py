@@ -71,6 +71,7 @@ class Fixture:
         self.killed={}
         self.drained={}
         self.events=[]
+        self.initialization_step=None
         self.provider_observation_lock=threading.Lock()
         self.mongo_observation_lock=threading.Lock()
         self.server=None
@@ -80,6 +81,9 @@ class Fixture:
         value={'at':utc(),'action':action,**fields}
         self.events.append(value)
         write(self.output/'fixture-events.json',self.events)
+
+    def mark_initialization_step(self, step):
+        self.initialization_step=step
 
     def certificates(self):
         directory=Path(self.ready['tls_directory'])
@@ -99,6 +103,7 @@ class Fixture:
         return json.loads(raw)
 
     def initialize(self):
+        self.mark_initialization_step('fixture_dependencies')
         self.ready.setdefault('provider_source',str(PROVIDER))
         self.certificates()
         self.client.apply(manifests.dependencies(self.secret,self.ready))
@@ -108,6 +113,7 @@ class Fixture:
             phase=pod.get('status',{}).get('phase')
             if phase=='Failed':raise RuntimeError('exact_image_role_failed')
             return phase=='Succeeded'
+        self.mark_initialization_step('runtime_role')
         self.client.wait(role_done,100,'role_not_ready')
         role=json.loads(self.client.k(['logs','am-role','--limit-bytes=524288']))
         write(self.output/'runtime-role.json',role)
@@ -121,6 +127,7 @@ class Fixture:
                 'mongodb://127.0.0.1:27017/admin?serverSelectionTimeoutMS=1000&connectTimeoutMS=1000',
                 '--eval',old.MONGO_READY],timeout=15,check=False)
             return rc==0 and 'PRIMARY_AUTHENTICATED' in raw
+        self.mark_initialization_step('authenticated_mongo')
         self.client.wait(primary,120,'authenticated_mongo_primary_not_ready')
         self.client.k(['exec','mongo','--','mongosh','--quiet','mongodb://127.0.0.1:27017/admin',
             '--eval',old.mongo_role_script(role)])
@@ -130,19 +137,24 @@ class Fixture:
         for am in ['a','b']:
             # Initialize the fresh database once before the second AM joins;
             # the complete journey begins only with both independent AMs Ready.
+            self.mark_initialization_step('am_ready_'+am)
             self.client.apply([self.templates[am]])
             self.record('am_created',am=am)
             self.wait_am(am)
             self.record('am_ready',am=am)
-        self.browser_cookie=login(self.client,self.origins['a'],public_host='api.localhost.direct')
+        self.browser_cookie=login(self.client,self.origins['a'],public_host='api.localhost.direct',
+            mark_stage=self.mark_initialization_step)
         # Prove the runtime-visible public API route before a real Agent create.
+        self.mark_initialization_step('runtime_public_tls')
         probe="import urllib.request; r=urllib.request.urlopen('https://api.localhost.direct/ready',timeout=10); print(r.status)"
         self.client.wait(lambda:self.client.k(['exec','provider','--','python3','-c',probe],check=False)[0]==0,
             30,'runtime_visible_public_api_unreachable')
         self.record('runtime_visible_public_api_tls_ready',origin='https://api.localhost.direct')
+        self.mark_initialization_step('provider_readiness')
         forward=self.client.forward('provider',8080)
         self.provider_origin='https://provider.localhost.direct:'+forward.rsplit(':',1)[1]
         self.client.wait(lambda:self.provider('GET','/health').get('ok'),30,'provider_not_ready')
+        self.mark_initialization_step('shared_membership')
         self.client.wait(lambda:all(v['ready'] for v in self.topology()['ams'].values()),60,'two_members_not_ready')
         self.record('two_am_shared_database_ready',topology=self.topology())
 
@@ -463,6 +475,13 @@ class Fixture:
                     rc,raw=self.client.k(['logs',name,'--timestamps=true','--limit-bytes=2097152'],check=False)
                     (destination/(name+'.full.private.log')).write_text(raw)
                     (destination/(name+'.private.log')).write_text(''.join(raw.splitlines(keepends=True)[-200:]))
+                    matching = next((pod for pod in pods if pod.get('metadata', {}).get('name') == name), {})
+                    if any(container.get('restartCount', 0) > 0 for container in
+                           matching.get('status', {}).get('containerStatuses', [])):
+                        previous_rc, previous = self.client.k(
+                            ['logs', name, '--previous', '--tail=100', '--limit-bytes=131072'], check=False)
+                        if previous_rc == 0:
+                            (destination/(name+'.previous.private.log')).write_text(previous)
                 else:
                     rc,raw=self.client.k(['logs',name,'--tail=200','--limit-bytes=131072'],check=False)
                     (destination/(name+'.private.log')).write_text(raw)

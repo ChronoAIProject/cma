@@ -36,6 +36,8 @@ def command_outcome(stage, program, returncode, elapsed, output, timed_out=False
         'configuration_refused': (b'configuration is not usable:',),
         'application_stopped': (b'cma stopped',),
         'application_listening': (b'cma listening',),
+        'stack_overflow': (b'has overflowed its stack', b'fatal runtime error: stack overflow'),
+        'segmentation_fault': (b'segmentation fault',),
         'database_unauthorized': (b'not authorized on', b'command failed with code 13'),
         'database_authentication_failed': (b'authentication failed', b'code 18 (authenticationfailed)'),
         'warm_pool_startup_failed': (b'native warm pool startup readiness failed:',),

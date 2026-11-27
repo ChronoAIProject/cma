@@ -4,7 +4,7 @@ import hashlib
 import json
 
 from diagnostics import command_outcome
-from setup_evidence import EVENTS, known, summarize_pods
+from setup_evidence import EVENTS, REASONS, known, summarize_pods
 
 ROLES = {'am_a': 'am-a-0', 'am_b': 'am-b-0', 'mongo': 'mongo',
          'identity': 'identity', 'provider': 'provider', 'api_proxy': 'api-proxy',
@@ -48,6 +48,15 @@ def summarize(directory):
                 if not all(type(n) is int and 0 <= n < 1000000 for n in counts):
                     raise ValueError('fixture_restart_count_invalid')
                 value['restarts'] = sum(counts)
+                if role.startswith('am_'):
+                    for container in status.get('containerStatuses', []):
+                        previous = container.get('lastState', {}).get('terminated')
+                        if previous is not None:
+                            exit_code = previous.get('exitCode')
+                            value['previous_termination'] = {
+                                'reason': known(previous.get('reason'), REASONS),
+                                'exit_code': exit_code if type(exit_code) is int and 0 <= exit_code <= 255 else None,
+                            }
                 value['observed'] = True
             elif matches:
                 value['duplicate_role'] = True
@@ -57,6 +66,10 @@ def summarize(directory):
         raw = read(log_name)
         if raw is not None:
             value['log_signals'] = command_outcome('fixture', 'other', None, 0, raw)['signals']
+        if role.startswith('am_'):
+            previous_log = read(name + '.previous.private.log')
+            if previous_log is not None:
+                value['previous_log_signals'] = command_outcome('fixture', 'other', None, 0, previous_log)['signals']
         result['roles'][role] = value
     try:
         raw = read('events.final.json')

@@ -58,7 +58,7 @@ class OwnershipTests(unittest.TestCase):
                                   command_outcomes=[])
             infrastructure.setup.return_value = ready
             infrastructure.cleanup.return_value = {'cluster_absent': True, 'children_joined': True}
-            fixture = Mock(thread=None)
+            fixture = Mock(thread=None, initialization_step='am_callback')
             fixture.initialize.side_effect = RuntimeError('fixture_initialization_failure')
             fixture.server.server_close.side_effect = OSError('fixture listener')
             fixture.client.deadline = 0
@@ -72,6 +72,7 @@ class OwnershipTests(unittest.TestCase):
 
             result = json.loads((output / 'summary' / 'result.json').read_text())
             self.assertEqual(result['failure_code'], 'fixture_initialization_failure')
+            self.assertEqual(result['initialization_step'], 'am_callback')
             self.assertEqual(result['fixture_control_cleanup_failure_class'], 'OSError')
             self.assertEqual(result['fixture_child_cleanup_failure_class'], 'TimeoutError')
             self.assertTrue(result['cleanup']['cluster_absent'])

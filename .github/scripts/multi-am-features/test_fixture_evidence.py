@@ -14,9 +14,12 @@ class FixtureEvidenceTests(unittest.TestCase):
                 {'metadata': {'name': 'am-a-0', 'uid': 'private-owner'}, 'status': {
                     'phase': 'Running', 'conditions': [{'type': 'Ready', 'status': 'False',
                         'message': 'private-token'}], 'containerStatuses': [{'restartCount': 3,
-                        'state': {'waiting': {'reason': 'CrashLoopBackOff', 'message': 'private'}}}]}},
+                        'state': {'waiting': {'reason': 'CrashLoopBackOff', 'message': 'private'}},
+                        'lastState': {'terminated': {'reason': 'Error', 'exitCode': 139,
+                            'message': 'private-crash-message'}}}]}},
                 {'metadata': {'name': 'private-dynamic-runtime'}, 'status': {'phase': 'Failed'}}]}))
             (root / 'am-a-0.full.private.log').write_text('private-provider-url exec format error')
+            (root / 'am-a-0.previous.private.log').write_text('private-crash-message fatal runtime error: stack overflow')
             (root / 'events.final.json').write_text(json.dumps({'items': [
                 {'reason': 'Failed', 'message': 'private-ip'}, {'reason': 'private-user'}]}))
             result = summarize(root)
@@ -24,9 +27,12 @@ class FixtureEvidenceTests(unittest.TestCase):
             self.assertFalse(result['roles']['am_a']['ready'])
             self.assertEqual(result['roles']['am_a']['restarts'], 3)
             self.assertEqual(result['roles']['am_a']['log_signals'], ['executable_format'])
+            self.assertEqual(result['roles']['am_a']['previous_termination'], {'reason': 'Error', 'exit_code': 139})
+            self.assertEqual(result['roles']['am_a']['previous_log_signals'], ['stack_overflow'])
             self.assertFalse(result['roles']['am_b']['observed'])
             self.assertEqual(result['event_reasons'], {'Failed': 1, 'Other': 1})
-            for token in ['private-owner', 'private-token', 'private-provider-url', 'private-user', 'private-ip']:
+            for token in ['private-owner', 'private-token', 'private-provider-url', 'private-user', 'private-ip',
+                          'private-crash-message']:
                 self.assertNotIn(token, json.dumps(result))
             self.assertFalse(result['root_cause_inferred'])
 

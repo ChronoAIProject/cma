@@ -81,6 +81,7 @@ class LocalFixture(OriginalFixture):
 
     def initialize(self):
         super().initialize()
+        self.mark_initialization_step('environment_readback')
         expected = {'CHRONO_AGENT_MANAGER_REPLICAS_ENABLED': 'true',
                     'CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED': 'true',
                     'CHRONO_USAGE_REPORT_VIEWS_ENABLED': 'true',
