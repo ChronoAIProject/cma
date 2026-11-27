@@ -12,7 +12,7 @@ import time
 import urllib.error
 
 from desktop_policy import install as install_desktop_policy
-from diagnostics import command_outcome, initialization_timeout, suite_error_kind
+from diagnostics import command_outcome, initialization_timeout, suite_error_frame, suite_error_kind
 from fixture_evidence import summarize as summarize_fixture
 from fixture_evidence import summarize_runtime_failure
 from infrastructure import Infrastructure
@@ -109,7 +109,10 @@ def run(args):
         coverage_file = summary / 'coverage.json'
         if not coverage_file.is_file():
             if stderr_file.is_file():
-                result['suite_error_kind'] = suite_error_kind(stderr_file.read_text())
+                stderr = stderr_file.read_text(errors='replace')
+                result['suite_error_kind'] = suite_error_kind(stderr)
+                if (frame := suite_error_frame(stderr, ROOT)) is not None:
+                    result['suite_error_frame'] = frame
             raise RuntimeError('suite_coverage_artifact_missing')
         verdict = json.loads(coverage_file.read_text())
         result['verdict'] = 'PASS' if code == 0 and verdict['suite_verdict'] == 'PASS' else 'FAIL'

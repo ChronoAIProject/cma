@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from diagnostics import command_outcome, initialization_timeout, suite_error_kind
+from diagnostics import command_outcome, initialization_timeout, suite_error_frame, suite_error_kind
 from infrastructure import Infrastructure
 
 
@@ -24,6 +24,17 @@ class DiagnosticTests(unittest.TestCase):
         self.assertEqual(suite_error_kind('first line\nTypeError: fixture-private\n    at /private/path'),
                          'TypeError')
         self.assertEqual(suite_error_kind('PrivateError: unreviewed'), 'unclassified')
+
+    def test_missing_suite_coverage_reports_only_checked_out_source_location(self):
+        root = Path(__file__).resolve().parent
+        known = (root / 'features' / 'sharing.mjs').as_uri()
+        unknown = (root / 'fixture_secret.mjs').as_uri()
+        stack = (f'TypeError: fixture-private\n    at file:///outside/private.mjs:2:1\n'
+                 f'    at {unknown}:4:5\n    at work ({known}:27:12)\n')
+        self.assertEqual(suite_error_frame(stack, root), {'module': 'features/sharing.mjs', 'line': 27})
+        self.assertEqual(suite_error_frame(f'{known}:1\nSyntaxError: fixture-private', root),
+                         {'module': 'features/sharing.mjs', 'line': 1})
+        self.assertIsNone(suite_error_frame(f'TypeError: {known}:3:1\n    at {unknown}:3:1', root))
 
     def test_output_is_only_hashed_with_fixed_classification(self):
         private = b'private-token https://private.invalid?password=private-value\nno space left on device'

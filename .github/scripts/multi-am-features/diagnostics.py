@@ -26,6 +26,22 @@ def suite_error_kind(output):
     return match[1] if match else 'unclassified'
 
 
+def suite_error_frame(output, suite_root):
+    """Publish a source location from Node stderr without paths or exception text."""
+    suite_root = suite_root.resolve()
+    script_origin = re.escape(suite_root.as_uri()) + '/'
+    location = re.compile(
+        r'^(?:[ \t]+at (?:[^\n]+? \()?)?' + script_origin
+        + r'((?:[a-z_]+/)*[a-z_]+\.mjs):([1-9][0-9]{0,4})(?::[1-9][0-9]{0,4})?\)?$',
+        re.MULTILINE)
+    for match in location.finditer(output):
+        module, line = match.groups()
+        path = suite_root / module
+        if path.resolve() == path and path.is_file():
+            return {'module': module, 'line': int(line)}
+    return None
+
+
 def command_outcome(stage, program, returncode, elapsed, output, timed_out=False):
     signals = {
         'disk_full': (b'no space left on device',),
