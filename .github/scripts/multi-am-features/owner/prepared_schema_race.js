@@ -388,7 +388,9 @@
   async function verifyCommitAcknowledgement() {
     const off = await admin.runCommand({configureFailPoint: 'failCommand', mode: 'off'});
     const affected = Number(off.count) - scope.commitProof.baseline;
-    if (off.ok !== 1 || !Number.isSafeInteger(affected) || affected < 5 || affected > 10) {
+    // Every matching send occurred after the fault was armed. An unused slot
+    // establishes that the fault still covered every same-application commit.
+    if (off.ok !== 1 || !Number.isSafeInteger(affected) || affected < 5 || affected >= 10) {
       throw Error('prepared_ack_fault_budget_unproven');
     }
     const receipt = await admin.runCommand({getLog: 'global'});
