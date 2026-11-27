@@ -1,5 +1,7 @@
 use super::*;
-use crate::sandbox::{AgentStatus, SandboxStatus};
+use crate::sandbox::{
+    AgentOperationDelivery, AgentOperationIntent, AgentStatus, ConversationState, SandboxStatus,
+};
 
 #[derive(Clone, Copy)]
 pub(super) enum RevisionRefresh {
@@ -145,6 +147,16 @@ fn same_retained_target(previous: &AuthorizedResource, next: &AuthorizedResource
                 .usage
                 .clone_from(&conversation.observations.usage);
         }
+        // Observation of the already-written message advances delivery on
+        // this turn without replacing its operation or changing the target.
+        if conversation.last_seq < updated.last_seq
+            && observes_confirmed_send(conversation, updated)
+        {
+            comparable_agent
+                .conversation
+                .operation
+                .clone_from(&conversation.operation);
+        }
     }
     let mut comparable_sandbox = next.sandbox.clone();
     comparable_sandbox.revision = previous.sandbox.revision;
@@ -152,4 +164,23 @@ fn same_retained_target(previous: &AuthorizedResource, next: &AuthorizedResource
         .updated_at
         .clone_from(&previous.sandbox.updated_at);
     &comparable_agent == agent && comparable_sandbox == previous.sandbox
+}
+
+fn observes_confirmed_send(previous: &ConversationState, next: &ConversationState) -> bool {
+    let (Some(operation), Some(observed)) = (&previous.operation, &next.operation) else {
+        return false;
+    };
+    if !matches!(operation.intent, AgentOperationIntent::SendMessage { .. })
+        || previous.active_turn != Some(operation.turn_sequence)
+        || previous.runtime_generation != Some(operation.runtime_generation)
+        || operation.state != AgentOperationDelivery::WriteConfirmed
+        || observed.state != AgentOperationDelivery::ExecutionObserved
+    {
+        return false;
+    }
+    let Some(at) = &observed.execution_observed_at else {
+        return false;
+    };
+    let mut expected = operation.clone();
+    expected.mark_execution_observed(at.clone()).is_ok() && &expected == observed
 }

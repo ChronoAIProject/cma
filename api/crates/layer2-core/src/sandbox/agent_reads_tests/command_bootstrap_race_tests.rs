@@ -10,12 +10,17 @@ mod queued_edits;
 #[path = "command_prepared_admission_tests.rs"]
 mod prepared;
 
+#[path = "command_delivery_refresh_tests.rs"]
+mod delivery;
+
 #[derive(Clone, Copy)]
 enum Progress {
     Parent,
     Agent,
     ConversationOutput,
     ConversationUsage,
+    ConversationDelivery,
+    ReplacedDelivery,
     TwoAgentRevisions,
     PreparedReady,
     ModelChange,
@@ -142,6 +147,9 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
                         .await
                         .unwrap();
                 }
+                Progress::ConversationDelivery | Progress::ReplacedDelivery => {
+                    delivery::observe_operation(&self.store, self.progress).await;
+                }
                 Progress::SlowFirstPreparation => {}
                 Progress::ModelChange => prepared::complete_then_change_model(&self.store).await,
                 Progress::Policy => {
@@ -186,15 +194,36 @@ async fn first_message_refreshes_after_usage_on_the_same_idle_conversation() {
 }
 
 async fn assert_message_refreshes_after_observation(progress: Progress, active_turn: Option<u64>) {
+    let (store, authority) = observation_fixture(progress, active_turn).await;
+    assert_observation_admission(store, authority, progress).await;
+}
+
+async fn observation_fixture(
+    progress: Progress,
+    active_turn: Option<u64>,
+) -> (Arc<InMemorySandboxStore>, Arc<Authority>) {
     let (store, authority, mut agent) = retry_results::ordinary_fixture().await;
     if let Some(turn) = active_turn {
         let revision = agent.revision;
         agent.status = AgentStatus::Working;
         agent.conversation.active_turn = Some(turn);
+        if matches!(
+            progress,
+            Progress::ConversationDelivery | Progress::ReplacedDelivery
+        ) {
+            agent.conversation.operation = Some(delivery::confirmed_operation(&agent, turn));
+        }
         agent.revision += 1;
         store.save_agent(revision, agent).await.unwrap();
     }
+    (store, authority)
+}
 
+async fn assert_observation_admission(
+    store: Arc<InMemorySandboxStore>,
+    authority: Arc<Authority>,
+    progress: Progress,
+) {
     let (service, progressing) = service(&store, authority, progress);
     let owner = context("owner");
     let request = submission("message-during-observation");
