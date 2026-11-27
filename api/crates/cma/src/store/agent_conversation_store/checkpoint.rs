@@ -47,6 +47,64 @@ pub(in crate::store) fn read(
     Ok(Some(checkpoint))
 }
 
+/// Lifecycle publication can end a turn without a final runtime frame. Use
+/// the validated prefix from the same transaction as the terminal log.
+pub(in crate::store) fn finish_published_text(
+    row: &Document,
+    current: &Agent,
+    next: &mut Agent,
+    logs: &mut Vec<layer2_core::sandbox::AgentLogEntry>,
+) -> Result<(), SandboxStoreError> {
+    use layer2_core::sandbox::{AgentLogEntry, AgentLogKind};
+
+    let Some(turn) = current.conversation.active_turn else {
+        return Ok(());
+    };
+    if next.conversation.active_turn == Some(turn) {
+        return Ok(());
+    }
+    let Some(checkpoint) = read(row)? else {
+        return Ok(());
+    };
+    let Some(text) = checkpoint.assembly.published_text() else {
+        return Ok(());
+    };
+    if !checkpoint.matches(current) {
+        return Err(SandboxStoreError::Conflict);
+    }
+    let position = logs
+        .iter()
+        .position(|entry| {
+            matches!(entry.kind,
+            AgentLogKind::TurnCompleted { turn_sequence }
+                | AgentLogKind::TurnInterrupted { turn_sequence }
+                | AgentLogKind::TurnFailed { turn_sequence, .. } if turn_sequence == turn)
+        })
+        .ok_or_else(|| SandboxStoreError::Corrupt("published text has no terminal turn".into()))?;
+    let terminal = &logs[position];
+    let message = AgentLogEntry {
+        agent_id: current.id.clone(),
+        seq: terminal.seq,
+        appended_at: terminal.appended_at.clone(),
+        kind: AgentLogKind::AgentMessage {
+            content: text.to_owned(),
+        },
+    };
+    for entry in &mut logs[position..] {
+        entry.seq = entry
+            .seq
+            .checked_add(1)
+            .ok_or(SandboxStoreError::SequenceConflict)?;
+    }
+    logs.insert(position, message);
+    next.conversation.last_seq = next
+        .conversation
+        .last_seq
+        .checked_add(1)
+        .ok_or(SandboxStoreError::SequenceConflict)?;
+    Ok(())
+}
+
 pub(super) async fn load(
     store: &MongoSandboxStore,
     id: &AgentId,

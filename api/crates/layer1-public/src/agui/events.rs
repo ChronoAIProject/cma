@@ -300,7 +300,7 @@ mod observation_tests {
                 "descriptionSource": "prompt_preview", "descriptionIsSetupPreview": true
             })
         );
-        let replay = serde_json::to_value(AgentEvent::from(entry)).unwrap();
+        let replay = serde_json::to_value(AgentEvent::try_from(entry).unwrap()).unwrap();
         assert_eq!(
             replay["kind"]["metadata"],
             json!({

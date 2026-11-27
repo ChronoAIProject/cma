@@ -4,7 +4,7 @@ use super::*;
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
     for segmented in [false, true] {
-        check_owner_stop_fences(false, segmented, false).await;
+        check_owner_stop_fences(false, segmented, false, false).await;
     }
 }
 
@@ -12,7 +12,7 @@ async fn owner_stop_settlement_fences_parents_and_retains_partial_output() {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn owner_stop_settlement_refuses_expired_lease_without_takeover() {
     for segmented in [false, true] {
-        check_owner_stop_fences(true, segmented, false).await;
+        check_owner_stop_fences(true, segmented, false, false).await;
     }
 }
 
@@ -20,11 +20,19 @@ async fn owner_stop_settlement_refuses_expired_lease_without_takeover() {
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn owner_stop_settlement_reconciles_a_lost_acknowledgement() {
     for segmented in [false, true] {
-        check_owner_stop_fences(false, segmented, true).await;
+        check_owner_stop_fences(false, segmented, true, false).await;
     }
 }
 
-async fn check_owner_stop_fences(expire: bool, segmented: bool, lost_ack: bool) {
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn owner_stop_finalizes_a_published_text_prefix_once() {
+    for segmented in [false, true] {
+        check_owner_stop_fences(false, segmented, false, true).await;
+    }
+}
+
+async fn check_owner_stop_fences(expire: bool, segmented: bool, lost_ack: bool, incremental: bool) {
     use crate::store::budget_test_fixture::OwnerStopBudgetFixture;
     use layer2_core::sandbox::store::{
         AgentLogPublicationIdentity, AgentWorkPublication, AgentWorkPublicationLineage,
@@ -77,10 +85,12 @@ async fn check_owner_stop_fences(expire: bool, segmented: bool, lost_ack: bool) 
         AgentLogKind::OwnerMessage {
             content: "owner prompt".into(),
         },
-        AgentLogKind::AgentMessage {
-            content: "partial response".into(),
-        },
     ];
+    if !incremental {
+        history.push(AgentLogKind::AgentMessage {
+            content: "partial response".into(),
+        });
+    }
     store
         .agent_log
         .insert_many(history.iter().enumerate().map(|(index, kind)| {
@@ -130,6 +140,41 @@ async fn check_owner_stop_fences(expire: bool, segmented: bool, lost_ack: bool) 
             .unwrap();
         assert_format(&store, &agent.id, true).await;
         history.push(adopted);
+        agent = store.get_agent(&agent.id).await.unwrap().unwrap();
+    }
+    if incremental {
+        use layer2_core::sandbox::{
+            AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder,
+        };
+        use layer3_adapter::{ContentBlock, ContentChunk, ConversationUpdate, SessionUpdate};
+        let recorder = DurableAgentUpdateRecorder::with_incremental_output_policy(
+            Arc::new(store.clone()),
+            Arc::default(),
+            None,
+            false,
+            false,
+            None,
+            true,
+        );
+        let result = recorder
+            .record_update(
+                &agent.id,
+                1,
+                &mut AgentMessageAssembly::default(),
+                ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(ContentChunk::new(
+                    ContentBlock::from("partial response"),
+                ))),
+                layer2_core::now_rfc3339(),
+            )
+            .await
+            .unwrap();
+        let suffix = AgentLogKind::AgentMessageDelta {
+            offset: 0,
+            content: "partial response".into(),
+        };
+        assert_eq!(result.appended.len(), 1);
+        assert_eq!(result.appended[0].kind, suffix);
+        history.push(suffix);
         agent = store.get_agent(&agent.id).await.unwrap().unwrap();
     }
     let budget = OwnerStopBudgetFixture::reserve(&store, &agent, 3).await;
@@ -280,6 +325,9 @@ async fn check_owner_stop_fences(expire: bool, segmented: bool, lost_ack: bool) 
         assert!(uncertain_replies.load(Ordering::SeqCst) > 0);
     }
     assert_eq!(published.unwrap(), AgentWorkPublication::Published);
+    if incremental {
+        stopped.conversation.last_seq += 1;
+    }
     assert_eq!(store.get_agent(&agent.id).await.unwrap(), Some(stopped));
     let actual: Vec<_> = store
         .agent_log(&agent.id, 0, 20)
@@ -290,14 +338,18 @@ async fn check_owner_stop_fences(expire: bool, segmented: bool, lost_ack: bool) 
         .collect();
     assert_eq!(&actual[..history.len()], history);
     budget.assert_settled_once(&store).await;
-    assert_eq!(
-        &actual[history.len()..],
-        &[
-            AgentLogKind::TurnInterrupted { turn_sequence: 3 },
-            AgentLogKind::Stopped {
-                reason: "owner".into()
-            },
-        ]
-    );
+    let mut terminal = vec![];
+    if incremental {
+        terminal.push(AgentLogKind::AgentMessage {
+            content: "partial response".into(),
+        });
+    }
+    terminal.extend([
+        AgentLogKind::TurnInterrupted { turn_sequence: 3 },
+        AgentLogKind::Stopped {
+            reason: "owner".into(),
+        },
+    ]);
+    assert_eq!(&actual[history.len()..], terminal);
     client.database(&name).drop().await.unwrap();
 }

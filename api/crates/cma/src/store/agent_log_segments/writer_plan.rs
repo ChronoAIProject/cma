@@ -10,7 +10,7 @@ use crate::store::agent_log_integrity::{ensure_append_batch_size, AppendCapacity
 const NORMAL_COUNT: i64 = 10_000;
 const NORMAL_BYTES: i64 = 64 * 1024 * 1024;
 const STOP_COUNT: i64 = NORMAL_COUNT + 64;
-const STOP_BYTES: i64 = NORMAL_BYTES + 512 * 1024;
+const STOP_BYTES: i64 = NORMAL_BYTES + crate::store::agent_log_integrity::STOP_RESERVE_BYTES as i64;
 const DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Permission is resolved from durable gate/admission evidence before planning.

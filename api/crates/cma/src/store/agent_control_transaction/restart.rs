@@ -160,6 +160,23 @@ async fn apply(
         }));
     }
     let row = &current.row;
+    let mut logs = interruption
+        .into_iter()
+        .map(|kind| AgentLogEntry {
+            agent_id: next.id.clone(),
+            seq: next.conversation.last_seq,
+            appended_at: acceptance.accepted_at.clone(),
+            kind,
+        })
+        .collect();
+    crate::store::agent_conversation_store::checkpoint::finish_published_text(
+        row,
+        &current.agent,
+        &mut next,
+        &mut logs,
+    )
+    .map_err(store_error)
+    .map_err(ApplyError::Domain)?;
     let revision = signed(current.agent.revision, "Agent revision")
         .map_err(AgentControlStoreError::Corrupt)
         .map_err(ApplyError::Domain)?;
@@ -211,12 +228,6 @@ async fn apply(
         },
         appended_at: acceptance.accepted_at.clone(),
     };
-    let log = interruption.map(|kind| AgentLogEntry {
-        agent_id: next.id.clone(),
-        seq: next.conversation.last_seq,
-        appended_at: acceptance.accepted_at.clone(),
-        kind,
-    });
     let (publication, session) = restart_publication::record(
         store,
         scope,
@@ -225,8 +236,12 @@ async fn apply(
             operation: &identity,
             current: &current.agent,
             next: &next,
-            logs: log.as_slice(),
-            capacity: AppendCapacity::Normal,
+            logs: &logs,
+            capacity: if logs.len() > 1 {
+                AppendCapacity::StopOrFailure
+            } else {
+                AppendCapacity::Normal
+            },
             result_digest: publication::result_digest(&acceptance)
                 .map_err(store_error)
                 .map_err(ApplyError::Domain)?,

@@ -382,7 +382,14 @@ async fn apply_publication_observed(
     .await?;
     let sign_in_sandbox = sign_in::apply(store, &current, mutation, session).await?;
     prepared_replay::fence(store, &current, &current_worktree, mutation, session).await?;
-    let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
+    let (mut final_agent, mut logs) = final_agent_and_logs(&current, mutation)?;
+    super::agent_conversation_store::checkpoint::finish_published_text(
+        &current_row,
+        &current,
+        &mut final_agent,
+        &mut logs,
+    )
+    .map_err(ApplyError::Domain)?;
 
     if let Some(history) = &history {
         let complete_log = &history.summary;

@@ -135,7 +135,13 @@ async fn apply_segmented(
             .map_err(ApplyError::Domain)?;
     }
     domain::publication::require_cleanup(&row, &current, mutation)?;
-    let logs = domain::conversation_logs(mutation).map_err(ApplyError::Domain)?;
+    let mut logs = domain::conversation_logs(mutation).map_err(ApplyError::Domain)?;
+    let mut next = mutation.agent.clone();
+    let count = logs.len();
+    if exact_checkpoint.is_none() {
+        domain::checkpoint::finish_published_text(&row, &current, &mut next, &mut logs)
+            .map_err(ApplyError::Domain)?;
+    }
     if exact_checkpoint.is_some()
         && writer_plan::needs_normal_rollover(captured.active_head(), &logs)
             .map_err(ApplyError::Domain)?
@@ -152,11 +158,11 @@ async fn apply_segmented(
     ))
     .await?;
     let operation = identity(mutation, capacity.is_some(), checkpoint)?;
-    let mut fields = agent_replacement_fields(&mutation.agent).map_err(ApplyError::Domain)?;
+    let mut fields = agent_replacement_fields(&next).map_err(ApplyError::Domain)?;
     if let Some(value) = exact_checkpoint {
         domain::checkpoint::set_field(&mut fields, value).map_err(ApplyError::Domain)?;
     } else {
-        domain::carry_checkpoint_fields(&row, &current, &mutation.agent, &mut fields)
+        domain::carry_checkpoint_fields(&row, &current, &next, &mut fields)
             .map_err(ApplyError::Domain)?;
     }
     let recorded = Box::pin(writer_commit::publish_prepared(
@@ -166,9 +172,9 @@ async fn apply_segmented(
         PublicationInput {
             operation: &operation,
             current: &current,
-            next: &mutation.agent,
+            next: &next,
             logs: &logs,
-            capacity: if capacity.is_some() {
+            capacity: if capacity.is_some() || logs.len() > count {
                 AppendCapacity::StopOrFailure
             } else {
                 AppendCapacity::Normal
@@ -182,11 +188,11 @@ async fn apply_segmented(
         adoption.map(|value| (&value.bootstrap, &value.admission)),
     ))
     .await?;
-    crate::store::suggestions::enqueue(store, &mutation.agent, &logs, scope.session()).await?;
+    crate::store::suggestions::enqueue(store, &next, &logs, scope.session()).await?;
     Ok(ConversationReceipt {
         segmented: Some(recorded),
         command_dispatch,
-        agent: mutation.agent.clone(),
+        agent: next,
         logs,
     })
 }
