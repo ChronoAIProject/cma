@@ -87,7 +87,7 @@ test('provenance abort refuses ambiguous failpoint accounting after restoration'
   assert.deepEqual(state.read(), {active: false, prompt: null});
 });
 
-function uncertainFixture({reusedSweep = false, lost = 5} = {}) {
+function uncertainFixture({reusedSweep = false, lost = 5, confirmed = false} = {}) {
   const record = {agentId: 'agent', sandboxId: 'sandbox', operationId: 'operation'};
   const transaction = 'a'.repeat(64), previousSweep = 'b'.repeat(64);
   let active = false, originalReadbacks = 0;
@@ -105,9 +105,15 @@ function uncertainFixture({reusedSweep = false, lost = 5} = {}) {
           return {commit_transaction_sha256: transaction};
         case 'commit':
           assert.equal(target, transaction);
-          return {commit_acknowledgements_lost: lost};
+          return {commit_armed: true};
+        case 'settle':
+          return {worker_unknown: true, commit_acknowledgements_lost: lost};
         case 'observe':
-          return {recorded: true, sweep_finished: true, sweep_sha256: reusedSweep ? previousSweep : 'c'.repeat(64)};
+          return {recorded: true, sweep_finished: true, new_sweep_receipts: 1,
+            sweep_sha256: reusedSweep ? previousSweep : 'c'.repeat(64)};
+        case 'observe_commit':
+          if (confirmed) throw Error('provenance_progress_commit_attribution_failed');
+          return {worker_unknown: true, commit_acknowledgements_lost: lost};
         case 'restore':
           active = false;
           return {restored: true, configured: false};
@@ -133,14 +139,17 @@ test('provenance commit acknowledgement loss qualifies one new durable sweep', a
   const fixture = uncertainFixture();
   const result = await provenanceUnknownCommit(fixture);
   assert.equal(result.commit_acknowledgements_lost, 5);
+  assert.equal(result.worker_commit_outcome, 'unknown');
+  assert.equal(result.new_sweep_receipts, 1);
   assert.equal(result.original_creation_restored, true);
-  assert.deepEqual(fixture.actions, ['arm', 'sample', 'commit', 'observe', 'restore']);
+  assert.deepEqual(fixture.actions, ['arm', 'sample', 'commit', 'settle', 'observe', 'observe_commit', 'restore']);
   assert.deepEqual(fixture.state(), {active: false, originalReadbacks: 4});
 });
 
-test('provenance commit acknowledgement loss refuses a reused sweep and an exhausted budget', async () => {
+test('provenance commit acknowledgement loss refuses reused sweeps, extra fault hits and a confirmed send', async () => {
   for (const [options, error] of [[{reusedSweep: true}, /provenance_progress_commit_sweep_reused/],
-    [{lost: 10}, /provenance_progress_commit_receipt_unbound/]]) {
+    [{lost: 10}, /provenance_progress_commit_receipt_unbound/],
+    [{confirmed: true}, /provenance_progress_commit_attribution_failed/]]) {
     const fixture = uncertainFixture(options);
     await assert.rejects(provenanceUnknownCommit(fixture), error);
     assert.equal(fixture.actions.at(-1), 'restore');

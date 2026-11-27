@@ -42,10 +42,10 @@
   if (action === 'sample' || action === 'verify') {
     const rows = await logs();
     const claimed = rows.filter(row => claim(row.command) && row.nMatched === 1 && row.nModified === 1);
-    const hasClaim = command => claimed.filter(row => transaction(row.command) === transaction(command)).length === 1;
+    const matchingClaims = command => claimed.filter(row => transaction(row.command) === transaction(command));
     if (action === 'verify') {
       const aborted = rows.filter(row => row.errCode === 112 && targetRead(row.command)
-        && sha(transaction(row.command)) === scope.transaction && hasClaim(row.command));
+        && sha(transaction(row.command)) === scope.transaction && matchingClaims(row.command).length === 1);
       print(JSON.stringify({aborted: aborted.length === 1}));
       return;
     }
@@ -55,12 +55,13 @@
         'command.aggregate': 'agents', 'command.autocommit': false}},
       {$limit: 16},
     ]).toArray();
-    const targets = operations.filter(({command}) => targetRead(command) && hasClaim(command));
+    const targets = operations.filter(({command}) => targetRead(command) && matchingClaims(command).length === 1);
     if (targets.length > 1) throw Error('provenance_progress_multiple_held_reads');
     const held = targets[0];
     const identity = held ? transaction(held.command) : null;
     print(JSON.stringify({transaction_sha256: held ? sha(String(held.opid) + ':' + identity) : null,
-      commit_transaction_sha256: identity ? sha(identity) : null}));
+      commit_transaction_sha256: identity ? sha(identity) : null,
+      ...(unknown && held ? {claim_revision: Number(matchingClaims(held.command)[0].command.query.revision)} : {})}));
     return;
   }
 
@@ -105,7 +106,10 @@
       if (canonical(row) !== scope.original) throw Error('provenance_progress_original_creation_changed');
       // Only the completed prior fixture sweep enables the second observation.
       const before = await control.findOne({_id: controlId});
-      if (unknown && !await sweepReceipt(control, before)) throw Error('provenance_progress_prior_receipt_unbound');
+      const priorReceipt = unknown ? await sweepReceipt(control, before) : null;
+      if (unknown && (!priorReceipt || await control.countDocuments({_id: /^sweep:/}, {limit: 2}) !== 1)) {
+        throw Error('provenance_progress_prior_receipt_unbound');
+      }
       const previous = unknown ? {_id: controlId, phase: 'sweep_finished', cursor: agentId,
         revision: before.revision, run: before.run, last_receipt: before.last_receipt, ...successfulCounts} : pristine;
       const armed = await control.updateOne({...previous, next_sweep_at: {$gt: now}},
@@ -114,7 +118,7 @@
       if (armed.modifiedCount !== 1 || removed.deletedCount !== 1) throw Error('provenance_progress_not_armed');
       await session.commitTransaction();
       print(JSON.stringify({armed: true, agent_revision: Number(agent.revision),
-        ...(unknown ? {previous_sweep_sha256: sha(before.run)} : {})}));
+        ...(unknown ? {previous_sweep_sha256: sha(before.run), previous_receipt: canonical(priorReceipt)} : {})}));
       return;
     }
 
@@ -125,8 +129,18 @@
       const recorded = Number(counts?.scanned) === 1 && Number(counts?.recorded) === 1
         && ['retained', 'skipped', 'errors'].every(key => Number(counts?.[key]) === 0);
       const receipt = await sweepReceipt(control, state);
+      if (unknown && receipt) {
+        const original = EJSON.parse(scope.previous_receipt, {relaxed: false});
+        const finished = await control.find({_id: /^sweep:/}).limit(3).toArray();
+        if (receipt._id === original._id || finished.length !== 2
+            || !finished.some(row => canonical(row) === scope.previous_receipt)
+            || !finished.some(row => row._id === receipt._id)) {
+          throw Error('provenance_progress_commit_sweep_receipts_unbound');
+        }
+      }
       print(JSON.stringify({recorded: recovered && recorded, agent_revision: Number(agent.revision),
-        sweep_finished: Boolean(receipt), ...(unknown && receipt ? {sweep_sha256: sha(state.run)} : {})}));
+        sweep_finished: Boolean(receipt),
+        ...(unknown && receipt ? {sweep_sha256: sha(state.run), new_sweep_receipts: 1} : {})}));
       return;
     }
     if (action !== 'restore') throw Error('provenance_progress_action_required');

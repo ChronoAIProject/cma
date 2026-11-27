@@ -94,19 +94,25 @@ export async function provenanceUnknownCommit({adapter, api, record, recordFailu
     const held = await poll(() => control('sample'), value => /^[a-f0-9]{64}$/.test(value?.commit_transaction_sha256 ?? ''),
       {timeout: 20000, interval: 150, code: 'provenance_progress_commit_target_missing'});
     transaction = held.commit_transaction_sha256;
-    receipt = await control('commit', {transaction});
-    check(Number.isSafeInteger(receipt?.commit_acknowledgements_lost) && receipt.commit_acknowledgements_lost >= 5
-      && receipt.commit_acknowledgements_lost < 10, 'provenance_progress_commit_receipt_unbound');
+    check((await control('commit', {transaction}))?.commit_armed === true,
+      'provenance_progress_commit_fault_not_armed');
+    receipt = await poll(() => control('settle'), value => value?.worker_unknown === true,
+      {timeout: 12000, interval: 250, code: 'provenance_progress_commit_worker_outcome_missing'});
+    check(receipt.commit_acknowledgements_lost === 5, 'provenance_progress_commit_receipt_unbound');
     const completed = await poll(() => control('observe'), value => value?.recorded === true
       && value.sweep_finished === true, {timeout: 25000, interval: 250, code: 'provenance_progress_commit_not_recovered'});
     check(/^[a-f0-9]{64}$/.test(completed.sweep_sha256 ?? '')
       && completed.sweep_sha256 !== armed.previous_sweep_sha256,
     'provenance_progress_commit_sweep_reused');
+    check(completed.new_sweep_receipts === 1, 'provenance_progress_commit_sweep_receipts_unbound');
     for (const am of ['a', 'b']) {
       const derived = await read(am);
       check(derived?.agent_id === agentId && derived.created_at === original.created_at
         && derived.creation_origin === 'legacy_unknown', 'provenance_progress_commit_legacy_readback_invalid');
     }
+    const final = await control('observe_commit');
+    check(final?.worker_unknown === true && final.commit_acknowledgements_lost === receipt.commit_acknowledgements_lost,
+      'provenance_progress_commit_outcome_changed');
   }, async () => {
     const restored = await control('restore');
     check(restored?.restored === true && restored.configured === false, 'provenance_progress_commit_restore_failed');
@@ -115,5 +121,6 @@ export async function provenanceUnknownCommit({adapter, api, record, recordFailu
     check(equal(await read(am), original), 'provenance_progress_commit_original_not_restored');
   }
   return {agent_sha256: hash(agentId), transaction_sha256: transaction,
-    commit_acknowledgements_lost: receipt.commit_acknowledgements_lost, recorded: 1, original_creation_restored: true};
+    commit_acknowledgements_lost: receipt.commit_acknowledgements_lost, worker_commit_outcome: 'unknown',
+    new_sweep_receipts: 1, recorded: 1, original_creation_restored: true};
 }

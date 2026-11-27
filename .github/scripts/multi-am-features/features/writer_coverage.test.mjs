@@ -20,7 +20,7 @@ test('all thirteen writer groups remain required independently of C275', async (
   assert.equal(new Set(groups.map(row => row.id)).size, 13);
   assert.equal(features.groups.at(-1).id, 'SW12');
   assert.deepEqual(prepared.groups.map(row => row.id), ['SW05', 'SW06', 'SW13']);
-  const executableGroups = ['SW01', 'SW02', 'SW03', 'SW05', 'SW06', 'SW07', 'SW09', 'SW10', 'SW12', 'SW13'];
+  const executableGroups = ['SW01', 'SW02', 'SW03', 'SW05', 'SW06', 'SW07', 'SW08', 'SW09', 'SW10', 'SW12', 'SW13'];
   for (const id of executableGroups) assert.equal(groups.find(row => row.id === id).verdict, 'NOT_RUN');
   assert.ok(groups.filter(row => !executableGroups.includes(row.id)).every(row => row.verdict === 'BLOCKED'));
   for (const fixture of ['features', 'prepared']) {
@@ -154,6 +154,19 @@ test('owner epoch and commit acknowledgement witnesses belong only to prepared S
     .filter(assertion => names.includes(assertion.case)).map(assertion => [group.id, assertion.case, assertion.verdict]));
   assert.deepEqual(mapping(prepared), names.map(name => ['SW06', name, 'NOT_RUN']));
   assert.deepEqual(mapping(features), []);
+});
+
+test('features SW08 requires both provenance progress journeys', async () => {
+  const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
+  const group = registry.cases.find(row => row.id === 'SW08');
+  const names = ['provenance_progress_known_abort', 'provenance_progress_unknown_commit'];
+  const rows = group.required_assertions.filter(row => row.routing !== 'journey').flatMap(row =>
+    row.phases.map(phase => ({case: row.case, phase, iteration: 1, ams: ['a', 'b'],
+      verdict: 'PASS', non_owner: row.routing === 'non_owner'})));
+  const evaluate = selected => writerCoverage(registry, rows, {verdict: 'LOCAL_TWO_AM_JOURNEY_PASS',
+    steps: selected.map(name => ({name, verdict: 'PASS'}))}, 'features').groups.find(row => row.id === 'SW08');
+  assert.equal(evaluate(names).verdict, 'PASS');
+  for (const name of names) assert.equal(evaluate([name]).verdict, 'NOT_RUN');
 });
 
 test('lifecycle Always on coverage requires browser execution on both sides of restart', async () => {

@@ -1,12 +1,13 @@
 """Exercise the shipped provenance backfill with a disposable Manager database."""
 
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
 
 from common import require_feature_fixture
 from legacy_manifests import pod, resource
-from publication_evidence import FEATURES_MONGO_APP, agent_digest, timed_publication_abort
+from publication_evidence import FEATURES_MONGO_APP, LOG_BOUND_BYTES, agent_digest, timed_publication_abort
 
 DATABASE = 'cma_native_am'
 COLLECTION = 'agent_provenance_progress'
@@ -76,6 +77,24 @@ def profile_progress(fixture, enabled):
                          'print(JSON.stringify(true));')
 
 
+def commit_outcomes(fixture, proof):
+    outcomes = []
+    for manager in ('a', 'b'):
+        raw = fixture.client.k(['logs', f'am-{manager}-0', '--since-time=' + proof['since'],
+                                f'--limit-bytes={LOG_BOUND_BYTES}'], timeout=8)
+        if len(raw.encode()) >= LOG_BOUND_BYTES:
+            raise RuntimeError('provenance_progress_commit_log_bound')
+        for line in raw.splitlines():
+            plain = re.sub(r'\x1b\[[0-9;]*m', '', line)
+            if ' provenance_commit: ' not in plain:
+                continue
+            match = re.search(r'\bsession_sha256=([a-f0-9]{64})\s+previous_revision=(\d+)\s+'
+                              r'outcome="?(unknown|committed|retry|failed)"?(?=\s|$)', plain)
+            if match and match[1] == proof['session_sha256'] and int(match[2]) == proof['claim_revision']:
+                outcomes.append(match[3])
+    return outcomes
+
+
 def provenance_backfill(fixture, *, action, agentId, sandboxId, operationId, unknown=False, transaction=None):
     require_feature_fixture(fixture)
     for identity in (agentId, sandboxId, operationId):
@@ -94,27 +113,53 @@ def provenance_backfill(fixture, *, action, agentId, sandboxId, operationId, unk
             raise RuntimeError('provenance_progress_already_armed')
         # Bind the exact original row before arming or changing the target.
         original = run_script(fixture, {**scope, 'action': 'original'})
-        fixture.provenance_original = target, original
+        state = {'target': target, 'original': original}
+        fixture.provenance_original = state
         profile_progress(fixture, True)
         armed = (run_script(fixture, scope, COMMIT_SCRIPT) if unknown else
                  timed_publication_abort(fixture, 'arm', None, 'agents', operation='aggregate'))
         changed = run_script(fixture, {**scope, 'original': original})
+        state['previous_receipt'] = changed.pop('previous_receipt', None)
         return {**changed, **armed}
     if action == 'restore' and state is None:
         return {'restored': False}
-    if state is None or state[0] != target:
+    if state is None or state['target'] != target:
         raise RuntimeError('provenance_progress_scope_changed')
     if action in ('sample', 'observe', 'verify'):
-        return run_script(fixture, {**scope, **({'transaction': transaction} if proof_action else {})})
+        observed = run_script(fixture, {**scope, 'transaction': transaction,
+                                        'previous_receipt': state['previous_receipt']})
+        if unknown and action == 'sample' and observed.get('commit_transaction_sha256'):
+            state['sample'] = observed['commit_transaction_sha256'], observed.pop('claim_revision')
+        return observed
     if action == 'commit':
-        return run_script(fixture, {**scope, 'transaction': transaction}, COMMIT_SCRIPT)
+        if 'commit' in state:
+            raise RuntimeError('provenance_progress_commit_already_armed')
+        sample = state.get('sample')
+        if sample is None or sample[0] != transaction or type(sample[1]) is not int:
+            raise RuntimeError('provenance_progress_commit_claim_unbound')
+        since = (datetime.now(timezone.utc) - timedelta(seconds=2)).strftime('%Y-%m-%dT%H:%M:%SZ')
+        proof = run_script(fixture, {**scope, 'transaction': transaction}, COMMIT_SCRIPT)
+        state['commit'] = {**proof, 'since': since, 'transaction': transaction, 'claim_revision': sample[1]}
+        return {'commit_armed': True}
+    if unknown and action in ('settle', 'observe_commit'):
+        proof = state.get('commit')
+        if proof is None or (action == 'settle') == ('affected' in proof):
+            raise RuntimeError('provenance_progress_commit_proof_unavailable')
+        outcomes = commit_outcomes(fixture, proof)
+        if not outcomes and action == 'settle':
+            return {'worker_unknown': False}
+        if outcomes != ['unknown']:
+            raise RuntimeError('provenance_progress_commit_worker_outcome_unbound')
+        receipt = run_script(fixture, {**proof, **scope, 'transaction': proof['transaction']}, COMMIT_SCRIPT)
+        proof['affected'] = receipt['commit_acknowledgements_lost']
+        return {**receipt, 'worker_unknown': True}
     if action == 'restore':
         try:
             disarmed = (run_script(fixture, scope, COMMIT_SCRIPT) if unknown else
                         timed_publication_abort(fixture, 'disarm', None, 'agents', operation='aggregate'))
         finally:
             profile_progress(fixture, False)
-        restored = run_script(fixture, {**scope, 'original': state[1]})
+        restored = run_script(fixture, {**scope, 'original': state['original']})
         fixture.provenance_original = None
         return {**restored, **disarmed}
     raise ValueError('provenance_progress_action_required')

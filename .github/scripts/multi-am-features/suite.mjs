@@ -555,6 +555,7 @@ try {
       overlapping_transaction_sha256: provenance.overlapping_transaction_sha256} : null,
     provenance_progress_unknown_commit: progressCommit ? {
       commit_acknowledgements_lost: progressCommit.commit_acknowledgements_lost,
+      worker_commit_outcome: progressCommit.worker_commit_outcome, new_sweep_receipts: progressCommit.new_sweep_receipts,
       transaction_sha256: progressCommit.transaction_sha256, recorded: progressCommit.recorded,
       original_creation_restored: progressCommit.original_creation_restored} : null,
     retirement: retirement ? {retained_history: retirement.retained_history,
