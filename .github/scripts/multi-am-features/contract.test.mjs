@@ -74,6 +74,16 @@ test('requests sharing a credential reserve distinct slots across AM clients and
   assert.ok([...pacer.next.keys()].every(key => !key.includes('owner')));
 });
 
+test('a two-request fixture burst reserves both slots and leaves room on each side', async () => {
+  const waits = [];
+  const pacer = new RequestPacer({now: () => 100, sleep: async ms => { waits.push(ms); }});
+  await pacer.wait('operator', 'POST');
+  await pacer.wait('operator', 'POST', 2);
+  await pacer.wait('operator', 'POST');
+  assert.deepEqual(waits, [12400, 24800]);
+  await assert.rejects(pacer.wait('operator', 'POST', 3), /fixture_pacing_burst_bound/);
+});
+
 test('client config accepts split UTF-8 over a pipe and rejects overlong or truncated input', async () => {
   const bytes = Buffer.from(JSON.stringify({owner: 'fixture-测试'}));
   assert.deepEqual(await readConfig([...bytes].map(x => Buffer.from([x]))), {owner: 'fixture-测试'});

@@ -8,12 +8,14 @@ export class RequestPacer {
     Object.assign(this, {now, sleep, createMs, defaultMs});
     this.next = new Map();
   }
-  async wait(credential, method) {
+  async wait(credential, method, count = 1) {
+    if (count !== 1 && count !== 2) throw new Error('fixture_pacing_burst_bound');
     const tier = method === 'POST' ? 'create' : 'default';
     const key = createHash('sha256').update(credential).digest('hex') + ':' + tier;
     if (!this.next.has(key) && this.next.size >= 64) throw new Error('fixture_pacing_identity_bound');
-    const current = this.now(), at = Math.max(current, this.next.get(key) ?? current);
-    this.next.set(key, at + (tier === 'create' ? this.createMs : this.defaultMs));
+    const period = tier === 'create' ? this.createMs : this.defaultMs;
+    const current = this.now(), at = Math.max(current, this.next.get(key) ?? current) + (count - 1) * period;
+    this.next.set(key, at + count * period);
     if (at > current) await this.sleep(at - current);
   }
 }

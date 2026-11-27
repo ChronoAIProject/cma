@@ -3,6 +3,7 @@ import {join, dirname} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {API, normalizeConfig, check} from './cma/core.mjs';
 import {runJourney} from './cma/journey.mjs';
+import {requestPacer} from './pacing.mjs';
 import {ExtendedAdminMatrix} from './features/admin_extended.mjs';
 import {ADMIN_PERMISSIONS} from './features/admin_matrix.mjs';
 import {userCases} from './features/user.mjs';
@@ -70,7 +71,15 @@ const fixture = {scope: 'LOCAL_DISPOSABLE_TWO_AM', source: config.expected_api_s
 const matrix = new ExtendedAdminMatrix({fixture,
   onFailure: (stage, error, row) => retainFailure(config.matrix_output, stage, error,
     {case: 'admin.' + row?.feature, phase, iteration: row?.iteration}),
-  request: (role, ...args) => (role === 'admin' ? admin : user).request(...args),
+  reserveResumePair: () => requestPacer.wait(config.admin_bearer, 'POST', 2),
+  request: (role, am, method, path, options) => {
+    if (options.pacedPair) {
+      check(role === 'admin' && method === 'POST' && path === '/api/v1/admin/admission/resume',
+        'admission_resume_pair_route_unexpected');
+      return admin.rawRequest(am, method, path, options);
+    }
+    return (role === 'admin' ? admin : user).request(am, method, path, options);
+  },
   record: async row => {
     const scoped = row.feature === 'sandbox_always_on_cross_am';
     const ids = row.requests.map(request => request.request_id).filter(Boolean);

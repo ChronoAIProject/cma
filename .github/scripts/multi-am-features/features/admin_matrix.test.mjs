@@ -92,13 +92,22 @@ test('admission lost stop acknowledgement reconciles once and restores through p
 test('admission retains one stop and one resume and probes public behavior on both Managers', async () => {
   const probes = [];
   const resumeAttempts = [];
+  let reserved = 0;
+  let bothEntered;
+  const pairing = new Promise(resolve => { bothEntered = resolve; });
   const state = {revision: 0, operator_stop: null, last_change: null, writes_available: true, history: []};
   const matrix = new AdminMatrix({fixture: fixture(), record: () => {},
-    request: async (_role, am, method, path, {body}) => {
+    reserveResumePair: async () => { reserved += 1; },
+    request: async (_role, am, method, path, {body, pacedPair}) => {
       const success = () => ({status: 200, body: structuredClone(state)});
       if (method === 'GET') return success();
       const stopping = path.endsWith('/stop');
-      if (!stopping) resumeAttempts.push([am, body.expected_revision]);
+      if (!stopping) resumeAttempts.push([am, body.expected_revision, pacedPair]);
+      if (pacedPair) {
+        assert.equal(reserved, 1);
+        if (resumeAttempts.filter(attempt => attempt[2]).length === 2) bothEntered();
+        await pairing;
+      }
       if (stopping && state.operator_stop) return success();
       if (body.expected_revision !== state.revision) return {status: 409, body: {code: 'admission_control_conflict'}};
       const revision = state.revision + 1;
@@ -113,7 +122,7 @@ test('admission retains one stop and one resume and probes public behavior on bo
     probes.push({am, mode, stopped: state.operator_stop !== null});
   });
   assert.deepEqual(probes, [{am: 'b', mode: 'paused', stopped: true}, {am: 'a', mode: 'open', stopped: false}]);
-  assert.deepEqual(resumeAttempts, [['b', 0], ['b', 1]]);
+  assert.deepEqual(resumeAttempts, [['b', 0, false], ['b', 1, true], ['a', 1, true]]);
   assert.equal(state.revision, 2);
   assert.equal(state.history[1].reason, 'local-matrix-offline-test-1');
 });
