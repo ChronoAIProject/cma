@@ -6,7 +6,7 @@ import { LocalCluster } from './kubernetes.mjs';
 import { validateConfig } from './safety.mjs';
 
 const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
-const roles = ['admissions', 'durable', 'receiver'];
+const roles = ['admissions', 'authority', 'durable', 'receiver'];
 
 async function readCapture(binding, role, runHash) {
   check(isAbsolute(binding?.path ?? '') && isHash(binding?.sha256),
@@ -45,16 +45,52 @@ function authority(record) {
   return [record.ownerHash, record.runtimeGeneration, record.authorityEpoch].join(':');
 }
 
-// The three observations are produced by the admission client, the durable
-// ledger reader, and the runtime/provider receiver respectively. A command
-// result is not itself evidence that the receiver performed one effect.
+function observedSequence(record) {
+  check(Number.isSafeInteger(record.observedSequence) && record.observedSequence >= 0,
+    'oracle_observation_sequence_missing', true);
+  return record.observedSequence;
+}
+
+// Each fixture observation uses the same independent ordering sequence.
+// Authority intervals are captured by the ownership observer, including any
+// takeover, independently of the execution and receiver observations.
+function authorityTimeline(records) {
+  check(records.length > 0, 'oracle_authority_timeline_missing', true);
+  for (const row of records) {
+    authority(row);
+    check(Number.isSafeInteger(row.fromSequence) && row.fromSequence >= 0
+      && Number.isSafeInteger(row.throughSequence) && row.throughSequence >= row.fromSequence,
+    'oracle_authority_interval_invalid', true);
+  }
+  const ordered = [...records].sort((a, b) => a.fromSequence - b.fromSequence);
+  for (let index = 1; index < ordered.length; index += 1) {
+    const previous = ordered[index - 1];
+    const current = ordered[index];
+    check(current.fromSequence === previous.throughSequence + 1,
+      'oracle_authority_interval_discontinuous', true);
+    check(current.runtimeGeneration > previous.runtimeGeneration
+      || (current.runtimeGeneration === previous.runtimeGeneration
+        && current.authorityEpoch > previous.authorityEpoch),
+    'oracle_authority_regressed', true);
+  }
+  return ordered;
+}
+
+function expectedAuthority(timeline, record, admittedAt) {
+  const sequence = observedSequence(record);
+  check(sequence >= admittedAt, 'oracle_observation_before_admission');
+  const expected = timeline.find((row) => row.fromSequence <= sequence && sequence <= row.throughSequence);
+  check(expected, 'oracle_authority_at_observation_missing', true);
+  return expected;
+}
+
 export async function readLocalOutcomeOracle({ runHash, captures }, { readCommand } = {}) {
   check(isHash(runHash), 'oracle_run_binding_missing', true);
   check(captures && new Set(roles.map((role) => captures[role]?.path)).size === roles.length,
     'oracle_capture_source_reused', true);
-  const [admissions, durable, receiver] = await Promise.all(
+  const [admissions, ownership, durable, receiver] = await Promise.all(
     roles.map((role) => readCapture(captures[role], role, runHash)));
-  check(new Set([admissions.sourceHash, durable.sourceHash, receiver.sourceHash]).size === roles.length,
+  check(new Set([admissions.sourceHash, ownership.sourceHash, durable.sourceHash, receiver.sourceHash]).size === roles.length,
     'oracle_capture_source_reused', true);
 
   const accepted = new Map();
@@ -64,21 +100,26 @@ export async function readLocalOutcomeOracle({ runHash, captures }, { readComman
     accepted.set(row.commandHash, row);
   }
   check(accepted.size > 0, 'oracle_admission_missing', true);
+  const ownershipByCommand = commandRecords(ownership.records, accepted);
   const recorded = commandRecords(durable.records, accepted);
   const effects = commandRecords(receiver.records, accepted);
 
   const commands = [];
   for (const [commandHash, admission] of accepted) {
+    const admittedAt = observedSequence(admission);
+    const timeline = authorityTimeline(ownershipByCommand.get(commandHash) ?? []);
+    check(authority(admission) === authority(expectedAuthority(timeline, admission, admittedAt)),
+      'oracle_admission_authority_mismatch');
     const executions = recorded.get(commandHash) ?? [];
     const observed = effects.get(commandHash) ?? [];
-    const execution = executions[0];
-    const expected = execution ? authority(execution) : null;
-    const effectAuthorities = observed.map(authority);
-    const correctOwner = execution?.ownerHash === admission.ownerHash
-      && observed.every((row) => row.ownerHash === admission.ownerHash);
+    const expectations = [...executions, ...observed].map((row) => ({
+      row, expected: expectedAuthority(timeline, row, admittedAt),
+    }));
+    const correctOwner = expectations.every(({ row, expected }) => row.ownerHash === expected.ownerHash);
     commands.push({ commandHash, accepted: true, executions: executions.length,
-      effects: observed.length, staleWrites: effectAuthorities.filter((value) => value !== expected).length,
-      terminal: execution?.terminal === true && observed.every((row) => row.terminal === true),
+      effects: observed.length,
+      staleWrites: expectations.filter(({ row, expected }) => authority(row) !== authority(expected)).length,
+      terminal: executions.every((row) => row.terminal === true) && observed.every((row) => row.terminal === true),
       correctOwner });
     if (readCommand) {
       check(typeof admission.commandId === 'string' && hash(admission.commandId) === commandHash,

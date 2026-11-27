@@ -16,8 +16,12 @@ const authority = { commandHash, ownerHash, runtimeGeneration: 2, authorityEpoch
 async function fixture(t, transform = () => {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'cma-outcome-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const records = { admissions: [{ commandId, commandHash, ownerHash, accepted: true }],
-    durable: [{ ...authority }], receiver: [{ ...authority }] };
+  const records = {
+    admissions: [{ ...authority, commandId, accepted: true, observedSequence: 10 }],
+    authority: [{ ...authority, fromSequence: 0, throughSequence: 20 }],
+    durable: [{ ...authority, observedSequence: 12 }],
+    receiver: [{ ...authority, observedSequence: 13 }],
+  };
   transform(records);
   const captures = {};
   for (const [role, rows] of Object.entries(records)) {
@@ -46,11 +50,54 @@ test('oracle reconciles independently captured admission, execution and receiver
 test('missing, duplicate, stale and foreign evidence cannot qualify', async (t) => {
   for (const [modify, error] of [
     [(r) => { r.receiver.length = 0; }, /accepted_effect_lost/],
-    [(r) => r.receiver.push({ ...authority }), /duplicate_effect/],
+    [(r) => r.receiver.push({ ...r.receiver[0] }), /duplicate_effect/],
     [(r) => { r.receiver[0].authorityEpoch = 2; }, /stale_epoch_write/],
     [(r) => { r.durable[0].ownerHash = hash('other-owner'); }, /stale_epoch_write/],
-    [(r) => r.durable.push({ ...authority }), /duplicate_execution/],
+    [(r) => r.durable.push({ ...r.durable[0] }), /duplicate_execution/],
     [(r) => r.receiver.push({ ...authority, commandHash: hash('other-command') }), /oracle_unexpected_command/],
+  ]) {
+    await assert.rejects(readLocalOutcomeOracle(await fixture(t, modify)), error);
+  }
+});
+
+test('agreement between stale execution and receiver records cannot establish current authority', async (t) => {
+  const input = await fixture(t, (records) => {
+    records.durable[0].authorityEpoch = 2;
+    records.receiver[0].authorityEpoch = 2;
+  });
+  await assert.rejects(readLocalOutcomeOracle(input, {
+    readCommand: async (id) => ({ receipt: { command_id: id }, status: 'completed' }),
+  }), /stale_epoch_write/);
+});
+
+test('independently observed takeover permits a new owner and epoch', async (t) => {
+  const successor = { ...authority, ownerHash: hash('successor-owner'), authorityEpoch: 4 };
+  const input = await fixture(t, (records) => {
+    records.authority[0].throughSequence = 11;
+    records.authority.push({ ...successor, fromSequence: 12, throughSequence: 20 });
+    records.durable[0] = { ...successor, observedSequence: 12 };
+    records.receiver[0] = { ...successor, observedSequence: 13 };
+  });
+  const result = await readLocalOutcomeOracle(input);
+  assert.equal(result.commands[0].correctOwner, true);
+  assert.equal(result.commands[0].staleWrites, 0);
+  const stale = await fixture(t, (records) => {
+    records.authority[0].throughSequence = 11;
+    records.authority.push({ ...successor, fromSequence: 12, throughSequence: 20 });
+  });
+  await assert.rejects(readLocalOutcomeOracle(stale), /stale_epoch_write/);
+});
+
+test('missing or ambiguous authority observations fail closed', async (t) => {
+  for (const [modify, error] of [
+    [(r) => { r.authority.length = 0; }, /oracle_authority_timeline_missing/],
+    [(r) => { r.authority[0].throughSequence = 12; }, /oracle_authority_at_observation_missing/],
+    [(r) => { r.admissions[0].authorityEpoch = 2; }, /oracle_admission_authority_mismatch/],
+    [(r) => { r.receiver[0].observedSequence = 9; }, /oracle_observation_before_admission/],
+    [(r) => r.authority.push({ ...authority, authorityEpoch: 4, fromSequence: 20, throughSequence: 30 }),
+      /oracle_authority_interval_discontinuous/],
+    [(r) => r.authority.push({ ...authority, authorityEpoch: 2, fromSequence: 21, throughSequence: 30 }),
+      /oracle_authority_regressed/],
   ]) {
     await assert.rejects(readLocalOutcomeOracle(await fixture(t, modify)), error);
   }
