@@ -80,6 +80,7 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       } else {
         record = await createAndOpen();
       }
+      const readyObservedAt = Date.now();
       check(Number.isSafeInteger(record.createToReadyMs) && record.createToReadyMs > 0
         && record.createToReadyMs < OLD_WORK_LEASE_MS, 'prepared_ready_work_lease_bound_unproven');
       const durable = await evidenceFor(record);
@@ -101,6 +102,8 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         && nativeAfter.receipts.every(isDigest) && new Set(nativeAfter.receipts).size === 3,
       'prepared_native_mutation_receipts_changed');
       const owner = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
+      const originalWorkLeaseStillLive = collision && Number.isSafeInteger(collision.leaseDeadlineMs)
+        && readyObservedAt < collision.leaseDeadlineMs;
       const browserOpen = await opening;
       if (browserOpen?.error) throw browserOpen.error;
       check(isDigest(browserOpen?.started), 'prepared_browser_starting_read_unproven');
@@ -133,7 +136,12 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         recordAbortEvidence({ingress, owner: owner.am, owner_epoch: owner.epoch,
           owner_instance_sha256: hash(owner.instance_id), agent_sha256: hash(record.agentId),
           lifecycle_operation_sha256: hash(record.operationId), exact_reservation_conflict: true,
+          collision_owner_epoch: collision.ownerEpoch,
+          original_work_lease_still_live_at_ready: originalWorkLeaseStillLive,
           publication_diagnostics: publicationDiagnostics});
+        check(collision.ownerInstance === owner.instance_id && collision.ownerEpoch === owner.epoch,
+          'prepared_publication_owner_changed_since_collision');
+        check(originalWorkLeaseStillLive, 'prepared_publication_original_work_lease_elapsed');
         check(aborts(owner.am) === 1 && aborts(owner.am === 'a' ? 'b' : 'a') === 0,
           'prepared_publication_abort_not_attributed');
       }
@@ -142,7 +150,7 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         create_to_ready_ms: record.createToReadyMs,
         ingress_instance_sha256: hash(ingressMember.instance_id), owner_instance_sha256: hash(owner.instance_id),
         request_sha256: requests, publication_diagnostics: publicationDiagnostics,
-        observed_known_abort: ingress === 'b',
+        observed_known_abort: ingress === 'b', original_work_lease_still_live_at_ready: originalWorkLeaseStillLive,
         atomic_publication_fence_count: durable.ready_fences.filter(count => count === 1).length,
         startup_receipt_count: durable.startup_receipts.length,
         runtime_receipt_format: nativeAfter.format, runtime_receipt_count: nativeAfter.receipts.length,
@@ -191,12 +199,14 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
     prepared_publication_abort: abortEvidence,
     steps: journey.steps.map(({name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
+      original_work_lease_still_live_at_ready,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
       browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
       prepared_work_lease_refused}) => ({
       name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
+      original_work_lease_still_live_at_ready,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
       browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
