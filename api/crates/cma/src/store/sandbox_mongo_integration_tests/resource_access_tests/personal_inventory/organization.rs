@@ -10,7 +10,7 @@ const PATH: &str = "/api/v1/agents?organization=owner&limit=200";
 pub(super) async fn owned(rows: usize, distinct: bool) -> fixture::Fixture {
     owned_with_command_observer(rows, distinct, true).await
 }
-async fn owned_with_command_observer(
+pub(super) async fn owned_with_command_observer(
     rows: usize,
     distinct: bool,
     observe_commands: bool,
