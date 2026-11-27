@@ -22,9 +22,15 @@ async fn retirement_receipt_requires_exact_terminal_provider_evidence() {
     let mut no_issuance = valid.clone();
     no_issuance["state"] = json!("no_issuance");
     no_issuance.as_object_mut().unwrap().remove("key_id");
+    let mut no_issuance_null_key = no_issuance.clone();
+    no_issuance_null_key["key_id"] = json!(null);
+    let mut no_issuance_with_key = no_issuance.clone();
+    no_issuance_with_key["key_id"] = json!("fixture-key");
     let mut cases = vec![
         (200, valid.clone(), Some(true)),
         (200, no_issuance, Some(true)),
+        (200, no_issuance_null_key, Some(true)),
+        (200, no_issuance_with_key, None),
         (202, valid.clone(), Some(false)),
         (404, valid.clone(), Some(false)),
         (503, valid.clone(), None),
