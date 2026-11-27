@@ -112,3 +112,62 @@ it('does not retry a malformed successful connection as a network failure', asyn
   const client = createRestWebClient(createClient({ baseUrl: 'https://cma.test' }));
   await expect(client.readAgentLifecycle!('operation-one')).rejects.toBeInstanceOf(ProtocolError);
 });
+
+const repositoryConnection = {
+  services: ['api-github'],
+  target: { type: 'sandbox_profile', profile: { id: 'profile-one', revision: 1 } },
+};
+const scopeRepair = {
+  connection_id: 'github-one',
+  operation: 'public_repository_write',
+  required_scope: 'public_repo',
+  manage_url: 'https://identity.example/keys/github-one',
+};
+
+function readWaitingOperation(connection: unknown) {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async () =>
+      Response.json({
+        id: 'operation-one',
+        status: 'waiting_for_connection',
+        phase: 'connect',
+        events: [],
+        connection,
+      }),
+    ),
+  );
+  return createRestWebClient(createClient({ baseUrl: 'https://cma.test' })).readAgentLifecycle!(
+    'operation-one',
+  );
+}
+
+it.each([
+  undefined,
+  'verification_unavailable',
+  'missing_connection',
+  'insufficient_scope',
+  'repository_unavailable',
+  'reference_unavailable',
+  'runtime_unsupported',
+])('retains the repository preflight refusal %s from a saved operation', async (reason) => {
+  const connection = {
+    ...repositoryConnection,
+    ...(reason === undefined ? {} : { repository_access: reason }),
+    ...(reason === 'insufficient_scope' ? { repository_scope_repair: scopeRepair } : {}),
+  };
+
+  await expect(readWaitingOperation(connection)).resolves.toMatchObject({ connection });
+});
+
+it.each([
+  { repository_access: 'unknown_refusal' },
+  {
+    repository_access: 'insufficient_scope',
+    repository_scope_repair: { ...scopeRepair, manage_url: null },
+  },
+])('rejects malformed repository repair data as a protocol failure', async (fields) => {
+  await expect(readWaitingOperation({ ...repositoryConnection, ...fields })).rejects.toBeInstanceOf(
+    ProtocolError,
+  );
+});
