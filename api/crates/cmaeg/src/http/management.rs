@@ -412,6 +412,8 @@ pub struct ChannelListItem {
     pub record_id: String,
     pub version: u64,
     pub provider: ProviderResponse,
+    /// Omitted for incomplete creations (`definition.creation.ready == false`)
+    /// and legacy records without a recoverable channel ID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoints: Option<EndpointResponse>,
     pub definition: super::schema::PublicChannelDefinition,
