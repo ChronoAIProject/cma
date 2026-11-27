@@ -11,7 +11,7 @@ import {busyConfigurationCase, competingSystemPrompts, configurationCases, heldC
   verifyLifecycleReplay} from './features/agent_configuration.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
-import {retainFailure, withRestoration} from './failure.mjs';
+import {journeyFailureSummary, retainFailure, withRestoration} from './failure.mjs';
 import {openPreparedBrowser} from './prepared_browser.mjs';
 import {relinquishAndReplayAlwaysOn} from './features/sandbox_always_on_browser.mjs';
 import {NonOwnerRouter} from './routing.mjs';
@@ -322,10 +322,13 @@ try {
   const drain = result.journey?.steps.find(s => s.name === 'owner_drain_and_readiness' && s.verdict === 'PASS');
   const runtimeLoss = result.journey?.steps.find(s => s.name === 'native_runtime_loss_preserves_agents' && s.verdict === 'PASS');
   const journeyVerdict = result.journey?.verdict === 'LOCAL_TWO_AM_JOURNEY_PASS' ? 'PASS' : 'FAIL';
+  const failedCase = rows.find(row => row.verdict === 'FAIL');
   // This allowlist is the only suite content eligible for CI artifact upload.
   await writeFile(join(config.summary_dir, 'coverage.json'), JSON.stringify({
     ...result.coverage, suite_verdict: result.verdict, source: result.source,
     journey_verdict: result.journey ? journeyVerdict : 'NOT_RUN',
+    ...journeyFailureSummary(result.journey),
+    first_failed_case: failedCase ? {case: failedCase.case, phase: failedCase.phase, iteration: failedCase.iteration} : null,
     writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: Boolean(recovery), owner_restart_replay: recovery?.replay ?? null,
@@ -335,6 +338,13 @@ try {
     runtime_loss: runtimeLoss ? {recovered_agents: runtimeLoss.recovered_agents,
       known_recovery_aborts: runtimeLoss.known_recovery_aborts,
       competing_metadata_publications: runtimeLoss.competing_metadata_publications,
+      recovery_abort_manager: runtimeLoss.recovery_abort_manager,
+      recovery_abort_instance_sha256: runtimeLoss.recovery_abort_instance_sha256,
+      metadata_writer_manager: runtimeLoss.metadata_writer_manager,
+      metadata_writer_instance_sha256: runtimeLoss.metadata_writer_instance_sha256,
+      metadata_ingress_manager: runtimeLoss.metadata_ingress_manager,
+      metadata_ingress_instance_sha256: runtimeLoss.metadata_ingress_instance_sha256,
+      metadata_request_sha256: runtimeLoss.metadata_request_sha256,
       generation_retirements: runtimeLoss.generation_retirements, post_loss_replies: runtimeLoss.post_loss_replies,
       previous_pod_sha256: runtimeLoss.previous_pod_sha256, replacement_pod_sha256: runtimeLoss.replacement_pod_sha256} : null,
     trigger_owner_relinquishment: trigger?.owner_relinquishment ?? null,

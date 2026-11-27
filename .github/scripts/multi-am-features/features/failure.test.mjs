@@ -4,8 +4,22 @@ import {mkdtemp, readdir, readFile, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {retainFailure, withRestoration} from '../failure.mjs';
+import {journeyFailureSummary, retainFailure, withRestoration} from '../failure.mjs';
 import {NonOwnerRouter} from '../routing.mjs';
+
+test('hosted summaries keep the initiating failure and count cleanup failures without resource identities', () => {
+  const result = journeyFailureSummary({
+    steps: [{name: 'initialization', verdict: 'PASS'},
+      {name: 'prepared_create_on_a', verdict: 'FAIL', error: 'prepared_parent_schemas_unbound'}],
+    cleanup: [{public_cleanup: 'FAILED', reason: 'private fixture detail', agent_sha256: 'private-agent'},
+      {am_restore: 'FAILED'}, {public_cleanup: 'PASS'}],
+  });
+  assert.deepEqual(result, {first_failed_step: 'prepared_create_on_a',
+    first_failed_step_code: 'prepared_parent_schemas_unbound',
+    journey_cleanup_failures: {public_retirement: 1, provider_release: 0, manager_restore: 1}});
+  assert.equal(journeyFailureSummary({steps: [{name: 'initialization', verdict: 'FAIL', error: '/private/file'}]})
+    .first_failed_step_code, 'transport_or_contract_error');
+});
 
 test('post-acceptance attribution failure retains command and stream receipts without replay', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'multi-am-custody-'));

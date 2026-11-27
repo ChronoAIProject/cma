@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import {hash} from '../cma/core.mjs';
 import {runtimeLoss} from './runtime_loss.mjs';
 
 function fixture({changeHome = false, changeConversation = false, loseHistory = false,
-  postEvents = 1, mixedGenerations = false, aborts = {a: 0, b: 1}, consumedAborts = 1,
-  missWindow = false, loseTitle = false, titleSeq = 23, transactionEntered = true} = {}) {
+  postEvents = 1, mixedGenerations = false, aborts = {a: 1, b: 0}, consumedAborts = 1,
+  missWindow = false, loseTitle = false, titleSeq = 23, transactionEntered = true,
+  writerOnIngress = false, writerNotLogged = false, replaceManager = false, repeatAbort = false} = {}) {
   const record = {agentId: 'agent', sandboxId: 'sandbox', operationId: 'create', runtime: {image: 'image'}};
   const sibling = {agentId: 'sibling', sandboxId: 'sandbox'};
   const prior = {status: 'active', boot_id: 'boot-a', children: [record, sibling].map(agent => ({status: 'ready',
@@ -14,12 +16,27 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
     runtime_generation: index === 1 && mixedGenerations ? 4 : 5, last_seq: 35}))};
   const oldReply = {turn_sequence: 7, outcome: {type: 'completed'}, messages: [{content: 'retained'}]};
   let removed = false;
-  let observedWithWriter = false;
+  let observationsWithWriter = 0;
   let title;
+  let topologyReads = 0;
+  const members = Object.fromEntries([['a', 'agent'], ['b', 'sibling']].map(([am, agent]) => [am, {
+    ready: true, instance_id: 'manager-' + am, pod_uid: 'owner-' + agent,
+  }]));
   const reads = [], completions = [], faultActions = [];
   const adapter = {
-    ownerOf: async ({agentId}) => ({am: agentId === 'agent' ? 'a' : 'b', epoch: 1,
-      agent_id: agentId, pod_uid: 'owner-' + agentId}),
+    ownerOf: async ({agentId}) => {
+      const am = agentId === 'agent' ? 'a' : 'b';
+      return {...members[am], am, epoch: 1, agent_id: agentId};
+    },
+    topology: async () => ({coordination_enabled: true, shared_database: true, ams: {
+      ...members, a: {...members.a, ...(++topologyReads === 3 && replaceManager ? {pod_uid: 'replaced'} : {})},
+    }}),
+    peerWriteEvidence: async ({am, requestHash, epoch, operation}) => {
+      assert.equal(requestHash, hash('preferences-request'));
+      assert.equal(epoch, 1);
+      assert.equal(operation, 'preferences');
+      return {matches: am === 'a' ? Number(writerOnIngress) : Number(!writerNotLogged)};
+    },
     lifecycleSnapshot: async scope => {
       assert.deepEqual(scope, {sandboxId: 'sandbox', agentIds: ['agent', 'sibling']});
       return removed ? after : prior;
@@ -36,8 +53,8 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
     runtimeLossEvidence: async scope => {
       assert.deepEqual(scope, {sandboxId: 'sandbox'});
       if (!title) return {a: 0, b: 0};
-      const visible = missWindow || observedWithWriter;
-      observedWithWriter = true;
+      const visible = missWindow || ++observationsWithWriter > 1;
+      if (repeatAbort && observationsWithWriter > 2) return {a: aborts.a + 1, b: aborts.b};
       return visible ? aborts : {a: 0, b: 0};
     },
     runtimeLossPublicationAbort: async ({action, count}) => {
@@ -55,17 +72,15 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
       return [titleSeq];
     },
   };
-  const api = {router: {dispatch: (agentId, request) => {
-    assert.equal(agentId, 'sibling');
-    return request('a');
-  }}, rawRequest: async (am, method, path, options) => {
+  const api = {rawRequest: async (am, method, path, options) => {
     if (method === 'PATCH') {
       assert.deepEqual(faultActions, ['arm', 'wait']);
       assert.equal(am, 'a');
       assert.equal(path, '/api/v1/agents/sibling/preferences');
       assert.equal(options.body.expected_revision, 5);
       title = options.body.title;
-      return {body: {title, revision: 6}};
+      return {status: 200, body: {title, revision: 6}, timing: {am, method,
+        route: '/api/v1/agents/{id}/preferences', request_id: 'preferences-request'}};
     }
     assert.equal(method, 'GET');
     if (removed) reads.push([am, path]);
@@ -100,6 +115,11 @@ test('runtime loss retains both Agents with one replacement and a working peer S
   assert.equal(result.generation_retirements, 2);
   assert.equal(result.known_recovery_aborts, 1);
   assert.equal(result.competing_metadata_publications, 1);
+  assert.equal(result.recovery_abort_manager, 'a');
+  assert.equal(result.recovery_abort_instance_sha256, hash('manager-a'));
+  assert.equal(result.metadata_ingress_instance_sha256, hash('manager-a'));
+  assert.equal(result.metadata_writer_instance_sha256, hash('manager-b'));
+  assert.equal(result.metadata_request_sha256, hash('preferences-request'));
   assert.deepEqual(context.faultActions, ['arm', 'wait', 'disarm']);
   assert.deepEqual(context.reads.filter(([, path]) => path.includes('/events')), [
     ['a', '/api/v1/agents/agent/events?after=20'], ['b', '/api/v1/agents/agent/events?after=20'],
@@ -115,6 +135,10 @@ test('runtime loss disarms the fault and rejects unbound or repeated aborts', as
     [{consumedAborts: 0}, /runtime_loss_abort_not_consumed_once/],
     [{transactionEntered: false}, /runtime_loss_transaction_not_observed/],
     [{missWindow: true}, /runtime_loss_writer_missed_transaction_window/],
+    [{writerOnIngress: true}, /runtime_loss_writer_executed_on_ingress/],
+    [{writerNotLogged: true}, /verified_owner_write_missing_or_duplicated/],
+    [{replaceManager: true}, /runtime_loss_manager_process_changed/],
+    [{repeatAbort: true}, /runtime_loss_abort_repeated_after_retry/],
   ]) {
     const context = fixture(input);
     await assert.rejects(runtimeLoss(context), error);

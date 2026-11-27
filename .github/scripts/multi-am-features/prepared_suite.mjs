@@ -3,7 +3,7 @@ import {join} from 'node:path';
 import {assertOwner, check, hash, poll} from './cma/core.mjs';
 import {runJourney} from './cma/journey.mjs';
 import {readConfig} from './config.mjs';
-import {retainFailure, withRestoration} from './failure.mjs';
+import {journeyFailureSummary, retainFailure, withRestoration} from './failure.mjs';
 import {openPreparedBrowser} from './prepared_browser.mjs';
 import {preparedSchemaRefusal} from './features/prepared_schema_refusal.mjs';
 import {writerCoverage} from './writer_coverage.mjs';
@@ -143,6 +143,7 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
   await writeFile(join(config.summary_dir, 'coverage.json'), JSON.stringify({
     schema: 'multi-am-prepared-coverage-v1', suite_verdict: verdict, source: config.expected_api_source,
     journey_verdict: journeyVerdict,
+    ...journeyFailureSummary(journey),
     writer_coverage: coverage,
     steps: journey.steps.map(({name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,

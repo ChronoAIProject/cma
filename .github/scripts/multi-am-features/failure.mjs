@@ -5,6 +5,22 @@ import {join} from 'node:path';
 export const errorCode = error => /^[a-zA-Z0-9_:-]{1,160}$/.test(error?.message ?? '')
   ? error.message : 'transport_or_contract_error';
 
+export function journeyFailureSummary(journey) {
+  const step = journey?.steps.find(value => value.verdict === 'FAIL');
+  const cleanup = journey?.cleanup ?? [];
+  const fixedCode = value => typeof value === 'string' && /^[a-z][a-z0-9_]{0,100}$/.test(value)
+    ? value : 'transport_or_contract_error';
+  return {
+    first_failed_step: step ? fixedCode(step.name) : null,
+    first_failed_step_code: step ? fixedCode(step.error) : null,
+    journey_cleanup_failures: {
+      public_retirement: cleanup.filter(value => value.public_cleanup === 'FAILED').length,
+      provider_release: cleanup.filter(value => value.provider_release === 'FAILED').length,
+      manager_restore: cleanup.filter(value => value.am_restore === 'FAILED').length,
+    },
+  };
+}
+
 // Keep typed response bodies and correlation IDs private. The returned receipt
 // contains only a classification and the hash of the complete private record.
 export async function retainFailure(directory, stage, error, context = {}) {
