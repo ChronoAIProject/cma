@@ -116,10 +116,13 @@ class Fixture:
         return json.loads(raw)
 
     def initialize(self):
-        self.mark_initialization_step('fixture_dependencies')
-        self.ready.setdefault('provider_source',str(PROVIDER))
+        self.mark_initialization_step('fixture_certificates')
         self.certificates()
-        self.client.apply(manifests.dependencies(self.secret,self.ready))
+        self.mark_initialization_step('fixture_dependency_build')
+        self.ready.setdefault('provider_source', str(PROVIDER))
+        dependencies = manifests.dependencies(self.secret, self.ready)
+        self.mark_initialization_step('fixture_dependency_create')
+        self.client.apply(dependencies)
         self.record('dependencies_created')
         def role_done():
             pod=self.client.kjson(['get','pod','am-role','-o','json'])

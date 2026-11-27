@@ -30,6 +30,16 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, *_):
         return None
 
+class CommandFailure(RuntimeError):
+    def __init__(self, label, program, returncode, elapsed, private_log):
+        super().__init__(f'{label}_exit_{returncode}')
+        self.program = program
+        self.returncode = returncode
+        self.elapsed = elapsed
+        self.private_log = private_log
+        self.resource_kind = None
+
+
 class Client:
     def __init__(self, ready, output):
         self.ready = ready
@@ -46,6 +56,7 @@ class Client:
         remaining = self.deadline-time.monotonic()
         if remaining <= 0:
             raise TimeoutError('client_deadline')
+        started = time.monotonic()
         child = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, start_new_session=True)
         self.children.append(child)
@@ -58,8 +69,9 @@ class Client:
             raise RuntimeError('subprocess_output_bound')
         if check and child.returncode:
             label = 'command-'+str(time.time_ns())
-            (self.output/(label+'.private.log')).write_text(out+'\n'+err)
-            raise RuntimeError(label+'_exit_'+str(child.returncode))
+            private_log = self.output / f'{label}.private.log'
+            private_log.write_text(out + '\n' + err)
+            raise CommandFailure(label, argv[0], child.returncode, time.monotonic() - started, private_log)
         return out if check else (child.returncode, out)
 
     def k(self, args, **kwargs):
@@ -70,7 +82,11 @@ class Client:
 
     def apply(self, objects):
         for obj in objects:
-            self.k(['create', '-f', '-', '-o', 'name'], data=json.dumps(obj))
+            try:
+                self.k(['create', '-f', '-', '-o', 'name'], data=json.dumps(obj))
+            except CommandFailure as error:
+                error.resource_kind = obj.get('kind')
+                raise
 
     def wait(self, predicate, seconds, label):
         end = min(self.deadline, time.monotonic()+seconds)

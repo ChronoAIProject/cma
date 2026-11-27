@@ -16,6 +16,7 @@ from run_ci import run as run_ci
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'owner'))
+from common import CommandFailure
 from fixture_no_secrets import NoSecretClient, synthetic_configmaps
 import manifests
 import legacy_manifests
@@ -90,8 +91,12 @@ class OwnershipTests(unittest.TestCase):
                                   command_outcomes=[])
             infrastructure.setup.return_value = ready
             infrastructure.cleanup.return_value = {'cluster_absent': True, 'children_joined': True}
-            fixture = Mock(thread=None, initialization_step='am_callback')
-            fixture.initialize.side_effect = RuntimeError('fixture_initialization_failure')
+            private_log = Path(directory) / 'command.private.log'
+            private_log.write_text('failed calling webhook https://private.invalid?token=example')
+            error = CommandFailure('command-123', 'kubectl', 1, 0.5, private_log)
+            error.resource_kind = 'Pod'
+            fixture = Mock(thread=None, initialization_step='fixture_dependency_create')
+            fixture.initialize.side_effect = error
             fixture.server.server_close.side_effect = OSError('fixture listener')
             fixture.client.deadline = 0
             fixture.client.close.side_effect = TimeoutError('fixture child')
@@ -103,8 +108,15 @@ class OwnershipTests(unittest.TestCase):
                 self.assertEqual(run_ci(args), 1)
 
             result = json.loads((output / 'summary' / 'result.json').read_text())
-            self.assertEqual(result['failure_code'], 'fixture_initialization_failure')
-            self.assertEqual(result['initialization_step'], 'am_callback')
+            self.assertEqual(result['failure_code'], 'fixture_command_failed')
+            self.assertEqual(result['initialization_step'], 'fixture_dependency_create')
+            outcome = result['fixture_command_failure']
+            self.assertEqual(outcome['stage'], 'fixture_dependency_create')
+            self.assertEqual(outcome['program'], 'kubectl')
+            self.assertEqual(outcome['returncode'], 1)
+            self.assertEqual(outcome['resource_kind'], 'Pod')
+            self.assertEqual(outcome['signals'], ['admission_webhook_unreachable'])
+            self.assertNotIn('private.invalid', json.dumps(result))
             self.assertEqual(result['fixture_control_cleanup_failure_class'], 'OSError')
             self.assertEqual(result['fixture_child_cleanup_failure_class'], 'TimeoutError')
             self.assertTrue(result['cleanup']['cluster_absent'])

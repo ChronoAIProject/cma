@@ -12,7 +12,7 @@ import time
 import urllib.error
 
 from desktop_policy import install as install_desktop_policy
-from diagnostics import initialization_timeout
+from diagnostics import command_outcome, initialization_timeout
 from fixture_evidence import summarize as summarize_fixture
 from fixture_evidence import summarize_runtime_failure
 from infrastructure import Infrastructure
@@ -23,7 +23,7 @@ from tls_fixture import prepare as prepare_tls
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'owner'))
-from common import utc, write
+from common import CommandFailure, utc, write
 from fixture_no_secrets import LocalFixture
 from gateway import initialize_gateway
 
@@ -118,7 +118,14 @@ def run(args):
         result['failure_class'] = type(error).__name__
         if fixture and result['stage'] == 'two_am_initialization':
             result['initialization_step'] = fixture.initialization_step
-        if initialization_timeout(error):
+        if isinstance(error, CommandFailure):
+            result['failure_code'] = 'fixture_command_failed'
+            outcome = command_outcome(result.get('initialization_step') or result['stage'],
+                                      error.program, error.returncode, error.elapsed, error.private_log.read_bytes())
+            if error.resource_kind in {'ConfigMap', 'Pod', 'Service', 'StatefulSet'}:
+                outcome['resource_kind'] = error.resource_kind
+            result['fixture_command_failure'] = outcome
+        elif initialization_timeout(error):
             result['failure_code'] = initialization_timeout(error)
         elif isinstance(error, urllib.error.HTTPError):
             result['http_status'] = error.code
