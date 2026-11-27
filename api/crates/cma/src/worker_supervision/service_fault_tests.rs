@@ -200,6 +200,9 @@ async fn whole_service_worker_failures_recover_over_http() {
 
 async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_json::Value {
     let before = probe.metrics().await;
+    let (ready, baseline) = probe.ready().await.expect("ready service before injection");
+    assert_eq!(ready, 200);
+    let baseline_workers = baseline["workers"].as_array().unwrap();
     let restarts = counter(&before, "cma_worker_restarts_total", worker, None);
     let reason = match fault {
         Fault::Panic => "panic",
@@ -226,7 +229,9 @@ async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_js
             let workers = body["workers"].as_array().unwrap();
             let target = workers.iter().find(|entry| entry["worker"] == worker).unwrap();
             for other in workers.iter().filter(|entry| entry["worker"] != worker) {
-                assert_eq!(other["state"], "running", "unrelated worker changed: {body}");
+                let previous = baseline_workers.iter().find(|entry| entry["worker"] == other["worker"]).unwrap();
+                // Disabled optional workers need not run; a fault must leave them unchanged.
+                assert_eq!(other["state"], previous["state"], "unrelated worker changed: {body}");
             }
             let state = target["state"].as_str().unwrap();
             if state != "running" {
