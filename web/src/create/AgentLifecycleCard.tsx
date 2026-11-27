@@ -370,12 +370,13 @@ function AgentLifecycleForm({
             onRecheck={() => void lifecycle.submit()}
           />
         ) : null}
-        {lifecycle.canDiscardWaiting ? (
+        {lifecycle.canDiscardWaiting || lifecycle.canCancelWaiting ? (
           <DiscardWaitingCreation
             key={lifecycle.intent?.key}
             label="creation"
-            onDiscard={() => {
-              if (!lifecycle.discardWaiting()) return;
+            remote={lifecycle.canCancelWaiting}
+            onDiscard={async () => {
+              if (!(await lifecycle.finishWaiting())) return;
               setRepository('');
               setRepositoryError(false);
               setMachineIncluded(false);

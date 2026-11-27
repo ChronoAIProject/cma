@@ -121,9 +121,7 @@ impl AgentLifecycleOperationReader for InlineAgentLifecycle {
         caller: &Caller,
         operation_id: &str,
     ) -> Result<AgentLifecycleOperationView, AgentLifecycleOperationReadError> {
-        if !caller.authorization.allows(Capability::UseOwnSandboxes)
-            || !caller.authorization.allows(Capability::CreateSandbox)
-        {
+        if !may_cancel_creation(caller) {
             return Err(AgentLifecycleOperationReadError::Forbidden);
         }
         let record = self
@@ -171,6 +169,21 @@ impl AgentLifecycleOperationReader for InlineAgentLifecycle {
             .map_err(|_| AgentLifecycleOperationReadError::Unavailable)?
             .ok_or(AgentLifecycleOperationReadError::NotFound)?;
         let mut view = record.view();
+        if may_cancel_creation(caller)
+            && self.operations.creation_terminal_settlement_enabled()
+            && matches!(
+                record.status.as_str(),
+                "queued" | "running" | "waiting_for_connection"
+            )
+            && record.sandbox_id.is_none()
+            && record.agent_id.is_none()
+            && record
+                .creation_fence
+                .as_ref()
+                .is_some_and(|fence| self.operations.supports_creation(fence))
+        {
+            view.can_cancel = Some(true);
+        }
         view.callback_url = callback_url(
             self.agent_records.as_ref(),
             &self.agent_page_origin,
@@ -197,6 +210,11 @@ impl AgentLifecycleOperationReader for InlineAgentLifecycle {
         }
         Ok(view)
     }
+}
+
+fn may_cancel_creation(caller: &Caller) -> bool {
+    caller.authorization.allows(Capability::UseOwnSandboxes)
+        && caller.authorization.allows(Capability::CreateSandbox)
 }
 
 impl InlineAgentLifecycle {

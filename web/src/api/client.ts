@@ -142,6 +142,7 @@ export interface AgentLifecycleOperationView {
   readonly accepted_at?: string;
   readonly status: string;
   readonly phase: string;
+  readonly can_cancel?: boolean;
   readonly agent_id?: string;
   readonly error?: string;
   readonly failure?: import('@cma/client').AgentLifecycleFailure;
@@ -255,6 +256,10 @@ export interface CmaWebClient {
     options: CommandOptions,
   ) => Promise<AgentLifecycleCreateReceipt>;
   readonly readAgentLifecycle?: (
+    operationId: string,
+    options?: ReadOptions,
+  ) => Promise<AgentLifecycleOperationView>;
+  readonly cancelAgentLifecycle?: (
     operationId: string,
     options?: ReadOptions,
   ) => Promise<AgentLifecycleOperationView>;

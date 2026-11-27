@@ -242,6 +242,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         !['queued', 'running', 'waiting_for_connection', 'succeeded', 'failed'].includes(
           value.status,
         ) ||
+        (value.can_cancel !== undefined && typeof value.can_cancel !== 'boolean') ||
         typeof value.phase !== 'string' ||
         !Array.isArray(value.events) ||
         (value.connection !== undefined &&
@@ -261,6 +262,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       if (value.failure !== undefined) agentLifecycleFailure(value.failure);
       return value;
     },
+    cancelAgentLifecycle: (operationId, options) =>
+      sdk.agents.cancelLifecycle(operationId, options),
     uploadAgentAttachment: (id, file, options) => sdk.agentAttachments.upload(id, file, options),
     botViews: sdk,
     readSandboxCapacity: (options) => sdk.sandboxes.capacity(options),

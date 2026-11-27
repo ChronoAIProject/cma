@@ -387,10 +387,11 @@ function TaskHomeContent({
         failure={failure}
         pending={lifecycle.pending}
         hasFollowUp={Boolean(preparationDraft.text || preparationDraft.error)}
+        cancelWaiting={lifecycle.canCancelWaiting}
         onDiscardWaiting={
-          lifecycle.canDiscardWaiting
-            ? () => {
-                if (!lifecycle.discardWaiting()) return;
+          lifecycle.canDiscardWaiting || lifecycle.canCancelWaiting
+            ? async () => {
+                if (!(await lifecycle.finishWaiting())) return;
                 connections.cancel();
                 connections.clearError();
                 setValidation(undefined);

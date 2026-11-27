@@ -25,6 +25,41 @@ const connectionWait: AgentLifecycleOperationView = {
   events: [],
 };
 
+it('keeps a cancellable operation until CMA confirms the exact terminal result', async () => {
+  const slot = lifecycleStorageKey('owner');
+  const saved = JSON.stringify({
+    version: 1,
+    intent: { key: 'original-key', body: { name: 'Original' }, receipt: { id: connectionWait.id } },
+  });
+  sessionStorage.setItem(slot, saved);
+  const cancelled = {
+    id: connectionWait.id,
+    status: 'failed',
+    phase: 'failed',
+    events: [],
+  };
+  const cancel = vi
+    .fn()
+    .mockRejectedValueOnce(new TypeError('Response lost'))
+    .mockResolvedValueOnce({ ...cancelled, id: 'unrelated-operation' })
+    .mockResolvedValueOnce(cancelled);
+  const client = agentClient({
+    readAgentLifecycle: async () => ({ ...connectionWait, can_cancel: true }),
+    cancelAgentLifecycle: cancel,
+  });
+  const { result } = renderHook(() => useLifecycleIntent(client, 'owner'));
+  await waitFor(() => expect(result.current.canCancelWaiting).toBe(true));
+  expect(result.current.canDiscardWaiting).toBe(false);
+  expect(result.current.discardWaiting()).toBe(false);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await act(async () => expect(await result.current.cancelWaiting()).toBe(false));
+    expect(sessionStorage.getItem(slot)).toBe(saved);
+  }
+  await act(async () => expect(await result.current.cancelWaiting()).toBe(true));
+  expect(cancel.mock.calls.map(([id]) => id)).toEqual(Array(3).fill(connectionWait.id));
+  expect(sessionStorage.getItem(slot)).toBeNull();
+});
+
 it('preserves a newer task draft and fences a delayed continuation after discard', async () => {
   const slot = lifecycleStorageKey('owner');
   sessionStorage.setItem(

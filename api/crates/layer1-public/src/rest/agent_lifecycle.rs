@@ -215,6 +215,10 @@ pub struct AgentLifecycleOperationView {
     pub accepted_at: Option<String>,
     pub status: String,
     pub phase: String,
+    /// The owner can request cancellation before allocation. The write checks
+    /// the operation and its creation proof again.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub can_cancel: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_id: Option<String>,
     /// Omitted without an Agent ID or when observation fails; null for a missing or Deleted Agent.
