@@ -115,6 +115,7 @@ pub(crate) struct FeatureFlags {
     pub sandbox_detail_timings: bool,
     pub agent_file_read_timings: bool,
     pub agent_file_single_exchange: bool,
+    pub agent_file_preview_peer_identity: bool,
     pub bounded_response_reads: bool,
     pub active_log_proofs: bool,
     pub bounded_transcript_reads: bool,
@@ -272,6 +273,10 @@ impl FeatureFlags {
             )?,
             agent_file_read_timings: flag(lookup, "CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED")?,
             agent_file_single_exchange: flag(lookup, "CHRONO_AGENT_FILE_SINGLE_EXCHANGE_ENABLED")?,
+            agent_file_preview_peer_identity: flag(
+                lookup,
+                "CHRONO_AGENT_FILE_PREVIEW_PEER_IDENTITY_ENABLED",
+            )?,
             sandbox_agent_projection: flag(lookup, "CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED")?,
             sandbox_profile_readability: flag(
                 lookup,
@@ -413,12 +418,7 @@ impl FeatureFlags {
         {
             return Err("CHRONO_INGRESS_COORDINATOR_ENABLED requires JSON retention, raw output, permission and live fragment bounds".into());
         }
-        if flags.am_startup_health_serving && flags.am_failure_containment_enabled {
-            return Err("CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED cannot be combined with CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED".into());
-        }
-        if flags.am_empty_warm_pool_startup && !flags.am_startup_health_serving {
-            return Err("CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED requires CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED".into());
-        }
+        gates::validate_startup(&flags)?;
         Ok(flags)
     }
 }

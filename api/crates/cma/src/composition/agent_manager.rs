@@ -74,6 +74,11 @@ pub(super) fn relay(
     if config.features.agent_file_write_handoff {
         relay.enable_file_write_handoff();
     }
+    if config.features.agent_file_single_exchange
+        && config.features.agent_file_preview_peer_identity
+    {
+        relay.enable_file_preview_peer_identity();
+    }
     relay.install_controls(stores.clone(), controls);
     relay.install_reopen(lifecycle.reopen_worker.clone(), stores);
     updates.install_live_source(relay.live_source());

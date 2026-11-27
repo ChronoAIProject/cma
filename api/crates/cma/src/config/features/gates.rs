@@ -29,3 +29,13 @@ pub(in crate::config) fn flag(
 }
 pub(super) const CREDENTIAL_RETIREMENT_RECEIPTS: &str = "CHRONO_CREDENTIAL_RETIREMENT_RECEIPTS";
 pub(super) const RETIREMENT_REAUTHORIZATION: &str = "CHRONO_RETIREMENT_REAUTHORIZATION_ENABLED";
+
+pub(super) fn validate_startup(flags: &super::FeatureFlags) -> Result<(), String> {
+    if flags.am_startup_health_serving && flags.am_failure_containment_enabled {
+        return Err("CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED cannot be combined with CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED".into());
+    }
+    if flags.am_empty_warm_pool_startup && !flags.am_startup_health_serving {
+        return Err("CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED requires CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED".into());
+    }
+    Ok(())
+}

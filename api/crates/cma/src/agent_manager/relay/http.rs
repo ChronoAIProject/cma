@@ -143,49 +143,30 @@ async fn route_request(
     } else {
         None
     };
-    let (destination, reports_handoff) = if let Some(raw) = proof {
-        if request.headers().get_all(PROOF).iter().count() != 1 {
-            return StatusCode::FORBIDDEN.into_response();
-        }
-        let verified = raw.to_str().ok().and_then(|raw| {
-            relay
-                .authentication
-                .verify(
-                    raw,
-                    request.method(),
-                    request.uri(),
-                    ingress::headers(&request),
-                    &bytes,
-                )
-                .ok()
-        });
-        let Some(verified) = verified else {
-            return StatusCode::FORBIDDEN.into_response();
-        };
-        if let Some(diagnostic) = diagnostic.as_mut() {
-            diagnostic.correlate_hop(raw.as_bytes());
-        }
-        if verified.owner.agent_id != id
-            || verified.owner.instance_id != relay.coordinator.instance_id
+    let (destination, reports_handoff) = if let Some(file_identity::VerifiedOwner(destination)) =
+        request
+            .extensions_mut()
+            .remove::<file_identity::VerifiedOwner>()
+    {
+        if !relay.coordinator.is_ready()
+            || !destination.authority.is_current()
+            || bounded(relay.coordinator.store.check(&destination.token))
+                .await
+                .is_err()
         {
-            return unavailable_with(diagnostic.as_ref(), Refusal::AuthorityChanged);
+            return file_read::refusal(diagnostic.as_ref(), Refusal::AuthorityChanged);
         }
-        let membership = match bounded(relay.coordinator.store.membership()).await {
-            Ok(membership) => membership,
-            Err(_) => return unavailable_with(diagnostic.as_ref(), Refusal::MembershipUnavailable),
-        };
-        if membership.require_compatible().is_err()
-            || !membership.members.iter().any(|member| {
-                member.instance_id == verified.sender
-                    && member.is_live(membership.now_ms)
-                    && !member.draining
-            })
+        request.headers_mut().remove(PROOF);
+        request.extensions_mut().insert(VerifiedPeer);
+        (destination, true)
+    } else if let Some(raw) = proof {
+        let verified = match relay
+            .verify_peer(&request, &bytes, &id, diagnostic.as_mut())
+            .await
         {
-            if let Some(diagnostic) = &diagnostic {
-                diagnostic.record(Refusal::MembershipUnavailable);
-            }
-            return StatusCode::FORBIDDEN.into_response();
-        }
+            Ok(verified) => verified,
+            Err(refusal) => return refusal,
+        };
         let reports_handoff = file_read && verified.reports_file_handoff();
         let reports_file_write = file_write && verified.reports_file_write_handoff();
         if reports_file_write && relay.coordinator.is_draining() {
@@ -306,12 +287,18 @@ async fn route_request(
         // A retryable typed refusal: the caller may land on the owner next.
         return unavailable();
     }
+    let claim = match file_identity::project(&relay, &request, &bytes, browser_proof.as_ref()).await
+    {
+        Ok(claim) => claim,
+        Err(refusal) => return refusal,
+    };
     let deadline = forward::deadline();
     let forwarded = forward::send(
         &relay,
         destination,
         &request,
         bytes.as_ref(),
+        claim,
         deadline,
         diagnostic.as_mut(),
     )

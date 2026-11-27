@@ -39,7 +39,7 @@ async fn refusal(f: &TestStore, sandbox: &Sandbox) -> Option<InactivityPauseRefu
         .refusal
 }
 
-async fn automatic(f: &TestStore, sandbox: &Sandbox) -> SandboxMaintenanceOutcome {
+pub(super) async fn automatic(f: &TestStore, sandbox: &Sandbox) -> SandboxMaintenanceOutcome {
     f.store
         .schedule_inactivity_pause(SandboxInactivityPauseRequest {
             expected_policy_revision: None,

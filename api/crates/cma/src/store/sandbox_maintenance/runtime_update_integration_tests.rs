@@ -2,7 +2,7 @@ use super::*;
 use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 use layer2_core::sandbox::store::{AgentWorkerStore, WorkspaceWorkerStore};
 
-fn workspace(sandbox: &Sandbox) -> Workspace {
+pub(super) fn workspace(sandbox: &Sandbox) -> Workspace {
     Workspace {
         id: WorkspaceId(format!("wks_{}", sandbox.id)),
         sandbox_id: sandbox.id.clone(),

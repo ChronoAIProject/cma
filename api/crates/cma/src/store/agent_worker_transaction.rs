@@ -261,7 +261,7 @@ async fn apply_publication_observed(
                 mutation,
                 publication_history::Selection {
                     ordinary: observed.is_none(),
-                    repeated: repeated_marker.is_some(),
+                    repeated_marker,
                 },
                 history_cache,
                 session,
@@ -396,6 +396,17 @@ async fn apply_publication_observed(
         )
         .await?;
         insert_logs(store, &integrity.documents, session).await?;
+    }
+    if let Some(update) = super::connection_recovery_activity::completed_update(
+        &current_row,
+        &current,
+        &final_agent,
+        last_log.or_else(|| history.as_ref()?.entries.last()),
+        &logs,
+    )
+    .map_err(ApplyError::Domain)?
+    {
+        publication_log::write_recovery_activity(store, &final_agent, update, session).await?;
     }
     restart_ready::finish(
         store,
