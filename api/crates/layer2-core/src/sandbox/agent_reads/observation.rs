@@ -68,7 +68,11 @@ impl AgentReadService {
         tail: bool,
         visit: &mut (dyn FnMut(AgentLogEntry) -> Result<(), SandboxStoreError> + Send),
     ) -> Result<(), SandboxStoreError> {
-        if let Some(service) = &self.observation {
+        if let Some(service) = self
+            .observation
+            .as_ref()
+            .filter(|_| !super::super::agent_observation::durable_read_fallback())
+        {
             let page = service
                 .source_page(agent, (after, through, limit, tail), || async {
                     let mut page = Some(Vec::new());

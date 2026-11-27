@@ -306,6 +306,102 @@ async fn unbound_submit_can_bind_before_first_snapshot_without_source_probe() {
 }
 
 #[tokio::test]
+async fn replay_rebuilds_indexed_output_when_custody_expires_during_a_page() {
+    use layer2_core::sandbox::agent_observation::observation_scope;
+
+    let data = make({
+        let mut kinds = beginning();
+        kinds.push(message("answer"));
+        kinds.push(AgentLogKind::TurnCompleted { turn_sequence: 3 });
+        kinds
+    })
+    .await;
+    let command_store = Arc::new(BindingStore {
+        inner: data.store.clone(),
+        bind_after_response_reads: 1,
+        bound: AtomicBool::new(false),
+        response_reads: AtomicUsize::new(0),
+    });
+    let commands = layer2_core::sandbox::agent_io::AgentCommandService::new(
+        command_store.clone(),
+        data.access.clone(),
+        Arc::new(Authority),
+    );
+    let (reads, custody, _) = super::super::shared_tests::install_with_commands(
+        data.reads.clone(),
+        data.store.clone(),
+        command_store,
+        &data.agent,
+    );
+    let router = crate::responses::v2::router(crate::responses::v2::ResponsesV2State::new(
+        data.state.agent_page_origin.clone(),
+        commands,
+        reads,
+    ));
+    let submit = observation_scope(
+        custody.clone(),
+        router.clone().oneshot(request(
+            Method::POST,
+            "/api/v2/responses",
+            "owner-a",
+            Some("indexed-handoff"),
+            Some(json!({
+                "conversation": "agt_indexed",
+                "input": "Hello",
+                "stream": true
+            })),
+        )),
+    )
+    .await
+    .unwrap();
+    assert_eq!(submit.status(), StatusCode::OK);
+    let id = submit.headers()["x-cma-response-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    drop(submit);
+    let response = observation_scope(
+        custody.clone(),
+        router.oneshot(request(
+            Method::GET,
+            &format!("/api/v2/responses/{id}/events?starting_after=0"),
+            "owner-a",
+            None,
+            None,
+        )),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["x-cma-response-id"], id);
+
+    data.source.counts.stall.store(true, Ordering::SeqCst);
+    let collected = tokio::spawn(axum::body::to_bytes(response.into_body(), 100_000));
+    tokio::time::timeout(
+        Duration::from_secs(4),
+        data.source.counts.entered.notified(),
+    )
+    .await
+    .expect("indexed page entered before closure");
+    custody.revoke();
+    data.source.counts.stall.store(false, Ordering::SeqCst);
+    data.source.counts.release.notify_one();
+    let bytes = tokio::time::timeout(Duration::from_secs(4), collected)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let released = events(&bytes);
+    assert!(released.iter().all(|event| event["type"] != "error"));
+    for (index, event) in released.iter().enumerate() {
+        assert_eq!(event["sequence_number"], (index + 1) as u64);
+    }
+    let completed = released.last().unwrap();
+    assert_eq!(completed["type"], "response.completed");
+    assert_eq!(completed["response"]["id"], id);
+}
+
+#[tokio::test]
 async fn v2_output_page_http_preserves_authority_and_refuses_a_foreign_cursor() {
     let mut kinds = beginning();
     kinds.push(AgentLogKind::TurnCompleted { turn_sequence: 3 });

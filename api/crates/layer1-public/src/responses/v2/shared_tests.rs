@@ -4,6 +4,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub(super) struct Facts {
     store: Arc<InMemorySandboxStore>,
+    commands: Arc<dyn AgentCommandStore>,
     pub generation: AtomicUsize,
     ready: AtomicBool,
 }
@@ -19,7 +20,7 @@ impl AgentObservationStore for Facts {
         let mut rows = Vec::new();
         for id in ids {
             rows.push(
-                self.store
+                self.commands
                     .get_response_command(id)
                     .await
                     .map_err(|_| AgentReadError::NotFound)
@@ -78,8 +79,22 @@ pub(super) fn install(
     Arc<AgentObservationAuthority>,
     Arc<Facts>,
 ) {
+    install_with_commands(reads, store.clone(), store, agent)
+}
+
+pub(super) fn install_with_commands(
+    reads: Arc<AgentReadService>,
+    store: Arc<InMemorySandboxStore>,
+    commands: Arc<dyn AgentCommandStore>,
+    agent: &Agent,
+) -> (
+    Arc<AgentReadService>,
+    Arc<AgentObservationAuthority>,
+    Arc<Facts>,
+) {
     let facts = Arc::new(Facts {
         store,
+        commands,
         generation: AtomicUsize::new(1),
         ready: AtomicBool::new(true),
     });
@@ -186,7 +201,7 @@ async fn personal_response_resumes_at_the_same_cursor_after_shared_custody_is_lo
 }
 
 #[tokio::test]
-async fn personal_replay_can_open_when_shared_observation_is_unavailable() {
+async fn personal_replay_keeps_shared_subscription_refusals() {
     let (f, observer) = fixture_with_events_and_standing(
         None,
         true,
@@ -213,12 +228,8 @@ async fn personal_replay_can_open_when_shared_observation_is_unavailable() {
         ))
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers()["x-cma-response-id"], id);
-    let mut body = response.into_body().into_data_stream();
-    let first = body.next().await.unwrap().unwrap();
-    assert_eq!(events(&first)[0]["type"], "response.created");
-    assert_eq!(events(&first)[0]["sequence_number"], 0);
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!response.headers().contains_key("x-cma-response-id"));
 }
 
 #[tokio::test]

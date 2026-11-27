@@ -5,10 +5,16 @@ use axum::response::{sse::Event, Response};
 use futures_util::stream::unfold;
 use layer2_core::sandbox::{
     agent_io::{AgentResponseReading, CommandReceiptView, ObservedResponseReadError},
+    agent_observation::{durable_read_scope, AgentObservationSubscription, OBSERVATION_INTERVAL},
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentReadError,
 };
 use serde_json::{json, Value};
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
+use tokio::sync::{Semaphore, SemaphorePermit};
+
+// Direct polling is more expensive than shared observation. Limit the number
+// of admitted streams that can continue polling through a custody outage.
+static DURABLE_RECOVERY_SLOTS: Semaphore = Semaphore::const_new(16);
 
 #[path = "indexed_stream.rs"]
 pub(super) mod indexed;
@@ -29,20 +35,17 @@ pub(super) async fn open(
             "The replay cursor is out of range.",
         );
     };
-    let (mut observation, mut recovering_observation) = match state
-        .reads
-        .observe_output_stream(&mut authorization)
-    {
-        Ok(value) => (value, false),
-        Err(AgentReadError::Unavailable(_)) if authorization.is_personal_owner() => (None, true),
+    let mut observation = match state.reads.observe_output_stream(&mut authorization) {
+        Ok(value) => value,
         Err(err) => return error::read(err),
     };
+    let mut durable_recovery = None;
     if let Err(err) = state.reads.validate_event_stream(&authorization).await {
-        if !use_durable_history(&mut authorization, &err) {
+        durable_recovery = acquire_durable_recovery(&mut authorization, &observation, &err);
+        if durable_recovery.is_none() {
             return error::read(err);
         }
         observation = None;
-        recovering_observation = true;
         if let Err(err) = state.reads.validate_event_stream(&authorization).await {
             return error::read(err);
         }
@@ -52,7 +55,7 @@ pub(super) async fn open(
     let open = Open {
         evidence: evidence.clone(),
         observation,
-        recovering_observation,
+        durable_recovery,
         state,
         authorization,
         receipt,
@@ -103,8 +106,8 @@ pub(super) async fn open(
                     return None;
                 }
                 if !open.first && !open.more {
-                    let interval = if open.recovering_observation {
-                        layer2_core::sandbox::agent_observation::OBSERVATION_INTERVAL
+                    let interval = if open.durable_recovery.is_some() {
+                        OBSERVATION_INTERVAL
                     } else {
                         Duration::from_millis(250)
                     };
@@ -168,8 +171,8 @@ struct Seen {
 
 struct Open {
     evidence: Contract,
-    observation: Option<layer2_core::sandbox::agent_observation::AgentObservationSubscription>,
-    recovering_observation: bool,
+    observation: Option<AgentObservationSubscription>,
+    durable_recovery: Option<SemaphorePermit<'static>>,
     state: ResponsesV2State,
     authorization: AgentEventStreamAuthorization,
     receipt: CommandReceiptView,
@@ -187,11 +190,13 @@ struct Open {
 
 impl Open {
     fn resume_from_durable_history(&mut self, error: &AgentReadError) -> bool {
-        if !use_durable_history(&mut self.authorization, error) {
+        let Some(permit) =
+            acquire_durable_recovery(&mut self.authorization, &self.observation, error)
+        else {
             return false;
-        }
+        };
         self.observation = None;
-        self.recovering_observation = true;
+        self.durable_recovery = Some(permit);
         // Rebuild unreleased frames from current durable history. The next
         // sequence is the first frame this connection has not yet released.
         self.pending.clear();
@@ -203,64 +208,66 @@ impl Open {
     }
 
     async fn refresh(&mut self) -> Result<bool, &'static str> {
+        let result = if self.durable_recovery.is_some() {
+            durable_read_scope(self.refresh_once()).await
+        } else {
+            match self.refresh_once().await {
+                Err(RefreshError::Read(ObservedResponseReadError::Header(ref error)))
+                    if self.resume_from_durable_history(error) =>
+                {
+                    durable_read_scope(self.refresh_once()).await
+                }
+                result => result,
+            }
+        };
+        result.map_err(|error| match error {
+            RefreshError::Read(ObservedResponseReadError::Command(error)) => {
+                self.evidence.record(CloseReason::command(&error));
+                "response_observation_unavailable"
+            }
+            RefreshError::Read(ObservedResponseReadError::Header(error)) => {
+                self.evidence.record(CloseReason::read(&error));
+                match error {
+                    AgentReadError::InvalidPage => "invalid_replay_cursor",
+                    _ => "response_observation_unavailable",
+                }
+            }
+            RefreshError::Unavailable => "response_observation_unavailable",
+        })
+    }
+
+    async fn refresh_once(&mut self) -> Result<bool, RefreshError> {
         let id = self
             .receipt
             .response_id
-            .clone()
-            .ok_or("response_observation_unavailable")?;
+            .as_ref()
+            .ok_or(RefreshError::Unavailable)?;
         // Always re-read current command state and authority, including on quiet
         // heads: queued rejection and revocation need not append Agent events.
-        let observed = if self.observation.is_some() {
-            match self
-                .state
+        let (command, header) = if self.observation.is_some() {
+            self.state
                 .commands
-                .response_for_observed_stream(&self.state.reads, &self.authorization, &id)
+                .response_for_observed_stream(&self.state.reads, &self.authorization, id)
                 .await
-            {
-                Ok(observed) => Some(observed),
-                Err(ObservedResponseReadError::Header(ref error))
-                    if self.resume_from_durable_history(error) =>
-                {
-                    None
-                }
-                Err(error) => {
-                    let reason = match error {
-                        ObservedResponseReadError::Command(ref error) => {
-                            CloseReason::command(error)
-                        }
-                        ObservedResponseReadError::Header(ref error) => CloseReason::read(error),
-                    };
-                    self.evidence.record(reason);
-                    return Err("response_observation_unavailable");
-                }
-            }
+                .map_err(RefreshError::Read)?
         } else {
-            None
-        };
-        let (command, observed_header) = match observed {
-            Some((command, header)) => (command, Some(header)),
-            None => self
+            let command = self
                 .state
                 .commands
-                .response_for_stream(&self.authorization, &id)
+                .response_for_stream(&self.authorization, id)
                 .await
-                .map(|command| (command, None))
-                .inspect_err(|error| self.evidence.record(CloseReason::command(error)))
-                .map_err(|_| "response_observation_unavailable")?,
-        };
-        if command.command.receipt != self.receipt {
-            return Err("response_observation_unavailable");
-        }
-        let header = match observed_header {
-            Some(header) => header,
-            None => self
+                .map_err(ObservedResponseReadError::Command)
+                .map_err(RefreshError::Read)?;
+            let header = self
                 .state
                 .reads
                 .event_stream_header(&self.authorization)
-                .await
-                .inspect_err(|error| self.evidence.record(CloseReason::read(error)))
-                .map_err(|_| "response_observation_unavailable")?,
+                .await?;
+            (command, header)
         };
+        if command.command.receipt != self.receipt {
+            return Err(RefreshError::Unavailable);
+        }
         let current = Seen { command, header };
         if self.seen.as_ref() == Some(&current) {
             return Ok(false);
@@ -275,12 +282,7 @@ impl Open {
                 .with_output_observation(&self.authorization, Some(turn), move |source| {
                     Box::pin(async move { indexed::read(source, &origin, reading, next).await })
                 })
-                .await
-                .inspect_err(|error| self.evidence.record(CloseReason::read(error)))
-                .map_err(|error| match error {
-                    layer2_core::sandbox::AgentReadError::InvalidPage => "invalid_replay_cursor",
-                    _ => "response_observation_unavailable",
-                })?;
+                .await?;
             if let Some(page) = page {
                 self.terminal = page.terminal;
                 self.more = page.more;
@@ -299,12 +301,10 @@ impl Open {
                 &self.authorization,
                 current.command.command.turn_sequence,
             )
-            .await
-            .inspect_err(|error| self.evidence.record(CloseReason::read(error)))
-            .map_err(|_| "response_observation_unavailable")?;
+            .await?;
         let response =
             super::shared_projection::project(&self.state, current.command.clone(), &history)
-                .ok_or("response_observation_unavailable")?;
+                .ok_or(RefreshError::Unavailable)?;
         self.terminal = response.terminal();
         self.pending = projection::events(&response, bound).into();
         self.last = self
@@ -312,7 +312,7 @@ impl Open {
             .back()
             .and_then(|v| v["sequence_number"].as_u64());
         self.more = false;
-        if self.observation.is_some() {
+        if self.observation.is_some() || self.durable_recovery.is_some() {
             let all = std::mem::take(&mut self.pending);
             let mut bytes = 0;
             for event in all.into_iter().filter(|event| {
@@ -321,7 +321,7 @@ impl Open {
                     .is_some_and(|seq| seq >= self.next)
             }) {
                 let size = serde_json::to_vec(&event)
-                    .map_err(|_| "response_observation_unavailable")?
+                    .map_err(|_| RefreshError::Unavailable)?
                     .len();
                 if size > layer2_core::sandbox::agent_observation::MAX_PAGE_BYTES {
                     self.pagination_required = true;
@@ -361,9 +361,29 @@ impl Open {
     }
 }
 
-fn use_durable_history(
+enum RefreshError {
+    Read(ObservedResponseReadError),
+    Unavailable,
+}
+
+impl From<AgentReadError> for RefreshError {
+    fn from(error: AgentReadError) -> Self {
+        Self::Read(ObservedResponseReadError::Header(error))
+    }
+}
+
+fn acquire_durable_recovery(
     authorization: &mut AgentEventStreamAuthorization,
+    observation: &Option<AgentObservationSubscription>,
     error: &AgentReadError,
-) -> bool {
-    matches!(error, AgentReadError::Unavailable(_)) && authorization.use_personal_durable_reads()
+) -> Option<SemaphorePermit<'static>> {
+    if !matches!(error, AgentReadError::Unavailable(_))
+        || !observation
+            .as_ref()
+            .is_some_and(AgentObservationSubscription::custody_lost)
+    {
+        return None;
+    }
+    let permit = DURABLE_RECOVERY_SLOTS.try_acquire().ok()?;
+    authorization.use_personal_durable_reads().then_some(permit)
 }
