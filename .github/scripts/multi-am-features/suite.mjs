@@ -30,6 +30,7 @@ import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
 import {accountAppearance, accountBuildVersion, accountDocumentation, accountSignIn, accountSignOut,
   accountTextSize, legacyNavigation} from './features/account_browser.mjs';
+import {taskNavigation} from './features/task_navigation.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -99,11 +100,12 @@ async function withBrowser(am_origins, run, name) {
   return outcome;
 }
 
-async function accountBrowserCases(ams, agentId) {
+async function accountBrowserCases(ams, witness) {
   const cases = [['user.account_appearance', accountAppearance], ['user.account_text_size', accountTextSize],
     ['user.account_build_version', page => accountBuildVersion(page, config.expected_api_source)],
-    ['user.account_documentation', page => accountDocumentation(page, agentId)],
-    ['user.navigation_legacy_routes', legacyNavigation]];
+    ['user.account_documentation', page => accountDocumentation(page, witness.agentId)],
+    ['user.navigation_legacy_routes', legacyNavigation],
+    ['user.navigation_tasks', page => taskNavigation(page, witness)]];
   async function exercise(am, iteration, name, run) {
     const start = performance.now();
     const row = {case: name, phase, iteration, ams: [am], real_browser: true, verdict: 'RUNNING'};
@@ -179,7 +181,7 @@ try {
     // The same admin groups run before and after actual owner loss. Their public
     // mutations use CAS, peer readback, stale-revision refusal and restoration.
     Object.assign(normal.ams, context.config.ams);
-    await accountBrowserCases(context.config.ams, context.record.agentId);
+    await accountBrowserCases(context.config.ams, context.record);
     admin.router = new NonOwnerRouter({adapter: context.adapter,
       record: proof => { adminOwnerProofs.push(proof); observations.push(proof); }});
     admin.bindSandbox(context.record.sandboxId, context.record.agentId);
