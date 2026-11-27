@@ -31,6 +31,7 @@ export class QueuedCommandTracker {
   private cursor = 0;
   private discoveryRetryAt = 0;
   private discoveryPollAt = 0;
+  private refreshRevision = 0;
   private queueRevision?: string;
   private discoveryNext = Infinity;
   private discoveryFailures = 0;
@@ -139,6 +140,7 @@ export class QueuedCommandTracker {
   }
 
   refresh(allowCompatibilityRetry = true) {
+    this.refreshRevision += 1;
     this.discoveryPollAt = 0;
     if (allowCompatibilityRetry && this.discoveryFailures === 0) this.discoveryRetryAt = 0;
   }
@@ -196,6 +198,7 @@ export class QueuedCommandTracker {
     const discoveryAfter = Math.max(this.discoveryRetryAt, this.discoveryPollAt);
     if (Date.now() >= discoveryAfter) {
       const generation = this.generation;
+      const refreshRevision = this.refreshRevision;
       try {
         const page = await this.session.responses.listQueuedInputs(this.session.journal.agentId, {
           signal,
@@ -252,7 +255,8 @@ export class QueuedCommandTracker {
         const delay = page.data.length > 0 && !unchanged ? 2000 : 10000;
         this.discoveryNext = idle ? Infinity : Date.now() + delay;
         // An observer wake for another command must preserve discovery's cadence.
-        this.discoveryPollAt = idle ? 0 : this.discoveryNext;
+        if (refreshRevision === this.refreshRevision)
+          this.discoveryPollAt = idle ? 0 : this.discoveryNext;
       } catch (error) {
         if (signal.aborted || identityChanged(error)) throw error;
         if (error instanceof ApiError && error.status === 404) {
