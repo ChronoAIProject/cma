@@ -331,11 +331,11 @@ class CIEventSelectionTests(unittest.TestCase):
         real = selection.summarize
         calls = []
 
-        def summarize(tree, fallback):
+        def summarize(tree, fallback, **kwargs):
             calls.append(tree)
             if len(calls) == 2:
                 raise ValueError('missing or ambiguous package ownership')
-            return real(tree, fallback)
+            return real(tree, fallback, **kwargs)
 
         with mock.patch.object(selection, 'summarize', side_effect=summarize):
             result = selection.determine_ci(self.root, pull('main', 'develop'), 'pull_request', repository)
