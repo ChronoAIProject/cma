@@ -129,6 +129,7 @@ async fn fence_eligibility(
         LogValidation {
             failure_policy: IntegrityFailurePolicy::ReportOnly,
             legacy_formats_checked: true,
+            certified_legacy: None,
         },
         true,
     )

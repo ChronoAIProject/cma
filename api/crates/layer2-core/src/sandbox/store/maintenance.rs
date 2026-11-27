@@ -3,9 +3,11 @@
 use async_trait::async_trait;
 
 use crate::ids::SandboxId;
+use crate::sandbox::inactivity::inactivity_pause_refusal;
+pub use crate::sandbox::inactivity::InactivityPausePreview;
 use crate::sandbox::{
-    image_rotation_required, inactivity_pause_notice, is_inactivity_pause_candidate,
-    is_platform_stop_pause_candidate, Agent, Sandbox, SandboxAgentActivity, SandboxEventKind,
+    image_rotation_required, inactivity_pause_notice, is_platform_stop_pause_candidate, Agent,
+    InactivityPauseRefusal, Sandbox, SandboxAgentActivity, SandboxEventKind,
     SandboxLifecycleOperation, SandboxRotationIdentity, SandboxStatus, PLATFORM_SPEND_PAUSE_NOTICE,
 };
 use crate::{seconds_from_rfc3339, MAX_PAUSE_AFTER_SECONDS, MIN_PAUSE_AFTER_SECONDS};
@@ -53,6 +55,13 @@ impl InactivityPauseCause {
 impl SandboxInactivityPauseRequest {
     /// A transaction must read this revision and write-fence the same settings row.
     pub fn matches_policy(&self, stored: &crate::StoredPlatformSettings) -> bool {
+        self.policy_refusal(stored).is_none()
+    }
+
+    pub fn policy_refusal(
+        &self,
+        stored: &crate::StoredPlatformSettings,
+    ) -> Option<InactivityPauseRefusal> {
         let policy = &stored.settings.inactivity;
         if self
             .expected_policy_revision
@@ -62,20 +71,21 @@ impl SandboxInactivityPauseRequest {
             || stored.revision == 0
             || self.pause_after_seconds != policy.pause_after_seconds
         {
-            return false;
+            return Some(InactivityPauseRefusal::PolicyChanged);
         }
         let Some(now) = seconds_from_rfc3339(&self.requested_at) else {
-            return false;
+            return Some(InactivityPauseRefusal::InvalidActivityTime);
         };
         let Some(started) = policy
             .grace_started_at
             .as_deref()
             .and_then(seconds_from_rfc3339)
         else {
-            return false;
+            return Some(InactivityPauseRefusal::PolicyChanged);
         };
-        matches!(self.cause, InactivityPauseCause::OperatorInactivity)
-            || now >= started.saturating_add(policy.pause_after_seconds)
+        (self.cause != InactivityPauseCause::OperatorInactivity
+            && now < started.saturating_add(policy.pause_after_seconds))
+        .then_some(InactivityPauseRefusal::PolicyGrace)
     }
 
     fn notice(&self) -> String {
@@ -90,17 +100,26 @@ impl SandboxInactivityPauseRequest {
     fn eligible(&self, current: &Sandbox, live_agents: &[SandboxAgentActivity]) -> bool {
         match self.cause {
             InactivityPauseCause::Inactivity | InactivityPauseCause::OperatorInactivity => {
-                is_inactivity_pause_candidate(
-                    current,
-                    live_agents,
-                    &self.requested_at,
-                    self.pause_after_seconds,
-                )
+                self.evidence_refusal(current, live_agents).is_none()
             }
             InactivityPauseCause::PlatformSpendStop => {
                 is_platform_stop_pause_candidate(current, live_agents, &self.requested_at)
             }
         }
+    }
+
+    #[doc(hidden)]
+    pub fn evidence_refusal(
+        &self,
+        current: &Sandbox,
+        live_agents: &[SandboxAgentActivity],
+    ) -> Option<InactivityPauseRefusal> {
+        inactivity_pause_refusal(
+            current,
+            live_agents,
+            &self.requested_at,
+            self.pause_after_seconds,
+        )
     }
 }
 
@@ -380,6 +399,19 @@ pub trait SandboxMaintenanceStore: Send + Sync {
         &self,
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError>;
+
+    /// Return the refusal from the same bounded preview evaluation.
+    async fn preview_inactivity_pause_with_reason(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<InactivityPausePreview, SandboxStoreError> {
+        let outcome = self.preview_inactivity_pause(request).await?;
+        Ok(InactivityPausePreview {
+            outcome,
+            refusal: (outcome == SandboxMaintenanceOutcome::NotEligible)
+                .then_some(InactivityPauseRefusal::EvidenceUnavailable),
+        })
+    }
 
     /// Change the durable automatic-pause exception through an operator-authorized
     /// path. The caller performs capability checks; the store supplies the

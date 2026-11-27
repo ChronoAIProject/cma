@@ -23,6 +23,16 @@ it('accepts older replies and sends bounded pages with explicit uncertain cursor
   expect((await t.client.admin.pauseIdleNow(true)).next).toBeNull();
 });
 
+it('preserves the refusal from each Sandbox preview', async () => {
+  const t = transport();
+  const refusals = [
+    { sandbox_id: 'sbx_legacy', reason: 'legacy_log_expected_rows' },
+    { sandbox_id: 'sbx_recent', reason: 'recent_agent_activity' },
+  ];
+  t.answer({ candidates: 0, refusals });
+  expect((await t.client.admin.previewAutoPause()).refusals).toEqual(refusals);
+});
+
 it('rejects invalid limits before transport and malformed batch metadata without retry', async () => {
   const t = transport();
   expect(() => t.client.admin.previewAutoPause({ limit: 101 })).toThrow(ValidationError);
