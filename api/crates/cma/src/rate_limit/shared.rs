@@ -27,6 +27,9 @@ impl RateLimiters {
             Budget::Create => ("create", config.create_per_minute),
             Budget::Input => ("input", config.input_per_minute),
             Budget::Control => ("control", config.control_per_minute),
+            // Recovery lookups have their own counter and the same finite
+            // per-caller ceiling as control submissions.
+            Budget::Recovery => ("recovery", config.control_per_minute),
             Budget::Admission | Budget::Health => unreachable!("admission remains per pod"),
         };
         use sha2::{Digest, Sha256};

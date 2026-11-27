@@ -228,12 +228,13 @@ async fn enabled_leases_leave_create_input_and_control_exact() {
         crate::config::TrustedProxyConfig::sample(),
         fixture.store.clone(),
     );
+    let key = RateKey::Subject("fixture-same-owner".into());
     for (budget, limit) in [
         (Budget::Create, 10),
         (Budget::Input, 10),
         (Budget::Control, 10),
+        (Budget::Recovery, 10),
     ] {
-        let key = RateKey::Subject(format!("fixture-{limit}-{budget:?}"));
         for index in 0..limit {
             let limiter = if index % 2 == 0 { &left } else { &right };
             limiter.check_operation(budget, &key).await.unwrap();
@@ -256,12 +257,12 @@ async fn enabled_leases_leave_create_input_and_control_exact() {
         .await
         .unwrap();
     assert!(
-        buckets.len() == 3
+        buckets.len() == 4
             && buckets.iter().all(|bucket| {
                 bucket.get_datetime("expires_at").unwrap()
                     > bucket.get_datetime("server_now").unwrap()
             }),
-        "all three buckets must retain a TTL in Mongo's real future: {buckets:?}"
+        "all four buckets must retain a TTL in Mongo's real future: {buckets:?}"
     );
     assert!(left.default_leases.table.lock().unwrap().entries.is_empty());
     assert!(right
