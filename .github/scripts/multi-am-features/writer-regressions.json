@@ -176,8 +176,7 @@
       "issues": "#2152/#2156",
       "feature": "Startup publication",
       "requirement": "Bounded reread checks current holder, work lease, parent, runtime and owner; retries publication only. Agent reaches Ready without waiting for the 18-minute old work lease and without rerunning native preparation.",
-      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The prepared fixture checks both scoped contention cases and the exact Runtime mutation receipts before claim and after Ready. Hosted execution remains pending.",
+      "status": "COMPLETE",
       "trigger": "Inject known-aborted ownership-fence conflict with byte-identical durable Agent at intent or completion publication after native work has completed",
       "required_assertions": [
         {"case": "prepared_create_on_b", "minimum_runs": 1, "phases": [], "routing": "journey"},
@@ -338,8 +337,7 @@
     },
     {
       "id": "SW13",
-      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The fixture exercises all six supported parent schema combinations and holds prepared Ready publication while the owner admits a Sandbox pause. Hosted execution remains pending.",
+      "status": "COMPLETE",
       "issues": "#2168/#2156",
       "feature": "Prepared startup with renewed parent schemas",
       "requirement": "Supported parent1/3/4 publication succeeds; no repeated schema-filterConflict, no18minute lease stall. Unknown Worktree schema, cleanup and paused parents still refuse. Record request/ingress/owner/epoch and distinguish targetenabled from actualpreparedhit.",

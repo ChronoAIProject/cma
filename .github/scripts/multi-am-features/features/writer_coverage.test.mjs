@@ -20,7 +20,7 @@ test('all thirteen writer groups remain required independently of C275', async (
   assert.equal(new Set(groups.map(row => row.id)).size, 13);
   assert.equal(features.groups.at(-1).id, 'SW12');
   assert.deepEqual(prepared.groups.map(row => row.id), ['SW05', 'SW06', 'SW13']);
-  const executableGroups = ['SW01', 'SW02', 'SW03', 'SW07', 'SW09', 'SW10', 'SW12'];
+  const executableGroups = ['SW01', 'SW02', 'SW03', 'SW05', 'SW07', 'SW09', 'SW10', 'SW12', 'SW13'];
   for (const id of executableGroups) assert.equal(groups.find(row => row.id === id).verdict, 'NOT_RUN');
   assert.ok(groups.filter(row => !executableGroups.includes(row.id)).every(row => row.verdict === 'BLOCKED'));
   for (const fixture of ['features', 'prepared']) {
@@ -124,10 +124,7 @@ test('prepared coverage requires the scoped abort, both ingress steps and a comp
   const journey = {verdict: 'LOCAL_PREPARED_TWO_AM_PASS',
     steps: [...cases].map(name => ({name, verdict: 'PASS'}))};
   const evaluate = () => writerCoverage(registry, [], journey, 'prepared');
-  assert.equal(evaluate().groups[2].verdict, 'BLOCKED');
-  group.status = 'COMPLETE';
-  assert.equal(evaluate().verdict, 'FAIL');
-  abort.status = 'COMPLETE';
+  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['PASS', 'BLOCKED', 'PASS']);
   assert.equal(evaluate().verdict, 'FAIL');
   refusal.status = 'COMPLETE';
   assert.equal(evaluate().verdict, 'PASS');
