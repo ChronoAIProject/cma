@@ -35,7 +35,7 @@ import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
 import {accountAppearance, accountBuildVersion, accountDocumentation, accountSignIn, accountSignOut,
   accountTextSize, gatewayDocumentation, gatewayNavigation, legacyNavigation} from './features/account_browser.mjs';
-import {agentOpen, commandSearch, taskDraft, taskNavigation} from './features/task_navigation.mjs';
+import {agentOpen, commandSearch, copyAgentResponse, taskDraft, taskNavigation} from './features/task_navigation.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -357,8 +357,10 @@ try {
           });
           await withBrowser(context.config.ams, async browser => {
             for (const am of ['a', 'b']) {
-              await browser.forIngress(am, ({page}) => browserCase(am, iteration, 'user.agent_open',
-                () => agentOpen(page, context.record, transcriptWitness)));
+              await browser.forIngress(am, async ({page}) => {
+                await browserCase(am, iteration, 'user.agent_open', () => agentOpen(page, context.record, transcriptWitness));
+                await browserCase(am, iteration, 'user.agent_copy_response', () => copyAgentResponse(page, transcriptWitness));
+              });
             }
           }, 'user.agent_open');
           await caseContext.runCase('writer.suggestions_publish_once', () => suggestionsCase(caseContext, false));

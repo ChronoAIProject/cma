@@ -61,8 +61,11 @@ export async function verifyRecoveredReceipt({api, adapter, agentId, owner, turn
 export async function sharedIngressReceipt({api, adapter, record, recordState, recordFailure}) {
   const {agentId} = record;
   const caseId = 'shared-ingress-' + randomUUID();
-  const marker = 'WS4_' + randomUUID().replaceAll('-', '');
+  const marker = 'WS4_COPY_' + randomUUID().replaceAll('-', '');
   const input = 'Return the exact marker ' + marker + ' without tools or file changes.';
+  const answer = 'WS4 complete ' + marker;
+  const code = `fixture_marker = "${marker}"`;
+  const markdown = `${answer}\n\n\`\`\`python\n${code}\n\`\`\``;
   const read = async (am, path) => (await api.rawRequest(am, 'GET', path)).body;
   const streams = [];
   await adapter.prepareTurn({caseId, marker});
@@ -79,7 +82,7 @@ export async function sharedIngressReceipt({api, adapter, record, recordState, r
     const responsePath = '/api/v2/responses/' + agui.responseId;
     const completed = await poll(async () => assertResponse(await read(peer, responsePath), agentId, agui.responseId),
       terminal, {timeout: 90000, code: 'agui_response_completion_timeout'});
-    check(completed.status === 'completed' && JSON.stringify(completed.output ?? []).includes('WS4 complete ' + marker),
+    check(completed.status === 'completed' && JSON.stringify(completed.output ?? []).includes(answer),
       'agui_response_output_missing');
     await agui.done;
     check(agui.error === null && agui.runOutcome === 'complete'
@@ -111,6 +114,8 @@ export async function sharedIngressReceipt({api, adapter, record, recordState, r
     const matching = transcript?.turns?.filter(turn => turn.owner_message === input);
     check(transcript.agent_id === agentId && matching?.length === 1
       && matching[0].turn_sequence === command.turn_sequence, 'shared_ingress_duplicate_or_missing_turn');
+    check(Array.isArray(matching[0].agent_messages) && matching[0].agent_messages.join('') === markdown,
+      'shared_ingress_retained_reply_changed');
     const settled = await poll(() => adapter.oracle({caseId}), value => value.active_streams === 0,
       {timeout: 20000, code: 'shared_ingress_provider_still_active'});
     assertOracle(settled, caseId, 1);
@@ -123,5 +128,5 @@ export async function sharedIngressReceipt({api, adapter, record, recordState, r
       await Promise.all(streams.map(stream => stream.done));
     }
   }, recordFailure);
-  return {input, answer: 'WS4 complete ' + marker};
+  return {input, answer, code, markdown};
 }

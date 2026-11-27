@@ -154,6 +154,29 @@ export async function agentOpen(page, {agentId}, {input, answer}) {
   }
 }
 
+export async function copyAgentResponse(page, {answer, code, markdown}) {
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  const message = page.getByRole('article').filter({has: page.getByText(answer, {exact: true})});
+  const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+  const copyMessage = message.getByRole('button', {name: 'Copy content', exact: true});
+  const copyCode = message.getByRole('button', {name: 'Copy code', exact: true});
+  await page.evaluate(() => Object.defineProperty(navigator.clipboard, 'writeText', {
+    configurable: true, value: () => Promise.reject(new DOMException('Fixture clipboard refusal', 'NotAllowedError')),
+  }));
+  try {
+    await copyMessage.click({timeout});
+    await message.getByText('Copy failed. Use Copy content to retry.', {exact: true}).waitFor({timeout});
+  } finally {
+    await page.evaluate(() => Reflect.deleteProperty(navigator.clipboard, 'writeText'));
+  }
+  await copyMessage.click({timeout});
+  await message.getByRole('status').getByText('Copied', {exact: true}).waitFor({timeout});
+  check(await clipboard() === markdown, 'browser_copy_message_content_changed');
+  await copyCode.click({timeout});
+  await message.getByRole('status').getByText('Code copied', {exact: true}).waitFor({state: 'attached', timeout});
+  check(await clipboard() === code, 'browser_copy_code_content_changed');
+}
+
 export async function commandSearch(page, active, retired) {
   const targets = [['agents', active.agentId], ['sandboxes', active.sandboxId], ['workspaces', active.workspaceId]];
   check([...targets.map(([, key]) => key), retired.agentId, retired.sandboxId].every(id),

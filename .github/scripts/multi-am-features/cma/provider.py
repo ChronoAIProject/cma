@@ -97,6 +97,8 @@ def snapshot(case_id):
 def response_events(response_id, model, marker):
     item_id = 'msg_' + digest(response_id)[:24]
     text = 'WS4 complete ' + marker
+    if re.fullmatch(r'WS4_COPY_[a-f0-9]{32}', marker):
+        text += '\n\n```python\nfixture_marker = "' + marker + '"\n```'
     item = {'id': item_id, 'type': 'message', 'status': 'completed', 'role': 'assistant',
             'content': [{'type': 'output_text', 'text': text, 'annotations': []}]}
     response = {'id': response_id, 'object': 'response', 'created_at': int(time.time()),

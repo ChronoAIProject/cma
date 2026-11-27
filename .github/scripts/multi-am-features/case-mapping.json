@@ -314,9 +314,10 @@
     ]
   },
   "cma-user.agent.copy-response": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
-    "minimum_runs": 3,
+    "cases": ["user.agent_copy_response"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 1,
     "phases": [
       "before_restart",
       "after_restart"

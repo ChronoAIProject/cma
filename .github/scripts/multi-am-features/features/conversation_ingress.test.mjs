@@ -125,7 +125,9 @@ async function fixture(t, {wrongRun = false, wrongReplay = false, recoveredRun =
     if (req.url === '/api/v2/commands/' + commandId) return sendJson(res, 200, command);
     if (req.url === '/api/v2/responses/' + responseId) return sendJson(res, 200, readResponse());
     assert.equal(req.url, '/api/v1/agents/' + agentId + '/transcript');
-    return sendJson(res, 200, {agent_id: agentId, turns: [{owner_message: input, turn_sequence: 7}]});
+    const markdown = `WS4 complete ${armed.marker}\n\n\`\`\`python\nfixture_marker = "${armed.marker}"\n\`\`\``;
+    return sendJson(res, 200, {agent_id: agentId, turns: [{owner_message: input, turn_sequence: 7,
+      agent_messages: [markdown]}]});
   }
 
   const ams = {};
