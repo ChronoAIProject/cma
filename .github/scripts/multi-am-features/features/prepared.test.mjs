@@ -3,12 +3,14 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {runInNewContext} from 'node:vm';
 import {preparedJourney} from '../prepared_suite.mjs';
+import {hash} from '../cma/core.mjs';
 
 function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], repeatReservation = false,
   schemas = [4, 3, 1], readyFences = [1, 1, 1, 1], startupReceipts = [1, 1, 1],
   starting = true, ready = true, effects = 1, changedOwner = false, changedIngress = false,
   admissionRequest = 'fixture-admission', repeatRequest = false, injected = 1, observed = 1,
-  failCreation = false, abortManager = 'b', createToReadyMs = 5000, reservationBound = true} = {}) {
+  failCreation = false, abortManager = 'b', createToReadyMs = 5000, reservationBound = true,
+  changedNativeReceipt = false} = {}) {
   const actions = [];
   const records = [];
   let ownerReads = 0;
@@ -17,7 +19,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
     assert.equal(desktop, false);
     const sandboxId = overrides?.profile ? 'cold-' + am : 'candidate-' + (repeatReservation ? 'a' : am);
     const record = {agentId: 'fixture-agent', sandboxId, operationId: 'fixture-operation', am, admissionRequest,
-      createToReadyMs};
+      createToReadyMs, runtime: {pod_uid: 'fixture-runtime-pod-' + sandboxId}};
     records.push(record);
     actions.push('create-' + am + '-' + sandboxId);
     if (failCreation && am === 'b' && onAgentId) throw new Error('fixture_admission_failed');
@@ -33,6 +35,13 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
       }};
     },
     preparedReady: async () => readyIds,
+    preparedRuntimeEvidence: async ({sandboxId, operationId}) => {
+      assert(readyIds.includes(sandboxId));
+      if (operationId) assert.equal(operationId, 'fixture-operation');
+      const changed = operationId && changedNativeReceipt && sandboxId === 'candidate-b';
+      return {format: 'indexed', pod_sha256: hash('fixture-runtime-pod-' + sandboxId),
+        receipts: ['0', '1', changed ? '3' : '2'].map(digit => digit.repeat(64))};
+    },
     preparedEvidence: async ({agentId, sandboxId, operationId}) => {
       assert.equal(agentId, 'fixture-agent');
       assert.equal(operationId, 'fixture-operation');
@@ -96,6 +105,8 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.deepEqual(context.results[1].publication_diagnostics.b, {known_aborted_cas: {publish_connection: 1}});
   assert.equal(context.results[1].observed_known_abort, false);
   assert.equal(context.results[3].observed_known_abort, true);
+  assert.equal(context.results[3].runtime_receipt_format, 'indexed');
+  assert.equal(context.results[3].runtime_receipt_count, 3);
   assert.equal(context.results[3].create_to_ready_ms, 5000);
   assert.deepEqual(context.results[1].parent_schema_versions, [4, 3, 1]);
 });
@@ -107,6 +118,10 @@ test('prepared publication proves a consumed and attributed abort and always rem
   const failed = fixture({failCreation: true});
   await assert.rejects(preparedJourney(failed), /fixture_admission_failed/);
   assert.equal(failed.actions.at(-1), 'disarm-publication-abort');
+});
+
+test('prepared publication retry must preserve the Runtime receipts present before the claim', async () => {
+  await assert.rejects(preparedJourney(fixture({changedNativeReceipt: true})), /prepared_native_mutation_receipts_changed/);
 });
 
 test('prepared Ready must be observed before the original work lease could expire', async () => {

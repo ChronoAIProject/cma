@@ -25,6 +25,7 @@ from configuration_log import configuration_dispatch, configuration_log
 import manifests
 import legacy_manifests as old
 from login import login
+from prepared_runtime import prepared_runtime_evidence
 from publication_evidence import (artifact_publication_abort, prepared_publication_abort, prepared_schema_barrier, prepared_schema_race,
                                   prepared_schema_refusals, publication_evidence,
                                   runtime_loss_evidence, runtime_loss_publication_abort,
@@ -57,6 +58,7 @@ class Fixture:
     runtimeLossEvidence = runtime_loss_evidence
     shareRedemptionPublicationAbort = share_redemption_publication_abort
     preparedPublicationAbort = prepared_publication_abort
+    preparedRuntimeEvidence = prepared_runtime_evidence
     preparedSchemaBarrier = prepared_schema_barrier
     preparedSchemaRace = prepared_schema_race
     preparedSchemaRefusals = prepared_schema_refusals
@@ -411,7 +413,7 @@ class Fixture:
                     name=self.path.strip('/')
                     allowed=['topology','runtimeFor','ownerOf','killAm','restoreAm','prepareTurn',
                              'releaseTurn','oracle','captureFailure','titleEffects','titleIntent','skillEffects',
-                             'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
+                             'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence','preparedRuntimeEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
                              'organizationMembership','configurationLog','configurationDispatch','publicationEvidence',
                              'retirementPurge','removeRuntimePod','artifactPublicationAbort','preparedPublicationAbort','preparedSchemaBarrier',

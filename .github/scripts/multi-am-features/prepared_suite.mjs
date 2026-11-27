@@ -1,5 +1,6 @@
 import {readFile, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
+import {isDeepStrictEqual as equal} from 'node:util';
 import {assertOwner, check, hash, poll} from './cma/core.mjs';
 import {runJourney} from './cma/journey.mjs';
 import {readConfig} from './config.mjs';
@@ -42,6 +43,8 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         {timeout: 180000, code: 'no_ready_prepared_reservation'});
       const initialManagers = await servingManagers(adapter);
       const ingressMember = initialManagers[ingress];
+      const nativeBefore = new Map(await Promise.all(ready.map(async sandboxId =>
+        [sandboxId, await adapter.preparedRuntimeEvidence({sandboxId})])));
       let opening, record, armed, disarmed;
       const createAndOpen = () => create(ingress, false, {}, ({agentId}) => {
         opening = page.openStarting(agentId).then(started => ({started}), error => ({error}));
@@ -73,6 +76,11 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         'prepared_open_ready_atomic_publication_unproven');
       check(durable.startup_receipts?.length === 3 && durable.startup_receipts.every(count => count === 1),
         'prepared_startup_receipt_count_wrong');
+      const nativeAfter = await adapter.preparedRuntimeEvidence({sandboxId: record.sandboxId, operationId: record.operationId});
+      check(equal(nativeAfter, nativeBefore.get(record.sandboxId)) && ['indexed', 'legacy'].includes(nativeAfter?.format)
+        && nativeAfter.pod_sha256 === hash(record.runtime.pod_uid) && nativeAfter.receipts?.length === 3
+        && nativeAfter.receipts.every(isDigest) && new Set(nativeAfter.receipts).size === 3,
+      'prepared_native_mutation_receipts_changed');
       const owner = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
       const browserOpen = await opening;
       if (browserOpen?.error) throw browserOpen.error;
@@ -113,6 +121,7 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         observed_known_abort: ingress === 'b',
         atomic_publication_fence_count: durable.ready_fences.filter(count => count === 1).length,
         startup_receipt_count: durable.startup_receipts.length,
+        runtime_receipt_format: nativeAfter.format, runtime_receipt_count: nativeAfter.receipts.length,
         browser_starting_read: true, browser_ready_read: true, browser_reply_sha256: browserReply.answer_sha256,
         prepared_reservation_sha256: hash(record.sandboxId), agent_sha256: hash(record.agentId),
         lifecycle_operation_sha256: hash(record.operationId)};
@@ -150,11 +159,13 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
     writer_coverage: coverage,
     steps: journey.steps.map(({name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
-      atomic_publication_fence_count, startup_receipt_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
+      atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
+      browser_starting_read, browser_ready_read, browser_reply_sha256,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused}) => ({
       name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
-      atomic_publication_fence_count, startup_receipt_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
+      atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
+      browser_starting_read, browser_ready_read, browser_reply_sha256,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
     })),
   }, null, 2) + '\n', {flag: 'wx', mode: 0o600});

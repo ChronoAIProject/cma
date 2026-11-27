@@ -11,7 +11,7 @@ export function createAdapter(config) {
   }
   return Object.fromEntries(['topology','runtimeFor','prepareTurn','ownerOf','killAm',
     'releaseTurn','oracle','restoreAm','captureFailure','titleEffects','titleIntent','skillEffects',
-    'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence','observeScale',
+    'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence','preparedRuntimeEvidence','observeScale',
     'observeNeverReady','liveOwnerLease','lifecycleSnapshot','organizationMembership',
     'configurationLog','configurationDispatch','publicationEvidence','retirementPurge','removeRuntimePod',
     'artifactPublicationAbort','preparedPublicationAbort','preparedSchemaBarrier','preparedSchemaRace','preparedSchemaRefusals',
