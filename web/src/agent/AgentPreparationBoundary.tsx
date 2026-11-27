@@ -161,6 +161,7 @@ function PreparationHost(
   const model = derivePreparationView({
     receipt: intent?.receipt,
     operation: matched ? operation : undefined,
+    agentId,
     readError: failure,
     requestAccepted: first?.purpose === 'task',
     setupFailure: setupFailure
@@ -177,6 +178,14 @@ function PreparationHost(
     <section className="agent-surface agent-preparation">
       <PreparationView
         model={model}
+        motion={{
+          client,
+          viewerId,
+          ...props.firstSendContext,
+          requestKey: intent?.key ?? detail.bootstrap?.operationId,
+          agentId,
+          incarnation: ready?.conversation.agentIncarnation,
+        }}
         message={intent?.body.initial_message}
         details={
           followup.details ?? (
