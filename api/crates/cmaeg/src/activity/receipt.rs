@@ -64,4 +64,24 @@ impl ActivityStore {
         contexts.insert((record.into(), event_id), (owner.into(), day));
         Ok(())
     }
+    pub(in crate::activity) async fn confirms_receipt(
+        &self,
+        owner: &str,
+        record: &str,
+        receipt: &ChannelActivity,
+    ) -> Result<bool, RecordError> {
+        let buckets = try_join_all(
+            (0..RETENTION_DAYS).map(|offset| self.read(owner, record, today() - offset)),
+        )
+        .await?;
+        Ok(buckets
+            .into_iter()
+            .flatten()
+            .flat_map(|(bucket, _)| bucket.items)
+            .any(|row| {
+                row.event_id == receipt.event_id
+                    && row.source_refusal == receipt.source_refusal
+                    && row.consumers.is_empty()
+            }))
+    }
 }

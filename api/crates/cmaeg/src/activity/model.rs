@@ -21,6 +21,9 @@ pub struct ActivityPage {
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct ChannelActivity {
     pub event_id: String,
+    /// A source refusal before any Consumer was selected or launched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_refusal: Option<String>,
     /// Availability only: this metadata feed never copies quoted text or IDs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quoted_context: Option<QuotedContextSummary>,
@@ -59,6 +62,7 @@ impl ChannelActivity {
             conversation,
             occurred_at,
             received_at,
+            source_refusal: None,
             quoted_context: None,
             kind: None,
             event_type: None,

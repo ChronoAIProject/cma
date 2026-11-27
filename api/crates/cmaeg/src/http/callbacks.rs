@@ -219,8 +219,23 @@ async fn admit_callback(
     let media_event_id = (platform == cmaeg_core::channel::Platform::Telegram)
         .then(|| EventId::new(verified.payload.message_id.clone()).ok())
         .flatten();
+    let receipt = media_event_id
+        .as_ref()
+        .and_then(|event| media_refusals::receipt(&channel, &verified.payload, event));
     let refuse = |reason| {
         media_refusals::refuse(state, &record, channel_id, media_event_id.as_ref(), reason)
+    };
+    let refuse_media = async |reason| {
+        if let Some(receipt) = &receipt {
+            if receipt.persist(state, &record, reason).await.is_err() {
+                return problem(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ProblemCode::ProviderUnavailable,
+                    "source refusal persistence unavailable",
+                );
+            }
+        }
+        refuse(reason)
     };
     let reject = |error| authenticated_invalid(state, &record, SOURCE, error);
     let observation = if state.relay_telegram_member_joins_enabled {
@@ -231,7 +246,7 @@ async fn admit_callback(
     .unwrap_or_else(|| observe(source, &verified.payload, state.media_enabled));
     let mut facts = match observation {
         Ok(Observation::Message(facts)) => facts,
-        Ok(Observation::Refused(reason)) => return Err(refuse(reason)),
+        Ok(Observation::Refused(reason)) => return Err(refuse_media(reason).await),
         Err(error) => return Err(reject(error)),
     };
     if crate::interactions::lark::supported(platform) {
@@ -351,7 +366,7 @@ async fn admit_callback(
     ) {
         Ok(Built::Launch(request)) => *request,
         // A 202 refusal, because NyxID never retries a rejected callback.
-        Ok(Built::Refused(reason)) => return Err(refuse(reason)),
+        Ok(Built::Refused(reason)) => return Err(refuse_media(reason).await),
         Err(reason) => {
             state.activity.refused(&record, SOURCE, None, reason);
             return Err(problem(
