@@ -8,7 +8,9 @@ publish.workspace = true
 axum = { workspace = true }
 cmaeg-core = { path = "../cmaeg-core" }
 cmaeg-engine = { path = "../cmaeg-engine" }
+serde = { workspace = true }
 serde_json = { workspace = true }
+utoipa = { workspace = true }
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 reqwest = { workspace = true }
 ring = { workspace = true }

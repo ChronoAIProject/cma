@@ -9,7 +9,9 @@ use layer2_core::sandbox::{
 };
 use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;
-use layer3_adapter::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame};
+use layer3_adapter::wire::{
+    AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame, WireFailure, WireOperation,
+};
 use layer3_adapter::{
     AdapterError, AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeObservation,
     WorkspacePrepareRecoveryReceipt, WorkspacePrepareRecoveryRequest,
@@ -19,6 +21,7 @@ struct RecoveryProbe {
     backend: InMemoryHostedBackend,
     requests: Mutex<Vec<WorkspacePrepareRecoveryRequest>>,
     rejection: Mutex<Option<AdapterError>>,
+    failure_reply: Mutex<Option<WireFailure>>,
     lose_response: AtomicBool,
 }
 #[async_trait::async_trait]
@@ -41,6 +44,15 @@ impl HostedBackend for RecoveryProbe {
         handle: &RuntimeHandle,
         frame: RequestFrame,
     ) -> layer3_adapter::Result<ResponseFrame> {
+        {
+            let mut reply = self.failure_reply.lock().unwrap();
+            if reply
+                .as_ref()
+                .is_some_and(|reply| reply.operation == frame.operation())
+            {
+                return Ok(ResponseFrame::Failure(reply.take().unwrap()));
+            }
+        }
         let RequestFrame::RecoverWorkspacePrepare(frame) = frame else {
             return self.backend.exchange(handle, frame).await;
         };
@@ -154,6 +166,7 @@ impl Fixture {
             backend: harness.backend.clone(),
             requests: Mutex::default(),
             rejection: Mutex::default(),
+            failure_reply: Mutex::default(),
             lose_response: AtomicBool::new(false),
         });
         Self {
@@ -166,6 +179,9 @@ impl Fixture {
         }
     }
     fn worker(&self) -> Arc<WorkspaceWorker> {
+        self.worker_with_config(WorkspaceWorkerConfig::new("recovery-worker", "test"))
+    }
+    fn worker_with_config(&self, config: WorkspaceWorkerConfig) -> Arc<WorkspaceWorker> {
         WorkspaceWorker::new(
             WorkspaceWorkerDependencies {
                 store: self.harness.store.clone(),
@@ -174,7 +190,7 @@ impl Fixture {
                         .with_home_volumes(self.homes.clone()),
                 ),
             },
-            WorkspaceWorkerConfig::new("recovery-worker", "test"),
+            config,
         )
     }
     async fn admit(&self, key: &str) {
@@ -202,11 +218,18 @@ async fn prepare_recovery_lost_response_replays_original_operation_then_complete
     let f = Fixture::new().await;
     f.admit("first").await;
     f.probe.lose_response.store(true, Ordering::SeqCst);
-    f.worker().run_one(&f.original.id, f.now).await.unwrap();
+    let config = WorkspaceWorkerConfig::new("recovery-worker", "test").with_replicas(true);
+    f.worker_with_config(config)
+        .run_one(&f.original.id, f.now)
+        .await
+        .unwrap();
     let pending = f.stored().await;
     assert_eq!(pending.status, WorkspaceStatus::Preparing);
     assert_eq!(pending.work.step, WorkspaceWorkStep::RecoverPrepare);
     assert!(pending.ready_at.is_none());
+    assert!(pending.work.prepare_recovery.as_ref().unwrap().attempts[0]
+        .observations
+        .is_none());
     assert!(pending.work.prepare_recovery.as_ref().unwrap().attempts[0]
         .completion
         .is_none());
@@ -268,4 +291,101 @@ async fn prepare_recovery_terminal_failure_preserves_prior_attempt_and_allows_ex
         requests[1].previous_recovery_operation_id.as_deref(),
         Some("first")
     );
+}
+
+#[tokio::test]
+async fn workspace_prepare_observations_persist_first_and_terminal_across_workers() {
+    use layer3_adapter::workspace_prepare_observation::{Code, Stage};
+
+    let f = Fixture::new().await;
+    let workspace = f
+        .service
+        .create_inline(
+            &caller("owner", [Capability::UseOwnSandboxes]),
+            &f.original.sandbox_id,
+            CreateInlineWorkspace {
+                source: InlineWorkspaceSource::Empty,
+                name: Some("observed".into()),
+            },
+        )
+        .await
+        .unwrap();
+    f.admit("first").await;
+    for (id, operation, stage) in [
+        (
+            &workspace.id,
+            WireOperation::PrepareWorkspace,
+            Stage::PrepareRpc,
+        ),
+        (
+            &f.original.id,
+            WireOperation::RecoverWorkspacePrepare,
+            Stage::RecoveryRpc,
+        ),
+    ] {
+        for (index, (holder, wire_code)) in [
+            ("first-worker", "repository_source_unavailable"),
+            ("successor-worker", "workspace_prepare_outcome_unknown"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            *f.probe.failure_reply.lock().unwrap() = Some(WireFailure {
+                operation,
+                code: wire_code.into(),
+                detail: "opaque provider diagnostic".into(),
+                retryable: index == 0,
+            });
+            let worker = f.worker_with_config(
+                WorkspaceWorkerConfig::new(holder, "test")
+                    .with_replicas(true)
+                    .with_prepare_observations(true),
+            );
+            assert!(worker
+                .run_one(id, f.now + Duration::from_secs(31 * index as u64))
+                .await
+                .unwrap());
+        }
+        let stored = f.harness.store.get_workspace(id).await.unwrap().unwrap();
+        assert_eq!(
+            stored.failed.as_ref().unwrap().class,
+            "workspace_runtime_rejected"
+        );
+        let (observations, expected_id, expected_digest) =
+            if let Some(recovery) = &stored.work.prepare_recovery {
+                let request = recovery.current_request().unwrap();
+                (
+                    &recovery.attempts[0].observations,
+                    request.operation_id,
+                    request.request_sha256,
+                )
+            } else {
+                let request = stored.original_prepare_request().unwrap();
+                (
+                    &stored.work.prepare_observations,
+                    request.operation_id,
+                    request.request_sha256,
+                )
+            };
+        let observations = observations.as_ref().unwrap();
+        assert_eq!(observations.operation_id, expected_id);
+        assert_eq!(observations.request_sha256, expected_digest);
+        let terminal = observations.terminal.as_ref().unwrap();
+        for (sample, code, attempt) in [
+            (&observations.first, Code::RepositorySourceUnavailable, 0),
+            (terminal, Code::WorkspacePrepareOutcomeUnknown, 1),
+        ] {
+            assert_eq!(sample.observation.stage, stage);
+            assert_eq!(sample.observation.code, code);
+            assert_eq!(sample.observation.wire_retryable, Some(attempt == 0));
+            assert_eq!(sample.attempt, attempt);
+            assert!(sample
+                .writer_sha256
+                .as_ref()
+                .is_some_and(|digest| digest.len() == 64));
+        }
+        assert!(!serde_json::to_string(observations)
+            .unwrap()
+            .contains("opaque provider diagnostic"));
+    }
 }

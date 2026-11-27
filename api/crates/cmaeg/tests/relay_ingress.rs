@@ -1,3 +1,5 @@
+#[path = "fake_nyxid.rs"]
+pub mod fake_nyxid;
 #[path = "relay/keys.rs"]
 mod keys;
 #[path = "relay/lark_media.rs"]
@@ -6,6 +8,8 @@ mod lark_media;
 mod lark_post;
 #[path = "relay/lark_resources.rs"]
 mod lark_resources;
+#[path = "support/management_state.rs"]
+mod management_fixture;
 #[path = "relay/multi_relay.rs"]
 mod multi_relay;
 #[path = "relay/normalization.rs"]

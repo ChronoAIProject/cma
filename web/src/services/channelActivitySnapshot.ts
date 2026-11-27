@@ -47,6 +47,7 @@ const consumer = object({
 
 const event = object({
   event_id: text,
+  source_refusal: optionalText,
   quoted_context: optional(nullable(QuotedContextSummarySchema)),
   kind: optionalText,
   event_type: optionalText,

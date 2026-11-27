@@ -63,6 +63,7 @@ pub(crate) struct FeatureFlags {
     pub native_retirement_finality_enabled: bool,
     pub native_retirement_capture_enabled: bool,
     pub credential_retirement_receipts: bool,
+    pub workspace_prepare_observations: bool,
     pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
@@ -216,6 +217,7 @@ impl FeatureFlags {
             )?,
             native_retirement_capture_enabled: flag(lookup, gates::RETIREMENT_CAPTURE)?,
             credential_retirement_receipts: flag(lookup, gates::CREDENTIAL_RETIREMENT_RECEIPTS)?,
+            workspace_prepare_observations: flag(lookup, gates::WORKSPACE_PREPARE_OBSERVATIONS)?,
             reviewed_sandbox_retirement_enabled: flag(
                 lookup,
                 "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",
@@ -490,11 +492,9 @@ mod work_retry_tests;
 mod launch_admission;
 
 #[cfg(test)]
+mod bot_effect_tests;
+#[cfg(test)]
 mod pending_homes_tests;
-
 #[cfg(test)]
 #[path = "features/visitor_defaults_tests.rs"]
 mod visitor_defaults_tests;
-
-#[cfg(test)]
-mod bot_effect_tests;

@@ -24,6 +24,14 @@ impl ManagedMachineUpdates {
         }
     }
 
+    pub(crate) fn mode(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Canary(_) => "canary",
+            Self::All => "all",
+        }
+    }
+
     pub(crate) fn includes(self, id: &SandboxId) -> bool {
         match self {
             Self::Disabled => false,
@@ -47,13 +55,16 @@ mod tests {
     fn default_and_canary_scope_fail_closed() {
         let allowed = SandboxId::generate();
         let other = SandboxId::generate();
-        assert!(!ManagedMachineUpdates::read(&mut |_| Ok(None))
-            .unwrap()
-            .includes(&allowed));
-        assert!(ManagedMachineUpdates::read(&mut |_| Ok(Some("all".into())))
-            .unwrap()
-            .includes(&other));
+        for value in [None, Some("disabled".to_owned())] {
+            let disabled = ManagedMachineUpdates::read(&mut |_| Ok(value.clone())).unwrap();
+            assert_eq!(disabled.mode(), "disabled");
+            assert!(!disabled.includes(&allowed));
+        }
+        let all = ManagedMachineUpdates::read(&mut |_| Ok(Some("all".into()))).unwrap();
+        assert_eq!(all.mode(), "all");
+        assert!(all.includes(&other));
         let canary = ManagedMachineUpdates::read(&mut |_| Ok(Some(allowed.to_string()))).unwrap();
+        assert_eq!(canary.mode(), "canary");
         assert!(canary.includes(&allowed));
         assert!(!canary.includes(&other));
         assert!(ManagedMachineUpdates::read(&mut |_| Ok(Some("true".into()))).is_err());
