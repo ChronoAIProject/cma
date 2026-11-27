@@ -216,10 +216,11 @@
       "feature": "Metadata writers",
       "requirement": "Each runs on owner where routable; non-routable known conflict has bounded fresh snapshot retry. Immutable title-effect custody prevents LLM/native replay; optional pacing hints may be safely superseded. Fences remain present.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The journey checks immutable creation provenance during automatic title generation and requires the original consent proposal to survive one known-aborted insert. The feature fixture requires one provenance observation after a forced known abort and an overlapping public prompt change. The ambiguous commit control and hosted execution remain pending.",
+      "remaining": "The journey checks immutable creation provenance during automatic title generation and requires the original consent proposal to survive one known-aborted insert. The feature fixture requires one provenance observation after a forced known abort and an overlapping public prompt change. The ambiguous-commit case requires the original transaction and one durable observation after acknowledgement loss. Hosted execution remains pending.",
       "trigger": "Title claim/completion, suggestions, resource-access lineage guards or provenance backfill overlap stream/lifecycle publication",
       "required_assertions": [
         {"case": "provenance_progress_known_abort", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "provenance_progress_unknown_commit", "minimum_runs": 1, "phases": [], "routing": "journey"},
         {"case": "writer.automatic_title_custody", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
         {"case": "writer.agent_access_request_denial", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "both"},
         {"case": "writer.suggestions_publish_once", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},

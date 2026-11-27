@@ -11,24 +11,66 @@
     return;
   }
 
-  const {action, agentId, sandboxId, operationId, app} = scope;
+  const {action, agentId, sandboxId, operationId, app, unknown} = scope;
   const owner = 'native-am-fixture-owner';
   const sha = value => require('crypto').createHash('sha256').update(value).digest('hex');
-  if (action === 'sample') {
+  const sameTransaction = command => command?.lsid?.id && command.txnNumber != null && command.autocommit === false;
+  const transaction = command => [command.lsid.id, command.txnNumber].map(String).join(':');
+  const targetRead = command => sameTransaction(command) && command.aggregate === 'agents'
+    && command.$db === d.getName() && command.pipeline?.[0]?.$match?._id === agentId
+    && command.pipeline.some(stage => stage.$lookup?.from === 'agent_creation_provenance'
+      && stage.$lookup.as === 'creation' && stage.$lookup.pipeline?.[0]?.$match?._id === agentId);
+  const claim = command => {
+    const query = command?.query;
+    const set = command?.update?.[0]?.$set;
+    return sameTransaction(command) && command.findAndModify === progress.getName()
+      && command.$db === d.getName() && query?._id === controlId
+      && Number(query.protocol) === 1 && typeof query.run === 'string' && query.run.length > 0
+      && query.revision != null && Number.isSafeInteger(Number(query.revision)) && Number(query.revision) >= 0
+      && query.fence != null && Number.isSafeInteger(Number(query.fence)) && Number(query.fence) >= 0
+      && command.new === true && typeof set?.owner?.$literal === 'string'
+      && set.revision?.$add?.[0] === '$revision' && Number(set.revision.$add[1]) === 1;
+  };
+
+  async function logs() {
+    const result = await admin.runCommand({getLog: 'global'});
+    if (result.ok !== 1) throw Error('provenance_progress_profile_log_failed');
+    return result.log.map(line => EJSON.parse(line)).filter(row => row.msg === 'Slow query'
+      && row.attr?.appName === app).map(row => row.attr);
+  }
+
+  if (action === 'sample' || action === 'verify') {
+    const rows = await logs();
+    const claimed = rows.filter(row => claim(row.command) && row.nMatched === 1 && row.nModified === 1);
+    const hasClaim = command => claimed.filter(row => transaction(row.command) === transaction(command)).length === 1;
+    if (action === 'verify') {
+      const aborted = rows.filter(row => row.errCode === 112 && targetRead(row.command)
+        && sha(transaction(row.command)) === scope.transaction && hasClaim(row.command));
+      print(JSON.stringify({aborted: aborted.length === 1}));
+      return;
+    }
     const operations = await admin.aggregate([
       {$currentOp: {allUsers: true}},
       {$match: {active: true, appName: app, 'command.$db': d.getName(),
         'command.aggregate': 'agents', 'command.autocommit': false}},
       {$limit: 16},
     ]).toArray();
-    const targets = operations.filter(({command}) => command.pipeline?.[0]?.$match?._id === agentId
-      && command.pipeline.some(stage => stage.$lookup?.from === 'agent_creation_provenance'
-        && stage.$lookup.as === 'creation' && stage.$lookup.pipeline?.[0]?.$match?._id === agentId));
+    const targets = operations.filter(({command}) => targetRead(command) && hasClaim(command));
     if (targets.length > 1) throw Error('provenance_progress_multiple_held_reads');
     const held = targets[0];
-    print(JSON.stringify({transaction_sha256: held?.command?.lsid?.id && held.command.txnNumber != null
-      ? sha([held.opid, held.command.lsid.id, held.command.txnNumber].map(String).join(':')) : null}));
+    const identity = held ? transaction(held.command) : null;
+    print(JSON.stringify({transaction_sha256: held ? sha(String(held.opid) + ':' + identity) : null,
+      commit_transaction_sha256: identity ? sha(identity) : null}));
     return;
+  }
+
+  const successfulCounts = {'counts.scanned': 1, 'counts.recorded': 1,
+    'counts.retained': 0, 'counts.skipped': 0, 'counts.errors': 0};
+  async function sweepReceipt(control, state) {
+    if (state?.phase !== 'sweep_finished' || typeof state.run !== 'string'
+        || state.last_receipt !== 'sweep:' + state.run) return null;
+    return await control.findOne({_id: state.last_receipt, last_receipt: state.last_receipt,
+      run: state.run, phase: 'sweep_finished', owner: null, cursor: null, ...successfulCounts});
   }
 
   const creationKey = {_id: agentId, 'record.agent_id': agentId, 'record.sandbox_id': sandboxId,
@@ -61,12 +103,18 @@
         return;
       }
       if (canonical(row) !== scope.original) throw Error('provenance_progress_original_creation_changed');
-      const armed = await control.updateOne({...pristine, next_sweep_at: {$gt: now}},
-        {$set: {next_sweep_at: now}});
+      // Only the completed prior fixture sweep enables the second observation.
+      const before = await control.findOne({_id: controlId});
+      if (unknown && !await sweepReceipt(control, before)) throw Error('provenance_progress_prior_receipt_unbound');
+      const previous = unknown ? {_id: controlId, phase: 'sweep_finished', cursor: agentId,
+        revision: before.revision, run: before.run, last_receipt: before.last_receipt, ...successfulCounts} : pristine;
+      const armed = await control.updateOne({...previous, next_sweep_at: {$gt: now}},
+        {$set: {next_sweep_at: now, ...(unknown ? {lease_until: now} : {})}});
       const removed = await creation.deleteOne(creationKey);
       if (armed.modifiedCount !== 1 || removed.deletedCount !== 1) throw Error('provenance_progress_not_armed');
       await session.commitTransaction();
-      print(JSON.stringify({armed: true, agent_revision: Number(agent.revision)}));
+      print(JSON.stringify({armed: true, agent_revision: Number(agent.revision),
+        ...(unknown ? {previous_sweep_sha256: sha(before.run)} : {})}));
       return;
     }
 
@@ -76,8 +124,9 @@
       const counts = state?.counts;
       const recorded = Number(counts?.scanned) === 1 && Number(counts?.recorded) === 1
         && ['retained', 'skipped', 'errors'].every(key => Number(counts?.[key]) === 0);
+      const receipt = await sweepReceipt(control, state);
       print(JSON.stringify({recorded: recovered && recorded, agent_revision: Number(agent.revision),
-        sweep_finished: state?.phase === 'sweep_finished'}));
+        sweep_finished: Boolean(receipt), ...(unknown && receipt ? {sweep_sha256: sha(state.run)} : {})}));
       return;
     }
     if (action !== 'restore') throw Error('provenance_progress_action_required');

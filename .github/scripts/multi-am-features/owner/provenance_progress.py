@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import re
 
 from common import require_feature_fixture
 from legacy_manifests import pod, resource
@@ -11,6 +12,7 @@ DATABASE = 'cma_native_am'
 COLLECTION = 'agent_provenance_progress'
 ROLE = 'cma_am_provenance_progress'
 SCRIPT = Path(__file__).with_suffix('.js')
+COMMIT_SCRIPT = SCRIPT.with_name('provenance_progress_commit.js')
 
 
 def initialize_progress(fixture):
@@ -61,35 +63,58 @@ def initialize_progress(fixture):
         raise RuntimeError('provenance_progress_initial_defer_failed')
 
 
-def run_script(fixture, scope):
-    return fixture.mongo(f'const scope = {json.dumps(scope)};\n' + SCRIPT.read_text())
+def run_script(fixture, scope, script=SCRIPT):
+    return fixture.mongo(f'const scope = {json.dumps(scope)};\n' + script.read_text())
 
 
-def provenance_backfill(fixture, *, action, agentId, sandboxId, operationId):
+def profile_progress(fixture, enabled):
+    command = ({'profile': 2, 'filter': {'appName': FEATURES_MONGO_APP, '$or': [
+        {'command.findAndModify': COLLECTION}, {'command.aggregate': 'agents'}]}} if enabled else
+        {'profile': 0, 'filter': 'unset'})
+    return fixture.mongo(f'const result = d.runCommand({json.dumps(command)});'
+                         'if (result.ok !== 1) throw Error("provenance_progress_profile_failed");'
+                         'print(JSON.stringify(true));')
+
+
+def provenance_backfill(fixture, *, action, agentId, sandboxId, operationId, unknown=False, transaction=None):
     require_feature_fixture(fixture)
     for identity in (agentId, sandboxId, operationId):
         agent_digest(identity)
+    proof_action = action in ('verify', 'commit')
+    if (type(unknown) is not bool or (transaction is not None) != proof_action
+            or (proof_action and ((action == 'commit') != unknown or not isinstance(transaction, str)
+                                  or not re.fullmatch(r'[a-f0-9]{64}', transaction)))):
+        raise ValueError('provenance_progress_mode_required')
+    target = agentId, sandboxId, operationId, unknown
     scope = dict(action=action, agentId=agentId, sandboxId=sandboxId, operationId=operationId,
-                 app=FEATURES_MONGO_APP)
+                 app=FEATURES_MONGO_APP, unknown=unknown)
+    state = getattr(fixture, 'provenance_original', None)
     if action == 'arm':
-        if getattr(fixture, 'provenance_original', None) is not None:
+        if state is not None:
             raise RuntimeError('provenance_progress_already_armed')
-        # Intend the exact original row before arming or changing the target.
+        # Bind the exact original row before arming or changing the target.
         original = run_script(fixture, {**scope, 'action': 'original'})
-        fixture.provenance_original = (agentId, sandboxId, operationId, original)
-        armed = timed_publication_abort(fixture, 'arm', None, 'agents', operation='aggregate')
+        fixture.provenance_original = target, original
+        profile_progress(fixture, True)
+        armed = (run_script(fixture, scope, COMMIT_SCRIPT) if unknown else
+                 timed_publication_abort(fixture, 'arm', None, 'agents', operation='aggregate'))
         changed = run_script(fixture, {**scope, 'original': original})
         return {**changed, **armed}
-    if action in ('sample', 'observe'):
-        return run_script(fixture, scope)
+    if action == 'restore' and state is None:
+        return {'restored': False}
+    if state is None or state[0] != target:
+        raise RuntimeError('provenance_progress_scope_changed')
+    if action in ('sample', 'observe', 'verify'):
+        return run_script(fixture, {**scope, **({'transaction': transaction} if proof_action else {})})
+    if action == 'commit':
+        return run_script(fixture, {**scope, 'transaction': transaction}, COMMIT_SCRIPT)
     if action == 'restore':
-        state = getattr(fixture, 'provenance_original', None)
-        if state is None:
-            return {'restored': False}
-        if state[:3] != (agentId, sandboxId, operationId):
-            raise RuntimeError('provenance_progress_restore_scope_changed')
-        disarmed = timed_publication_abort(fixture, 'disarm', None, 'agents', operation='aggregate')
-        restored = run_script(fixture, {**scope, 'original': state[3]})
+        try:
+            disarmed = (run_script(fixture, scope, COMMIT_SCRIPT) if unknown else
+                        timed_publication_abort(fixture, 'disarm', None, 'agents', operation='aggregate'))
+        finally:
+            profile_progress(fixture, False)
+        restored = run_script(fixture, {**scope, 'original': state[1]})
         fixture.provenance_original = None
         return {**restored, **disarmed}
     raise ValueError('provenance_progress_action_required')

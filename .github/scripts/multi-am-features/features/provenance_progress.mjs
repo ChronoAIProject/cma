@@ -13,7 +13,7 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
   const patch = (am, revision, system_prompt) => api.rawRequest(am, 'PATCH', agent + '/preferences', {
     key: randomUUID(), body: {expected_revision: revision, system_prompt}, timeout: 8000,
   });
-  const control = action => adapter.provenanceBackfill({action, agentId, sandboxId, operationId});
+  const control = (action, fields = {}) => adapter.provenanceBackfill({action, agentId, sandboxId, operationId, ...fields});
   const original = await read(owner.am, '/provenance');
   const baseline = await read(owner.am, '/preferences');
   check(original?.agent_id === agentId && original.creation_origin === 'manual'
@@ -29,6 +29,7 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
     const held = await poll(() => control('sample'), value => /^[a-f0-9]{64}$/.test(value?.transaction_sha256 ?? ''),
       {timeout: 20000, interval: 150, code: 'provenance_progress_read_not_held'});
     digest = held.transaction_sha256;
+    check(/^[a-f0-9]{64}$/.test(held.commit_transaction_sha256 ?? ''), 'provenance_progress_claim_not_bound');
     const {body: updated} = await api.router.dispatch(agentId, am => {
       check(am === ingress, 'provenance_progress_owner_changed');
       return patch(am, baseline.revision, prompt);
@@ -41,6 +42,8 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
       && value.sweep_finished === true, {timeout: 25000, interval: 250, code: 'provenance_progress_not_recorded_once'});
     check(Number.isSafeInteger(completed.agent_revision) && completed.agent_revision > armed.agent_revision,
       'provenance_progress_peer_revision_lost');
+    const failed = await control('verify', {transaction: held.commit_transaction_sha256});
+    check(failed?.aborted === true, 'provenance_progress_abort_transaction_unproven');
     for (const am of [owner.am, ingress]) {
       const preferences = await read(am, '/preferences');
       check(preferences?.system_prompt === prompt && preferences.revision === updated.revision,
@@ -70,4 +73,47 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
   }
   return {agent_sha256: hash(agentId), ingress, owner: owner.am, owner_epoch: owner.epoch,
     overlapping_transaction_sha256: digest, known_aborts: 1, recorded: 1, original_creation_restored: true};
+}
+
+export async function provenanceUnknownCommit({adapter, api, record, recordFailure}) {
+  const {agentId, sandboxId, operationId} = record;
+  check(id(agentId) && id(sandboxId) && id(operationId), 'provenance_progress_lineage_required');
+  const path = '/api/v1/agents/' + agentId + '/provenance';
+  const read = async am => (await api.rawRequest(am, 'GET', path)).body;
+  const control = (action, args = {}) =>
+    adapter.provenanceBackfill({action, agentId, sandboxId, operationId, unknown: true, ...args});
+  const original = await read('a');
+  check(original?.agent_id === agentId && original.creation_origin === 'manual'
+    && equal(await read('b'), original), 'provenance_progress_commit_original_unbound');
+
+  let receipt, transaction;
+  await withRestoration(async () => {
+    const armed = await control('arm');
+    check(armed?.armed === true && armed.configured === true
+      && /^[a-f0-9]{64}$/.test(armed.previous_sweep_sha256 ?? ''), 'provenance_progress_commit_not_armed');
+    const held = await poll(() => control('sample'), value => /^[a-f0-9]{64}$/.test(value?.commit_transaction_sha256 ?? ''),
+      {timeout: 20000, interval: 150, code: 'provenance_progress_commit_target_missing'});
+    transaction = held.commit_transaction_sha256;
+    receipt = await control('commit', {transaction});
+    check(Number.isSafeInteger(receipt?.commit_acknowledgements_lost) && receipt.commit_acknowledgements_lost >= 5
+      && receipt.commit_acknowledgements_lost < 10, 'provenance_progress_commit_receipt_unbound');
+    const completed = await poll(() => control('observe'), value => value?.recorded === true
+      && value.sweep_finished === true, {timeout: 25000, interval: 250, code: 'provenance_progress_commit_not_recovered'});
+    check(/^[a-f0-9]{64}$/.test(completed.sweep_sha256 ?? '')
+      && completed.sweep_sha256 !== armed.previous_sweep_sha256,
+    'provenance_progress_commit_sweep_reused');
+    for (const am of ['a', 'b']) {
+      const derived = await read(am);
+      check(derived?.agent_id === agentId && derived.created_at === original.created_at
+        && derived.creation_origin === 'legacy_unknown', 'provenance_progress_commit_legacy_readback_invalid');
+    }
+  }, async () => {
+    const restored = await control('restore');
+    check(restored?.restored === true && restored.configured === false, 'provenance_progress_commit_restore_failed');
+  }, recordFailure);
+  for (const am of ['a', 'b']) {
+    check(equal(await read(am), original), 'provenance_progress_commit_original_not_restored');
+  }
+  return {agent_sha256: hash(agentId), transaction_sha256: transaction,
+    commit_acknowledgements_lost: receipt.commit_acknowledgements_lost, recorded: 1, original_creation_restored: true};
 }
