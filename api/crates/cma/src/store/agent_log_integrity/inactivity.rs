@@ -4,6 +4,7 @@ use crate::store::{
     agent_capacity_recovery::source::envelope_filter,
     agent_log_segments::read_format,
     agents::read_agent,
+    connection_recovery_activity,
     sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome},
     transaction_terminal::GuardedTerminal as _,
 };
@@ -118,11 +119,10 @@ pub(in crate::store) async fn current(
     else {
         return Ok(Proof::AggregateBytes);
     };
-    Ok(Proof::Latest(SandboxAgentLogActivity {
-        agent_id: entry.agent_id,
-        seq: entry.seq,
-        appended_at: entry.appended_at,
-    }))
+    Ok(Proof::Latest(connection_recovery_activity::project_head(
+        &entry,
+        connection_recovery_activity::activity_time(&row, agent, &entry),
+    )))
 }
 
 /// Each sweep may commit one page. A new Agent revision or head restarts the

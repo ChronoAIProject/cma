@@ -52,6 +52,9 @@ async fn repeated_failure_bounds_scans_with_conflicts_and_matches_full_snapshot(
         for conflict in [false, true] {
             let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
             let metrics = recorder.handle();
+            let baseline_recorder =
+                metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+            let baseline_metrics = baseline_recorder.handle();
             let mut f = seeded_step(step).await;
             let initial_head = f.agent.conversation.last_seq;
             let caller = ScanCaller::WorkerPublication(step);
@@ -84,10 +87,12 @@ async fn repeated_failure_bounds_scans_with_conflicts_and_matches_full_snapshot(
                 // publications outside the measured interval and audit cache.
                 let original = f.row().await;
                 f.store = f.store.with_bounded_close_retries(false);
+                let observation = metrics::set_default_local_recorder(&baseline_recorder);
                 f.store
                     .commit_agent_work_repeated_failure(retry.clone(), None)
                     .await
                     .unwrap();
+                drop(observation);
                 let expected = f.row().await;
                 f.reset(original).await;
                 f.store = f.store.with_bounded_close_retries(true);
@@ -139,6 +144,22 @@ async fn repeated_failure_bounds_scans_with_conflicts_and_matches_full_snapshot(
             );
             assert_eq!(attempts, if conflict { 8 } else { 4 });
             let rendered = metrics.render();
+            let baseline_rendered = baseline_metrics.render();
+            for (text, mode, expected) in
+                [(&baseline_rendered, "off", 4), (&rendered, "on", attempts)]
+            {
+                let counter = text.lines().find(|line| {
+                    line.starts_with("cma_agent_close_retry_eligible_attempts_total{")
+                        && line.contains(&format!("mode=\"{mode}\""))
+                        && line.contains("cohort=\"included\"")
+                });
+                if step == AgentWorkStep::CloseProcess {
+                    let line = counter.expect("eligible CloseProcess attempts must be exported");
+                    assert!(line.ends_with(&format!(" {expected}")), "{line}");
+                } else {
+                    assert!(counter.is_none(), "unrelated step {step:?}");
+                }
+            }
             for (outcome, expected) in [
                 ("completed_full", 1),
                 ("skipped_proof", 3),

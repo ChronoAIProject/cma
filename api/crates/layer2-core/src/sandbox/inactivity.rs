@@ -51,6 +51,9 @@ pub struct SandboxAgentLogActivity {
     pub agent_id: AgentId,
     pub seq: u64,
     pub appended_at: String,
+    /// The last material activity when the store proved a quiet reconnection at this head.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub activity_at: Option<String>,
 }
 
 /// Everything needed to decide whether one live agent is quiet, and nothing else.
@@ -105,6 +108,7 @@ impl SandboxAgentActivity {
                 agent_id: entry.agent_id.clone(),
                 seq: entry.seq,
                 appended_at: entry.appended_at.clone(),
+                activity_at: None,
             }),
         })
     }
@@ -263,7 +267,14 @@ fn agent_pause_refusal(
     if newest.agent_id != activity.agent_id || newest.seq != activity.last_seq {
         return Some(Refusal::InvalidLogEvidence);
     }
-    (now <= appended_at.saturating_add(idle_after_seconds)).then_some(Refusal::RecentAgentActivity)
+    let activity_at = match newest.activity_at.as_deref() {
+        Some(time) => match seconds_from_rfc3339(time) {
+            Some(time) if time <= appended_at => time,
+            _ => return Some(Refusal::InvalidLogEvidence),
+        },
+        None => appended_at,
+    };
+    (now <= activity_at.saturating_add(idle_after_seconds)).then_some(Refusal::RecentAgentActivity)
 }
 
 /// Pause eligibility under a platform spend stop (decision 26). Every live

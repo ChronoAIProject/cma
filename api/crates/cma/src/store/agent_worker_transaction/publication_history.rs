@@ -1,11 +1,11 @@
 //! Same-snapshot proofs, periodic audits, and invocation-local conflict reuse.
-use super::retry_audit::telemetry::SettlementRead;
-use super::retry_audit::telemetry::{self, Verification};
+use super::retry_audit::telemetry::{self, CloseRetry, ReadDecision, Verification};
 use super::*;
 use crate::store::agent_log_integrity::{
     trusted_summary, AppendCapacity, LogSummary, INTEGRITY_FIELD, NORMAL_AGENT_LOG_ENTRIES,
     QUARANTINE_FIELD,
 };
+use layer2_core::sandbox::store::validate_agent_repeated_failure;
 use layer2_core::sandbox::AgentLogKind;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -46,9 +46,9 @@ impl AttemptHistory {
     }
 }
 
-pub(super) struct Selection {
+pub(super) struct Selection<'a> {
     pub ordinary: bool,
-    pub repeated: bool,
+    pub repeated_marker: Option<&'a AgentLogEntry>,
 }
 
 impl MongoSandboxStore {
@@ -59,6 +59,7 @@ impl MongoSandboxStore {
 
     pub(crate) fn with_bounded_close_retries(mut self, enabled: bool) -> Self {
         self.bounded_close_retries = enabled;
+        CloseRetry::initialize(enabled);
         self
     }
 }
@@ -68,21 +69,36 @@ pub(super) async fn read(
     current: &Agent,
     row: &Document,
     mutation: &AgentWorkMutation,
-    selection: Selection,
+    selection: Selection<'_>,
     cache: &mut AttemptHistory,
     session: &mut mongodb::ClientSession,
 ) -> Result<Arc<History>, ApplyError> {
-    let needs_marker = agent_cleanup_capacity_retry(current, mutation) || selection.repeated;
+    let repeated = selection.repeated_marker.is_some();
+    let needs_marker = agent_cleanup_capacity_retry(current, mutation) || repeated;
     let repeat = needs_marker && mutation.agent_logs.is_empty();
-    let caller = if needs_marker && !selection.repeated
+    let caller = if needs_marker && !repeated
         || crate::store::agent_worker_capacity::capacity_failure_evidence_matches(current, mutation)
     {
         ScanCaller::CapacitySettlement(current.work.step)
     } else {
         ScanCaller::WorkerPublication(current.work.step)
     };
-    let bounded =
-        selection.ordinary && store.bounded_close_retries && store.bounded_log_enabled(&current.id);
+    let ordinary_append =
+        selection.ordinary && !store.retry_single_marker_enabled && eligible(current, mutation);
+    // Compare proposals before the switch and audit clock affect verification.
+    // The retained marker still has to match in the existing snapshot check.
+    let eligible_close_retry = selection.ordinary
+        && caller == ScanCaller::WorkerPublication(AgentWorkStep::CloseProcess)
+        && (ordinary_append
+            || selection.repeated_marker.is_some_and(|marker| {
+                validate_agent_repeated_failure(current, mutation, marker, Some(marker)).is_ok()
+            }));
+    let selected = selection.ordinary
+        && (eligible_close_retry || store.bounded_close_retries)
+        && store.bounded_log_enabled(&current.id);
+    let close_retry =
+        eligible_close_retry.then(|| CloseRetry::observe(store.bounded_close_retries, selected));
+    let bounded = store.bounded_close_retries && selected;
     let key = bounded.then(|| snapshot_key(row)).transpose()?;
     if let Some(key) = &key {
         if let Some((agent, proof, history)) = &cache.validated {
@@ -90,7 +106,7 @@ pub(super) async fn read(
                 if repeat {
                     telemetry::record(current.work.step, Verification::SkippedConflictReuse);
                 }
-                telemetry::settlement(caller, SettlementRead::ConflictReuse);
+                telemetry::read(caller, close_retry, ReadDecision::ConflictReuse);
                 tracing::debug!(
                     step = current.work.step.operation_name(),
                     "Reused Agent history after aborted publication"
@@ -109,25 +125,34 @@ pub(super) async fn read(
         .with_worker(work)
         .with_phase(current.work.step.operation_name())
         .scope(async {
-            if bounded
-                && ((!store.retry_single_marker_enabled && eligible(current, mutation))
-                    || repeat && store.retry_audits.recent(current))
-            {
+            if bounded && (ordinary_append || repeat && store.retry_audits.recent(current)) {
                 let proof =
                     Box::pin(trusted_summary(store, current, row, caller, session, false)).await;
                 if proof.is_err() {
-                    telemetry::settlement(caller, SettlementRead::ProofError);
+                    telemetry::read(caller, close_retry, ReadDecision::ProofError);
                 }
                 if let Some(summary) = proof? {
                     let last = if needs_marker {
-                        last_entry(store, current, session).await?
+                        let result = last_entry(store, current, session).await;
+                        if let (Err(_), Some(retry)) = (&result, close_retry) {
+                            retry.verification(ReadDecision::ProofError);
+                        }
+                        result?
                     } else {
                         None
                     };
                     if repeat {
                         telemetry::record(current.work.step, Verification::SkippedProof);
                     }
-                    telemetry::settlement(caller, SettlementRead::Proof);
+                    let decision = if close_retry.is_some()
+                        && repeated
+                        && last.as_ref() != selection.repeated_marker
+                    {
+                        ReadDecision::MarkerConflict
+                    } else {
+                        ReadDecision::Proof
+                    };
+                    telemetry::read(caller, close_retry, decision);
                     return Ok::<_, ApplyError>(History {
                         summary,
                         entries: vec![],
@@ -139,18 +164,19 @@ pub(super) async fn read(
                 if repeat {
                     telemetry::fallback(current, row).map_err(ApplyError::Domain)?;
                 }
-                telemetry::settlement(caller, SettlementRead::ProofFallback);
+                telemetry::read(caller, close_retry, ReadDecision::ProofFallback);
             } else {
-                telemetry::settlement(
+                telemetry::read(
                     caller,
-                    if !selection.ordinary || !repeat {
-                        SettlementRead::FullRequired
+                    close_retry,
+                    if !selection.ordinary || !repeat && !ordinary_append {
+                        ReadDecision::FullRequired
                     } else if !store.bounded_close_retries {
-                        SettlementRead::FlagDisabled
-                    } else if !store.bounded_log_enabled(&current.id) {
-                        SettlementRead::CohortExcluded
+                        ReadDecision::FlagDisabled
+                    } else if !selected {
+                        ReadDecision::CohortExcluded
                     } else {
-                        SettlementRead::AuditDue
+                        ReadDecision::AuditDue
                     },
                 );
             }

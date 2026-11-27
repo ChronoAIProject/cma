@@ -5,7 +5,8 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Agent, AgentWorkStep};
 use mongodb::bson::Document;
 
-pub(in super::super) enum SettlementRead {
+#[derive(Clone, Copy)]
+pub(in super::super) enum ReadDecision {
     FlagDisabled,
     CohortExcluded,
     FullRequired,
@@ -14,27 +15,78 @@ pub(in super::super) enum SettlementRead {
     ProofFallback,
     ProofError,
     ConflictReuse,
+    MarkerConflict,
 }
 
-/// Counts verification decisions per transaction attempt, not completed work.
-/// Keep capacity markers distinct from ordinary repeated-failure publications.
-pub(in super::super) fn settlement(caller: ScanCaller, decision: SettlementRead) {
-    let ScanCaller::CapacitySettlement(step) = caller else {
-        return;
-    };
-    let decision = match decision {
-        SettlementRead::FlagDisabled => "flag_disabled",
-        SettlementRead::CohortExcluded => "cohort_excluded",
-        SettlementRead::FullRequired => "full_required",
-        SettlementRead::AuditDue => "audit_due",
-        SettlementRead::Proof => "proof",
-        SettlementRead::ProofFallback => "proof_fallback",
-        SettlementRead::ProofError => "proof_error",
-        SettlementRead::ConflictReuse => "conflict_reuse",
-    };
-    metrics::counter!("cma_agent_capacity_settlement_reads_total",
-        "worker_step" => step.operation_name(), "decision" => decision)
-    .increment(1);
+impl ReadDecision {
+    fn label(self) -> &'static str {
+        match self {
+            Self::FlagDisabled => "flag_disabled",
+            Self::CohortExcluded => "cohort_excluded",
+            Self::FullRequired => "full_required",
+            Self::AuditDue => "audit_due",
+            Self::Proof => "proof",
+            Self::ProofFallback => "proof_fallback",
+            Self::ProofError => "proof_error",
+            Self::ConflictReuse => "conflict_reuse",
+            Self::MarkerConflict => "marker_conflict",
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(in super::super) struct CloseRetry {
+    mode: &'static str,
+    cohort: &'static str,
+}
+
+impl CloseRetry {
+    fn new(enabled: bool, selected: bool) -> Self {
+        Self {
+            mode: if enabled { "on" } else { "off" },
+            cohort: if selected { "included" } else { "excluded" },
+        }
+    }
+
+    fn eligible_counter(self) -> metrics::Counter {
+        metrics::counter!("cma_agent_close_retry_eligible_attempts_total",
+            "mode" => self.mode, "cohort" => self.cohort)
+    }
+
+    pub(in super::super) fn initialize(enabled: bool) {
+        for selected in [false, true] {
+            Self::new(enabled, selected).eligible_counter().absolute(0);
+        }
+    }
+
+    /// An eligible proposal can still fail snapshot verification or publication.
+    pub(in super::super) fn observe(enabled: bool, selected: bool) -> Self {
+        let retry = Self::new(enabled, selected);
+        retry.eligible_counter().increment(1);
+        retry
+    }
+
+    pub(in super::super) fn verification(self, decision: ReadDecision) {
+        metrics::counter!("cma_agent_close_retry_verification_total",
+            "mode" => self.mode, "cohort" => self.cohort, "decision" => decision.label())
+        .increment(1);
+    }
+}
+
+/// Counts verification decisions per transaction attempt, independently of commit.
+pub(in super::super) fn read(
+    caller: ScanCaller,
+    close_retry: Option<CloseRetry>,
+    decision: ReadDecision,
+) {
+    if let Some(retry) = close_retry {
+        retry.verification(decision);
+    }
+    if let ScanCaller::CapacitySettlement(step) = caller {
+        metrics::counter!("cma_agent_capacity_settlement_reads_total",
+            "worker_step" => step.operation_name(), "decision" => decision.label())
+        .increment(1);
+    }
 }
 
 pub(in super::super) enum Verification {
@@ -79,22 +131,71 @@ mod tests {
     use super::*;
 
     #[test]
+    fn close_retry_exports_empty_exposure_and_separate_verification_decisions() {
+        let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+        let metrics = recorder.handle();
+        let _observation = metrics::set_default_local_recorder(&recorder);
+        CloseRetry::initialize(false);
+        CloseRetry::initialize(true);
+        let caller = ScanCaller::WorkerPublication(AgentWorkStep::CloseProcess);
+        let off = CloseRetry::observe(false, true);
+        read(caller, Some(off), ReadDecision::FlagDisabled);
+        let on = CloseRetry::observe(true, true);
+        read(caller, Some(on), ReadDecision::AuditDue);
+        let hit = CloseRetry::observe(true, true);
+        read(caller, Some(hit), ReadDecision::Proof);
+
+        let rendered = metrics.render();
+        let counter = |name: &str, mode: &str, cohort: &str, decision: Option<&str>| {
+            rendered
+                .lines()
+                .find(|line| {
+                    line.starts_with(name)
+                        && line.contains(&format!("mode=\"{mode}\""))
+                        && line.contains(&format!("cohort=\"{cohort}\""))
+                        && decision
+                            .is_none_or(|value| line.contains(&format!("decision=\"{value}\"")))
+                })
+                .unwrap()
+                .rsplit_once(' ')
+                .unwrap()
+                .1
+        };
+        let eligible = "cma_agent_close_retry_eligible_attempts_total{";
+        let verification = "cma_agent_close_retry_verification_total{";
+        assert_eq!(counter(eligible, "off", "included", None), "1");
+        assert_eq!(counter(eligible, "on", "included", None), "2");
+        assert_eq!(counter(eligible, "on", "excluded", None), "0");
+        assert_eq!(
+            counter(verification, "off", "included", Some("flag_disabled")),
+            "1"
+        );
+        assert_eq!(
+            counter(verification, "on", "included", Some("audit_due")),
+            "1"
+        );
+        assert_eq!(counter(verification, "on", "included", Some("proof")), "1");
+        assert!(!rendered.contains("cma_agent_capacity_settlement_reads_total"));
+    }
+
+    #[test]
     fn settlement_decisions_are_fixed_labels_and_exclude_other_callers() {
         let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
         let metrics = recorder.handle();
         let observation = metrics::set_default_local_recorder(&recorder);
         for (decision, label) in [
-            (SettlementRead::FlagDisabled, "flag_disabled"),
-            (SettlementRead::CohortExcluded, "cohort_excluded"),
-            (SettlementRead::FullRequired, "full_required"),
-            (SettlementRead::AuditDue, "audit_due"),
-            (SettlementRead::Proof, "proof"),
-            (SettlementRead::ProofFallback, "proof_fallback"),
-            (SettlementRead::ProofError, "proof_error"),
-            (SettlementRead::ConflictReuse, "conflict_reuse"),
+            (ReadDecision::FlagDisabled, "flag_disabled"),
+            (ReadDecision::CohortExcluded, "cohort_excluded"),
+            (ReadDecision::FullRequired, "full_required"),
+            (ReadDecision::AuditDue, "audit_due"),
+            (ReadDecision::Proof, "proof"),
+            (ReadDecision::ProofFallback, "proof_fallback"),
+            (ReadDecision::ProofError, "proof_error"),
+            (ReadDecision::ConflictReuse, "conflict_reuse"),
         ] {
-            settlement(
+            read(
                 ScanCaller::CapacitySettlement(AgentWorkStep::CloseProcess),
+                None,
                 decision,
             );
             let rendered = metrics.render();
@@ -109,9 +210,10 @@ mod tests {
             assert!(line.ends_with(" 1"), "{line}");
         }
         let before = metrics.render();
-        settlement(
+        read(
             ScanCaller::WorkerPublication(AgentWorkStep::CloseProcess),
-            SettlementRead::Proof,
+            None,
+            ReadDecision::Proof,
         );
         drop(observation);
         // Prometheus series ordering is unspecified; compare the exact series
