@@ -27,7 +27,7 @@ const PROCESS_HEADER: &str = "x-sw04-serving-process";
 const SOURCE_KEY: &str = "sw04-source";
 const CANCEL_KEY: &str = "sw04-cancel";
 const LIMIT: Duration = Duration::from_secs(10);
-const DATABASE_CLEANUP_LIMIT: Duration = Duration::from_secs(30);
+const DATABASE_CLEANUP_LIMIT: Duration = Duration::from_secs(75);
 
 fn hash(value: &str) -> String {
     format!("{:x}", Sha256::digest(value))
@@ -120,31 +120,39 @@ async fn sw04_cancel_admitted_by_non_owner_executes_once() {
 }
 
 async fn drop_owned_database(mongo: &Client, database: &mongodb::Database) -> bool {
-    // A drop can still be running after both replicas have exited. Give the
-    // disposable database its own deadline and reserve time for exact readback.
+    // Mongo can retain an unfinished transaction after its client exits.
+    // Allow one default transaction lifetime plus time for removal and readback.
     let deadline = Instant::now() + DATABASE_CLEANUP_LIMIT;
-    // A lost or failed acknowledgement does not establish whether the drop ran.
-    match timeout_at(deadline - Duration::from_secs(1), database.drop()).await {
-        Ok(Ok(())) => return true,
-        Ok(Err(error)) => eprintln!("SW04 fixture database drop failed: {error}"),
-        Err(_) => eprintln!("SW04 fixture database drop timed out"),
-    }
     let filter = doc! {"name": database.name()};
-    timeout_at(deadline, async {
+    let mut last_drop = None;
+    let removed = timeout_at(deadline, async {
         loop {
-            if mongo
-                .list_database_names()
-                .filter(filter.clone())
-                .await
-                .is_ok_and(|names| names.is_empty())
-            {
+            // A server-side deadline lets a subsequent attempt make progress.
+            // Reconcile the exact database before repeating an unconfirmed drop.
+            last_drop = Some(
+                timeout(LIMIT, async {
+                    database
+                        .run_command(doc! {"dropDatabase": 1, "maxTimeMS": 8_000_i64})
+                        .await
+                })
+                .await,
+            );
+            let visible = timeout(LIMIT, async {
+                mongo.list_database_names().filter(filter.clone()).await
+            })
+            .await;
+            if matches!(visible, Ok(Ok(names)) if names.is_empty()) {
                 return true;
             }
-            sleep(Duration::from_millis(50)).await;
+            sleep(Duration::from_millis(200)).await;
         }
     })
     .await
-    .unwrap_or(false)
+    .unwrap_or(false);
+    if !removed {
+        eprintln!("SW04 fixture database removal unconfirmed: last_drop={last_drop:?}");
+    }
+    removed
 }
 
 async fn reap(process: &mut Child) -> io::Result<()> {
