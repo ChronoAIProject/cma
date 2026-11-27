@@ -39,7 +39,21 @@ def writer_publication_abort(fixture, arm=None):
     return publication_abort(fixture, arm, 'update', 'agents', FEATURES_MONGO_APP)
 
 
-def publication_abort(fixture, arm, operation, collection, app):
+def runtime_loss_publication_abort(fixture, action=None, count=None):
+    require_feature_fixture(fixture)
+    if action in ('arm', 'disarm') and count is None:
+        return publication_abort(fixture, action == 'arm', 'update', 'agents', FEATURES_MONGO_APP,
+                                 block_ms=12000)
+    if action != 'wait' or type(count) is not int or not 0 <= count < 2**53 - 1:
+        raise ValueError('runtime_loss_abort_action_required')
+    command = {'waitForFailPoint': 'failCommand', 'timesEntered': count + 1, 'maxTimeMS': 4000}
+    return fixture.mongo('let entered = false;'
+                         f'try {{ entered = admin.runCommand({json.dumps(command)}).ok === 1; }}'
+                         'catch (error) { if (error.code !== 50) throw error; }'
+                         'print(JSON.stringify({entered}));')
+
+
+def publication_abort(fixture, arm, operation, collection, app, *, block_ms=None):
     command = {'configureFailPoint': 'failCommand', 'mode': 'off'}
     if arm:
         command.update(mode={'times': 1}, data={
@@ -47,6 +61,8 @@ def publication_abort(fixture, arm, operation, collection, app):
             'appName': app, 'errorCode': 112,
             'errorLabels': ['TransientTransactionError'],
         })
+        if block_ms is not None:
+            command['data'].update(blockConnection=True, blockTimeMS=block_ms)
     return fixture.mongo(f'const result = admin.runCommand({json.dumps(command)});'
                          "if (result.ok !== 1 || result.count == null) throw Error('publication_abort_not_configured');"
                          'print(JSON.stringify({count: Number(result.count)}));')

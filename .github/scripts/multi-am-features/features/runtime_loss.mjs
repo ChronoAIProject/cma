@@ -1,4 +1,5 @@
 import {isDeepStrictEqual as equal} from 'node:util';
+import {randomUUID} from 'node:crypto';
 import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 
@@ -51,15 +52,29 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
   };
   const observeAbort = () => adapter.runtimeLossEvidence({sandboxId});
   const priorAborts = await observeAbort();
+  const preferencePath = `/api/v1/agents/${sibling.agentId}/preferences`;
+  const preferences = await read(siblingOwner.am, preferencePath);
+  check(Number.isSafeInteger(preferences?.revision), 'runtime_loss_writer_baseline_unbound');
+  const title = 'Runtime recovery fixture ' + randomUUID();
+  let writer;
   let armed, disarmed, observedAborts;
   await withRestoration(async () => {
-    armed = await adapter.writerPublicationAbort({arm: true});
+    armed = await adapter.runtimeLossPublicationAbort({action: 'arm'});
+    check(Number.isSafeInteger(armed?.count), 'runtime_loss_abort_count_unbound');
     const removed = await adapter.removeRuntimePod({agentId, sandboxId, operationId, podUid: runtime.pod_uid});
     check(removed?.accepted === true && removed.pod_uid === runtime.pod_uid, 'runtime_loss_removal_unbound');
+    await waitFor(() => adapter.runtimeLossPublicationAbort({action: 'wait', count: armed.count}),
+      value => value?.entered === true, {timeout: 90000, interval: 100, code: 'runtime_loss_transaction_not_observed'});
+    writer = await api.router.dispatch(sibling.agentId, am => api.rawRequest(am, 'PATCH', preferencePath, {
+      body: {title, expected_revision: preferences.revision}, key: randomUUID(), allowed: [200], timeout: 8000,
+    }));
+    check(writer.body?.title === title && writer.body?.revision === preferences.revision + 1,
+      'runtime_loss_competing_publication_unbound');
+    check(equal(await observeAbort(), priorAborts), 'runtime_loss_writer_missed_transaction_window');
     observedAborts = await waitFor(observeAbort, value => ['a', 'b'].some(am => value[am] > priorAborts[am]),
       {timeout: 90000, code: 'runtime_loss_abort_not_observed'});
   }, async () => {
-    disarmed = await adapter.writerPublicationAbort({arm: false});
+    disarmed = await adapter.runtimeLossPublicationAbort({action: 'disarm'});
   });
   check(Number.isSafeInteger(armed?.count) && disarmed?.count === armed.count + 1,
     'runtime_loss_abort_not_consumed_once');
@@ -67,6 +82,14 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
   check(aborts.every(count => count === 0 || count === 1) && aborts[0] + aborts[1] === 1,
     'runtime_loss_abort_count_unbound');
   const recovered = await waitFor(snapshot, recoveredSnapshot, {timeout: 240000, code: 'runtime_loss_recovery_timeout'});
+  const titleEffects = await adapter.titleEffects({agentId: sibling.agentId, title});
+  check(titleEffects?.length === 1 && Number.isSafeInteger(titleEffects[0])
+    && titleEffects[0] > before.children[1].last_seq, 'runtime_loss_competing_effect_not_unique');
+  for (const am of ['a', 'b']) {
+    const current = await read(am, preferencePath);
+    check(current?.title === writer.body.title && current.revision === writer.body.revision,
+      'runtime_loss_competing_publication_lost');
+  }
   const replacement = await adapter.runtimeFor({agentId});
   check(replacement.ready === true && id(replacement.pod_uid) && replacement.pod_uid !== runtime.pod_uid
     && replacement.image === runtime.image && replacement.sandbox_id === sandboxId
@@ -90,12 +113,13 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
       const retirements = items?.filter(entry => entry.kind?.type === 'runtime_generation_retired');
       check(next === undefined && retirements?.length === 1
         && retirements[0].kind.previous_generation === baseline.runtime_generation
-        && retirements[0].kind.runtime_generation === recovered.children[index].runtime_generation,
+        && retirements[0].kind.runtime_generation === recovered.children[index].runtime_generation
+        && (index !== 1 || Number.isSafeInteger(retirements[0].seq) && titleEffects[0] < retirements[0].seq),
       'runtime_loss_generation_retirement_unbound');
     }
   }
   return {previous_pod_sha256: hash(runtime.pod_uid), replacement_pod_sha256: hash(replacement.pod_uid),
     recovered_agents: agents.length, retained_runtime_image: true, retained_home: true,
-    retained_conversations: true, known_recovery_aborts: 1,
+    retained_conversations: true, known_recovery_aborts: 1, competing_metadata_publications: titleEffects.length,
     generation_retirements: agents.length, post_loss_replies: agents.length};
 }

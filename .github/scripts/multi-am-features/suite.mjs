@@ -328,6 +328,8 @@ try {
       peer_advanced: drain.peer_advanced, drain_ms: drain.drain_ms, takeover_ms: drain.takeover_ms,
       useful_reads_during_restart: drain.useful_reads_during_restart} : null,
     runtime_loss: runtimeLoss ? {recovered_agents: runtimeLoss.recovered_agents,
+      known_recovery_aborts: runtimeLoss.known_recovery_aborts,
+      competing_metadata_publications: runtimeLoss.competing_metadata_publications,
       generation_retirements: runtimeLoss.generation_retirements, post_loss_replies: runtimeLoss.post_loss_replies,
       previous_pod_sha256: runtimeLoss.previous_pod_sha256, replacement_pod_sha256: runtimeLoss.replacement_pod_sha256} : null,
     trigger_owner_relinquishment: trigger?.owner_relinquishment ?? null,

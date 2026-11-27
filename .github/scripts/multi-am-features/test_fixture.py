@@ -337,6 +337,33 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(fixture.runtimeLossEvidence('fixture-sandbox'), {'a': 0, 'b': 1})
         self.assertTrue(all('--since=6m' in call.args[0] for call in fixture.client.k.call_args_list))
 
+    def test_runtime_loss_publication_fault_is_one_scoped_write_with_bounded_wait(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = Mock(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        fixture.mongo = Mock(side_effect=[{'count': 7}, {'entered': False}, {'count': 8}])
+        self.assertEqual(fixture.runtimeLossPublicationAbort('arm'), {'count': 7})
+        script = fixture.mongo.call_args.args[0]
+        command, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
+        self.assertEqual(command['mode'], {'times': 1})
+        self.assertEqual(command['data'], {
+            'failCommands': ['update'], 'namespace': 'cma_native_am.agents', 'appName': FEATURES_MONGO_APP,
+            'errorCode': 112, 'errorLabels': ['TransientTransactionError'],
+            'blockConnection': True, 'blockTimeMS': 12000,
+        })
+        self.assertEqual(fixture.runtimeLossPublicationAbort('wait', 7), {'entered': False})
+        self.assertIn('"timesEntered": 8, "maxTimeMS": 4000', fixture.mongo.call_args.args[0])
+        self.assertEqual(fixture.runtimeLossPublicationAbort('disarm'), {'count': 8})
+        self.assertIn('"mode": "off"', fixture.mongo.call_args.args[0])
+        with self.assertRaisesRegex(ValueError, 'runtime_loss_abort_action_required'):
+            fixture.runtimeLossPublicationAbort('wait', True)
+        fixture.ready['fixture'] = 'prepared'
+        with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
+            fixture.runtimeLossPublicationAbort('arm')
+        self.assertEqual(fixture.mongo.call_count, 3)
+
     def test_retirement_purge_writes_are_scoped_to_the_local_feature_fixture(self):
         run_id = 'cma-ci-' + 'a' * 12
         fixture = Fixture.__new__(Fixture)

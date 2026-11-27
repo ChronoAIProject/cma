@@ -3,7 +3,8 @@ import test from 'node:test';
 import {runtimeLoss} from './runtime_loss.mjs';
 
 function fixture({changeHome = false, changeConversation = false, loseHistory = false,
-  postEvents = 1, mixedGenerations = false, aborts = {a: 0, b: 1}, consumedAborts = 1} = {}) {
+  postEvents = 1, mixedGenerations = false, aborts = {a: 0, b: 1}, consumedAborts = 1,
+  missWindow = false, loseTitle = false, titleSeq = 23, transactionEntered = true} = {}) {
   const record = {agentId: 'agent', sandboxId: 'sandbox', operationId: 'create', runtime: {image: 'image'}};
   const sibling = {agentId: 'sibling', sandboxId: 'sandbox'};
   const prior = {status: 'active', boot_id: 'boot-a', children: [record, sibling].map(agent => ({status: 'ready',
@@ -13,6 +14,8 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
     runtime_generation: index === 1 && mixedGenerations ? 4 : 5, last_seq: 35}))};
   const oldReply = {turn_sequence: 7, outcome: {type: 'completed'}, messages: [{content: 'retained'}]};
   let removed = false;
+  let observedWithWriter = false;
+  let title;
   const reads = [], completions = [], faultActions = [];
   const adapter = {
     ownerOf: async ({agentId}) => ({am: agentId === 'agent' ? 'a' : 'b', epoch: 1,
@@ -26,27 +29,52 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
     removeRuntimePod: async scope => {
       assert.deepEqual(scope, {agentId: 'agent', sandboxId: 'sandbox', operationId: 'create', podUid: 'pod-a'});
       assert(!removed);
-      assert.deepEqual(faultActions, [true]);
+      assert.deepEqual(faultActions, ['arm']);
       removed = true;
       return {accepted: true, pod_uid: 'pod-a'};
     },
     runtimeLossEvidence: async scope => {
       assert.deepEqual(scope, {sandboxId: 'sandbox'});
-      return removed ? aborts : {a: 0, b: 0};
+      if (!title) return {a: 0, b: 0};
+      const visible = missWindow || observedWithWriter;
+      observedWithWriter = true;
+      return visible ? aborts : {a: 0, b: 0};
     },
-    writerPublicationAbort: async ({arm}) => {
-      faultActions.push(arm);
-      return {count: arm ? 3 : 3 + consumedAborts};
+    runtimeLossPublicationAbort: async ({action, count}) => {
+      faultActions.push(action);
+      if (action === 'wait') {
+        assert.equal(count, 3);
+        assert(removed);
+        return {entered: transactionEntered};
+      }
+      return {count: action === 'arm' ? 3 : 3 + consumedAborts};
+    },
+    titleEffects: async ({agentId, title: expected}) => {
+      assert.equal(agentId, 'sibling');
+      assert.equal(expected, title);
+      return [titleSeq];
     },
   };
-  const api = {rawRequest: async (am, method, path) => {
+  const api = {router: {dispatch: (agentId, request) => {
+    assert.equal(agentId, 'sibling');
+    return request('a');
+  }}, rawRequest: async (am, method, path, options) => {
+    if (method === 'PATCH') {
+      assert.deepEqual(faultActions, ['arm', 'wait']);
+      assert.equal(am, 'a');
+      assert.equal(path, '/api/v1/agents/sibling/preferences');
+      assert.equal(options.body.expected_revision, 5);
+      title = options.body.title;
+      return {body: {title, revision: 6}};
+    }
     assert.equal(method, 'GET');
     if (removed) reads.push([am, path]);
     const agentId = path.split('/')[4];
     assert(['agent', 'sibling'].includes(agentId));
+    if (path.endsWith('/preferences')) return {body: title && !loseTitle ? {title, revision: 6} : {revision: 5}};
     if (path.endsWith('/transcript')) return {body: {agent_id: agentId,
       turns: removed && agentId === 'sibling' && loseHistory ? [] : [oldReply]}};
-    if (path.endsWith('events?after=20')) return {body: {items: Array.from({length: postEvents}, () => ({kind: {
+    if (path.endsWith('events?after=20')) return {body: {items: Array.from({length: postEvents}, () => ({seq: 28, kind: {
       type: 'runtime_generation_retired', previous_generation: 4, runtime_generation: 5,
     }}))}};
     assert.equal(path, '/api/v1/agents/' + agentId);
@@ -71,7 +99,8 @@ test('runtime loss retains both Agents with one replacement and a working peer S
   assert.equal(result.post_loss_replies, 2);
   assert.equal(result.generation_retirements, 2);
   assert.equal(result.known_recovery_aborts, 1);
-  assert.deepEqual(context.faultActions, [true, false]);
+  assert.equal(result.competing_metadata_publications, 1);
+  assert.deepEqual(context.faultActions, ['arm', 'wait', 'disarm']);
   assert.deepEqual(context.reads.filter(([, path]) => path.includes('/events')), [
     ['a', '/api/v1/agents/agent/events?after=20'], ['b', '/api/v1/agents/agent/events?after=20'],
     ['a', '/api/v1/agents/sibling/events?after=20'], ['b', '/api/v1/agents/sibling/events?after=20'],
@@ -84,10 +113,12 @@ test('runtime loss disarms the fault and rejects unbound or repeated aborts', as
     [{aborts: {a: 0, b: 0}}, /runtime_loss_abort_not_observed/],
     [{aborts: {a: 1, b: 1}}, /runtime_loss_abort_count_unbound/],
     [{consumedAborts: 0}, /runtime_loss_abort_not_consumed_once/],
+    [{transactionEntered: false}, /runtime_loss_transaction_not_observed/],
+    [{missWindow: true}, /runtime_loss_writer_missed_transaction_window/],
   ]) {
     const context = fixture(input);
     await assert.rejects(runtimeLoss(context), error);
-    assert.deepEqual(context.faultActions, [true, false]);
+    assert.deepEqual(context.faultActions, ['arm', 'wait', 'disarm']);
     assert.deepEqual(context.completions, [['sibling', 'a', false]]);
   }
 });
@@ -96,6 +127,8 @@ test('a new Pod alone cannot pass while the home, conversation or event custody 
   for (const [input, error] of [[{changeHome: true}, /runtime_loss_home_replaced/],
     [{changeConversation: true}, /runtime_loss_conversation_replaced/],
     [{loseHistory: true}, /runtime_loss_history_changed/],
+    [{loseTitle: true}, /runtime_loss_competing_publication_lost/],
+    [{titleSeq: 29}, /runtime_loss_generation_retirement_unbound/],
     [{postEvents: 2}, /runtime_loss_generation_retirement_unbound/],
     [{mixedGenerations: true}, /runtime_loss_partial_generation_retirement/]]) {
     await assert.rejects(runtimeLoss(fixture(input)), error);
