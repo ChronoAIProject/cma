@@ -63,12 +63,15 @@ async fn attach_subject_inner(
         return next.run(request).await;
     }
     let mut observation = crate::request_observation::Resolution::start(&request, "ambient");
+    // Keep the resolver's state out of each diagnostic scope's future. The
+    // accumulated stack frames can overflow even on routes that skip resolution.
+    let resolution = Box::pin(auth.resolve_request(request.headers()));
     let ((resolved, failure), retry_after) = super::identity_throttle::capture(
         layer2_core::diagnostic_context::DiagnosticContext::current()
             .with_phase("identity")
             .scope(diagnostics::capture(super::identity_lifetime::scope(
                 &auth,
-                auth.resolve_request(request.headers()),
+                resolution,
                 super::identity_retry::unavailable,
             ))),
     )

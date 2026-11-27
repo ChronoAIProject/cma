@@ -70,7 +70,20 @@ async fn trusted_identity_is_attached_with_its_authority() {
     );
     let app = Router::new()
         .route("/", get(inspect))
-        .layer(axum::middleware::from_fn_with_state(auth, attach_subject));
+        .layer(axum::middleware::from_fn_with_state(
+            auth,
+            |state, request, next| async move {
+                let future = attach_subject(state, request, next);
+                // Leave room for the request router and the nested diagnostic scopes
+                // when polling this middleware on a default Tokio worker stack.
+                let bytes = std::mem::size_of_val(&future);
+                assert!(
+                    bytes <= 64 * 1024,
+                    "authentication future uses {bytes} bytes"
+                );
+                future.await
+            },
+        ));
     let response = app
         .oneshot(Request::get("/").body(Body::empty()).unwrap())
         .await
