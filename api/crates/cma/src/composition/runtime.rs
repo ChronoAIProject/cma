@@ -163,6 +163,7 @@ pub(super) fn lifecycle_config(
         work_retry_policy_enabled: config.features.work_retry_policy_enabled,
         native_create_retry_enabled: config.features.native_create_retry_enabled,
         reopen_output_refusal_enabled: config.features.reopen_output_refusal_enabled,
+        park_runtime_update_sandbox: config.runtime.park_runtime_update_sandbox.clone(),
         cleanup_continuation_enabled: config.features.cleanup_continuation_enabled,
         owner_stop_settlement_enabled: config.features.owner_stop_settlement_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,

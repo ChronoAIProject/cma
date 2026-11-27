@@ -31,6 +31,32 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        // The real admitted update has restored the home by this phase. Park
+        // before reopening any Agent so the owner can exercise retirement.
+        if self.config.park_runtime_update_sandbox.as_ref() == Some(&sandbox.id)
+            && sandbox.supports_retained_runtime_update()
+            && sandbox.runtime_update_request().is_some_and(|request| {
+                request.started_at.is_some()
+                    && request.completed_at.is_none()
+                    && request.retained_transition.is_none()
+                    && sandbox.admitted_runtime_update_target()
+                        == Some(request.target_version.as_str())
+                    && sandbox
+                        .runtime
+                        .as_ref()
+                        .is_some_and(|binding| binding.runtime_version == request.target_version)
+            })
+        {
+            return self
+                .handle_lifecycle_failure(
+                    sandbox,
+                    WorkerFailure::terminal_validation(
+                        "staging fixture refused the admitted runtime update",
+                    ),
+                    now,
+                )
+                .await;
+        }
         if let Err(failure) = self.reconcile_retired_runtime_paths(&sandbox, now).await {
             return self.handle_lifecycle_failure(sandbox, failure, now).await;
         }

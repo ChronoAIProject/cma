@@ -1,12 +1,83 @@
 use super::*;
 use layer2_core::sandbox::store::AgentConversationStore;
-use layer2_core::sandbox::SandboxImageRotationPhase;
+use layer2_core::sandbox::{
+    SandboxImageRotationPhase, SandboxLifecycleAction, SandboxLifecycleResult,
+};
 
 #[path = "runtime_update_reopen_relay_tests.rs"]
 mod relay;
 pub(crate) use relay::exercise_runtime_update_reopen_http;
 
 const TARGET: &str = "registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+
+#[tokio::test]
+async fn staging_runtime_update_parking_is_exact_and_retireable() {
+    for selector_matches in [false, true] {
+        let (mut f, parent, agent, mut now) = at_reopen(false, 0).await;
+        f.park_runtime_update_sandbox = Some(if selector_matches {
+            parent.id.clone()
+        } else {
+            SandboxId("sbx_00000000000000000000000000000000".into())
+        });
+        now += Duration::from_secs(6);
+        f.step(&parent.id, now, TARGET).await;
+        let after = f.harness.stored(&parent.id).await;
+        assert_eq!(after.lifecycle.home, parent.lifecycle.home);
+        assert_eq!(after.runtime, parent.runtime);
+        if !selector_matches {
+            assert!(after.runtime_update_request().unwrap().failure.is_none());
+            assert!(matches!(
+                after.lifecycle.operation,
+                Some(SandboxLifecycleOperation::ImageRotation {
+                    phase: SandboxImageRotationPhase::QueuedMessageDelivery,
+                    ..
+                })
+            ));
+            continue;
+        }
+
+        assert_eq!(after.lifecycle.operation, parent.lifecycle.operation);
+        assert_eq!(after.work.step, SandboxWorkStep::None);
+        assert!(after.work.lease.is_none());
+        assert_eq!(
+            f.harness.store.get_agent(&agent.id).await.unwrap(),
+            Some(agent)
+        );
+        let result = SandboxLifecycleResult::observe(&after, None, now, true).unwrap();
+        assert_eq!(result.code, Some("runtime_update_parked"));
+        assert!(!result.continuing);
+        assert!(result.actions.contains(&SandboxLifecycleAction::Retire));
+
+        let retiring = f
+            .harness
+            .service
+            .delete(&caller("owner", [Capability::DeleteOwnSandbox]), &after.id)
+            .await
+            .unwrap();
+        assert_eq!(retiring.status, SandboxStatus::Retiring);
+        let retired = f
+            .drive(&after.id, &mut now, SandboxStatus::Retired, TARGET)
+            .await;
+        assert!(retired.lifecycle.home.unwrap().released);
+    }
+}
+
+#[tokio::test]
+async fn staging_runtime_update_parking_leaves_ordinary_revive_unchanged() {
+    let (mut f, parent, _, now) = retained_reopen_tests::restored_reopen().await;
+    f.park_runtime_update_sandbox = Some(parent.id.clone());
+    f.step(&parent.id, now + Duration::from_secs(6), &runtime_image())
+        .await;
+    let after = f.harness.stored(&parent.id).await;
+    assert!(after.runtime_update_request().is_none());
+    assert!(matches!(
+        after.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Revive {
+            phase: SandboxRevivePhase::QueuedMessageDelivery,
+            ..
+        })
+    ));
+}
 
 #[tokio::test]
 async fn runtime_update_reopen_output_refusal_parks_only_the_enabled_current_rotation() {
