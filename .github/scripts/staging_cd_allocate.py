@@ -265,17 +265,22 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
         mark(item["component"], "owner-read")
         run = owner_attempt(api, item)
         active = run is not None and run["status"] != "completed"
-        web = next((item for item in items if item["component"] == "web"), None)
+        web = next((item for item in items if item["component"] == "web"
+                    and "cma-web/v" + item["version"] not in final_names), None)
         failed = web if active and current_event and web is not None and web_writer_failed(api, web) else None
-        return active, failed
+        return active, failed, run is not None
 
-    to_reconcile = []
-    for items, (active, failed) in zip(owners.values(), parallel_read(owner_state, owners.values())):
+    to_reconcile, abandoned_web, failed_web = [], [], []
+    for items, (active, failed, known) in zip(owners.values(), parallel_read(owner_state, owners.values())):
         for item in items:
             if active and item != failed:
                 busy.add(item["component"])
             elif DEPLOYABLES[item["component"]] + "/v" + item["version"] not in final_names:
                 to_reconcile.append(item)
+                if item == failed:
+                    failed_web.append(item)
+                elif known and item["component"] == "web":
+                    abandoned_web.append(item)
     if transition and not new_group_source and busy & GROUP:
         # A partial resume would make group completion replace a live publisher.
         # Leave every peer to that owner while independent components proceed.
@@ -287,7 +292,9 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
     # changes. Build that successor with its current publication policy.
     if current_event and "web" not in busy:
         final_sources = {tag["target"] for tag in finals if tag["receipt"]["identity"]["component"] == "web"}
-        if any(item["component"] == "web" and item["source"] not in final_sources for item in to_reconcile):
+        failed = any(item["source"] not in final_sources for item in failed_web)
+        if failed or any(item["source"] not in final_sources and web_writer_failed(api, item)
+                         for item in abandoned_web):
             changes = include_web_head(api, changes, history.head)
             newest[DEPLOYABLES["web"]] = history.head
     latest = {}

@@ -83,6 +83,19 @@ class AbandonedTests(unittest.TestCase):
                 writes.insert.assert_not_called()
                 writes.final_after_owner.assert_not_called()
 
+        # A terminal owner releases the same failed Web publication. Existing
+        # allocation still handles its other lanes independently.
+        run["status"] = "completed"
+        web_job.update(status="completed", conclusion="failure")
+        writes.list.side_effect = lambda: [web]
+        queue["changes"][0]["deployables"] = [DEPLOYABLES["web"]]
+        writes.reset_mock()
+        result = allocate_queue(queue, api, writes, 10, 1)
+        [group] = result["include"]
+        [task] = json.loads(group["tasks"])
+        self.assertEqual(task["reservation"]["source"], head)
+        writes.final_after_owner.assert_called_once_with(web)
+
     def test_both_explicit_404s_are_abandoned(self):
         runner = Mock(return_value=response(404))
         self.assertFalse(run_active(github(runner), self.reservation()))
