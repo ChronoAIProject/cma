@@ -1,4 +1,13 @@
-import { boolean, enumeration, integer, nullable, object, text, type Output } from './schema.js';
+import {
+  boolean,
+  enumeration,
+  integer,
+  nullable,
+  object,
+  optional,
+  text,
+  type Output,
+} from './schema.js';
 
 export const environmentFeature = object({
   state: enumeration(
@@ -18,6 +27,7 @@ export const agentEnvironment = object({
   policy_revision: integer,
   runtime_incarnation: nullable(text),
   revalidate_at: nullable(text),
+  access_revalidate_at: optional(nullable(text)),
   files: environmentFeature,
   operation_output: environmentFeature,
   browser: environmentFeature,

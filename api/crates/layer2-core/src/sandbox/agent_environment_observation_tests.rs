@@ -118,6 +118,10 @@ async fn enabled_browser_remains_available_when_the_control_probe_times_out() {
     assert_eq!(pending["browser"]["state"], "available");
     assert_eq!(pending["control"]["writable"], false);
     assert!(pending["revalidate_at"].as_str().is_some());
+    assert_eq!(
+        pending.get("access_revalidate_at"),
+        Some(&serde_json::Value::Null)
+    );
 
     tokio::time::advance(Duration::from_secs(1)).await;
     tokio::task::yield_now().await;
