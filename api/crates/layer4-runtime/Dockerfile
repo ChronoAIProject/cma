@@ -627,6 +627,14 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
 
 COPY --link --from=omarchy-application /payload/ /
 
+FROM runtime AS supervised-debian-desktop
+ARG RUNTIME_DESKTOP
+RUN test "${RUNTIME_DESKTOP}" = "1"
+ENV CHRONO_RUNTIME_DESKTOP_SUPERVISION_ENABLED=true
+
+FROM omarchy AS supervised-omarchy
+ENV CHRONO_RUNTIME_DESKTOP_SUPERVISION_ENABLED=true
+
 FROM runtime AS default-runtime
 ARG CHRONO_BUILD_SHA=local-unpinned
 ARG CHRONO_BUILD=development
