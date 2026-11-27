@@ -11,6 +11,8 @@ use layer2_core::sandbox::SandboxAgentLogActivity;
 use mongodb::{options::Hint, ClientSession};
 use serde::{Deserialize, Serialize};
 
+mod tip;
+
 const FIELD: &str = "inactivity_log_proof_v1";
 const PAGE_ROWS: i64 = 128;
 const PAGE_BYTES: usize = 4 * 1024 * 1024;
@@ -32,6 +34,8 @@ struct Progress {
     through: u64,
     bytes: usize,
     tail_hash: [u8; HASH_BYTES],
+    tail_bytes: usize,
+    tail_appended_at: String,
     state: Preparation,
     integrity: Option<[u8; HASH_BYTES]>,
 }
@@ -45,6 +49,8 @@ impl Progress {
             through: 0,
             bytes: 0,
             tail_hash: [0; HASH_BYTES],
+            tail_bytes: 0,
+            tail_appended_at: String::new(),
             state: Preparation::Pending,
             integrity,
         }
@@ -65,7 +71,14 @@ impl Progress {
             || proof.through > proof.head
             || proof.head > PHYSICAL_AGENT_LOG_ENTRIES
             || proof.bytes > PHYSICAL_AGENT_LOG_BYTES
-            || (proof.through == 0 && (proof.bytes != 0 || proof.tail_hash != [0; HASH_BYTES]))
+            || proof.tail_bytes > PAGE_BYTES
+            || proof.tail_bytes > proof.bytes
+            || proof.tail_appended_at.len() > 128
+            || (proof.through == 0
+                && (proof.bytes != 0
+                    || proof.tail_hash != [0; HASH_BYTES]
+                    || !proof.tail_appended_at.is_empty()))
+            || (proof.through > 0 && proof.tail_bytes == 0)
             || (proof.state == Preparation::Certified
                 && (proof.through == 0 || proof.through != proof.head))
         {
@@ -88,7 +101,6 @@ pub(in crate::store) enum Proof {
 pub(in crate::store) async fn current(
     store: &MongoSandboxStore,
     agent: &Agent,
-    bytes_left: &mut usize,
     session: &mut ClientSession,
 ) -> Result<Proof, TransactionLogError> {
     let row = legacy_row(store, agent, session).await?;
@@ -100,23 +112,14 @@ pub(in crate::store) async fn current(
         Preparation::ByteLimit => return Ok(Proof::Budget),
         Preparation::Certified => {}
     }
-    let Some(entry) = anchor(
-        store,
-        agent,
-        progress.through,
-        progress.tail_hash,
-        bytes_left,
-        session,
-    )
-    .await?
-    else {
-        return Ok(Proof::Budget);
-    };
-    require_tip(store, agent, session).await?;
+    // The complete structural audit is pinned to this exact immutable log
+    // head and Agent revision. Validate that head in the deciding transaction
+    // without transferring or decoding any event payloads.
+    tip::require_latest(store, agent, &progress, session).await?;
     Ok(Proof::Latest(SandboxAgentLogActivity {
-        agent_id: entry.agent_id,
-        seq: entry.seq,
-        appended_at: entry.appended_at,
+        agent_id: agent.id.clone(),
+        seq: progress.through,
+        appended_at: progress.tail_appended_at,
     }))
 }
 
@@ -183,7 +186,7 @@ async fn advance_in_transaction(
         }
         progress
     };
-    require_tip(store, agent, session).await?;
+    tip::require_tip(store, agent, session).await?;
     let sizes = page_sizes(
         store,
         agent,
@@ -266,26 +269,6 @@ fn integrity_tag(row: &Document) -> Result<Option<[u8; HASH_BYTES]>, SandboxStor
                 .map_err(|_| invalid())
         })
         .transpose()
-}
-
-async fn require_tip(
-    store: &MongoSandboxStore,
-    agent: &Agent,
-    session: &mut ClientSession,
-) -> Result<(), TransactionLogError> {
-    let tip = store
-        .agent_log
-        .find_one(doc! { "agent_id": agent.id.as_str() })
-        .hint(Hint::Name("agent_log_sequence".into()))
-        .sort(doc! { "seq": -1 })
-        .projection(doc! { "_id": 0, "seq": 1 })
-        .session(session)
-        .await
-        .map_err(TransactionLogError::Driver)?;
-    if tip.as_ref().and_then(sequence) != Some(agent.conversation.last_seq) {
-        return Err(invalid().into());
-    }
-    Ok(())
 }
 
 async fn legacy_row(
@@ -426,8 +409,13 @@ async fn read_page(
             return Err(invalid().into());
         }
         let entry = decode(raw, agent, progress.through + 1)?;
+        if entry.appended_at.len() > 128 {
+            return Err(invalid().into());
+        }
         progress.through = entry.seq;
         progress.tail_hash = hash_raw(raw.as_bytes());
+        progress.tail_bytes = *size;
+        progress.tail_appended_at = entry.appended_at;
         progress.bytes = progress
             .bytes
             .checked_add(*size)

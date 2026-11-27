@@ -215,3 +215,69 @@ async fn dormant_legacy_certification_handles_adjacent_large_rows_and_reports_by
     assert_unchanged(&f.store, &oversize).await;
     f.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn two_certified_legacy_heads_above_the_payload_budget_can_pause() {
+    let f = TestStore::open().await;
+    let row_bytes = (MAX_LEGACY_BYTES / 2 + 100_000) as usize;
+    let large_tail = |entries: &mut [AgentLogEntry]| {
+        entries[2].kind = AgentLogKind::AgentMessage {
+            content: "x".repeat(row_bytes),
+        };
+    };
+    let (sandbox, first) = seed(&f, "sbx_dormant_large_tails", 3, large_tail).await;
+    let mut second = ready_agent(&sandbox, "agt_dormant_large_tail_second");
+    second.conversation.last_seq = 3;
+    let mut entries = small_history(&second, 3);
+    large_tail(&mut entries);
+    seed_legacy(&f.store, &second, &entries).await;
+    assert_eq!(
+        refusal(&f, &sandbox).await,
+        Some(InactivityPauseRefusal::LegacyLogBytes)
+    );
+    for _ in 0..2 {
+        assert_eq!(
+            automatic(&f, &sandbox).await,
+            SandboxMaintenanceOutcome::NotEligible
+        );
+    }
+    assert_eq!(
+        proof(&f, &first).await.unwrap().get_str("state").unwrap(),
+        "certified"
+    );
+    assert_eq!(
+        proof(&f, &second).await.unwrap().get_str("state").unwrap(),
+        "certified"
+    );
+    f.commands();
+    assert_eq!(refusal(&f, &sandbox).await, None);
+    let commands = f.commands();
+    assert_eq!(
+        commands
+            .iter()
+            .filter(|command| command.get_document("projection").is_ok())
+            .count(),
+        2
+    );
+    assert!(
+        !commands
+            .iter()
+            .any(|command| command.contains_key("find")
+                && command.get_document("projection").is_err())
+    );
+    assert_unchanged(&f.store, &sandbox).await;
+    assert_eq!(
+        automatic(&f, &sandbox).await,
+        SandboxMaintenanceOutcome::Scheduled
+    );
+    assert_eq!(
+        f.store
+            .sandbox_events(&sandbox.id, 0, 10)
+            .await
+            .unwrap()
+            .len(),
+        1
+    );
+    f.cleanup().await;
+}

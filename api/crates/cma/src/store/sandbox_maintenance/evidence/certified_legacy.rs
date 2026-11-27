@@ -9,10 +9,7 @@ use layer2_core::{
 
 use crate::store::agent_log_integrity::inactivity::{self, Preparation, Proof};
 
-use super::{
-    legacy_log_budget::MAX_LEGACY_BYTES, scoped::CapturedActivities, ApplyError, ClientSession,
-    MongoSandboxStore,
-};
+use super::{scoped::CapturedActivities, ApplyError, ClientSession, MongoSandboxStore};
 
 pub(super) type CertifiedHeads = BTreeMap<AgentId, SandboxAgentLogActivity>;
 
@@ -31,12 +28,11 @@ pub(in crate::store::sandbox_maintenance) async fn capture(
     let mut heads = BTreeMap::new();
     let mut unproven = Vec::new();
     let mut preparing = false;
-    let mut bytes_left = MAX_LEGACY_BYTES as usize;
     for agent in agents.iter().filter(|agent| agent.status.is_live()) {
         if segmented.is_some_and(|sources| sources.contains(agent)) {
             continue;
         }
-        match inactivity::current(store, agent, &mut bytes_left, session).await? {
+        match inactivity::current(store, agent, session).await? {
             Proof::Latest(entry) => {
                 heads.insert(agent.id.clone(), entry);
             }

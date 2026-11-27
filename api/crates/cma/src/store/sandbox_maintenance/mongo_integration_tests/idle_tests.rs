@@ -106,7 +106,13 @@ async fn agentless_inactivity_requires_complete_old_child_and_session_evidence()
         }
         if case == "terminal_command" {
             let mut terminal = ready_agent(&sandbox, "agt_terminal_command");
-            terminal.status = AgentStatus::Deleted;
+            terminal
+                .transition(
+                    AgentStatus::Stopped,
+                    IDLE_AT.into(),
+                    Some(layer2_core::sandbox::AgentStopReason::Owner),
+                )
+                .unwrap();
             store
                 .agents
                 .insert_one(agent_document(&terminal).unwrap())
