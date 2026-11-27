@@ -20,6 +20,13 @@ impl PoolTarget {
                 _ => "pending",
             }
         };
+        let retirement_status = self.retiring.then(|| {
+            if status == "disabled" {
+                "drained".into()
+            } else {
+                "pending".into()
+            }
+        });
         WarmPoolView {
             id: self.id.clone(),
             revision: self.revision as u64,
@@ -28,9 +35,11 @@ impl PoolTarget {
             cpu_millis: self.plan.spec.cpu_millis,
             memory_mib: self.plan.spec.memory_mib,
             target_replicas: self.target_replicas,
+            provider_target_replicas: exact.map(|status| status.desired_replicas),
             ready_replicas: ready,
             observed,
             status: status.into(),
+            retirement_status,
             resource_name: self.binding.as_ref().map(|binding| binding.name.clone()),
             error: self.error.clone().or_else(|| {
                 if !available {
