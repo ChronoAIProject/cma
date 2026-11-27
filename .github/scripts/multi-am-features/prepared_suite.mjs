@@ -90,7 +90,8 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       await openBoth(record);
       const browserReply = await page.sendAndRead(record.agentId, adapter);
       check(browserReply?.effects === 1 && isDigest(browserReply.ready_request_sha256)
-        && isDigest(browserReply.send_request_sha256) && isDigest(browserReply.answer_sha256),
+        && isDigest(browserReply.send_request_sha256) && isDigest(browserReply.answer_sha256)
+        && ['agui', 'responses_v2'].includes(browserReply.transport),
         'prepared_browser_reply_unproven');
       const requests = {
         admission: hash(record.admissionRequest),
@@ -123,6 +124,7 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         startup_receipt_count: durable.startup_receipts.length,
         runtime_receipt_format: nativeAfter.format, runtime_receipt_count: nativeAfter.receipts.length,
         browser_starting_read: true, browser_ready_read: true, browser_reply_sha256: browserReply.answer_sha256,
+        browser_send_transport: browserReply.transport,
         prepared_reservation_sha256: hash(record.sandboxId), agent_sha256: hash(record.agentId),
         lifecycle_operation_sha256: hash(record.operationId)};
     }));
@@ -163,13 +165,13 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
     steps: journey.steps.map(({name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
-      browser_starting_read, browser_ready_read, browser_reply_sha256,
+      browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
       prepared_work_lease_refused}) => ({
       name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
-      browser_starting_read, browser_ready_read, browser_reply_sha256,
+      browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
       prepared_work_lease_refused,
     })),

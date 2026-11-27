@@ -153,19 +153,23 @@ class PreparedAgentPage {
     if (ready?.error) throw ready.error;
     check(ready?.response, 'prepared_browser_ready_read_unproven');
     const readyRequest = await requestHash(ready.response);
-    let sendRequest;
+    let sendRequest, sendTransport;
     await adapter.prepareTurn({caseId, marker});
     await withRestoration(async () => {
       const composer = this.page.getByRole('textbox', {name: 'Message', exact: true});
       await browserOperation('prepared_browser_composer_fill_failed', () => composer.fill(input, {timeout: 15000}));
       await adapter.releaseTurn({caseId});
-      const [submitted] = await Promise.all([
+      const [sent, submitted] = await Promise.all([
+        browserOperation('prepared_browser_send_request_missing', () => this.page.waitForRequest(
+          request => isPreparedSend(request, agentId, input), {timeout: 20000})),
         browserOperation('prepared_browser_send_response_missing', () => this.page.waitForResponse(
           response => isPreparedSend(response.request(), agentId, input), {timeout: 30000})),
         browserOperation('prepared_browser_send_click_failed', () =>
           this.page.getByRole('button', {name: 'Send message', exact: true}).click({timeout: 15000})),
       ]);
+      check(submitted.request() === sent, 'prepared_browser_send_response_unbound');
       check(submitted.ok(), 'prepared_browser_send_refused');
+      sendTransport = new URL(sent.url()).pathname === '/api/v1/agui/run' ? 'agui' : 'responses_v2';
       sendRequest = await requestHash(submitted);
       await browserOperation('prepared_browser_answer_render_failed', () =>
         this.page.getByText(answer, {exact: true}).waitFor({state: 'visible', timeout: 90000}));
@@ -174,7 +178,7 @@ class PreparedAgentPage {
       assertOracle(settled, caseId, 1);
     }, () => adapter.releaseTurn({caseId}));
     return {answer_sha256: hash(answer), effects: 1, ready_request_sha256: readyRequest,
-      send_request_sha256: sendRequest};
+      send_request_sha256: sendRequest, transport: sendTransport};
   }
 }
 

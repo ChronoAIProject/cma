@@ -72,7 +72,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
       actions.push('reply-' + am);
       return {effects, ready_request_sha256: ready ? (repeatRequest ? 'b' : 'c').repeat(64) : null,
         send_request_sha256: 'd'.repeat(64),
-        answer_sha256: 'a'.repeat(64)};
+        answer_sha256: 'a'.repeat(64), transport: 'responses_v2'};
     },
   })};
   return {adapter, create, step, results, actions, records, browser,
@@ -96,6 +96,7 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.equal(context.results[1].startup_receipt_count, 3);
   assert.equal(context.results[1].browser_starting_read, true);
   assert.equal(context.results[1].browser_ready_read, true);
+  assert.equal(context.results[1].browser_send_transport, 'responses_v2');
   assert.equal(context.results[1].ingress, 'a');
   assert.equal(context.results[1].owner, 'b');
   assert.equal(context.results[1].owner_epoch, 1);
