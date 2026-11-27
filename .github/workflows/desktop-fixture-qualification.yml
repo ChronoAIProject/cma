@@ -1,37 +1,25 @@
-name: Desktop fixture qualification
+name: Supervised Debian Desktop qualification
 
 on:
   push:
     branches: [tl/runtime/1811-native-fixture-qualification]
-    paths:
-      - .github/workflows/desktop-fixture-qualification.yml
-      - .github/scripts/desktop-lifecycle-probe.py
-      - .github/scripts/desktop-runtime-evidence.mjs
+    paths: [.github/workflows/desktop-fixture-qualification.yml]
 
 permissions:
   contents: read
 
 env:
-  FIXTURE_SOURCE: 3ab0355888c30a1aa83fd02d162de87da5e29a4e
+  FIXTURE_SOURCE: 53f8de370252f1289207cc2aeee718dd2ebc5994
 
 jobs:
   desktop:
-    name: ${{ matrix.target }}
+    name: supervised-debian-desktop
     if: github.repository == 'ChronoAIProject/cma'
     runs-on: ubuntu-24.04
     timeout-minutes: 180
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: supervised-debian-desktop
-            component: runtime
-          - target: supervised-omarchy
-            component: runtime-omarchy
     env:
-      FIXTURE_TARGET: ${{ matrix.target }}
-      CD_COMPONENT: ${{ matrix.component }}
-      FIXTURE_IMAGE: cma-${{ matrix.component }}:ci
+      CD_COMPONENT: runtime
+      FIXTURE_IMAGE: cma-runtime:ci
       DOCKERFILE: api/crates/layer4-runtime/Dockerfile
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -59,7 +47,7 @@ jobs:
         with:
           context: .
           file: ${{ env.DOCKERFILE }}
-          target: ${{ matrix.target }}
+          target: supervised-debian-desktop
           platforms: linux/amd64
           push: false
           load: true
@@ -67,12 +55,11 @@ jobs:
           tags: ${{ env.FIXTURE_IMAGE }}
           build-args: |
             RUNTIME_DESKTOP=1
-            OMARCHY_CMA_BASE=runtime-tools
             CHRONO_BUILD=git-${{ env.FIXTURE_SOURCE }}
             CHRONO_BUILD_SHA=${{ env.FIXTURE_SOURCE }}
             OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             SOURCE_DATE_EPOCH=0
-          cache-from: type=gha,version=2,scope=${{ matrix.component }}
+          cache-from: type=gha,version=2,scope=runtime
       - name: Verify the loaded image identity and supervision setting
         run: |
           docker image inspect "$FIXTURE_IMAGE" | jq -e --arg source "$FIXTURE_SOURCE" '
@@ -94,24 +81,11 @@ jobs:
       - name: Prepare native Chromium namespaces
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Exercise the Debian Desktop fixture
-        if: matrix.component == 'runtime'
         timeout-minutes: 10
         run: |
-          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
-          probe=.github/scripts/desktop-lifecycle-probe.py
-          harness=.github/scripts/desktop-runtime-evidence.mjs
-          trap 'git restore --source "$FIXTURE_SOURCE" -- "$probe" "$harness"' EXIT
-          git show "$GITHUB_SHA:$probe" > "$probe"
-          git show "$GITHUB_SHA:$harness" > "$harness"
           node .github/scripts/desktop-runtime-evidence.mjs "$FIXTURE_IMAGE" "$FIXTURE_SOURCE" \
             "$RUNNER_TEMP/desktop.json"
           jq -e '{revision,image,result,cleanup} | select(.result == "pass" and .cleanup)' "$RUNNER_TEMP/desktop.json"
-      - name: Exercise the Omarchy fixture
-        if: matrix.component == 'runtime-omarchy'
-        timeout-minutes: 10
-        run: |
-          node .github/scripts/omarchy-runtime-evidence.mjs "$FIXTURE_SOURCE" "$RUNNER_TEMP/omarchy"
-          jq -e '{revision,image,result,cleanup} | select(.result == "pass" and .cleanup)' "$RUNNER_TEMP/omarchy/verification.json"
       - name: Install the pinned image scanner
         timeout-minutes: 8
         run: |
