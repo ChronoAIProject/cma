@@ -285,12 +285,19 @@ class OwnershipTests(unittest.TestCase):
             'failCommands': ['insert'], 'namespace': 'cma_native_am.agent_artifacts', 'appName': FEATURES_MONGO_APP,
             'errorCode': 112, 'errorLabels': ['TransientTransactionError'],
         }})
+        fixture.artifactPublicationAbort(True, 'unknown')
+        script = fixture.mongo.call_args.args[0]
+        uncertain, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
+        command['data']['errorLabels'].append('UnknownTransactionCommitResult')
+        self.assertEqual(uncertain, command)
         with self.assertRaisesRegex(ValueError, 'artifact_publication_abort_action_required'):
             fixture.artifactPublicationAbort(1)
+        with self.assertRaisesRegex(ValueError, 'artifact_publication_abort_action_required'):
+            fixture.artifactPublicationAbort(True, 'unspecified')
         fixture.ready['fixture'] = 'prepared'
         with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
             fixture.artifactPublicationAbort(True)
-        self.assertEqual(fixture.mongo.call_count, 1)
+        self.assertEqual(fixture.mongo.call_count, 2)
 
     def test_rename_abort_and_evidence_are_scoped_to_the_feature_fixture_and_agent(self):
         fixture = Fixture.__new__(Fixture)

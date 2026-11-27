@@ -91,3 +91,44 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
     'artifact_effect_missing_or_duplicated');
   await recordState('artifact_publication_retry', {known_aborts: 1, artifacts: matches.length});
 }
+
+export async function artifactUnknownPublication({adapter, user, record, recordFailure, recordState = async () => {}}) {
+  const {agentId} = record;
+  const path = `/api/v1/agents/${encodeURIComponent(agentId)}/artifacts`;
+  const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
+  const ingress = other(owner.am);
+  const data = Buffer.from('Synthetic unacknowledged artifact publication\n');
+  const intent = {key: randomUUID(), body: {name: `fixture-${randomUUID()}.txt`, media_type: 'text/plain',
+    content_base64: data.toString('base64')}};
+  const matching = async am => {
+    const {body} = await user.rawRequest(am, 'GET', path);
+    check(Array.isArray(body?.items) && body.next === undefined, 'artifact_unknown_listing_unbound');
+    return body.items.filter(row => row.name === intent.body.name);
+  };
+  let armed, disarmed;
+  await withRestoration(async () => {
+    armed = await adapter.artifactPublicationAbort({arm: true, outcome: 'unknown'});
+    const response = await user.rawRequest(ingress, 'POST', path, {...intent, allowed: [503]});
+    check(response.status === 503 && response.body?.code === 'resource_access_unavailable',
+      'artifact_unknown_mislabeled_or_retried');
+  }, async () => {
+    disarmed = await adapter.artifactPublicationAbort({arm: false});
+  }, recordFailure);
+  check(Number.isSafeInteger(armed?.count) && disarmed?.count === armed.count + 1,
+    'artifact_unknown_fault_not_consumed_once');
+  for (const am of [ingress, owner.am]) {
+    check((await matching(am)).length === 0, 'artifact_unknown_published_without_acknowledgement');
+  }
+  const {body: recovered} = await user.rawRequest(owner.am, 'POST', path, {...intent, allowed: [201]});
+  const {body: replay} = await user.rawRequest(ingress, 'POST', path, {...intent, allowed: [201]});
+  const digest = createHash('sha256').update(data).digest('hex');
+  check(typeof recovered?.id === 'string' && recovered.agent_id === agentId && recovered.sha256 === digest
+    && replay?.id === recovered.id && replay.created_at === recovered.created_at && replay.sha256 === digest,
+  'artifact_unknown_same_key_receipt_unbound');
+  for (const am of [ingress, owner.am]) {
+    const rows = await matching(am);
+    check(rows.length === 1 && rows[0].id === recovered.id && rows[0].sha256 === digest,
+      'artifact_unknown_recovery_effect_missing_or_duplicated');
+  }
+  await recordState('artifact_unknown_publication', {unacknowledged_writes: 1, recovered_artifacts: 1});
+}

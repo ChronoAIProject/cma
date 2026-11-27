@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
-import {shareAgentArtifact} from './sharing.mjs';
+import {artifactUnknownPublication, shareAgentArtifact} from './sharing.mjs';
 
 function scenario({duplicateRedemption = false, divergingArtifact = false, aborts = 1} = {}) {
   const agentId = 'fixture-agent';
@@ -96,4 +96,56 @@ test('competing uploads must return one artifact before any share is created', a
   assert.deepEqual(calls.map(row => row[0]), ['b', 'a']);
   assert.deepEqual(failures, []);
   assert.equal(isRevoked(), false);
+});
+
+function unknownPublication({publishedBeforeRetry = false, wrongProblem = false, divergingReceipt = false} = {}) {
+  const agentId = 'fixture-agent';
+  const actions = [], posts = [], states = [];
+  let artifact;
+  const adapter = {
+    ownerOf: async () => ({am: 'a', epoch: 2, agent_id: agentId, pod_uid: 'pod-a'}),
+    artifactPublicationAbort: async ({arm, outcome}) => {
+      actions.push([arm, outcome]);
+      return {count: arm ? 5 : 6};
+    },
+  };
+  const user = {rawRequest: async (am, method, path, options) => {
+    assert.equal(path, '/api/v1/agents/fixture-agent/artifacts');
+    if (method === 'GET') return {body: {items: artifact ? [artifact] : []}};
+    assert.equal(method, 'POST');
+    posts.push({am, ...options});
+    const published = {id: 'artifact-first', name: options.body.name, agent_id: agentId,
+      sha256: createHash('sha256').update(Buffer.from(options.body.content_base64, 'base64')).digest('hex'),
+      created_at: 'fixture-time'};
+    if (posts.length === 1) {
+      if (publishedBeforeRetry) artifact = published;
+      return {status: 503, body: {code: wrongProblem ? 'other_error' : 'resource_access_unavailable'}};
+    }
+    artifact ??= published;
+    return {status: 201, body: posts.length === 3 && divergingReceipt ? {...artifact, id: 'second'} : artifact};
+  }};
+  return {actions, posts, states, run: () => artifactUnknownPublication({adapter, user, record: {agentId},
+    recordState: async (name, state) => states.push([name, state])})};
+}
+
+test('unknown artifact publication stays unresolved until explicit replay of the exact original key across both ingresses', async () => {
+  const scenario = unknownPublication();
+  await scenario.run();
+  assert.deepEqual(scenario.posts.map(row => [row.am, row.allowed[0]]), [['b', 503], ['a', 201], ['b', 201]]);
+  assert(scenario.posts.every(row => row.key === scenario.posts[0].key && row.body === scenario.posts[0].body));
+  assert.deepEqual(scenario.actions, [[true, 'unknown'], [false, undefined]]);
+  assert.deepEqual(scenario.states, [['artifact_unknown_publication', {unacknowledged_writes: 1, recovered_artifacts: 1}]]);
+});
+
+test('unknown artifact publication rejects an extra effect or incorrect uncertainty classification', async () => {
+  for (const [input, error, requests] of [
+    [{publishedBeforeRetry: true}, /artifact_unknown_published_without_acknowledgement/, 1],
+    [{wrongProblem: true}, /artifact_unknown_mislabeled_or_retried/, 1],
+    [{divergingReceipt: true}, /artifact_unknown_same_key_receipt_unbound/, 3],
+  ]) {
+    const scenario = unknownPublication(input);
+    await assert.rejects(scenario.run(), error);
+    assert.equal(scenario.posts.length, requests);
+    assert.deepEqual(scenario.actions, [[true, 'unknown'], [false, undefined]]);
+  }
 });

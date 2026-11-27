@@ -25,11 +25,12 @@ def prepared_publication_abort(fixture, arm=None):
     return publication_abort(fixture, arm, 'update', 'worktrees', PREPARED_MONGO_APP)
 
 
-def artifact_publication_abort(fixture, arm=None):
+def artifact_publication_abort(fixture, arm=None, outcome='known'):
     require_feature_fixture(fixture)
-    if type(arm) is not bool:
+    if type(arm) is not bool or outcome not in ('known', 'unknown'):
         raise ValueError('artifact_publication_abort_action_required')
-    return publication_abort(fixture, arm, 'insert', 'agent_artifacts', FEATURES_MONGO_APP)
+    return publication_abort(fixture, arm, 'insert', 'agent_artifacts', FEATURES_MONGO_APP,
+                             unknown=outcome == 'unknown')
 
 
 def writer_publication_abort(fixture, arm=None):
@@ -53,7 +54,7 @@ def runtime_loss_publication_abort(fixture, action=None, count=None):
                          'print(JSON.stringify({entered}));')
 
 
-def publication_abort(fixture, arm, operation, collection, app, *, block_ms=None):
+def publication_abort(fixture, arm, operation, collection, app, *, block_ms=None, unknown=False):
     command = {'configureFailPoint': 'failCommand', 'mode': 'off'}
     if arm:
         command.update(mode={'times': 1}, data={
@@ -63,6 +64,8 @@ def publication_abort(fixture, arm, operation, collection, app, *, block_ms=None
         })
         if block_ms is not None:
             command['data'].update(blockConnection=True, blockTimeMS=block_ms)
+        if unknown:
+            command['data']['errorLabels'].append('UnknownTransactionCommitResult')
     return fixture.mongo(f'const result = admin.runCommand({json.dumps(command)});'
                          "if (result.ok !== 1 || result.count == null) throw Error('publication_abort_not_configured');"
                          'print(JSON.stringify({count: Number(result.count)}));')

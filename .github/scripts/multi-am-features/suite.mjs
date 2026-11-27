@@ -19,7 +19,7 @@ import {writerCoverage} from './writer_coverage.mjs';
 import {queuedCommandCase} from './features/queued_commands.mjs';
 import {configurationDenials} from './features/configuration_denials.mjs';
 import {installSkillCase} from './features/skills.mjs';
-import {shareAgentArtifact} from './features/sharing.mjs';
+import {artifactUnknownPublication, shareAgentArtifact} from './features/sharing.mjs';
 import {organizationShare} from './features/organization_share.mjs';
 import {accessRequest} from './features/access_request.mjs';
 import {retirementRetention} from './features/retirement_retention.mjs';
@@ -252,6 +252,8 @@ try {
           await caseContext.runCase('writer.skill_publication_retry', () => installSkillCase(caseContext, true));
           await caseContext.runCase('writer.share_and_artifact_receipts',
             () => shareAgentArtifact({...caseContext, user, outsider}));
+          await caseContext.runCase('writer.artifact_unknown_publication',
+            () => artifactUnknownPublication({...caseContext, user}));
           await caseContext.runCase('writer.organization_share_membership',
             () => organizationShare({...caseContext, user, outsider}));
           await caseContext.runCase('writer.agent_access_request_denial',
