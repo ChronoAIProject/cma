@@ -179,6 +179,7 @@ impl HostedContextRefresh {
                 sandbox_id: status.sandbox_id,
                 runtime_generation: status.generation,
                 boot_id: status.boot_id,
+                home_identity: None,
                 path: self.0.path.clone(),
                 max_bytes: 32 * 1024,
             }))
@@ -224,6 +225,7 @@ impl HostedContextRefresh {
                 sandbox_id: status.sandbox_id.clone(),
                 runtime_generation: status.generation,
                 boot_id: status.boot_id.clone(),
+                home_identity: None,
                 path: self.0.path.clone(),
                 max_bytes: 32 * 1024,
             }))

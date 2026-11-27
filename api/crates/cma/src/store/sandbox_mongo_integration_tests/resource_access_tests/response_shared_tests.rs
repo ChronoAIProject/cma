@@ -1,6 +1,8 @@
 //! Paired complete authenticated routes, including relay and read custody.
 use super::*;
 use serde_json::Value;
+#[path = "response_shared_auth_errors.rs"]
+mod auth_errors;
 #[path = "response_shared_generation.rs"]
 mod generation;
 #[path = "response_shared_limits.rs"]
@@ -171,7 +173,7 @@ async fn measure(
     let client = client();
     f.meter.clear();
     let path = format!("/api/v2/responses/{id}/events");
-    let openings = (0..observers).map(|index| {
+    let open = |index: usize| {
         let (client, replica, path) = (&client, &replicas[index % 2], &path);
         async move {
             let response = request(client, f, replica, path).send().await.unwrap();
@@ -200,16 +202,21 @@ async fn measure(
             });
             (buffer, consumer)
         }
-    });
-    // Give both routes the same bounded admission concurrency so the shared
-    // route can coalesce pending release checks during cold replay.
-    let (buffers, consumers): (Vec<_>, Vec<_>) = futures_util::stream::iter(openings)
-        .buffered(8)
-        .collect::<Vec<_>>()
-        .await
-        .into_iter()
-        .unzip();
-    readiness::wait_for_replay(&buffers, &consumers).await;
+    };
+    // Headers can arrive before replay. Bound complete cold opens equally on
+    // both routes and let each cohort finish replay before opening the next.
+    let mut buffers = Vec::with_capacity(observers);
+    let mut consumers = Vec::with_capacity(observers);
+    for start in (0..observers).step_by(8) {
+        let (opened, readers): (Vec<_>, Vec<_>) =
+            futures_util::future::join_all((start..(start + 8).min(observers)).map(open))
+                .await
+                .into_iter()
+                .unzip();
+        readiness::wait_for_replay(&opened, &readers).await;
+        buffers.extend(opened);
+        consumers.extend(readers);
+    }
     let cold_snapshots = f.meter.stats.lock().unwrap().snapshot_commands;
     start_idle.send_replace(true);
     tokio::time::sleep(Duration::from_secs(12)).await;

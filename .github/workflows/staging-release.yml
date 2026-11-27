@@ -190,6 +190,7 @@ jobs:
           CD_COMPONENT: ${{ inputs.component }}
           CD_TASKS: ${{ inputs.tasks }}
           CD_BUILD_CACHE: enabled
+          CD_LEGACY_BUILDKIT_DRAIN: ${{ vars.CMA_LEGACY_BUILDKIT_DRAIN == 'true' && 'enabled' || '' }}
           CD_LAYER_ARCHIVE_CACHE: ${{ vars.CMA_BOUNDED_LAYER_CACHE == 'true' && 'enabled' || '' }}
           CD_LAYER_ARCHIVE_RESTORED: ${{ steps.layer-validate.outcome == 'success' }}
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
@@ -208,6 +209,7 @@ jobs:
           CD_WEB_RETENTION_FILE_LIMIT: ${{ inputs.web_file_limit }}
           CD_WEB_RETENTION_BYTE_LIMIT: ${{ inputs.web_byte_limit }}
           CD_BUILD_CACHE: enabled
+          CD_LEGACY_BUILDKIT_DRAIN: ${{ vars.CMA_LEGACY_BUILDKIT_DRAIN == 'true' && 'enabled' || '' }}
           CD_LAYER_ARCHIVE_CACHE: ${{ vars.CMA_BOUNDED_LAYER_CACHE == 'true' && 'enabled' || '' }}
           CD_LAYER_ARCHIVE_RESTORED: ${{ steps.layer-validate.outcome == 'success' }}
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}

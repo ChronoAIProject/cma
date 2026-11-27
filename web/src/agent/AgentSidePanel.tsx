@@ -240,7 +240,7 @@ export function AgentSidePanel({
         aria-label="Agent computer"
         id="agent-files-panel"
         className="agent-computer"
-        data-expanded={expanded || undefined}
+        data-computer-expanded={expanded || undefined}
         hidden={!computerOpen}
         inert={!computerOpen || undefined}
         onKeyDownCapture={(event) => {

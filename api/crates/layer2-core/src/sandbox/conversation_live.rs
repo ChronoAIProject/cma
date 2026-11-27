@@ -273,10 +273,13 @@ impl AgentLiveHub {
             while !remaining.is_char_boundary(end) {
                 end -= 1;
             }
-            fragment.delta = remaining[..end].into();
+            let chunk = &remaining[..end];
             let delivery = match &self.budget {
-                Some(budget) => budget.retain(fragment.clone()),
-                None => Some(fragment.clone().into()),
+                Some(budget) => budget.copy_chunk(&fragment, chunk),
+                None => {
+                    fragment.delta = chunk.into();
+                    Some(fragment.clone().into())
+                }
             };
             // None is an ordered gap, not an acknowledged runtime output. Live
             // consumers already replay durable history after broadcast lag.

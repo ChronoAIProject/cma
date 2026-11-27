@@ -17,10 +17,20 @@ use crate::AuthenticatedCaller;
 pub(crate) struct AutoPausePreviewView {
     /// Eligible Sandboxes in this bounded page; follow next for further pages.
     pub candidates: u64,
+    /// Fixed refusal codes, present when a Sandbox was refused on this page.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub refusals: Vec<AutoPauseSandboxRefusalView>,
     pub failed: u64,
     pub next: Option<String>,
     pub enabled: bool,
     pub policy_revision: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct AutoPauseSandboxRefusalView {
+    pub sandbox_id: String,
+    #[schema(value_type = String)]
+    pub reason: layer2_core::sandbox::InactivityPauseRefusal,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -84,6 +94,14 @@ pub(crate) async fn preview(
         .map_err(CollectionProblem::from)?;
     Ok(Json(AutoPausePreviewView {
         candidates: batch.candidates,
+        refusals: batch
+            .refusals
+            .into_iter()
+            .map(|refusal| AutoPauseSandboxRefusalView {
+                sandbox_id: refusal.sandbox_id.to_string(),
+                reason: refusal.reason,
+            })
+            .collect(),
         failed: batch.failed,
         next: batch.next,
         enabled: batch.enabled,
@@ -116,4 +134,31 @@ pub(crate) async fn pause_idle_now(
         enabled: batch.enabled,
         policy_revision: batch.policy_revision,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use layer2_core::sandbox::InactivityPauseRefusal;
+
+    #[test]
+    fn preview_includes_the_sandbox_and_code_when_refused() {
+        let view = AutoPausePreviewView {
+            candidates: 0,
+            refusals: vec![AutoPauseSandboxRefusalView {
+                sandbox_id: "sbx_fixture".into(),
+                reason: InactivityPauseRefusal::RecentAgentActivity,
+            }],
+            failed: 0,
+            next: None,
+            enabled: true,
+            policy_revision: 1,
+        };
+        assert_eq!(
+            serde_json::to_value(view).unwrap()["refusals"],
+            serde_json::json!([
+                {"sandbox_id": "sbx_fixture", "reason": "recent_agent_activity"}
+            ])
+        );
+    }
 }

@@ -9,6 +9,7 @@ pub(super) struct Probe {
     pub peak: AtomicUsize,
     pub enabled: AtomicBool,
     pub delay_ms: AtomicUsize,
+    pub control_delay_ms: AtomicUsize,
 }
 struct Active<'a>(&'a Probe);
 impl Drop for Active<'_> {
@@ -18,6 +19,20 @@ impl Drop for Active<'_> {
 }
 #[async_trait::async_trait]
 impl BrowserAdapter for Probe {
+    async fn browser_control(
+        &self,
+        _: &RuntimeHandle,
+        _: &BrowserControlRequest,
+    ) -> Result<BrowserControlReceipt> {
+        tokio::time::sleep(std::time::Duration::from_millis(
+            self.control_delay_ms.load(Ordering::SeqCst) as u64,
+        ))
+        .await;
+        Err(AdapterError::Unsupported(
+            "no browser control in fixture".into(),
+        ))
+    }
+
     async fn browser(
         &self,
         _: &RuntimeHandle,

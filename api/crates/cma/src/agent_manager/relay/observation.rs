@@ -9,7 +9,10 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use layer2_core::sandbox::{agent_observation::observation_scope, AgentReadService};
+use layer2_core::{
+    resource_access::CallerContext,
+    sandbox::{agent_observation::observation_scope, AgentReadService},
+};
 
 pub(super) struct Observation {
     store: Arc<MongoAgentObservation>,
@@ -55,7 +58,7 @@ pub(super) fn eligible(request: &Request) -> bool {
             .is_some_and(|tail| tail.ends_with("/responses") && tail.split('/').count() == 2))
         && !request
             .extensions()
-            .get::<layer2_core::resource_access::CallerContext>()
+            .get::<CallerContext>()
             .is_some_and(|context| {
                 context.credential_source == layer2_core::resource_access::CredentialSource::Binding
             });
@@ -160,6 +163,12 @@ fn agent(request: &Request, body: &[u8]) -> Result<AgentId, ()> {
 }
 
 pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Response {
+    // The dispatcher admits only eligible observation routes here.
+    let path = request.uri().path();
+    let responses_v2 = path.starts_with("/api/v2/responses") || path.ends_with("/responses");
+    if responses_v2 && request.extensions().get::<CallerContext>().is_none() {
+        return layer1_public::responses::v2::authentication_required();
+    }
     let Some(observation) = relay.observation.get() else {
         return http::unavailable();
     };
@@ -194,10 +203,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         }
         Err(_) => return capacity::refused(true),
     };
-    let Some(context) = request
-        .extensions()
-        .get::<layer2_core::resource_access::CallerContext>()
-    else {
+    let Some(context) = request.extensions().get::<CallerContext>() else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
     let credential = request
@@ -219,7 +225,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         match agent(&request, &bytes) {
             Ok(id) => id,
             Err(_) if request.uri().path().starts_with("/api/v2/") => {
-                return next.run(request).await
+                return next.run(request).await;
             }
             Err(_) => return StatusCode::BAD_REQUEST.into_response(),
         }

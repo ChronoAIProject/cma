@@ -32,6 +32,7 @@ mod deployment_request;
 mod home;
 #[cfg(test)]
 mod home_tests;
+mod hosted_control_transport;
 #[cfg(test)]
 mod indexed_ledger_hold_tests;
 mod inspection_timing;
@@ -79,12 +80,13 @@ pub use deployment::{
     HostedDeployment, MODEL_PROXY_BASE_URL, NYXID_PROXY_BASE_URL, PLACEHOLDER_CREDENTIAL,
 };
 pub(crate) use deployment_request::JOURNAL_RECOVERY;
+pub use hosted_control_transport::HostedControlTransport;
 pub use managed_context::HostedContextRefresh;
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
 pub(crate) use nonexecuting::IdleBootstrapProof;
 #[doc(hidden)]
 pub use nonexecuting::NonexecutingRuntimeProof;
-pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
+pub use provider_backend::ProviderHostedBackend;
 pub use provider_tools::{
     HostedProviderToolBinding, HostedProviderToolSource, HostedToolOpenReceipt,
 };

@@ -451,3 +451,6 @@ async fn symlinked_or_corrupt_binding_cannot_authorize_home_use() {
         assert!(Supervisor::new(fixture.config.clone(), SupervisorBoundary::default()).is_err());
     }
 }
+
+#[path = "supervisor_checked_file_read_tests.rs"]
+mod checked_file_read;

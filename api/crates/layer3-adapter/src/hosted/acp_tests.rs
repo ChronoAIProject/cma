@@ -73,6 +73,37 @@ pub(super) async fn socket_pair() -> (Socket, ServerSocket) {
     )
 }
 
+pub(in crate::hosted) async fn open_idle_fixture(
+    agent: &str,
+    updates: tokio::sync::mpsc::Sender<ConversationUpdate>,
+) -> (OpenedBridge, ServerSocket) {
+    let (client, mut server) = socket_pair().await;
+    let serve = async {
+        send_ready(&mut server, agent).await;
+        let initialize = receive_json(&mut server).await;
+        respond(&mut server, &initialize, serde_json::json!({})).await;
+        let session = receive_json(&mut server).await;
+        respond(
+            &mut server,
+            &session,
+            serde_json::json!({"sessionId": "file-read-fixture"}),
+        )
+        .await;
+        server
+    };
+    let open = Bridge::open_with_relay_policy(
+        client,
+        agent,
+        "/workspace".into(),
+        (settings(None, false), None, (false, None)),
+        None,
+        None,
+        updates,
+    );
+    let (opened, server) = tokio::join!(open, serve);
+    (opened.unwrap(), server)
+}
+
 pub(super) async fn send_ready(server: &mut ServerSocket, agent_id: &str) {
     server
         .send(Message::Text(

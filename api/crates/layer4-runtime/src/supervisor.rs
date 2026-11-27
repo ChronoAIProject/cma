@@ -95,18 +95,19 @@ pub(crate) struct Supervisor {
 }
 
 impl Supervisor {
+    pub(crate) fn stale_turn_seal_enabled(&self) -> bool {
+        self.config
+            .process_env
+            .get(crate::bridge::STALE_TURN_SEAL_FLAG)
+            .is_some_and(|value| value == "1")
+    }
+
     pub(crate) async fn stale_turn_bridge(
         &self,
         target: &layer3_adapter::stale_turn::StaleTurnTarget,
     ) -> std::result::Result<Arc<Bridge>, layer3_adapter::stale_turn::StaleTurnHold> {
         use layer3_adapter::stale_turn::StaleTurnHold;
-        if self
-            .config
-            .process_env
-            .get(crate::bridge::STALE_TURN_SEAL_FLAG)
-            .map(String::as_str)
-            != Some("1")
-        {
+        if !self.stale_turn_seal_enabled() {
             return Err(StaleTurnHold::Unsupported);
         }
         if !target.is_valid()

@@ -452,7 +452,7 @@ mod consumption;
 
 mod delivery;
 
-mod composed;
+pub(in crate::sandbox::worker_tests) mod composed;
 
 #[cfg(unix)]
 mod process_crash;
