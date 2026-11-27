@@ -23,6 +23,7 @@ export interface ThinkingActivity {
 }
 
 interface ThinkingProps {
+  readonly branded?: boolean;
   readonly waitingForResponse?: boolean;
   readonly progressKey?: string;
   readonly text?: string;
@@ -49,6 +50,7 @@ export function activitySummary(activity: ThinkingActivity): string {
 
 /** Active-turn liveness, with a clock anchored to the public turn record rather than mount. */
 export function Thinking({
+  branded = false,
   text = '',
   activities = [],
   startedAt,
@@ -84,14 +86,22 @@ export function Thinking({
   return (
     <section className="thinking" aria-label="What the agent is working through">
       <div className="thinking__key">
-        <span className="thinking__logo" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
-        <span className="thinking__title" role="status">
-          {waitingForResponse ? 'Waiting for a response' : 'Thinking'}
-        </span>
+        {branded ? null : (
+          <>
+            <span
+              className="thinking__logo"
+              aria-hidden="true"
+              dangerouslySetInnerHTML={markHtml}
+            />
+            <span className="thinking__title" role="status">
+              {waitingForResponse ? 'Waiting for a response' : 'Thinking'}
+            </span>
+          </>
+        )}
         {seconds === undefined ? null : (
           <span className="thinking__elapsed">{elapsedTime(seconds * 1000)}</span>
         )}
-        <span aria-hidden="true">·</span>
+        {branded && seconds === undefined ? null : <span aria-hidden="true">·</span>}
         <button
           type="button"
           className="thinking__activity-toggle"

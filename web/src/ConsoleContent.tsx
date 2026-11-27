@@ -165,15 +165,14 @@ export function ConsoleContent({
   const canOpenTriggers = !user.visitor && user.capabilities.includes('publish_triggers');
   const [commandsOpen, setCommandsOpen] = useState(false);
   const newAgent = useCallback(() => onCreate?.({ kind: 'new_agent' }), [onCreate]);
-  const hasAgent = personalAgentId !== undefined || shared !== undefined;
-  const runtimeVisible = !accessUncertain && agent.retained === undefined;
+  const showAgentPanel = !accessUncertain && !agent.retained && Boolean(personalAgentId ?? shared);
   useDocumentTitle(
     route.kind === 'home' || route.kind === 'agent_manager'
       ? 'Agent Manager'
       : route.kind === 'not_found'
         ? 'Page not found'
         : undefined,
-    route.kind === 'agent' && hasAgent ? 'inherit' : 'product',
+    route.kind === 'agent' && (personalAgentId ?? shared) !== undefined ? 'inherit' : 'product',
   );
   const content =
     route.kind === 'artifacts' || route.kind === 'document' ? (
@@ -213,6 +212,7 @@ export function ConsoleContent({
     ) : route.kind === 'agent' && shared !== undefined && client.resourceViews !== undefined ? (
       <SharedAgent
         key={shared.id}
+        authEpoch={accessUncertain ? undefined : authEpoch}
         viewerId={user.id}
         client={client.resourceViews}
         web={client}
@@ -356,12 +356,12 @@ export function ConsoleContent({
         phoneTitle="Agent Manager"
         taskLayout
         workspaceDetails={panel !== 'details'}
-        detailsOpen={runtimeVisible && hasAgent && panel !== undefined}
+        detailsOpen={showAgentPanel && panel !== undefined}
         detailsExpanded={panels.computerExpanded}
         compactDetailsOverlay
         onDetailsClose={panels.dismissDetails}
         details={
-          route.kind === 'agent' && runtimeVisible && hasAgent ? (
+          route.kind === 'agent' && showAgentPanel ? (
             <AgentSidePanel
               key={route.agentId}
               agentId={route.agentId}

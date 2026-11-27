@@ -49,6 +49,8 @@ test('LOCAL completed-turn recovery agrees across task, header and tools after r
     await expect.poll(() => fixture.streams.size).toBe(1);
     await expect(task(page)).toHaveAccessibleName(/Working/);
     await expect(headerStatus(page, 'Working')).toBeVisible();
+    const progress = page.locator('.turn-activity');
+    await expect(progress.getByText('Running a tool', { exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'View activity', exact: true }).click();
     await expect(page.locator('.thinking__activity')).toContainText(
       'Inspect synthetic file - running',
@@ -65,6 +67,7 @@ test('LOCAL completed-turn recovery agrees across task, header and tools after r
     ).toBeVisible();
     await expect(task(page)).toHaveAccessibleName(/Turn ended/);
     await expect(headerStatus(page, 'Ready')).toBeVisible();
+    await expect(progress.getByText('Turn ended', { exact: true })).toBeVisible();
     await expect(page.getByText('Refreshing live updates…', { exact: true })).toHaveCount(0);
     await expect(page.locator('[data-streaming]')).toHaveCount(0);
     await page.reload();

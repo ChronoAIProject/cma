@@ -8,6 +8,8 @@ import {
   type ConversationState,
 } from './conversation';
 import { mergeTranscriptSnapshot } from './chronology';
+import { agentClient } from '../test/agent';
+import { externalApprovalFixture } from './externalApproval.fixture';
 
 const startedAt = '2026-09-14T00:00:00Z';
 const empty = () => conversationFromTranscript({ agentId: 'agent', throughSeq: 0, turns: [] });
@@ -32,6 +34,64 @@ const draw = (conversation: ConversationState) => (
   </>
 );
 afterEach(() => vi.useRealTimers());
+
+it('keeps one current-turn picture through tools, approval, deadline and verified completion', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-01-01T00:04:59.000Z'));
+  const client = agentClient();
+  const acceptance = {
+    task_id: 'task',
+    turn_sequence: 1,
+    verdict: { status: 'succeeded' as const },
+    unconfirmed_outputs: [],
+  };
+  const branded = (
+    conversation: ConversationState,
+    taskAcceptance?: typeof acceptance,
+    authEpoch = 1,
+  ) => (
+    <MessageStream
+      conversation={conversation}
+      retainedOutput={{ client, agentId: 'agent', viewerId: 'viewer' }}
+      turnPresentation={{ status: 'ready', authEpoch }}
+      taskAcceptance={taskAcceptance}
+      onApproval={vi.fn()}
+    />
+  );
+  const reason = live(start(), 'REASONING_MESSAGE_CONTENT', {
+    messageId: 'idea',
+    delta: 'Inspecting',
+  });
+  const working = live(reason, 'TOOL_CALL_START', { toolCallId: 'tool', toolCallName: 'Read' });
+  const oldApproval = { ...externalApprovalFixture, id: 'old-approval', runId: '0' };
+  const waiting = { ...working, approvals: [oldApproval, externalApprovalFixture] };
+  const ended = {
+    ...waiting,
+    activeRunId: undefined,
+    latestTurnId: '1',
+    turnOutcomes: { 1: 'completed' as const },
+  };
+  const { container, rerender } = render(branded(reason));
+  const progress = () => within(container.querySelector<HTMLElement>('.turn-activity')!);
+  const art = container.querySelector('.turn-activity .agent-mascot__artwork');
+  expect(progress().getByText('Thinking')).toBeVisible();
+  rerender(branded({ ...working, approvals: [oldApproval] }, acceptance));
+  expect(progress().getByText('Running a tool')).toBeVisible();
+  rerender(branded(waiting, acceptance));
+  expect(progress().getByText('Waiting for approval')).toBeVisible();
+  act(() => vi.advanceTimersByTime(1000));
+  expect(
+    progress().getByText('Waiting for the server to confirm the approval outcome'),
+  ).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Waiting for your approval' })).toBeVisible();
+  rerender(branded(ended));
+  expect(progress().getByText('Turn ended')).toBeVisible();
+  rerender(branded(ended, acceptance));
+  expect(progress().getByText('Task complete')).toBeVisible();
+  expect(container.querySelector('.turn-activity .agent-mascot__artwork')).toBe(art);
+  rerender(branded({ ...working, activeRunId: '2', latestTurnId: '2' }, acceptance, 2));
+  expect(progress().getByText('Waiting for a response')).toBeVisible();
+});
 
 it('keeps Thinking below new text and moves concurrent tools into separate completion-ordered cards', () => {
   let state = live(start(), 'REASONING_MESSAGE_CONTENT', {

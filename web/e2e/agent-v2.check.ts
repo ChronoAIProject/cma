@@ -4,7 +4,7 @@ import { binding, LocalAgentV2 } from './agent-v2.fixture';
 import { traceOpeningReads, openingReads } from './agent-v2-reads.fixture';
 
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true });
-const thinking = (page: Page) => page.getByRole('status').filter({ hasText: /^Thinking$/ });
+const thinking = (page: Page) => page.getByRole('status').filter({ hasText: /^Running a tool$/ });
 const recover = (page: Page) => page.getByRole('button', { name: 'Recover pending request' });
 function clean(fixture: LocalAgentV2) {
   expect(fixture.boundary.writes).toEqual([]);

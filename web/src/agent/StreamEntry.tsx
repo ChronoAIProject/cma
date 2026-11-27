@@ -24,6 +24,7 @@ function StreamEntryView({
   retained = false,
   entry,
   approvalBusy,
+  hideApprovalCharacter,
   approvalReadOnly = false,
   onApproval,
   activeRunId,
@@ -42,6 +43,7 @@ function StreamEntryView({
   readonly retained?: boolean;
   readonly entry: Entry;
   readonly approvalBusy: boolean;
+  readonly hideApprovalCharacter?: boolean;
   readonly approvalReadOnly?: boolean;
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
   /** Only the active turn can still be running a call. */
@@ -207,6 +209,7 @@ function StreamEntryView({
     <ApprovalCard
       approval={entry.item}
       busy={approvalBusy}
+      hideCharacter={hideApprovalCharacter}
       readOnly={approvalReadOnly}
       onApproval={onApproval}
       active={approvalActive}
@@ -239,6 +242,7 @@ export const StreamEntry = memo(StreamEntryView, (previous, next) => {
     );
   if (next.entry.kind === 'approval')
     return (
+      previous.hideApprovalCharacter === next.hideApprovalCharacter &&
       previous.approvalBusy === next.approvalBusy &&
       previous.approvalReadOnly === next.approvalReadOnly &&
       previous.approvalActive === next.approvalActive &&
