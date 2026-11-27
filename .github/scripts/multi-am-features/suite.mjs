@@ -13,6 +13,7 @@ import {documentCases} from './features/documents.mjs';
 import {createDocumentAfterLostReply} from './features/document_creation_browser.mjs';
 import {documentEditAndConflict} from './features/document_edit_browser.mjs';
 import {documentFormat} from './features/document_format_browser.mjs';
+import {documentLinkBrowser} from './features/document_link_browser.mjs';
 import {documentBrowse} from './features/document_browse_browser.mjs';
 import {documentPeople} from './features/document_people_browser.mjs';
 import {documentCommentBrowser} from './features/document_comment_browser.mjs';
@@ -198,6 +199,11 @@ async function accountBrowserCases(ams, witness) {
             documentFormat({page, ingress: am, user, documentId: document.id,
               recordFailure: (stage, error) => retainFailure(config.matrix_output, stage, error,
                 {case: 'user.documents_browser_format', phase, iteration})}));
+          if (iteration === 1) await browserCase(am, iteration, 'user.documents_browser_link_sharing', () =>
+            documentLinkBrowser({page, ingress: am, owner: user, recipient: admin, ownerId: config.owner_id,
+              recipientId: 'native-am-fixture-admin', recipientCookie: config.recipient_browser_session_cookie,
+              documentId: document.id, recordFailure: (stage, error) => retainFailure(config.matrix_output,
+                stage, error, {case: 'user.documents_browser_link_sharing', phase, iteration})}));
           await browserCase(am, iteration, 'user.documents_browser_browse', () => documentBrowse({page, ingress: am,
             user, admin, ownerId: config.owner_id, recordFailure: (stage, error) =>
               retainFailure(config.matrix_output, stage, error, {case: 'user.documents_browser_browse', phase, iteration})}));

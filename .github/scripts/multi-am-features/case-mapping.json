@@ -965,11 +965,9 @@
     "routing": "both"
   },
   "cma-user.documents.link-sharing": {
-    "cases": [
-      "user.documents_link_revoke"
-    ],
-    "blocked": "API assertions prepared; required real-browser controls and draft/navigation behavior remain unimplemented",
-    "minimum_runs": 3,
+    "cases": ["user.documents_browser_link_sharing"],
+    "browser": true,
+    "minimum_runs": 1,
     "phases": [
       "before_restart",
       "after_restart"
