@@ -159,8 +159,11 @@
   gap: var(--space-6);
 }
 .task-home[data-overview] h1 {
-  font-size: clamp(var(--text-page), 4vw, calc(var(--text-display) * 0.75));
+  font-size: clamp(28px, 3vw, 36px);
   text-wrap: balance;
+}
+.task-home[data-first-visit] h1 {
+  font-size: clamp(var(--text-page), 4vw, calc(var(--text-display) * 0.75));
 }
 .task-home__first-mascot {
   position: relative;
