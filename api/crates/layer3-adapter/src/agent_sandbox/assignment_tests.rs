@@ -5,6 +5,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use futures_util::{SinkExt, StreamExt};
