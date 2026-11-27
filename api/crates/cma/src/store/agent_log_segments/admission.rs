@@ -48,7 +48,7 @@ pub(in crate::store) async fn apply_catalogue(
 ) -> Result<AdmissionReceipt, ApplyError> {
     store
         .bindings
-        .admit_agent(admission, scope.session())
+        .validate_agent_admission(admission, scope.session())
         .await
         .map_err(ApplyError::from)?;
     let persisted_launch = trigger_protocol::selected(store, admission, scope.session()).await?;
@@ -76,6 +76,14 @@ pub(in crate::store) async fn apply_catalogue(
     }
     if let Some(replay) = replay_in_transaction(store, admission, scope.session()).await? {
         return Ok(replay);
+    }
+
+    if let Some(fence) = &admission.binding {
+        store
+            .bindings
+            .write_admission_fence(fence, scope.session())
+            .await
+            .map_err(ApplyError::from)?;
     }
 
     if let Some(launch) = &persisted_launch {
