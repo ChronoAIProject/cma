@@ -57,11 +57,10 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     if (!lineage(record, r.body)) {const error = new Error('agent_lineage_mismatch'); error.response = r; throw error;}
     return r.body;
   }
-  async function create(am, desktop, overrides = {}, onAgentId) {
+  async function admit(am, desktop, overrides) {
     const record = {name: 'e2e-slo-ws4-' + randomUUID(), key: randomUUID(), desktop, am,
       sharedSandbox: Boolean(overrides.workspace_id)};
     records.push(record);
-    const start = performance.now();
     record.createBody = {name: record.name, machine_included: desktop, desktop,
       ...(desktop ? {initial_message: 'Report local readiness briefly without using tools or changing files.'} : {}),
       ...overrides};
@@ -69,6 +68,11 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       body: record.createBody, key: record.key, allowed: [202]});
     check(id(receipt.body?.id), 'lifecycle_receipt_invalid'); record.operationId = receipt.body.id;
     record.admissionRequest = receipt.timing.request_id;
+    return record;
+  }
+  async function create(am, desktop, overrides = {}, onAgentId) {
+    const start = performance.now();
+    const record = await admit(am, desktop, overrides);
     const op = await poll(async () => {
       const {body} = await api.request(other(am), 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
       check(body?.id === record.operationId, 'lifecycle_identity_mismatch');
@@ -360,7 +364,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       return {coordination_enabled: true, shared_database: true, am_pod_uid_hashes: ['a', 'b'].map(am => hash(t.ams[am].pod_uid))};
     });
     if (preparedHook) {
-      await preparedHook({adapter, create, openBoth, cleanup, step, complete});
+      await preparedHook({adapter, admit, create, openBoth, cleanup, step, complete});
       result.verdict = 'LOCAL_PREPARED_TWO_AM_PASS';
       return result;
     }

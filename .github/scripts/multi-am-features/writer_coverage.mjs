@@ -2,7 +2,7 @@ import {coverage} from './coverage.mjs';
 
 const requireValue = (value, message) => { if (!value) throw Error(message); };
 const ids = Array.from({length: 13}, (_, index) => 'SW' + String(index + 1).padStart(2, '0'));
-const preparedIds = ['SW05', 'SW13'];
+const preparedIds = ['SW05', 'SW06', 'SW13'];
 const fixtures = {
   features: {ids: ids.filter(id => !preparedIds.includes(id)), journeyPass: 'LOCAL_TWO_AM_JOURNEY_PASS'},
   prepared: {ids: preparedIds, journeyPass: 'LOCAL_PREPARED_TWO_AM_PASS'},

@@ -5,7 +5,7 @@ import {check, hash, lineage, other, poll, safeError} from './core.mjs';
 
 export async function cleanupFixture({record, config, api, killedAm, result}) {
   if (!record.agentId || record.deleted) return;
-  check(record.ready && record.sandboxId, 'cleanup_create_lineage_incomplete');
+  check(record.sandboxId && record.operationId, 'cleanup_create_lineage_incomplete');
   const am = killedAm ? other(killedAm) : other(record.am);
   const receiptPath = join(config.output_dir, 'cleanup-' + hash(record.agentId) + '-' + randomUUID() + '.private.json');
   const journal = {am, agent_id:record.agentId, sandbox_id:record.sandboxId, started_at:new Date().toISOString(), mutations:[], last_reads:{}};

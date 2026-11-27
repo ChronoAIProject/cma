@@ -19,7 +19,7 @@ test('all thirteen writer groups remain required independently of C275', async (
   assert.equal(features.total + prepared.total, 13);
   assert.equal(new Set(groups.map(row => row.id)).size, 13);
   assert.equal(features.groups.at(-1).id, 'SW12');
-  assert.deepEqual(prepared.groups.map(row => row.id), ['SW05', 'SW13']);
+  assert.deepEqual(prepared.groups.map(row => row.id), ['SW05', 'SW06', 'SW13']);
   assert.ok(groups.every(row => row.verdict === 'BLOCKED'));
   for (const fixture of ['features', 'prepared']) {
     for (const malformed of [actual.cases.slice(0, 12), [...actual.cases.slice(0, 12), actual.cases[0]]]) {
@@ -59,19 +59,24 @@ test('prepared coverage requires the scoped abort, both ingress steps and a comp
   const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
   const group = registry.cases.find(row => row.id === 'SW13');
   const abort = registry.cases.find(row => row.id === 'SW05');
+  const refusal = registry.cases.find(row => row.id === 'SW06');
   const journey = {verdict: 'LOCAL_PREPARED_TWO_AM_PASS',
-    steps: group.required_assertions.map(row => ({name: row.case, verdict: 'PASS'}))};
+    steps: [...group.required_assertions, ...refusal.required_assertions].map(row => ({name: row.case, verdict: 'PASS'}))};
   const evaluate = () => writerCoverage(registry, [], journey, 'prepared');
-  assert.equal(evaluate().groups[1].verdict, 'BLOCKED');
+  assert.equal(evaluate().groups[2].verdict, 'BLOCKED');
   group.status = 'COMPLETE';
   assert.equal(evaluate().verdict, 'FAIL');
   abort.status = 'COMPLETE';
+  assert.equal(evaluate().verdict, 'FAIL');
+  refusal.status = 'COMPLETE';
   assert.equal(evaluate().verdict, 'PASS');
   journey.verdict = 'LOCAL_TWO_AM_JOURNEY_PASS';
   assert.equal(evaluate().verdict, 'FAIL');
   journey.verdict = 'LOCAL_PREPARED_TWO_AM_PASS';
   journey.steps.pop();
-  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['NOT_RUN', 'NOT_RUN']);
+  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['PASS', 'NOT_RUN', 'PASS']);
+  journey.steps.pop();
+  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['NOT_RUN', 'NOT_RUN', 'NOT_RUN']);
 });
 
 test('lifecycle Always on coverage requires browser execution on both sides of restart', async () => {

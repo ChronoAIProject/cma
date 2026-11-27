@@ -25,7 +25,8 @@ from configuration_log import configuration_dispatch, configuration_log
 import manifests
 import legacy_manifests as old
 from login import login
-from publication_evidence import prepared_publication_abort, publication_evidence
+from publication_evidence import (prepared_publication_abort, prepared_schema_barrier, prepared_schema_race,
+                                  prepared_schema_refusals, publication_evidence)
 from readiness_scaling import observe_never_ready, observe_scale
 from retirement_purge import retirement_purge
 from runtime_loss import remove_runtime_pod
@@ -33,7 +34,6 @@ from title_evidence import title_effects, title_intent
 
 ROOT=Path(__file__).resolve().parent
 PROVIDER=ROOT.parent/'cma'/'provider.py'
-
 def validate_runtime_sources(ready):
     sources=ready.get('runtime_sources')
     if not isinstance(sources,dict):
@@ -48,6 +48,9 @@ class Fixture:
     configurationDispatch = configuration_dispatch
     publicationEvidence = publication_evidence
     preparedPublicationAbort = prepared_publication_abort
+    preparedSchemaBarrier = prepared_schema_barrier
+    preparedSchemaRace = prepared_schema_race
+    preparedSchemaRefusals = prepared_schema_refusals
     retirementPurge = retirement_purge
     removeRuntimePod = remove_runtime_pod
     titleEffects = title_effects
@@ -411,7 +414,8 @@ class Fixture:
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
                              'organizationMembership','configurationLog','configurationDispatch','publicationEvidence',
-                             'retirementPurge','removeRuntimePod','preparedPublicationAbort']
+                             'retirementPurge','removeRuntimePod','preparedPublicationAbort','preparedSchemaBarrier',
+                             'preparedSchemaRace','preparedSchemaRefusals']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

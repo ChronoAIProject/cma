@@ -89,3 +89,30 @@ test('shared Sandbox cleanup deletes only the sibling and requires its exact Del
     await rm(output_dir, {recursive: true, force: true});
   }
 });
+
+test('a still-Starting Agent can be cleaned up after independent lifecycle readback', async () => {
+  const output_dir = await mkdtemp(join(tmpdir(), 'starting-agent-cleanup-'));
+  const record = {agentId: 'agent', name: 'probe', sandboxId: 'sandbox', operationId: 'operation',
+    am: 'a', sharedSandbox: true, key: 'cleanup-key'};
+  let status = 'starting';
+  const mutations = [];
+  const api = {rawRequest: async (_, method, path) => {
+    if (path === '/api/v1/agent-lifecycle/operation') {
+      return {status: 200, body: {id: 'operation', agent_id: 'agent'}};
+    }
+    if (method === 'POST') {
+      assert.equal(path, '/api/v1/agents/agent/stop');
+      status = 'stopped';
+    }
+    if (method === 'DELETE') status = 'deleted';
+    if (method !== 'GET') mutations.push(method);
+    return {status: 200, body: {id: 'agent', title: 'probe', sandbox: {id: 'sandbox'}, status}};
+  }};
+  try {
+    await cleanupFixture({record, api, config: {output_dir}, result: {cleanup: []}});
+    assert.deepEqual(mutations, ['POST', 'DELETE']);
+    assert.equal(record.deleted, true);
+  } finally {
+    await rm(output_dir, {recursive: true, force: true});
+  }
+});
