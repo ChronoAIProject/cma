@@ -59,12 +59,18 @@ class FixtureEvidenceTests(unittest.TestCase):
             (root / 'pods.final.json').write_text('{"items": []}')
             (failure / 'pods.final.json').write_text(json.dumps({'items': [
                 {'spec': {'containers': [{'name': 'manager'}]}, 'status': {'phase': 'Running'}},
-                {'metadata': {'name': 'private-runtime'},
+                {'metadata': {'name': 'private-runtime', 'uid': 'private-runtime-uid'},
                  'spec': {'containers': [{'name': 'runtime'}]}, 'status': {'phase': 'Pending',
                     'conditions': [{'type': 'PodScheduled', 'status': 'False', 'message': 'private-reason'}]}}]}))
             (failure / 'pvc.final.json').write_text(json.dumps({'items': [
                 {'metadata': {'name': 'private-volume'}, 'status': {'phase': 'Pending'}},
                 {'status': {'phase': 'Bound'}}]}))
+            (failure / 'events.final.json').write_text(json.dumps({'items': [
+                {'reason': 'FailedScheduling', 'involvedObject': {'uid': 'private-runtime-uid'},
+                 'message': '0/1 nodes are available: 1 Insufficient cpu. private-scheduler-details'},
+                {'reason': 'FailedScheduling', 'involvedObject': {'uid': 'private-unrelated'},
+                 'message': '1 Insufficient memory'},
+            ]}))
             (failure / 'creation-failure-snapshot.json').write_text(json.dumps({
                 'agent': {'status': 'starting', 'step': 'wait_for_workspace', 'attempts': 3, 'id': 'private-agent'},
                 'sandbox': {'status': 'active', 'step': 'private-step', 'attempts': 'private-value'},
@@ -74,6 +80,7 @@ class FixtureEvidenceTests(unittest.TestCase):
             result = summarize_runtime_failure(root)
             self.assertEqual(result['runtime_pods']['phases'], {'Pending': 1})
             self.assertEqual(result['pod_scheduled'], {'False': 1})
+            self.assertEqual(result['runtime_scheduling_causes'], {'cpu': 1})
             self.assertEqual(result['home_volume_phases'], {'Bound': 1, 'Pending': 1})
             self.assertEqual(result['creation_progress'], {
                 'agent': {'status': 'starting', 'step': 'wait_for_workspace', 'attempts': 3},

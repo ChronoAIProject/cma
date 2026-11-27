@@ -122,6 +122,10 @@ def managers(secret, ready):
     if prepared:
         env['stringData']['CHRONO_NATIVE_PREPARED_TARGET'] = '1'
         env['stringData']['CHRONO_MONGODB_URI'] += '&appName=' + PREPARED_MONGO_APP
+        # A prepared reservation remains scheduled during the cold comparison.
+        # Both Standard runtimes must fit beside the two Managers and Kind.
+        env['stringData']['CHRONO_AGENT_MANAGER_SANDBOX_CPU'] = '500m'
+        env['stringData']['CHRONO_SANDBOX_CPU'] = '500m'
     elif ready.get('fixture') == 'features':
         env['stringData']['CHRONO_MONGODB_URI'] += '&appName=' + FEATURES_MONGO_APP
         env['stringData']['RUST_LOG'] += ',cma::agent_manager::writer_publication=debug'
@@ -134,9 +138,9 @@ def managers(secret, ready):
         env['stringData']['CHRONO_TASK_EXPERIENCE_POLICY']=json.dumps({
             'mode':'accounts','accounts':['native-am-fixture-owner'],
             'capabilities':capabilities},separators=(',',':'))
-        # Inline Agent lifecycle uses one deployment capacity for either family.
+        # This fixture retires its Standard home before starting the desktop.
+        # Keep the one-CPU request and give either family enough memory for desktop.
         if not prepared:
-            env['stringData']['CHRONO_AGENT_MANAGER_SANDBOX_CPU']='2'
             env['stringData']['CHRONO_AGENT_MANAGER_SANDBOX_MEMORY']='8Gi'
     public=old.service('am-public',8080)
     public['spec']['selector']={'ws4-public-am':'true'}

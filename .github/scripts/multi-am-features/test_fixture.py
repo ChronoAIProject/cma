@@ -479,9 +479,13 @@ class OwnershipTests(unittest.TestCase):
         features = manifests.managers(legacy_manifests.credentials(), {**ready, 'fixture': 'features'})
         features_environment = next(x['stringData'] for x in features if x['kind'] == 'Secret')
         self.assertTrue(features_environment['CHRONO_MONGODB_URI'].endswith('&appName=' + FEATURES_MONGO_APP))
+        self.assertEqual(features_environment['CHRONO_AGENT_MANAGER_SANDBOX_CPU'], '1')
+        self.assertEqual(features_environment['CHRONO_AGENT_MANAGER_SANDBOX_MEMORY'], '8Gi')
         prepared = synthetic_configmaps(manifests.managers(legacy_manifests.credentials(),
                                                             {**ready, 'fixture': 'prepared'}))
         prepared_environment = next(x['data'] for x in prepared if x['kind'] == 'ConfigMap')
+        self.assertEqual(prepared_environment['CHRONO_AGENT_MANAGER_SANDBOX_CPU'], '500m')
+        self.assertEqual(prepared_environment['CHRONO_SANDBOX_CPU'], '500m')
         self.assertNotIn('suggested_followup_admission',
                          json.loads(prepared_environment['CHRONO_TASK_EXPERIENCE_POLICY'])['capabilities'])
         managers = [x for x in objects if x['kind'] == 'StatefulSet']

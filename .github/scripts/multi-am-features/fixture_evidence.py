@@ -24,6 +24,13 @@ CREATION_STEPS = {
                 'create_profile_workspace', 'activate', 'none'},
     'workspace': {'prepare', 'recover_prepare', 'setup', 'remove', 'none'},
 }
+SCHEDULING_CAUSES = {
+    'cpu': ('insufficient cpu',),
+    'memory': ('insufficient memory',),
+    'placement': ('node affinity', 'node selector', 'untolerated taint', 'did not match pod'),
+    'volume': ('persistentvolumeclaim', 'persistentvolume', 'volume node affinity'),
+    'pod_limit': ('too many pods',),
+}
 
 
 def _creation_progress(snapshot):
@@ -79,6 +86,16 @@ def summarize_runtime_failure(directory):
             known(next((c.get('status') for c in pod.get('status', {}).get('conditions', [])
                         if c.get('type') == 'PodScheduled'), None), conditions)
             for pod in runtime).items()))
+        runtime_uids = {pod.get('metadata', {}).get('uid') for pod in runtime} - {None}
+        scheduled_events = _fixture_items(sample, 'events') or []
+        causes = Counter()
+        for event in scheduled_events:
+            if (event.get('reason') == 'FailedScheduling'
+                    and event.get('involvedObject', {}).get('uid') in runtime_uids):
+                message = str(event.get('message', '')).lower()
+                classes = [label for label, words in SCHEDULING_CAUSES.items() if any(word in message for word in words)]
+                causes.update(classes or ['Other'])
+        result['runtime_scheduling_causes'] = dict(sorted(causes.items()))
     pvcs = _fixture_items(sample, 'pvc')
     if pvcs is not None:
         result['home_volume_phases'] = dict(sorted(Counter(
