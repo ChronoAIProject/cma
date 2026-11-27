@@ -76,7 +76,9 @@ fn protocol_create_example_validates_with_runtime_credentials() {
     .unwrap();
     let mut expected = definition.to_public_json();
     expected["version"] = 2.into();
-    let view = cmaeg::http::schema::PublicChannelDefinition::new(&definition, 2);
+    let view: cmaeg_http::http::schema::PublicChannelDefinition =
+        cmaeg::http::schema::PublicChannelDefinition::new(&definition, 2);
+    let _: &cmaeg::http::schema::PublicSecrets = &view.secrets;
     assert_eq!(serde_json::to_value(view).unwrap(), expected);
 }
 
