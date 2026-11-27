@@ -123,7 +123,7 @@ jobs:
           python3 -B .github/scripts/migration_kind_runner.py \
             --old-source "$OLD_SOURCE" --old-image "$OLD_IMAGE" \
             --new-source "$NEW_SOURCE" --new-image "$NEW_IMAGE" \
-            --writer-policy "$POLICY" \
+            --writer-policy "$POLICY" --runtime-stack-bytes "$MATRIX_RUNTIME_STACK_BYTES" \
             --fixture-command "python3 -B $GITHUB_WORKSPACE/.github/scripts/$FIXTURE_SCRIPT" \
             --output "$output" --plan "$inputs/plan.json" --inventory "$inputs/inventory.json" \
             $FIXTURE_OVERLAY --kind "$RUNNER_TEMP/kind" --kind-node-image "$CAMPAIGN_KIND_NODE" \

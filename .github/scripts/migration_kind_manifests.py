@@ -1,7 +1,6 @@
 """Disposable kind fixture infrastructure; no production resources."""
 import base64
 import json
-import os
 from pathlib import Path
 import secrets
 
@@ -27,7 +26,8 @@ mongosh --host mongo:27017 --username matrix_admin --password \"$MATRIX_ADMIN_PA
 mongosh --host mongo:27017 --username matrix --password \"$MATRIX_RUNTIME_PASSWORD\" --authenticationDatabase matrix --quiet --eval 'db.runCommand({ping:1})'
 """
 def manifests(api_image, runtime_password, admin_password, encryption_key, mongo_image, role,
-              runtime_image=RUNTIME, identity_image=IDENTITY, identity_credentials=None):
+              runtime_image=RUNTIME, identity_image=IDENTITY, identity_credentials=None,
+              runtime_stack_bytes=None):
     """Render a trusted fixture by default, or a local provider fixture when configured.
 
     Provider mode is opt-in so unit tests and profile-only campaigns retain the
@@ -67,11 +67,10 @@ def manifests(api_image, runtime_password, admin_password, encryption_key, mongo
         "CHRONO_UPSTREAM_WIRE_API": "responses",
         "CHRONO_PLATFORM_BASE_URL": "https://platform.matrix.invalid",
     }
-    stack = os.environ.get("MATRIX_RUNTIME_STACK_BYTES")
-    if stack:
-        if not stack.isdecimal() or not 1048576 <= int(stack) <= 67108864:
+    if runtime_stack_bytes is not None:
+        if type(runtime_stack_bytes) is not int or not 1048576 <= runtime_stack_bytes <= 67108864:
             raise ValueError("invalid runtime stack budget")
-        api_values["RUST_MIN_STACK"] = stack
+        api_values['RUST_MIN_STACK'] = str(runtime_stack_bytes)
     if identity_credentials is None:
         api_values.update(CHRONO_AUTH_MODE="trusted", CHRONO_TRUSTED_SUBJECT="migration-owner")
     else:
