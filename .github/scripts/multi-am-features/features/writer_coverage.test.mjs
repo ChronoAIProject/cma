@@ -20,7 +20,7 @@ test('all thirteen writer groups remain required independently of C275', async (
   assert.equal(new Set(groups.map(row => row.id)).size, 13);
   assert.equal(features.groups.at(-1).id, 'SW12');
   assert.deepEqual(prepared.groups.map(row => row.id), ['SW05', 'SW06', 'SW13']);
-  const executableGroups = ['SW01', 'SW02', 'SW03', 'SW05', 'SW07', 'SW09', 'SW10', 'SW12', 'SW13'];
+  const executableGroups = ['SW01', 'SW02', 'SW03', 'SW05', 'SW06', 'SW07', 'SW09', 'SW10', 'SW12', 'SW13'];
   for (const id of executableGroups) assert.equal(groups.find(row => row.id === id).verdict, 'NOT_RUN');
   assert.ok(groups.filter(row => !executableGroups.includes(row.id)).every(row => row.verdict === 'BLOCKED'));
   for (const fixture of ['features', 'prepared']) {
@@ -124,9 +124,7 @@ test('prepared coverage requires the scoped abort, both ingress steps and a comp
   const journey = {verdict: 'LOCAL_PREPARED_TWO_AM_PASS',
     steps: [...cases].map(name => ({name, verdict: 'PASS'}))};
   const evaluate = () => writerCoverage(registry, [], journey, 'prepared');
-  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['PASS', 'BLOCKED', 'PASS']);
-  assert.equal(evaluate().verdict, 'FAIL');
-  refusal.status = 'COMPLETE';
+  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['PASS', 'PASS', 'PASS']);
   assert.equal(evaluate().verdict, 'PASS');
   journey.verdict = 'LOCAL_TWO_AM_JOURNEY_PASS';
   assert.equal(evaluate().verdict, 'FAIL');
@@ -134,6 +132,8 @@ test('prepared coverage requires the scoped abort, both ingress steps and a comp
   for (const [missing, expected] of [
     ['prepared_worktree_cleanup_refusal', ['PASS', 'PASS', 'NOT_RUN']],
     ['prepared_work_lease_refusal', ['PASS', 'NOT_RUN', 'PASS']],
+    ['prepared_commit_acknowledgement_loss', ['PASS', 'NOT_RUN', 'PASS']],
+    ['prepared_owner_epoch_refusal', ['PASS', 'NOT_RUN', 'PASS']],
     ['prepared_worktree_schema_refusal', ['PASS', 'NOT_RUN', 'NOT_RUN']],
     ['prepared_create_on_b', ['NOT_RUN', 'PASS', 'NOT_RUN']],
     ['prepared_owner_fence_conflict', ['NOT_RUN', 'PASS', 'PASS']],
@@ -143,6 +143,17 @@ test('prepared coverage requires the scoped abort, both ingress steps and a comp
     journey.steps = [...cases].filter(name => name !== missing).map(name => ({name, verdict: 'PASS'}));
     assert.deepEqual(evaluate().groups.map(row => row.verdict), expected);
   }
+});
+
+test('owner epoch and commit acknowledgement witnesses belong only to prepared SW06', async () => {
+  const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
+  const names = ['prepared_commit_acknowledgement_loss', 'prepared_owner_epoch_refusal'];
+  const prepared = writerCoverage(registry, [], undefined, 'prepared');
+  const features = writerCoverage(registry, [], undefined, 'features');
+  const mapping = coverage => coverage.groups.flatMap(group => group.assertions
+    .filter(assertion => names.includes(assertion.case)).map(assertion => [group.id, assertion.case, assertion.verdict]));
+  assert.deepEqual(mapping(prepared), names.map(name => ['SW06', name, 'NOT_RUN']));
+  assert.deepEqual(mapping(features), []);
 });
 
 test('lifecycle Always on coverage requires browser execution on both sides of restart', async () => {
