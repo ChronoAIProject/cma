@@ -2,6 +2,7 @@
 use super::super::agent_log_integrity::TransactionLogError;
 use super::*;
 use layer2_core::sandbox::store::SandboxStoreError;
+use sha2::{Digest, Sha256};
 
 pub(in crate::store) async fn require_finality(
     store: &MongoSandboxStore,
@@ -12,16 +13,17 @@ pub(in crate::store) async fn require_finality(
     for row in rows {
         let effect = read(row).map_err(|_| SandboxStoreError::Conflict)?;
         let unresolved = effect.unknown();
-        if unresolved && !capability_expired(store, &effect, &mut server_now).await? {
-            tracing::warn!(
-                "sandbox purge deferred: automatic title provider effect is within its claim deadline"
-            );
-            return Err(SandboxStoreError::Conflict.into());
-        }
         if unresolved || effect.accepted().is_some() {
             let id = row
                 .get_str("_id")
                 .map_err(|_| SandboxStoreError::Conflict)?;
+            if unresolved && !capability_expired(store, &effect, &mut server_now).await? {
+                tracing::warn!(
+                    agent_sha256 = %format_args!("{:x}", Sha256::digest(id.as_bytes())),
+                    "sandbox purge deferred: automatic title provider effect is within its claim deadline"
+                );
+                return Err(SandboxStoreError::Conflict.into());
+            }
             let provenance = store
                 .agent_creation_provenance
                 .find_one(doc! {"_id": id})

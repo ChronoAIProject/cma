@@ -19,7 +19,7 @@ export function createAdapter(config) {
     'releaseTurn','oracle','restoreAm','captureFailure','titleEffects','titleIntent','skillEffects',
     'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence','preparedRuntimeEvidence','observeScale',
     'observeNeverReady','liveOwnerLease','lifecycleSnapshot','organizationMembership',
-    'configurationLog','configurationDispatch','publicationEvidence','retirementPurge','removeRuntimePod',
+    'configurationLog','configurationDispatch','publicationEvidence','retirementPurge','retirementTitleDeferral','removeRuntimePod',
     'artifactPublicationAbort','artifactPublicationRace','preparedSchemaBarrier','preparedSchemaRace','preparedSchemaRefusals',
     'writerPublicationAbort','writerPublicationEvidence','runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
     'shareRedemptionPublicationAbort','accessProposalAbort','seedOversizeFile']

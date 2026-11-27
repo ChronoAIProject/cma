@@ -451,7 +451,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
           check(children.every(child => child.sharedSandbox && child.deleted && id(child.agentId)
             && id(child.operationId)), 'retirement_child_admission_unbound');
           const admissions = [plain, ...children].map(({agentId, operationId}) => ({agentId, operationId}));
-          return retirementHook({adapter, record: plain, cleanup, config, admissions});
+          return retirementHook({adapter, api, record: plain, create, cleanup, config, admissions, step});
         });
       } else await cleanup(plain);
       return {retired: true};

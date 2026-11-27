@@ -3,7 +3,7 @@ import {createRequire} from 'node:module';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {runInNewContext} from 'node:vm';
-import {retirementRetention} from './retirement_retention.mjs';
+import {retirementRetention, unresolvedTitleRetirement} from './retirement_retention.mjs';
 
 function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateRetirement = false,
   duplicateStop = false, stopReplayWrites = false, duplicateDelete = false, deleteReplayWrites = false,
@@ -159,6 +159,64 @@ test('a foreign side effect, early purge deadline or duplicate retirement fails'
     const {context} = fixture(input);
     await assert.rejects(retirementRetention(context), expected);
   }
+});
+
+test('an unresolved title must defer a real purge attempt, then allow removal without a second request', async () => {
+  const identity = {agentId: 'fixture-agent', sandboxId: 'fixture-sandbox', operationId: 'fixture-operation'};
+  const title = 'a'.repeat(64), provenance = 'b'.repeat(64), requests = [];
+  let attempts = 0, advanced = false, released = false, activeAtDeferral = true;
+  const witness = () => ({case_id: requests[0].caseId, request_count: 1, completed_effect_count: 1,
+    active_streams: 0, title_requests: 1, title_lost_replies: Number(released), title_responses: 0,
+    title_request_sha256: title});
+  const context = {
+    adapter: {
+      prepareTurn: async spec => requests.push(spec),
+      releaseTurn: async spec => { if (spec.title === true) released = true; },
+      oracle: async () => witness(),
+      titleIntent: async () => ({request_sha256: title, accepted: false, turn_sequence: 1}),
+      retirementTitleDeferral: async ids => {
+        assert.deepEqual(ids, {agentId: identity.agentId, sandboxId: identity.sandboxId});
+        attempts++;
+        return {a: {title_deferrals: 1, refused_purge_attempts: 1}, b: {}};
+      },
+      retirementPurge: async spec => {
+        assert.equal(spec.titleDigest, title);
+        if (spec.arm) return {armed: true, agents: 1, creation_sha256: provenance};
+        if (spec.advanceTitle) {
+          assert.equal(attempts, 1);
+          advanced = true;
+          return {title_advanced: true, creation_sha256: provenance};
+        }
+        return {present: !advanced, agents: Number(!advanced), creation_sha256: provenance,
+          unresolved_title_active: !advanced && activeAtDeferral,
+          agent_events: !advanced, sandbox_events: !advanced, workspaces: !advanced, worktrees: !advanced};
+      },
+    },
+    api: {
+      send: async () => ({responseId: 'response', abort() {}, done: Promise.resolve()}),
+      rawRequest: async (_am, _method, path) => path === '/api/v2/responses/response'
+        ? {body: {id: 'response', conversation: {id: identity.agentId}, status: 'completed'}} : {status: 404},
+    },
+    create: async (_am, desktop, spec) => {
+      assert.equal(desktop, false);
+      assert.deepEqual(spec, {title_mode: 'automatic'});
+      return identity;
+    },
+    cleanup: async record => assert.equal(record, identity),
+  };
+  const proof = await unresolvedTitleRetirement(context);
+  assert.equal(requests[0].title, 'lost_reply');
+  assert.equal(proof.unresolved_title_deferred_purge, true);
+  assert.equal(proof.purged_agents, 1);
+  assert.equal(proof.title_request_count, 1);
+
+  attempts = 0;
+  advanced = false;
+  released = false;
+  activeAtDeferral = false;
+  requests.length = 0;
+  await assert.rejects(unresolvedTitleRetirement(context), /retirement_live_title_retention_unproven/);
+  assert.equal(advanced, false);
 });
 
 test('an equal-count unlisted child cannot authorize or pass a purge observation', async () => {
