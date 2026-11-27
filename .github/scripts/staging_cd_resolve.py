@@ -69,6 +69,9 @@ def verify(receipt, tags, registry, history, *, automatic):
         latest = resolve(component, "latest", tags, registry, history)
         if latest["source"] != receipt["source"]:
             raise ObsoleteSource("Obsolete automatic deployment cannot replace a newer published source")
+    if "asset_continuity" in receipt:
+        from staging_cd_web_continuity import require_images
+        require_images(receipt["asset_continuity"], receipt["asset_proof"], registry)
     return receipt
 
 

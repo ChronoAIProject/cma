@@ -9,7 +9,7 @@ use mongodb::{
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn optional_forms_storage_has_exact_grants_indexes_and_persistent_retention() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_forms_contract_{}", uuid::Uuid::new_v4().simple());
     let result = exercise(&uri, &admin.database(&name)).await;

@@ -27,6 +27,7 @@ const PROCESS_HEADER: &str = "x-sw04-serving-process";
 const SOURCE_KEY: &str = "sw04-source";
 const CANCEL_KEY: &str = "sw04-cancel";
 const LIMIT: Duration = Duration::from_secs(10);
+const DATABASE_CLEANUP_LIMIT: Duration = Duration::from_secs(30);
 
 fn hash(value: &str) -> String {
     format!("{:x}", Sha256::digest(value))
@@ -119,8 +120,9 @@ async fn sw04_cancel_admitted_by_non_owner_executes_once() {
 }
 
 async fn drop_owned_database(mongo: &Client, database: &mongodb::Database) -> bool {
-    let deadline = Instant::now() + LIMIT;
-    // Reserve time inside the original cleanup bound for an exact readback.
+    // A drop can still be running after both replicas have exited. Give the
+    // disposable database its own deadline and reserve time for exact readback.
+    let deadline = Instant::now() + DATABASE_CLEANUP_LIMIT;
     // A lost or failed acknowledgement does not establish whether the drop ran.
     match timeout_at(deadline - Duration::from_secs(1), database.drop()).await {
         Ok(Ok(())) => return true,

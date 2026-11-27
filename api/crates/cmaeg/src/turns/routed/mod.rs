@@ -4,6 +4,12 @@
 //! an uncertain start only when its provider proves exact-body idempotency;
 //! otherwise it retains Unknown. Platform delivery remains a separate effect.
 mod adapter;
+mod answer_binding;
+mod answer_dispatch;
+mod answer_identity;
+mod answer_receipt;
+pub(crate) use answer_identity::AcceptedAnswerIdentity;
+pub use answer_receipt::{AnswerReceipt, AnswerReceiptLookup};
 mod body;
 mod builder;
 mod custom_delivery;
@@ -145,6 +151,8 @@ mod builder_tests;
 
 #[cfg(test)]
 mod executor_activity_tests;
+#[cfg(test)]
+mod executor_answer_tests;
 #[cfg(test)]
 pub(crate) mod executor_tests;
 #[cfg(test)]

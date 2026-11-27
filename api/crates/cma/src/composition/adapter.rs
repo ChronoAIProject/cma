@@ -188,6 +188,13 @@ pub(super) async fn production_adapter(
             }
             _ => transport,
         };
+        let transport = match &config.runtime.open_reply_loss_sandbox {
+            Some(sandbox_id) => transport.with_open_reply_loss(
+                sandbox_id.clone(),
+                Arc::new(store.open_reply_loss_claim(sandbox_id.clone())),
+            ),
+            None => transport,
+        };
         let transport = register_owner_control(config, "native", transport, &mut owner_controls);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
             client, transport,

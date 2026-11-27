@@ -3,7 +3,7 @@
 use super::{
     storage,
     tool_operation::{valid_hash, OperationStore},
-    ExecutionError, Journal,
+    AcceptedAnswerIdentity, ExecutionError, Journal,
 };
 use crate::replicas::partition::PartitionLease;
 use crate::{
@@ -41,6 +41,8 @@ pub(super) struct Attempt {
     pub(super) operation: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) content_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) answer: Option<AcceptedAnswerIdentity>,
     pub(super) until: i64,
     pub(super) receipt: Option<StoredReceipt>,
 }
@@ -66,6 +68,15 @@ pub(super) struct Record {
     pub(super) automatic: Option<Attempt>,
     #[serde(skip)]
     pub(super) version: u64,
+}
+impl Record {
+    fn keyed_attempt(&self, operation: &str) -> Result<&Attempt, ExecutionError> {
+        [&self.tool, &self.automatic]
+            .into_iter()
+            .flatten()
+            .find(|attempt| attempt.operation == operation)
+            .ok_or(ExecutionError::Corrupt)
+    }
 }
 #[derive(Clone)]
 pub(super) struct ReplyClaim {
@@ -218,6 +229,7 @@ impl ReplyStore {
             claim: uuid::Uuid::new_v4().to_string(),
             operation,
             content_hash: None,
+            answer: None,
             until: (self.0.clock)() + 30,
             receipt: None,
         });
@@ -252,43 +264,114 @@ impl ReplyStore {
         self.admit_keyed_inner(
             plan,
             target,
-            operation,
-            content_hash,
+            (operation, content_hash, None),
+            Kind::Tool,
             self.0.partitions.is_some(),
             false,
         )
         .await
     }
+    pub async fn admit_keyed_answer(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        key: (String, String, Option<&AcceptedAnswerIdentity>),
+    ) -> Result<Admission, ExecutionError> {
+        self.admit_keyed_inner(plan, target, key, Kind::Automatic, true, false)
+            .await
+    }
+
+    pub async fn refuse_answer(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        operation: &str,
+        content_hash: &str,
+        answer: &AcceptedAnswerIdentity,
+        reason: &str,
+    ) -> Result<IntentReceipt, ExecutionError> {
+        let record = self.load(plan, target).await?;
+        self.0
+            .bind_answer_payload(&self.1, &record, operation, content_hash, answer)
+            .await?;
+        let operations = OperationStore(self.0.clone());
+        if let Some(receipt) = operations.lookup(&record, operation, content_hash).await? {
+            return Ok(receipt);
+        }
+        let receipt = if record.operation_keys.contains(operation) {
+            let attempt = record.keyed_attempt(operation)?;
+            if attempt.content_hash.as_deref() != Some(content_hash)
+                || attempt.answer.as_ref() != Some(answer)
+            {
+                return Err(ExecutionError::IdempotencyConflict);
+            }
+            operations
+                .recover_answer(&self.1, &record, attempt)
+                .await?
+                .ok_or(ExecutionError::Corrupt)?
+        } else {
+            let refusal = Attempt {
+                claim: uuid::Uuid::new_v4().to_string(),
+                operation: operation.into(),
+                content_hash: Some(content_hash.into()),
+                until: (self.0.clock)(),
+                receipt: None,
+                answer: Some(answer.clone()),
+            };
+            operations
+                .close_unprepared(&self.1, &record, &refusal, reason)
+                .await?
+        };
+        self.0
+            .receipts(operation, &record.owner, record.retained_until)
+            .load(&receipt)
+            .await
+            .map_err(|_| ExecutionError::Unavailable)
+    }
     async fn admit_keyed_inner(
         &self,
         plan: &AdmittedPlan,
         target: &StoredTarget,
-        operation: String,
-        content_hash: String,
+        (operation, content_hash, answer): (String, String, Option<&AcceptedAnswerIdentity>),
+        kind: Kind,
         preserve_legacy: bool,
         allow_closed: bool,
     ) -> Result<Admission, ExecutionError> {
         let mut record = self.load(plan, target).await?;
-        if record.operation_keys.contains(&operation) {
-            if let Some(receipt) = OperationStore(self.0.clone())
+        let operations = OperationStore(self.0.clone());
+        if let Some(answer) = answer {
+            self.0
+                .bind_answer_payload(&self.1, &record, &operation, &content_hash, answer)
+                .await?;
+        }
+        if answer.is_some() || record.operation_keys.contains(&operation) {
+            if let Some(receipt) = operations
                 .lookup(&record, &operation, &content_hash)
                 .await?
             {
                 return Ok(Admission::Replay(receipt));
             }
-            let attempt = record
-                .tool
-                .as_ref()
-                .filter(|attempt| attempt.operation == operation)
-                .ok_or(ExecutionError::Corrupt)?;
-            if attempt.content_hash.as_ref() != Some(&content_hash) {
+        }
+        if record.operation_keys.contains(&operation) {
+            let attempt = record.keyed_attempt(&operation)?;
+            if attempt.content_hash.as_ref() != Some(&content_hash)
+                || attempt.answer.as_ref() != answer
+            {
                 return Err(ExecutionError::IdempotencyConflict);
             }
-            return Ok(if attempt.until > (self.0.clock)() {
-                Admission::Pending
-            } else {
-                Admission::Unknown
-            });
+            if attempt.until > (self.0.clock)() {
+                return Ok(Admission::Pending);
+            }
+            if let Some(receipt) = operations.recover_answer(&self.1, &record, attempt).await? {
+                return Ok(Admission::Replay(
+                    self.0
+                        .receipts(&operation, &record.owner, record.retained_until)
+                        .load(&receipt)
+                        .await
+                        .map_err(|_| ExecutionError::Unavailable)?,
+                ));
+            }
+            return Ok(Admission::Unknown);
         }
         if let Some(receipt) = self.exact_confirmation(&record, &operation, true).await? {
             return Ok(Admission::Replay(receipt));
@@ -310,13 +393,18 @@ impl ReplyStore {
             return Err(ExecutionError::OperationLimit);
         }
         record.operation_keys.insert(operation.clone());
-        record.tool = Some(Attempt {
+        let attempt = Attempt {
             claim: uuid::Uuid::new_v4().to_string(),
-            operation,
+            operation: operation.clone(),
             content_hash: Some(content_hash),
+            answer: answer.cloned(),
             until: (self.0.clock)() + 30,
             receipt: None,
-        });
+        };
+        match kind {
+            Kind::Tool => record.tool = Some(attempt),
+            Kind::Automatic => record.automatic = Some(attempt),
+        }
         if storage::bytes(&record)?.len() > 40 * 1024 {
             return Err(ExecutionError::OperationLimit);
         }
@@ -333,12 +421,12 @@ impl ReplyStore {
             .await?;
         // Only the CAS winner creates a retained key record; failed competing
         // admissions cannot consume records outside the 64-operation bound.
-        OperationStore(self.0.clone())
-            .prepare(&self.1, &record, record.tool.as_ref().unwrap())
+        operations
+            .prepare(&self.1, &record, record.keyed_attempt(&operation)?)
             .await?;
         Ok(Admission::Claimed(Box::new(ReplyClaim {
             record,
-            kind: Kind::Tool,
+            kind,
             partition: self.1.clone(),
         })))
     }

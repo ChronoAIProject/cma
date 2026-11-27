@@ -140,7 +140,7 @@ impl ControlPlaneComposition {
         let projections = projections.with_qualification(qualification);
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
-        let image_resolver = runtime::image_manager_resolver(config)?;
+        let image_resolver = Arc::new(crate::agent_lifecycle::RetiredImageResolver);
         let inline_lifecycle = crate::agent_lifecycle::InlineAgentLifecycle::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),

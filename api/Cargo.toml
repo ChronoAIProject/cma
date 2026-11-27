@@ -15,7 +15,6 @@ members = [
     "crates/cmaeg-execution",
     "crates/cmaeg-http",
     "crates/cmaeg",
-    "crates/cma-image-manager",
     "crates/cma-service-auth",
     "crates/cma-service-migrations",
     "crates/cma-allocator-qualification",
@@ -200,3 +199,9 @@ opt-level = 3
 opt-level = 3
 [profile.dev.package.zune-jpeg]
 opt-level = 3
+
+# The ranked-report contract exercises complete cohort folds under the same
+# generation deadline as release builds. Optimize its reporting hot loops in
+# the test profile that inherits these development overrides.
+[profile.dev.package.cma-am-reporting]
+opt-level = 2

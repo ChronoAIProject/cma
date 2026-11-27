@@ -22,7 +22,11 @@ async fn two_replicas_observe_revocation_and_outage_without_borrowing_previous_s
     for bearer in [false, true] {
         let fixture = Fixture::new().await;
         fixture.seed().await;
-        let other = AuthState::with_store(fixture.auth.mode.clone(), None, fixture.store.clone());
+        let other = AuthState::with_store(
+            fixture.auth.fixture_mode().clone(),
+            None,
+            fixture.store.clone(),
+        );
         let (first, login) = browser(&fixture).await;
         let second = crate::auth::router(other.clone()).layer(
             axum::middleware::from_fn_with_state(other.clone(), crate::auth::attach_subject),
@@ -30,8 +34,8 @@ async fn two_replicas_observe_revocation_and_outage_without_borrowing_previous_s
         for app in [&first, &second] {
             assert_eq!(read(app, &login, bearer).await, StatusCode::OK);
         }
-        assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
-        assert_eq!(other.identity_store.active_receipts(), 0);
+        assert_eq!(fixture.auth.fixture_active_receipts(), 0);
+        assert_eq!(other.fixture_active_receipts(), 0);
         *fixture.control.introspection.write().await = Reply::json(json!({"active":false}));
         // Only A has observed refusal when B starts its next independent read.
         assert_eq!(read(&first, &login, bearer).await, StatusCode::UNAUTHORIZED);
@@ -77,6 +81,6 @@ async fn sequential_reads_always_dispatch_even_with_identical_credentials() {
     }
     let calls = fixture.control.requests.load(Ordering::SeqCst) - before;
     assert_eq!(calls, 80);
-    assert_eq!(fixture.auth.identity_store.active_receipts(), 0);
+    assert_eq!(fixture.auth.fixture_active_receipts(), 0);
     println!("identity_live_calls requests=40 provider_calls={calls} discovery=prewarmed");
 }

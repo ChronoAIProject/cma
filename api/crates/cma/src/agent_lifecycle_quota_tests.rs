@@ -1,6 +1,6 @@
 use super::*;
 use layer2_core::sandbox::store::{InMemorySandboxStore, SandboxStore};
-use layer2_core::sandbox::{FixedSandboxCredentialPrerequisite, SandboxStatus};
+use layer2_core::sandbox::{FixedSandboxCredentialPrerequisite, SandboxQuotaUsage, SandboxStatus};
 use mongodb::bson::{doc, Document};
 
 #[tokio::test]
@@ -50,7 +50,11 @@ async fn quota_preflight_preserves_replay_and_existing_targets_without_preparati
         service
             .create(&owner.caller, Some(&owner), None, refused, "refused")
             .await,
-        Err(AgentLifecycleProvisioningError::SandboxLimitReached { limit: 1, live: 1 })
+        Err(AgentLifecycleProvisioningError::SandboxLimitReached {
+            limit: 1,
+            live: 1,
+            ..
+        })
     ));
     assert_eq!(
         db.collection::<Document>("agent_lifecycle_operations")
@@ -199,7 +203,15 @@ async fn worker_quota_failure_metadata_is_gated_and_survives_restart() {
             .unwrap()
             .contains("sandbox limit reached"));
         let expected = enabled.then_some(
-            layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached { limit: 1, live: 1 },
+            layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached {
+                limit: 1,
+                live: 1,
+                quota_usage: Some(SandboxQuotaUsage {
+                    active: 1,
+                    retiring_charged: 0,
+                    retiring_released: 0,
+                }),
+            },
         );
         assert_eq!(record.failure, expected);
         let raw = db
@@ -208,7 +220,12 @@ async fn worker_quota_failure_metadata_is_gated_and_survives_restart() {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(raw.contains_key("failure"), enabled);
+        let expected_bson = expected
+            .as_ref()
+            .map(mongodb::bson::serialize_to_bson)
+            .transpose()
+            .unwrap();
+        assert_eq!(raw.get("failure"), expected_bson.as_ref());
         let restarted = MongoAgentLifecycleStore::open(&db).await.unwrap();
         let replay = restarted
             .replay(&owner.caller.subject, "race", &input)

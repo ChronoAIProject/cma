@@ -53,7 +53,7 @@ fn manifest_checksum_covers_order_and_definition_and_release_requires_digest() {
 }
 
 pub(super) async fn fixture() -> Database {
-    let client = Client::with_uri_str(std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap())
+    let client = Client::with_uri_str(std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
     let db = client.database(&format!(

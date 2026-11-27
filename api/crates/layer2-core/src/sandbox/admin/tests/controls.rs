@@ -3,6 +3,67 @@ use crate::profiles::ProfileVisibility;
 use crate::sandbox::SandboxWorkStep;
 
 #[tokio::test]
+async fn stopped_retirement_retries_only_at_the_current_revision_and_original_step() {
+    let fixture = fixture();
+    let mut parent = sandbox(
+        "sbx_stopped_retirement",
+        "owner-a",
+        SandboxStatus::Active,
+        "v2",
+    );
+    let original_revision = parent.revision;
+    fixture
+        .sandboxes
+        .create_sandbox(parent.clone())
+        .await
+        .unwrap();
+    let at = "2026-11-26T00:00:00Z";
+    parent.begin_retirement(at.into()).unwrap();
+    parent
+        .work
+        .schedule(SandboxWorkStep::RevokeRetirementCredentials, at.into());
+    parent.work.attempts = crate::sandbox::work_retry::WORK_RETRY_BUDGET;
+    let fence = parent
+        .work
+        .claim("worker".into(), at, "2026-11-26T00:01:00Z".into())
+        .unwrap();
+    parent.work.stop_retirement("worker", fence).unwrap();
+    fixture
+        .sandboxes
+        .save_sandbox(original_revision, parent.clone())
+        .await
+        .unwrap();
+    let operator = caller([Capability::ControlAnySandbox]);
+    assert!(
+        !fixture
+            .service
+            .retire_sandbox(&operator, &parent.id, None)
+            .await
+            .unwrap()
+            .changed
+    );
+    assert!(matches!(
+        fixture
+            .service
+            .retire_sandbox(&operator, &parent.id, Some(parent.revision - 1))
+            .await,
+        Err(OperatorError::InvalidState(_))
+    ));
+    let result = fixture
+        .service
+        .retire_sandbox(&operator, &parent.id, Some(parent.revision))
+        .await
+        .unwrap();
+    assert!(result.changed);
+    assert_eq!(result.sandbox.status, SandboxStatus::Retiring);
+    assert_eq!(result.sandbox.work.step, parent.work.step);
+    assert_eq!(result.sandbox.work.next_fence, parent.work.next_fence);
+    assert_eq!(result.sandbox.work.attempts, 0);
+    assert_eq!(result.sandbox.runtime, parent.runtime);
+    assert_eq!(result.sandbox.credential, parent.credential);
+}
+
+#[tokio::test]
 async fn retirement_uses_the_sandbox_transition_and_never_stops_an_agent_directly() {
     let fixture = fixture();
     let sandbox = sandbox("sbx_retire", "owner-a", SandboxStatus::Active, "v2");

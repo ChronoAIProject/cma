@@ -228,6 +228,13 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(cache.build_options(), ['--cache-from', 'type=local,src=' + str(restored),
                                                 '--build-arg', mount])
 
+    def test_am_publication_does_not_export_optional_dependency_layers(self):
+        env = dict(self.env, CD_COMPONENT='am', CD_LAYER_ARCHIVE_CACHE='enabled',
+                   CD_LAYER_CACHE_WRITER_FLOOR='verified')
+        cache = BuildCache(ROOT, env, ROOT, 'am')
+        self.assertNotIn('--cache-to', cache.build_options())
+        self.assertFalse(cache.exports_layers())
+
     def test_only_develop_producers_can_prepare_or_transfer_cargo_caches(self):
         for key, value in (("GITHUB_EVENT_NAME", "pull_request"), ("GITHUB_EVENT_NAME", "workflow_dispatch"),
                            ("GITHUB_REF", "refs/pull/12/merge"), ("GITHUB_REPOSITORY", "fork/repo"),
@@ -673,6 +680,21 @@ class TimingTests(unittest.TestCase):
         for name in ('dependency-compile', 'go-compile', 'media-compile'):
             self.assertEqual(result['category_seconds'][name], 4)
         self.assertNotIn('private-value', json.dumps(result))
+
+    def test_only_successful_cached_dependency_cook_counts_as_reused(self):
+        rows = [
+            {'id': '1', 'name': '[dependencies 2/2] RUN cargo chef cook --release',
+             'cached': True, 'completed': '2026-01-01T00:00:04Z'},
+            {'id': '2', 'name': '[dependencies 1/2] COPY recipe.json /recipe.json',
+             'cached': True, 'completed': '2026-01-01T00:00:04Z'},
+            {'id': '3', 'name': '[dependencies 2/2] RUN cargo chef cook --release',
+             'cached': True, 'error': 'failed', 'completed': '2026-01-01T00:00:04Z'},
+            {'id': '4', 'name': '[dependencies 2/2] RUN cargo chef cook --release',
+             'cached': False, 'completed': '2026-01-01T00:00:04Z'},
+        ]
+        result = summarize(b'\n'.join(json.dumps(row).encode() for row in rows))
+        self.assertEqual(result['cached_dependency_steps'], 1)
+        self.assertEqual(result['cached_build_steps'], 2)
 
     def test_a_failed_build_names_only_the_stage_and_step_where_it_stopped(self):
         rows = [

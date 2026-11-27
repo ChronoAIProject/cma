@@ -5,15 +5,6 @@ use crate::{
     agent_lifecycle::guidance, config::Config, store::MongoStores, warm_pools::NativeWarmPools,
 };
 
-pub(super) fn image_manager_resolver(
-    config: &Config,
-) -> Result<Arc<crate::agent_lifecycle::ImageManagerResolver>, String> {
-    crate::agent_lifecycle::ImageManagerResolver::new(
-        config.image_manager_base_url.clone(),
-        config.features.image_manager_retirement,
-    )
-}
-
 pub(super) fn configure_inline_lifecycle(
     config: &Config,
     stores: &MongoStores,
@@ -166,6 +157,7 @@ pub(super) fn lifecycle_config(
         native_retirement_finality_enabled: config.features.native_retirement_finality_enabled,
         native_retirement_capture_enabled: config.features.native_retirement_capture_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
+        inspection_refusal: config.runtime.inspection_refusal.clone(),
         startup_sibling_hold_enabled: config.features.startup_sibling_hold_enabled,
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,
         work_retry_policy_enabled: config.features.work_retry_policy_enabled,

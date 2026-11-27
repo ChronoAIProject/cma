@@ -39,7 +39,7 @@ export function AddressedChannel({
   const current = channel;
   const activity = useChannelActivity(current.channel_id, session.subject, active);
   const nodes = channelNodes(current);
-  const editable = can(session, 'event-gateway', 'channels:update');
+  const editable = can(session, 'channels:update');
   const newProducer =
     editable && selection.kind === 'producer' && selection.index === nodes.producers.length;
   const exists =
@@ -92,7 +92,7 @@ export function AddressedChannel({
           ) : undefined
         }
         tests={
-          can(session, 'event-gateway', 'channels:test') ? (
+          can(session, 'channels:test') ? (
             <div hidden={newProducer}>
               <ChannelNodeTests
                 writable={writable}
@@ -106,7 +106,7 @@ export function AddressedChannel({
         }
         activity={selected.kind === 'channel' ? <ChannelActivityView feed={activity} /> : undefined}
         danger={
-          selected.kind === 'channel' && can(session, 'event-gateway', 'channels:delete') ? (
+          selected.kind === 'channel' && can(session, 'channels:delete') ? (
             <DeleteChannel
               allowed={deletable}
               channel={current}

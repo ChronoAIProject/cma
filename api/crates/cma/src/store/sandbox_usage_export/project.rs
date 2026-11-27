@@ -29,7 +29,7 @@ impl CaptureStore {
                         TransactionEventError::Driver(error)
                             if is_transient(&error) || is_duplicate_key(&error) =>
                         {
-                            continue
+                            continue;
                         }
                         TransactionEventError::Driver(error) => return Err(unavailable(error)),
                         TransactionEventError::Domain(error) => return Err(error),
@@ -40,7 +40,7 @@ impl CaptureStore {
                 CommitOutcome::Committed => return Ok(projected),
                 CommitOutcome::Retry(_) => continue,
                 CommitOutcome::Unknown(error) | CommitOutcome::Failed(error) => {
-                    return Err(unavailable(error))
+                    return Err(unavailable(error));
                 }
             }
         }
@@ -162,6 +162,7 @@ impl CaptureStore {
         if changed.matched_count != 1 {
             return Err(Domain(SandboxStoreError::Conflict));
         }
+        self.fence_completeness_source(session, &stream).await?;
         Ok(true)
     }
 

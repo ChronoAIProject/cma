@@ -45,6 +45,10 @@ pub(super) fn head(stream: &str, minute: u64) -> String {
     format!("head/{stream}/{minute:016x}")
 }
 
+pub(super) fn hold(stream: &str, minute: u64) -> String {
+    format!("hold/{stream}/{minute:016x}")
+}
+
 pub(super) fn bridge(binding: &str) -> String {
     format!("binding/{binding}/")
 }

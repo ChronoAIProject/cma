@@ -170,6 +170,18 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
             let at = now();
             let to = (at - 3600) / 3600 * 3600;
             let from = to - seconds;
+            // Existing usage states precede report admission in production. Keep
+            // synthetic state ingestion outside the report generation deadline.
+            let states: Vec<_> = (0..members)
+                .map(|member| {
+                    let mut state = state(member, from);
+                    state.owner = SubjectId(format!("owner-{:04}", member % 431));
+                    state
+                })
+                .collect();
+            for chunk in states.chunks(250) {
+                seed(&store, chunk).await;
+            }
             store
                 .submit(
                     scope("operator", true),
@@ -203,17 +215,10 @@ async fn aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources() {
             let mut chart_count = 0_i64;
             let batch_size = if dense { 8 } else { 250 };
             for offset in (0..members).step_by(batch_size) {
-                let states: Vec<_> = (offset..(offset + batch_size).min(members))
-                    .map(|member| {
-                        let mut s = state(member, from);
-                        // Multiple Sandboxes per owner with a bounded distinct
-                        // owner distribution; the scale outcome reports this.
-                        s.owner = SubjectId(format!("owner-{:04}", member % 431));
-                        s
-                    })
+                let rows: Vec<_> = states[offset..(offset + batch_size).min(members)]
+                    .iter()
+                    .map(fixture_row)
                     .collect();
-                seed(&store, &states).await;
-                let rows: Vec<_> = states.iter().map(fixture_row).collect();
                 let mut charts = Vec::new();
                 let expectations = [Expectation {
                     from,

@@ -16,7 +16,7 @@ fn explicit_audit_sites_preserve_awaits_and_existing_failure_policies() {
          "self.activity.record(&record).await.map_err(|error|OperatorError::Unavailable(error.to_string()))"),
         ("gateway records", include_str!("../../../layer2-core/src/gateway_records.rs"),
          "self.activity.record(&record).await.map_err(|error|CoreError::RuntimeUnavailable(error.to_string()))"),
-        ("sign-in", include_str!("../auth/records.rs"),
+        ("sign-in", include_str!("../../../cma-am-auth/src/auth/records.rs"),
          "ifletErr(error)=records.activity.record(&activity).await{tracing::warn!(error=%error,\"couldnotrecordsuccessfulsign-in\");}"),
         // This site already awaits the ActivityStore port directly before dispatch.
         ("delegation", include_str!("../bot_setups/delegation.rs"),

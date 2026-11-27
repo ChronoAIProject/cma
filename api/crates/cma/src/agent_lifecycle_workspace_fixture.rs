@@ -120,7 +120,7 @@ pub(super) fn facade_with_limit(
         operations,
         limit,
         credentials,
-        ImageManagerResolver::new("http://127.0.0.1:1".into(), false).unwrap(),
+        Arc::new(RetiredImageResolver),
     )
 }
 

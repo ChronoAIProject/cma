@@ -3,17 +3,19 @@ use std::time::{Duration, SystemTime};
 use layer2_core::sandbox::store::{SandboxLifecycleStore, SandboxStoreError, SandboxTransaction};
 use layer2_core::sandbox::work_retry::WorkRetryFailure;
 use layer2_core::sandbox::{
-    Sandbox, SandboxCredentialAuthority, SandboxEventKind, SandboxStatus, SandboxWorkStep,
-    TypedFailure,
+    Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep, TypedFailure,
 };
 use layer2_core::{rfc3339_at, seconds_from_rfc3339};
 use layer3_adapter::{AdapterError, RuntimeHandle};
 
-use crate::sandbox::credential::{CredentialError, CredentialMaterial};
+use crate::sandbox::credential::CredentialError;
 use crate::sandbox::funding::FundingError;
 
-use super::{
-    SandboxDependencyError, SandboxWorker, CREDENTIAL_EXPIRY_MARGIN, CREDENTIAL_ROTATION_AGE,
+use super::{SandboxDependencyError, SandboxWorker};
+
+mod credential_policy;
+pub(super) use credential_policy::{
+    credential_rotation_at, credential_valid_for_delivery, material_matches,
 };
 
 impl SandboxWorker {
@@ -105,7 +107,7 @@ impl SandboxWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        if failure.retryable {
+        if sandbox.status == SandboxStatus::Retiring || failure.retryable {
             return self.retry_failure(sandbox, failure, now).await;
         }
         let expected_revision = sandbox.revision;
@@ -146,14 +148,24 @@ impl SandboxWorker {
         let expected_revision = sandbox.revision;
         let step = sandbox.work.step;
         let fence = self.claimed_fence(&sandbox)?;
-        sandbox
-            .work
-            .retry(&self.config.holder, fence, rfc3339_at(now + decision.delay))
-            .map_err(|_| SandboxStoreError::Conflict)?;
+        let event_at = rfc3339_at(now);
+        let exhausted = sandbox.status == SandboxStatus::Retiring
+            && step.is_retirement()
+            && sandbox.work.attempts >= failure.retry_kind().retry_budget();
+        if exhausted {
+            sandbox
+                .work
+                .stop_retirement(&self.config.holder, fence)
+                .map_err(|_| SandboxStoreError::Conflict)?;
+        } else {
+            sandbox
+                .work
+                .retry(&self.config.holder, fence, rfc3339_at(now + decision.delay))
+                .map_err(|_| SandboxStoreError::Conflict)?;
+        }
         sandbox.revision = expected_revision
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
-        let event_at = rfc3339_at(now);
         sandbox.updated_at = event_at.clone();
         commit_advance(
             &self.dependencies.store,
@@ -166,6 +178,10 @@ impl SandboxWorker {
             },
         )
         .await?;
+        if exhausted {
+            metrics::counter!("cma_sandbox_retirement_retry_exhausted_total").increment(1);
+            return Ok(());
+        }
         super::retry::native_retry_published(native_retry);
         if let Some(telemetry) = telemetry {
             telemetry.published();
@@ -227,51 +243,6 @@ pub(super) fn operation_id(sandbox: &Sandbox) -> String {
     }
     let fence = sandbox.work.lease.as_ref().map_or(0, |lease| lease.fence);
     format!("{}:{:?}:{fence}", sandbox.id, sandbox.work.step)
-}
-
-pub(super) fn material_matches(
-    sandbox: &Sandbox,
-    pending: &SandboxCredentialAuthority,
-    material: &CredentialMaterial,
-) -> bool {
-    material.sandbox_id == sandbox.id
-        && material.owner == sandbox.owner
-        && material.source == sandbox.credential.source
-        && material.matches_source()
-        && material.matches_connection(sandbox)
-        && &material.authority == pending
-}
-
-pub(super) fn credential_valid_for_delivery(sandbox: &Sandbox, now: SystemTime) -> bool {
-    if !sandbox.credential.source.is_managed() {
-        return sandbox
-            .credential
-            .pending
-            .as_ref()
-            .is_some_and(|pending| sandbox.credential.source.accepts(pending));
-    }
-    let now = now
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    sandbox
-        .credential
-        .pending
-        .as_ref()
-        .and_then(|pending| seconds_from_rfc3339(&pending.expires_at))
-        .is_some_and(|expires| expires > now.saturating_add(CREDENTIAL_EXPIRY_MARGIN.as_secs()))
-}
-
-pub(super) fn credential_rotation_at(sandbox: &Sandbox) -> Option<SystemTime> {
-    if !sandbox.credential.source.is_managed() {
-        return None;
-    }
-    let current = sandbox.credential.current.as_ref()?;
-    let issued = seconds_from_rfc3339(&current.issued_at)?;
-    let expires = seconds_from_rfc3339(&current.expires_at)?;
-    let age_due = issued.checked_add(CREDENTIAL_ROTATION_AGE.as_secs())?;
-    let expiry_due = expires.checked_sub(CREDENTIAL_EXPIRY_MARGIN.as_secs())?;
-    Some(SystemTime::UNIX_EPOCH + Duration::from_secs(age_due.min(expiry_due)))
 }
 
 pub(super) fn system_time(stamp: &str) -> Option<SystemTime> {

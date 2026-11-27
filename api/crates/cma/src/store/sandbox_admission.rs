@@ -11,9 +11,9 @@ use layer2_core::sandbox::store::{
 use layer2_core::sandbox::{Sandbox, SandboxEvent, SandboxEventKind, SandboxOrigin};
 use mongodb::bson::{doc, Bson};
 
-use super::sandbox_events::{event_document, read_event};
+use super::sandbox_events::event_document;
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
-use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_admission_replay};
+use super::sandboxes::{admitted_sandbox_document, read_sandbox_admission_replay};
 
 mod canary;
 mod catalogue;
@@ -208,14 +208,18 @@ where
     }
     let live = store
         .sandboxes
-        .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })
+        .count_documents(super::sandboxes::capacity::charged_owner_slots(owner))
         .session(&mut *session)
         .await
         .map_err(AdmissionError::Driver)?;
     if live >= u64::from(live_limit) {
+        let usage = super::sandboxes::capacity::quota_usage(store, owner, session)
+            .await
+            .map_err(AdmissionError::Driver)?;
         return Err(AdmissionError::Domain(SandboxStoreError::LimitReached {
             limit: live_limit,
             live: u16::try_from(live).unwrap_or(u16::MAX),
+            usage,
         }));
     }
     let ceilings = super::budget::require_open_protected(
@@ -444,55 +448,6 @@ fn classify_insert(error: mongodb::error::Error) -> AdmissionError {
     } else {
         AdmissionError::Driver(error)
     }
-}
-
-async fn reconcile(
-    store: &MongoSandboxStore,
-    admission: &SandboxAdmission,
-    receipt: &AdmissionReceipt,
-) -> Result<Option<SandboxAdmissionResult>, SandboxStoreError> {
-    if let Some(current) = durable_replay(store, admission).await? {
-        return match receipt {
-            AdmissionReceipt::Created { sandbox, event, .. } if current.id == sandbox.id => {
-                let stored_event = store
-                    .sandbox_events
-                    .find_one(doc! { "_id": format!("{}:{:020}", event.sandbox_id, 1) })
-                    .await
-                    .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-                    .as_ref()
-                    .map(read_event)
-                    .transpose()?;
-                Ok((stored_event.as_ref() == Some(event))
-                    .then_some(SandboxAdmissionResult::Created(current)))
-            }
-            AdmissionReceipt::Created { .. } | AdmissionReceipt::Existing(_) => {
-                Ok(Some(SandboxAdmissionResult::Existing(current)))
-            }
-        };
-    }
-    let AdmissionReceipt::Created { sandbox, event, .. } = receipt else {
-        return Ok(None);
-    };
-    let stored_sandbox = store
-        .sandboxes
-        .find_one(doc! { "_id": sandbox.id.as_str() })
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()?;
-    let stored_event = store
-        .sandbox_events
-        .find_one(doc! { "_id": format!("{}:{:020}", event.sandbox_id, 1) })
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
-        .as_ref()
-        .map(read_event)
-        .transpose()?;
-    Ok(
-        (stored_sandbox.as_ref() == Some(sandbox) && stored_event.as_ref() == Some(event))
-            .then(|| SandboxAdmissionResult::Created(sandbox.clone())),
-    )
 }
 
 #[cfg(test)]

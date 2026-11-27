@@ -972,7 +972,7 @@
         "store_failed"
       ],
       "non_problem_statuses": {
-        "400": "api/crates/cma/src/auth/flow.rs# Invalid return destinations use the redirect-flow error document without a code field."
+        "400": "api/crates/cma-am-auth/src/auth/flow.rs# Invalid return destinations use the redirect-flow error document without a code field."
       }
     },
     "GET /auth/logout": {
@@ -984,13 +984,13 @@
     },
     "GET /auth/session": {
       "classification": "supplemental_auth",
-      "source": "api/crates/cma/src/auth/middleware.rs# Session identity outages return identity_unavailable with Retry-After; only GET /auth/session may use bounded recent browser identity evidence. Other operations remain fail closed.",
+      "source": "api/crates/cma-am-auth/src/auth/middleware.rs# Session identity outages return identity_unavailable with Retry-After; only GET /auth/session may use bounded recent browser identity evidence. Other operations remain fail closed.",
       "required_problems": [
         "store_failed",
         "identity_unavailable"
       ],
       "non_problem_statuses": {
-        "401": "api/crates/cma/src/auth/session_routes.rs# Unsigned browser session is an authentication-state response with authenticated false, not a problem document."
+        "401": "api/crates/cma-am-auth/src/auth/session_routes.rs# Unsigned browser session is an authentication-state response with authenticated false, not a problem document."
       }
     },
     "GET /auth/signup-options": {

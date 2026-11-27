@@ -6,7 +6,11 @@ use axum::{
     Extension, Router,
 };
 use layer1_public::rest::AgentLifecycleFailure;
-use layer2_core::sandbox::{store::SandboxStoreError, SandboxOrigin};
+use layer2_core::sandbox::{
+    store::{SandboxStore, SandboxStoreError},
+    SandboxOrigin, SandboxStatus,
+};
+use layer2_core::SandboxId;
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -168,6 +172,38 @@ async fn original_create_replay_resumes_a_waiting_operation_without_allocating_a
         Outcome::Created { sandbox_id, operation_id: Some(operation_id), .. }
         if sandbox_id == "sbx_replay_fixture" && operation_id == id)
     );
+    // Later retirement must preserve the exact created association, including
+    // the original operation from which a consumer can reconcile retirement.
+    let sandbox_id = SandboxId("sbx_replay_fixture".into());
+    let mut retired = sandboxes.get_sandbox(&sandbox_id).await.unwrap().unwrap();
+    retired.status = SandboxStatus::Retiring;
+    retired.revision += 1;
+    retired.updated_at = layer2_core::now_rfc3339();
+    sandboxes
+        .save_sandbox(retired.revision - 1, retired.clone())
+        .await
+        .unwrap();
+    retired.status = SandboxStatus::Retired;
+    retired.retired_at = Some(layer2_core::now_rfc3339());
+    retired.revision += 1;
+    sandboxes
+        .save_sandbox(retired.revision - 1, retired)
+        .await
+        .unwrap();
+    assert_eq!(
+        sandboxes
+            .get_sandbox(&sandbox_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        SandboxStatus::Retired
+    );
+    assert!(
+        matches!(reader.lookup(&identity(&store, &owner, &request), &request).await.unwrap(),
+        Outcome::Created { sandbox_id, operation_id: Some(operation_id), .. }
+        if sandbox_id == "sbx_replay_fixture" && operation_id == id)
+    );
     store.database.drop().await.unwrap();
 }
 
@@ -199,12 +235,13 @@ async fn fenced_worker_quota_refusal_preserves_flagged_lifecycle_failure_metadat
         );
         effect.creation_fence = Some(fence.clone());
         let error = sandboxes.admit_sandbox(effect.clone()).await.unwrap_err();
-        let SandboxStoreError::LimitReached { limit, live } = error else {
+        let SandboxStoreError::LimitReached { limit, live, usage } = error else {
             panic!("expected typed quota refusal, got {error:?}")
         };
         let failure = enabled.then_some(AgentLifecycleFailure::SandboxLimitReached {
             limit,
             live: u64::from(live),
+            quota_usage: Some(usage),
         });
         assert!(operations
             .fail_fenced_creation(
@@ -222,7 +259,7 @@ async fn fenced_worker_quota_refusal_preserves_flagged_lifecycle_failure_metadat
         assert_eq!(
             view["failure"],
             if enabled {
-                serde_json::json!({"code":"sandbox_limit_reached","limit":limit,"live":live})
+                serde_json::json!({"code":"sandbox_limit_reached","limit":limit,"live":live,"quota_usage":usage})
             } else {
                 Value::Null
             }
@@ -385,6 +422,25 @@ async fn covered_nonquota_failure_emits_terminal_no_allocation_proof() {
     assert_eq!(read_operation(&app, id).await["status"], "failed");
     assert!(
         matches!(reader.lookup(&identity(&store,&owner,&request),&request).await.unwrap(),Outcome::Refused { code:RefusalCode::CreationFailed, operation_id:Some(operation_id),.. } if operation_id==id)
+    );
+    // Treat the first successful write as an acknowledgement the caller lost.
+    // A retry must neither allocate nor replace the durable refusal.
+    assert!(!operations
+        .fail_fenced_creation(
+            &owner,
+            &lease,
+            &fence,
+            "Repeated failure",
+            None,
+            RefusalCode::CreationFailed
+        )
+        .await
+        .unwrap());
+    assert_eq!(submit(&app, &request).await, receipt);
+    assert!(operations.claim(id).await.unwrap().is_none());
+    assert!(
+        matches!(reader.lookup(&identity(&store,&owner,&request),&request).await.unwrap(),
+        Outcome::Refused { code:RefusalCode::CreationFailed, operation_id:Some(operation_id),.. } if operation_id==id)
     );
     store.database.drop().await.unwrap();
 }

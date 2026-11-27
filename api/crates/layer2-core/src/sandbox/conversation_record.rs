@@ -237,13 +237,11 @@ impl DurableAgentUpdateRecorder {
                     "conversation updates require a live agent",
                 ));
             }
-            if guard.is_some_and(|guard| guard.owner_restart.is_some())
-                && update.is_some_and(|effect| {
-                    !matches!(effect, layer3_adapter::ConversationUpdate::Metadata(_))
-                })
-            {
-                return Err(AgentConversationError::ReopenOutputDiscontinuity);
-            }
+            let update = if guard.is_some_and(|guard| guard.owner_restart.is_some()) {
+                output::owner_restart_effect(update)?
+            } else {
+                update
+            };
             let folded = match &update {
                 Some(update) => fold_update(
                     &current,

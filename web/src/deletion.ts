@@ -6,7 +6,7 @@ export type { AgentDeletionPermissions } from './agent/deletionEligibility';
 import type { TreeAction } from './shell/Tree';
 import type { ProvisioningStep } from './sandbox/progress';
 import { readSandboxHistory } from './sandbox/eventHistory';
-import { sandboxRetirementWaitExceeded } from './sandbox/lifecycle';
+import { sandboxRetirementFailed, sandboxRetirementWaitExceeded } from './sandbox/lifecycle';
 import {
   sandboxDeletionReason,
   sandboxHasParkedRuntimeUpdate,
@@ -35,6 +35,7 @@ export interface DeletionObservation {
   readonly complete: boolean;
   readonly inProgress?: boolean;
   readonly retirementDelayed?: boolean;
+  readonly retirementFailed?: boolean;
   readonly stopsRuntimeUpdate?: boolean;
   readonly agent?: {
     readonly status: AgentStatus;
@@ -91,9 +92,10 @@ export async function observeDeletion(
     if (sandbox.id !== action.sandboxId)
       throw new Error('Deletion status referred to another Sandbox.');
     const complete = sandbox.status === 'retired';
-    const inProgress = sandbox.status === 'retiring';
+    const retirementFailed = sandboxRetirementFailed(sandbox);
+    const inProgress = sandbox.status === 'retiring' && !retirementFailed;
     const events =
-      accepted || complete || inProgress
+      accepted || complete || inProgress || retirementFailed
         ? await readSandboxHistory(client, sandbox.id, signal, previous)
         : [];
     const completed = new Set(
@@ -109,9 +111,12 @@ export async function observeDeletion(
       .find(
         (event) =>
           event.kind.type === 'work_step_failed' &&
-          ['stop_agents', 'revoke_retirement_credentials', 'teardown_runtime'].includes(
-            String((event.kind.step as { kind?: string } | undefined)?.kind),
-          ),
+          [
+            'stop_agents',
+            'revoke_retirement_credentials',
+            'teardown_runtime',
+            'mark_retired',
+          ].includes(String((event.kind.step as { kind?: string } | undefined)?.kind)),
       );
     const failureStep = (latestFailure?.kind.step as { kind?: string } | undefined)?.kind;
     const failure =
@@ -124,6 +129,7 @@ export async function observeDeletion(
       complete,
       inProgress,
       retirementDelayed: sandboxRetirementWaitExceeded(sandbox),
+      retirementFailed,
       stopsRuntimeUpdate: sandboxHasParkedRuntimeUpdate(sandbox),
       events,
       failure,

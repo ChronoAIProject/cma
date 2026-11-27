@@ -48,6 +48,8 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
     pub legacy_receiver_image: Option<layer3_adapter::hosted::LegacyReceiverImage>,
     pub stale_turn_runtime_digest: Option<String>,
+    pub(crate) open_reply_loss_sandbox: Option<String>,
+    pub(crate) inspection_refusal: Option<super::InspectionRefusalControl>,
     pub allocate_agent_sandbox: bool,
     pub native_prepared_target: u8,
     pub native_machine_prepared_target: u8,
@@ -331,6 +333,11 @@ impl RuntimeConfig {
             agent_sandbox_runtime_transport,
             legacy_receiver_image,
             stale_turn_runtime_digest,
+            open_reply_loss_sandbox: super::open_reply_loss::sandbox_from_lookup(lookup)?,
+            inspection_refusal: super::InspectionRefusalControl::from_lookup(
+                lookup,
+                std::time::SystemTime::now(),
+            )?,
             allocate_agent_sandbox,
             native_prepared_target,
             native_machine_prepared_target,
@@ -356,7 +363,7 @@ impl RuntimeConfig {
     }
 }
 
-pub(super) fn deployment_id_from_lookup(
+pub(crate) fn deployment_id_from_lookup(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<String, String> {
     let value = required(lookup, "CHRONO_DEPLOYMENT_ID")?;

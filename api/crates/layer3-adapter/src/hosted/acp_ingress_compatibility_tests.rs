@@ -47,7 +47,7 @@ async fn independent_legacy_flags_preserve_rpc_errors_receipts_and_ack_order() {
                 client,
                 "agent",
                 "/synthetic/work".into(),
-                (settings, None, flags & 64 != 0),
+                (settings, None, (flags & 64 != 0, None)),
                 None,
                 None,
                 updates,

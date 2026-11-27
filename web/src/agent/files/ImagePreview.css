@@ -1,0 +1,81 @@
+.agent-image-preview {
+  min-width: 0;
+  color: var(--dsw-alias-label-primary);
+}
+
+.agent-image-preview__controls {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding-block: 4px;
+}
+
+.agent-image-preview__controls output {
+  min-width: 5ch;
+  text-align: center;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.agent-image-preview__viewport {
+  box-sizing: border-box;
+  width: 100%;
+  height: clamp(160px, 36dvh, 320px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  touch-action: none;
+  user-select: none;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-1);
+}
+
+.agent-image-preview__viewport:focus-visible {
+  outline: 2px solid var(--dsw-alias-brand-primary);
+  outline-offset: -2px;
+}
+
+.agent-image-preview__viewport[data-pan='true'] {
+  cursor: grab;
+}
+
+.agent-image-preview__viewport[data-pan='true'][data-dragging='true'] {
+  cursor: grabbing;
+}
+
+.agent-image-preview__canvas {
+  display: grid;
+  place-items: center;
+  min-width: 100%;
+  min-height: 100%;
+  width: max-content;
+  height: max-content;
+}
+
+.agent-image-preview__canvas img {
+  display: block;
+  max-width: none;
+  object-fit: contain;
+}
+
+.agent-image-preview__canvas img[data-ready='false'] {
+  position: absolute;
+  visibility: hidden;
+  width: 0;
+  height: 0;
+}
+
+.agent-image-preview[data-expanded='true'] {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.agent-image-preview[data-expanded='true'] .agent-image-preview__viewport {
+  flex: 1 1 0;
+  height: auto;
+  min-height: 0;
+}
