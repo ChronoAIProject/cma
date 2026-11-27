@@ -6,6 +6,7 @@ import { readableError } from '../vocabulary/errors';
 export interface AuthorizedValue<Value> {
   readonly value: Value;
   readonly revalidateAt?: string | null;
+  readonly refreshAt?: string | null;
 }
 export type AuthorizedRead<Value> =
   | { readonly status: 'loading' }
@@ -60,6 +61,7 @@ export function useAuthorizedRead<Value>(
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let pending: AbortController | undefined;
     let expiration: ReturnType<typeof setTimeout> | undefined;
+    let refreshHint: ReturnType<typeof setTimeout> | undefined;
     // Wall-clock authority deadline of the published value. Background tabs may
     // throttle `expiration`, so foreground checks this directly.
     let validUntil: number | undefined;
@@ -89,6 +91,7 @@ export function useAuthorizedRead<Value>(
     };
     const clear = () => {
       clearTimeout(expiration);
+      clearTimeout(refreshHint);
       validUntil = undefined;
       pending?.abort();
       pending = undefined;
@@ -97,6 +100,7 @@ export function useAuthorizedRead<Value>(
     const load = async () => {
       if (!active || pending !== undefined || document.visibilityState === 'hidden') return;
       clearTimeout(retryTimer);
+      clearTimeout(refreshHint);
       if (retry.current.at > Date.now()) {
         retryTimer = setTimeout(() => void load(), retry.current.at - Date.now());
         return;
@@ -138,6 +142,9 @@ export function useAuthorizedRead<Value>(
           clear();
           void load();
         }, deadline - Date.now());
+        const refreshAt = Date.parse(result.refreshAt ?? '');
+        if (refreshAt > started && refreshAt < deadline)
+          refreshHint = setTimeout(() => void load(), Math.max(250, refreshAt - Date.now()));
         retry.current = { scope: retryScope, failures: 0, at: 0 };
         publish({ status: 'ready', value: result.value });
       } catch (error) {
@@ -193,6 +200,7 @@ export function useAuthorizedRead<Value>(
       retryRead.current = undefined;
       pending?.abort();
       clearTimeout(expiration);
+      clearTimeout(refreshHint);
       clearInterval(refresh);
       clearTimeout(retryTimer);
       document.removeEventListener('visibilitychange', foreground);

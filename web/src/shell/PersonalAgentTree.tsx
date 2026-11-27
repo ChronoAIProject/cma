@@ -1,7 +1,6 @@
 import { selectAgentAction } from './agentActionDispatch';
 import { RuntimeAttentionDisclosure } from './RuntimeAttentionDisclosure';
 import { runtimeAttention } from './runtimeAttention';
-import { CharacterAvatar } from '../character/CharacterAvatar';
 import { Button } from '../ui/Button';
 import { useEffect, useMemo } from 'react';
 import {
@@ -16,10 +15,9 @@ import { useTaskClock } from './useTaskClock';
 import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
 import { agentActions } from './treeActions';
-import { keyboardNavigation, agentSignal } from './treePresentation';
+import { agentListAction, agentSignal, keyboardNavigation } from './treePresentation';
 import { taskPresentation } from './taskPresentation';
 import { IconDataOutline16 } from '../ui/icons';
-import { sandboxChildStatus } from '../sandbox/lifecycle';
 import { taskTitle } from './taskTitle';
 import type { AgentDetail, AgentSummary, SandboxDetail } from '../api/types';
 import { setupEnvironmentRoute, SETUP_ENVIRONMENT_NOTICE } from '../agent/setupEnvironment';
@@ -140,6 +138,7 @@ export function PersonalAgentTree({
     const { status, label, parentNotice, showRunningTime } = presentation;
     const environmentNotice =
       parentNotice !== undefined || presentation.group === 'Status unavailable';
+    const ready = status === 'starting' || status === 'not_started';
     const displayedTime =
       environmentNotice || status === 'not_started'
         ? ''
@@ -154,18 +153,12 @@ export function PersonalAgentTree({
         label={title}
         accessibleLabel={`${title}, ${label}${parentNotice && parentNotice !== label ? `, ${parentNotice}` : ''}${displayedTime ? `, ${displayedTime}` : ''}`}
         layout={environmentNotice ? 'stacked' : 'line'}
-        icon={
-          environmentNotice ? (
-            <IconDataOutline16 />
-          ) : (
-            agentSignal(
-              sandboxChildStatus(sandbox, agent.status),
-              agent.id,
-              24,
-              sandbox.color ?? taskColor(agent.id),
-            )
-          )
-        }
+        icon={agentSignal(
+          agentListAction(agent.status, sandbox, presentation),
+          label,
+          16,
+          sandbox.color ?? taskColor(agent.id),
+        )}
         route={{ kind: 'agent', agentId: agent.id }}
         selected={route.kind === 'agent' && route.agentId === agent.id}
         dimmed={sandbox.status === 'paused'}
@@ -177,11 +170,9 @@ export function PersonalAgentTree({
                 {parentNotice && parentNotice !== label ? ` · ${parentNotice}` : ''}
               </span>
             ) : (
-              <span className="sr-only">{label}</span>
+              <span className={ready ? 'task-ready' : undefined}>{label}</span>
             )}
-            {environmentNotice ? null : status === 'starting' || status === 'not_started' ? (
-              <span className="task-ready">{status === 'starting' ? 'Preparing' : 'Ready'}</span>
-            ) : showRunningTime ? (
+            {environmentNotice || ready ? null : showRunningTime ? (
               <span className="task-running">
                 <span aria-hidden="true" className="task-running__dot" />
                 {runningTaskTime(agent.taskStartedAt, now)}
@@ -294,7 +285,7 @@ export function RetiredAgentRow({
         level={1}
         label={taskTitle(detail)}
         accessibleLabel={`${taskTitle(detail)}, Retired`}
-        icon={<CharacterAvatar pose="paused" still size={24} />}
+        icon={agentSignal('rest', 'Retired', 16)}
         route={{ kind: 'agent', agentId: detail.id }}
         selected
         meta={<span>Shown because you’re viewing it.</span>}

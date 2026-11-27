@@ -78,6 +78,70 @@ it('releases hidden and closed observation, reconnects without enablement, and w
   expect(fetch.mock.calls.at(-1)?.[1]?.method).toBe('DELETE');
 });
 
+it('keeps the live Browser observer across pending environment reads and clears it on policy change', async () => {
+  vi.useFakeTimers();
+  let environmentReads = 0;
+  let sequence = 1;
+  let policyRevision = 1;
+  const accessDeadline = new Date(Date.now() + 20_000).toISOString();
+  const fetch = vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+    if (String(input).endsWith('/environment')) {
+      environmentReads += 1;
+      const current = environment('available');
+      return Response.json({
+        ...current,
+        policy_revision: policyRevision,
+        access_revalidate_at: accessDeadline,
+        revalidate_at: new Date(Date.now() + 2000).toISOString(),
+        browser:
+          environmentReads === 1
+            ? current.browser
+            : { ...feature('temporarily_unavailable'), reason: 'observation_pending' },
+      });
+    }
+    return Response.json(observation(options?.method === 'DELETE' ? sequence : sequence++));
+  });
+  const sdk = createClient({ baseUrl: 'https://fixture.invalid', fetch });
+  const client = agentClient({
+    taskExperience: taskExperience('owner'),
+    files: {
+      ...emptyFiles,
+      environment: (agent, options) => sdk.agentFiles.environment(agent, options),
+    },
+    browser: sdk.agentBrowser,
+  });
+  render(
+    <CmaClientProvider client={client}>
+      <AgentSidePanel
+        viewerId="owner"
+        agentId="agent-a"
+        shared={false}
+        panel="browser"
+        onClose={() => {}}
+        onAccessChanged={() => {}}
+        publicationScope={new ArtifactPublicationScope()}
+      />
+    </CmaClientProvider>,
+  );
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  fireEvent.load(screen.getByAltText('Agent browser page'));
+  expect(screen.getByRole('figure', { name: 'Live browser page' })).toBeInTheDocument();
+  await act(() => vi.advanceTimersByTimeAsync(4000));
+  expect(environmentReads).toBe(3);
+  fireEvent.load(screen.getByAltText('Agent browser page'));
+  expect(screen.getByRole('figure', { name: 'Live browser page' })).toBeInTheDocument();
+  const observers = fetch.mock.calls.flatMap(([input]) => {
+    const observer = new URL(String(input)).searchParams.get('observer');
+    return observer ? [observer] : [];
+  });
+  expect(new Set(observers).size).toBe(1);
+  expect(fetch.mock.calls.some(([, options]) => options?.method === 'DELETE')).toBe(false);
+  policyRevision += 1;
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(screen.queryByAltText('Agent browser page')).not.toBeInTheDocument();
+  expect(fetch.mock.calls.some(([, options]) => options?.method === 'DELETE')).toBe(true);
+});
+
 it('shows ordered frames, rejects delayed A, loses Live on disconnect, and resumes the same context', async () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-11-03T00:00:00Z'));

@@ -1,6 +1,6 @@
 import { NavigationSettingsContext } from './sidebarContext';
 import { createRef, type ReactElement } from 'react';
-import { act, fireEvent, render as renderView, screen } from '@testing-library/react';
+import { act, fireEvent, render as renderView, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { ManagerNavigation, type EnvironmentNavigationHandle } from './ManagerNavigation';
@@ -82,7 +82,7 @@ it('starts with all personal Agents, retains each status filter and the Sandbox 
   expect(screen.queryByRole('link', { name: /Agent one/ })).not.toBeInTheDocument();
 });
 
-it('shows visible task states alongside characters and respects parent lifecycle barriers', async () => {
+it('shows visible task states alongside static posters and respects parent lifecycle barriers', async () => {
   const refresh = vi.fn();
   const draw = (sandbox: 'active' | 'paused', agent: AgentStatus) => (
     <ManagerNavigation
@@ -92,34 +92,23 @@ it('shows visible task states alongside characters and respects parent lifecycle
   );
   const view = render(draw('active', 'ready'));
   const cases = [
-    ['active', 'ready', 'idle', 'still', 'brand', 'Ready', 'Status unavailable', 'neutral'],
-    ['active', 'starting', 'preparing', 'still', 'brand', 'Starting', 'Preparing', 'ongoing'],
-    ['active', 'working', 'thinking', 'live', 'brand', 'Working', 'Working', 'ongoing'],
-    [
-      'active',
-      'waiting_approval',
-      'approval',
-      'live',
-      'warning',
-      'Needs approval',
-      'Waiting for approval',
-      'warning',
-    ],
-    ['active', 'failed', 'failed', 'still', 'error', 'Needs attention', 'Failed', 'error'],
-    ['active', 'stopped', 'paused', 'still', 'brand', 'Stopped', 'Stopped', undefined],
-    ['paused', 'working', 'paused', 'still', 'brand', 'Paused', 'Paused', undefined],
+    ['active', 'ready', 'rest', 'Status unavailable'],
+    ['active', 'starting', 'preparing', 'Preparing'],
+    ['active', 'working', 'working', 'Working'],
+    ['active', 'waiting_approval', 'question', 'Waiting for approval'],
+    ['active', 'failed', 'failed', 'Failed'],
+    ['active', 'stopped', 'rest', 'Stopped'],
+    ['paused', 'working', 'rest', 'Paused'],
   ] as const;
-  for (const [sandbox, agent, pose, motion, tone, , taskWord] of cases) {
+  for (const [sandbox, agent, action, taskWord] of cases) {
     view.rerender(draw(sandbox, agent));
     const name = new RegExp(`^Agent one,\\s*${taskWord}`);
     const row = screen.getByRole('treeitem', { name });
-    expect(row).toHaveTextContent(taskWord);
     expect(screen.getByRole('link', { name })).toBe(row.querySelector('a'));
-    const character = row.querySelector('.character-avatar');
-    expect(character).toHaveAttribute('data-pose', pose);
-    expect(character).toHaveAttribute('data-motion', motion);
-    expect(character).toHaveAttribute('data-tone', tone);
-    expect(character).toHaveAttribute('aria-hidden', 'true');
+    expect(within(row).getByText(taskWord)).toBeVisible();
+    expect(row.querySelector('img')?.getAttribute('src')).toContain(`/${action}/poster-`);
+    expect(row.querySelector('.agent-mascot__sprite')).toBeNull();
+    expect(row.querySelector('.agent-mascot__artwork')).toHaveAttribute('aria-hidden', 'true');
     expect(row.getAttribute('aria-label')).not.toMatch(/\d{4}-\d\d-\d\dT/);
     expect(row.querySelector('.task-running__dot') !== null).toBe(taskWord === 'Working');
     if (taskWord === 'Preparing')
@@ -394,7 +383,7 @@ function render(view: ReactElement) {
   return { ...result, rerender: (content: ReactElement) => result.rerender(wrap(content)) };
 }
 
-it('keeps the Sandbox character colour and uses a documented task fallback only when absent', () => {
+it('keeps the Sandbox colour beside the poster and uses a documented task fallback only when absent', () => {
   const items = navigationFixture().map((item) => ({
     ...item,
     sandbox: { ...item.sandbox, color: '#62d079' },
@@ -406,14 +395,13 @@ it('keeps the Sandbox character colour and uses a documented task fallback only 
     />
   );
   const view = render(draw(items));
-  const character = () =>
-    screen.getByRole('treeitem', { name: /^Agent one,/ }).querySelector('.character-avatar')!;
-  expect(character()).toHaveStyle({ color: '#62d079' });
-  expect(character().getAttribute('style')).not.toContain('hue-rotate');
+  const marker = () =>
+    screen.getByRole('treeitem', { name: /^Agent one,/ }).querySelector('.tree-row__signal-color')!;
+  expect(marker()).toHaveStyle({ backgroundColor: '#62d079' });
   view.rerender(
     draw(items.map((item) => ({ ...item, sandbox: { ...item.sandbox, color: undefined } }))),
   );
-  expect(character().getAttribute('style')).toContain('var(--dsw-alias-workspace-');
+  expect(marker().getAttribute('style')).toContain('var(--dsw-alias-workspace-');
 });
 
 it('keeps only the visible personal tree polling after visiting environments', async () => {

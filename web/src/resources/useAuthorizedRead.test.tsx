@@ -47,6 +47,26 @@ it('drops values at their authority deadline even when the refresh ignores cance
   expect(JSON.stringify(hook.result.current.state)).not.toContain('shared secret');
 });
 
+it('refreshes ahead of a distinct authority deadline and withdraws the value at expiry', async () => {
+  vi.useFakeTimers();
+  const read = vi
+    .fn()
+    .mockResolvedValueOnce({
+      value: 'current value',
+      refreshAt: new Date(Date.now() + 2000).toISOString(),
+      revalidateAt: new Date(Date.now() + 5000).toISOString(),
+    })
+    .mockImplementation(() => new Promise(() => {}));
+  const hook = renderHook(() => useAuthorizedRead(read));
+  await act(async () => {});
+  await act(() => vi.advanceTimersByTimeAsync(2000));
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.state).toEqual({ status: 'ready', value: 'current value' });
+  expect(hook.result.current.refreshing).toBe(true);
+  await act(() => vi.advanceTimersByTimeAsync(3000));
+  expect(hook.result.current.state.status).toBe('loading');
+});
+
 it('removes old rows on a failed refresh and aborts a request when disabled', async () => {
   vi.useFakeTimers();
   const signals: AbortSignal[] = [];

@@ -23,10 +23,15 @@ import {
 import { TreeRow } from './TreeRow';
 import { agentActions, sandboxActions, workspaceActions } from './treeActions';
 import { CreationBadge, useTreeCreation } from './treeCreation';
-import './Tree.css';
 import { statusLabel, statusTone } from '../vocabulary/status';
 import { taskActivityOrder } from './taskGroups';
-import { activityLabel, agentSignal, stateMeta, keyboardNavigation } from './treePresentation';
+import {
+  activityLabel,
+  agentListAction,
+  agentSignal,
+  stateMeta,
+  keyboardNavigation,
+} from './treePresentation';
 import { PersonalAgentTree } from './PersonalAgentTree';
 import { DeletionProgressList } from './DeletionProgressList';
 export { activityLabel } from './treePresentation';
@@ -338,6 +343,9 @@ export function Tree({
                                                           ? ('error' as const)
                                                           : statusTone(agent.status),
                                                     };
+                                              const status = refreshError
+                                                ? undefined
+                                                : agent.status;
                                               return (
                                                 <TreeRow
                                                   key={agent.id}
@@ -346,11 +354,11 @@ export function Tree({
                                                   level={3}
                                                   label={agentDisplayTitle(agent)}
                                                   icon={agentSignal(
-                                                    effectiveStatus,
-                                                    agent.id,
-                                                    20,
+                                                    agentListAction(status, sandbox, task),
+                                                    observation?.label ??
+                                                      statusLabel(effectiveStatus),
+                                                    16,
                                                     sandbox.color,
-                                                    observation,
                                                   )}
                                                   route={{ kind: 'agent', agentId: agent.id }}
                                                   selected={
