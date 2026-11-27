@@ -303,3 +303,66 @@ fn native_mention_only_and_reply_only_policies_use_their_exact_evidence() {
         Normalized::Activity(_)
     ));
 }
+
+#[test]
+fn scoped_discord_admission_matches_exact_sender_and_chat_ids() {
+    let policy: AdmissionPolicy = serde_json::from_value(json!({
+        "type":"scoped",
+        "senders":{"type":"allowlist","ids":["42"]},
+        "chats":{"type":"allowlist","ids":["99"]},
+        "groups":"all"
+    }))
+    .unwrap();
+    for (sender, chat, expected) in [
+        ("42", "99", None),
+        ("420", "99", Some(Refusal::SenderDenied)),
+        ("42", "990", Some(Refusal::ChatDenied)),
+        ("420", "990", Some(Refusal::SenderDenied)),
+    ] {
+        for kind in ["private", "group", "channel"] {
+            let mut event = raw();
+            event["author"]["id"] = sender.into();
+            event["channel_id"] = chat.into();
+            // Names are presentation only; the decision uses platform IDs.
+            event["author"]["username"] = "renamed".into();
+            match kind {
+                "group" => event["channel_type"] = 3.into(),
+                "channel" => event["guild_id"] = "88".into(),
+                _ => {}
+            }
+            match (normalize(&event, "77", &policy).unwrap(), expected) {
+                (Normalized::Activity(activity), None) => {
+                    assert_eq!(activity.conversation.id, chat);
+                    assert_eq!(activity.actor.id, sender);
+                }
+                (Normalized::Refused(actual), Some(expected)) => assert_eq!(actual, expected),
+                _ => panic!("unexpected admission for {kind}"),
+            }
+        }
+    }
+}
+
+#[test]
+fn scoped_discord_admission_supports_independent_dimensions_and_explicit_deny() {
+    let open = json!({"type":"open"});
+    let deny = json!({"type":"deny"});
+    let sender = json!({"type":"allowlist","ids":["42"]});
+    let chat = json!({"type":"allowlist","ids":["99"]});
+    for (senders, chats, expected) in [
+        (sender.clone(), open.clone(), None),
+        (open.clone(), chat.clone(), None),
+        (deny.clone(), chat, Some(Refusal::SenderDenied)),
+        (sender, deny, Some(Refusal::ChatDenied)),
+        (open.clone(), open, None),
+    ] {
+        let policy = serde_json::from_value(json!({
+            "type":"scoped","senders":senders,"chats":chats,"groups":"all"
+        }))
+        .unwrap();
+        match (normalize(&raw(), "77", &policy).unwrap(), expected) {
+            (Normalized::Activity(_), None) => {}
+            (Normalized::Refused(actual), Some(expected)) => assert_eq!(actual, expected),
+            _ => panic!("unexpected scoped admission"),
+        }
+    }
+}
