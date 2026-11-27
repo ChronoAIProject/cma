@@ -92,14 +92,22 @@ test('admission lost stop acknowledgement reconciles once and restores through p
 test('admission retains one stop and one resume and probes public behavior on both Managers', async () => {
   const probes = [];
   const resumeAttempts = [];
+  const discarded = [];
   let reserved = 0;
   let bothEntered;
   const pairing = new Promise(resolve => { bothEntered = resolve; });
   const state = {revision: 0, operator_stop: null, last_change: null, writes_available: true, history: []};
   const matrix = new AdminMatrix({fixture: fixture(), record: () => {},
     reserveResumePair: async () => { reserved += 1; },
-    request: async (_role, am, method, path, {body, pacedPair}) => {
-      const success = () => ({status: 200, body: structuredClone(state)});
+    withholdAdmissionReply: true,
+    request: async (_role, am, method, path, {body, pacedPair = false, discardSuccessfulReply}) => {
+      const success = () => {
+        if (discardSuccessfulReply) {
+          discarded.push([am, path]);
+          return {status: 200, body: null, timing: {reply_discarded: true}};
+        }
+        return {status: 200, body: structuredClone(state)};
+      };
       if (method === 'GET') return success();
       const stopping = path.endsWith('/stop');
       if (!stopping) resumeAttempts.push([am, body.expected_revision, pacedPair]);
@@ -123,6 +131,7 @@ test('admission retains one stop and one resume and probes public behavior on bo
   });
   assert.deepEqual(probes, [{am: 'b', mode: 'paused', stopped: true}, {am: 'a', mode: 'open', stopped: false}]);
   assert.deepEqual(resumeAttempts, [['b', 0, false], ['b', 1, true], ['a', 1, true]]);
+  assert.deepEqual(discarded, [['a', '/api/v1/admin/admission/stop'], ['b', '/api/v1/admin/admission/resume']]);
   assert.equal(state.revision, 2);
   assert.equal(state.history[1].reason, 'local-matrix-offline-test-1');
 });

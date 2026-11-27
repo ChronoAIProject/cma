@@ -65,19 +65,26 @@ export const READ_CASES = [
 export class AdminMatrix {
   // request(role, am, method, path, {body,key,allowed,timeout}) must make a real
   // owner-authenticated local request and return {status,body}; no auto retries.
-  constructor({fixture, request, record, reserveResumePair, onBoundary = async()=>{}, onFailure = async()=>{}}) {
+  constructor({fixture, request, record, reserveResumePair, withholdAdmissionReply = false,
+    onBoundary = async()=>{}, onFailure = async()=>{}}) {
     validateFixture(fixture);
     check(typeof request==='function' && typeof record==='function','owner_callbacks_required');
-    Object.assign(this,{fixture,request,record,reserveResumePair,onBoundary,onFailure}); this.rows=[]; this.current=null;
+    check(!withholdAdmissionReply || typeof reserveResumePair === 'function', 'admission_reply_control_requires_paired_resume');
+    Object.assign(this,{fixture,request,record,reserveResumePair,withholdAdmissionReply,onBoundary,onFailure});
+    this.rows=[]; this.current=null;
   }
-  async call(am,method,path,body,allowed=[200],role='admin',key,pacedPair = false) {
+  async call(am,method,path,body,allowed=[200],role='admin',key,transport = {}) {
     const started=performance.now();
     const observation={am,method,route:path.split('?')[0].replace(/\/(sandboxes|profiles|warm-pools)\/[^/]+/g,'/$1/{id}'),role};
     try {
-      const response=await this.request(role,am,method,path,{body,key,allowed,timeout:30000,pacedPair});
+      const response=await this.request(role,am,method,path,{body,key,allowed,timeout:30000,...transport});
       observation.status=response?.status;
       observation.am=response?.timing?.am ?? am;
       observation.request_id=response?.timing?.request_id;
+      if (transport.discardSuccessfulReply && response.status === 200) {
+        check(response.timing?.reply_discarded === true && response.body === null, 'admission_reply_was_not_discarded');
+        observation.reply_discarded = true;
+      }
       check(allowed.includes(response?.status),'unexpected_http_'+response?.status);
       return response.body;
     } catch(error) {
@@ -172,9 +179,13 @@ export class AdminMatrix {
       const initial=await this.call(am,'GET',path);
       check(initial.writes_available===true && initial.operator_stop===null,'admission_fixture_must_be_open_writable');
       const reason=`local-matrix-${this.fixture.run_id}-${iteration}`;
+      const discardSuccessfulReply = this.withholdAdmissionReply;
       await this.withRestoration(async () => {
-        const stopped=await this.call(am,'POST',`${path}/stop`,{expected_revision:initial.revision,reason});
-        check(stopped.operator_stop?.reason === reason && stopped.revision === initial.revision + 1,
+        const stopReply = await this.call(am, 'POST', `${path}/stop`, {expected_revision: initial.revision, reason},
+          [200], 'admin', undefined, {discardSuccessfulReply});
+        const stopped = discardSuccessfulReply ? await this.call(peer, 'GET', path) : stopReply;
+        check(stopped.operator_stop?.reason === reason && stopped.revision === initial.revision + 1
+          && stopped.last_change?.reason === reason,
           'admission_stop_ack');
         const replay = await this.call(peer, 'POST', `${path}/stop`,
           {expected_revision: initial.revision, reason: reason + '-competing'});
@@ -194,20 +205,25 @@ export class AdminMatrix {
         if (this.reserveResumePair) {
           await this.reserveResumePair();
           const attempts = await Promise.allSettled([peer, am].map(target =>
-            this.call(target, 'POST', resumePath, resume, [200, 409], 'admin', undefined, true)));
+            this.call(target, 'POST', resumePath, resume, [200, 409], 'admin', undefined,
+              {pacedPair: true, discardSuccessfulReply})));
           for (const attempt of attempts) if (attempt.status === 'rejected') throw attempt.reason;
           const results = attempts.map(attempt => attempt.value);
-          const accepted = results.filter(value => value?.revision === stopped.revision + 1 && value.operator_stop === null);
+          const accepted = results.filter(value => discardSuccessfulReply ? value === null
+            : value?.revision === stopped.revision + 1 && value.operator_stop === null);
           check(accepted.length === 1 && results.filter(value => value?.code === 'admission_control_conflict').length === 1,
             'admission_concurrent_resume_unbound');
           [resumed] = accepted;
         } else {
           resumed = await this.call(peer, 'POST', resumePath, resume);
         }
-        check(resumed.revision === stopped.revision + 1 && resumed.operator_stop === null, 'admission_resume_ack');
+        if (!discardSuccessfulReply) {
+          check(resumed.revision === stopped.revision + 1 && resumed.operator_stop === null, 'admission_resume_ack');
+        }
         const settled = await this.call(am, 'GET', path);
-        check(admissionHistory(settled) && settled.revision === resumed.revision && settled.operator_stop === null
-          && isDeepStrictEqual(settled.last_change, resumed.last_change)
+        check(admissionHistory(settled) && settled.revision === stopped.revision + 1 && settled.operator_stop === null
+          && settled.last_change.reason === reason
+          && (discardSuccessfulReply || isDeepStrictEqual(settled.last_change, resumed.last_change))
           && isDeepStrictEqual(settled.last_change.old_stop, stopped.operator_stop)
           && isDeepStrictEqual(settled.history[1], stopped.last_change), 'admission_resume_not_visible');
         await verifyAdmission?.(am, 'open');

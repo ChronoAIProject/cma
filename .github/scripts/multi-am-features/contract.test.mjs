@@ -84,6 +84,28 @@ test('a two-request fixture burst reserves both slots and leaves room on each si
   await assert.rejects(pacer.wait('operator', 'POST', 3), /fixture_pacing_burst_bound/);
 });
 
+test('discarding an acknowledgement cancels the success body and retains typed refusal bodies', async t => {
+  let cancelled = false;
+  const replies = [
+    new Response(new ReadableStream({cancel() { cancelled = true; }}),
+      {headers: {'X-Request-Id': 'success'}}),
+    Response.json({code: 'admission_control_conflict'}, {status: 409}),
+  ];
+  t.mock.method(globalThis, 'fetch', async () => replies.shift());
+  const api = new API({bearer: 'synthetic-operator', host: 'fixture.test',
+    ams: {a: 'http://127.0.0.1:10000', b: 'http://127.0.0.1:10001'}});
+  const path = '/api/v1/admin/admission/resume';
+  const options = {allowed: [200, 409], discardSuccessfulReply: true, body: {expected_revision: 1}};
+  const success = await api.rawRequest('a', 'POST', path, options);
+  const conflict = await api.rawRequest('b', 'POST', path, options);
+  assert.equal(cancelled, true);
+  assert.equal(success.body, null);
+  assert.equal(success.timing.reply_discarded, true);
+  assert.equal(success.timing.request_id, 'success');
+  assert.equal(conflict.body.code, 'admission_control_conflict');
+  assert.equal(conflict.timing.reply_discarded, undefined);
+});
+
 test('client config accepts split UTF-8 over a pipe and rejects overlong or truncated input', async () => {
   const bytes = Buffer.from(JSON.stringify({owner: 'fixture-测试'}));
   assert.deepEqual(await readConfig([...bytes].map(x => Buffer.from([x]))), {owner: 'fixture-测试'});

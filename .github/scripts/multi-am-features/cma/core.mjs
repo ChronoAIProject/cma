@@ -202,7 +202,8 @@ export class API {
     }
     return response;
   }
-  async rawRequest(am, method, path, {body, key, allowed = [200], timeout = 30000, documentShareToken, prefer} = {}) {
+  async rawRequest(am, method, path, {body, key, allowed = [200], timeout = 30000,
+    documentShareToken, prefer, discardSuccessfulReply = false} = {}) {
     const start = performance.now();
     const headers = this.headers({...(body === undefined ? {} : {'Content-Type': 'application/json'}),
       ...(key ? {'Idempotency-Key': key} : {}),
@@ -211,11 +212,15 @@ export class API {
     const result = await fetch(this.url(am, path), {method, headers,
       body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeout), redirect: 'error'});
     const headerMs = performance.now() - start;
-    const text = await result.text(); check(text.length < 4 * 1024 * 1024, 'api_body_limit');
+    const discarded = discardSuccessfulReply && result.ok && Boolean(result.body);
+    if (discarded) await result.body.cancel();
+    const text = discarded ? '' : await result.text();
+    check(text.length < 4 * 1024 * 1024, 'api_body_limit');
     let value = null; if (text) { try { value = JSON.parse(text); } catch { throw new Error('api_json_invalid'); } }
     const observation = {am, method, route: path.split('?')[0].replace(/(\/(?:agents|sandboxes|agent-lifecycle|responses|commands))\/[^/]+/g, '$1/{id}'),
       status: result.status, header_ms: headerMs, body_ms: performance.now() - start,
       request_id: result.headers.get('x-request-id')};
+    if (discarded) observation.reply_discarded = true;
     this.observe(observation);
     const response = {status: result.status, body: value, timing: observation,
       retry_after: result.headers.get('retry-after')};

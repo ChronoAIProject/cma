@@ -72,7 +72,12 @@ const matrix = new ExtendedAdminMatrix({fixture,
   onFailure: (stage, error, row) => retainFailure(config.matrix_output, stage, error,
     {case: 'admin.' + row?.feature, phase, iteration: row?.iteration}),
   reserveResumePair: () => requestPacer.wait(config.admin_bearer, 'POST', 2),
+  withholdAdmissionReply: true,
   request: (role, am, method, path, options) => {
+    if (options.discardSuccessfulReply) {
+      check(role === 'admin' && method === 'POST' && /^\/api\/v1\/admin\/admission\/(stop|resume)$/.test(path),
+        'admission_reply_discard_route_unexpected');
+    }
     if (options.pacedPair) {
       check(role === 'admin' && method === 'POST' && path === '/api/v1/admin/admission/resume',
         'admission_resume_pair_route_unexpected');
@@ -249,6 +254,10 @@ try {
       verifyAdmission: async (ingress, mode) => {
         const {record, create, cleanup} = context;
         check(typeof record.workspaceId === 'string' && record.workspaceId.length > 0, 'admission_probe_workspace_missing');
+        const existing = (await user.rawRequest(ingress, 'GET', '/api/v1/agents/' + record.agentId)).body;
+        check(existing?.id === record.agentId && existing.status === 'ready'
+          && existing.workspace?.id === record.workspaceId && existing.sandbox?.id === record.sandboxId,
+        'admission_probe_existing_agent_changed');
         let child;
         try {
           child = await create(ingress, false, {workspace_id: record.workspaceId});

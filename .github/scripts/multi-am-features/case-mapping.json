@@ -1702,7 +1702,6 @@
     "cases": [
       "admin.admission_stop_resume"
     ],
-    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
     "minimum_runs": 3,
     "routing": "both",
     "phases": [
@@ -1714,7 +1713,6 @@
     "cases": [
       "admin.admission_stop_resume"
     ],
-    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
     "minimum_runs": 3,
     "routing": "both",
     "phases": [
