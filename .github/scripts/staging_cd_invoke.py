@@ -240,7 +240,7 @@ def deploy(env, masker, script_reader=private_script, runner=None,
     for credential in credentials.values():
         masker(credential)
     with precondition("budget"):
-        remaining(started, mode=mode)
+        remaining(started, mode=mode, env=env)
     with precondition("checkout"):
         script = script_reader(env)
     with precondition("policy"):
@@ -290,7 +290,7 @@ def deploy(env, masker, script_reader=private_script, runner=None,
                 os.chmod(path, 0o600)
                 stream.write(canonical(request))
         with precondition("budget"):
-            remaining(started, mode=mode)
+            remaining(started, mode=mode, env=env)
         if runner is None:
             runner = partial(execute, limit=limit)
         try:
