@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from fixture_evidence import summarize
+from fixture_evidence import summarize, summarize_runtime_failure
 
 
 class FixtureEvidenceTests(unittest.TestCase):
@@ -50,6 +50,26 @@ class FixtureEvidenceTests(unittest.TestCase):
             self.assertTrue(result['roles']['mongo']['observed'])
             (root / 'pods.final.json').write_text('{invalid')
             self.assertTrue(summarize(root)['pod_sample_invalid'])
+
+    def test_timeout_preserves_the_runtime_and_volume_states_before_retirement(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            failure = root / 'diagnosis-42'
+            failure.mkdir()
+            (root / 'pods.final.json').write_text('{"items": []}')
+            (failure / 'pods.final.json').write_text(json.dumps({'items': [
+                {'spec': {'containers': [{'name': 'manager'}]}, 'status': {'phase': 'Running'}},
+                {'metadata': {'name': 'private-runtime'},
+                 'spec': {'containers': [{'name': 'runtime'}]}, 'status': {'phase': 'Pending',
+                    'conditions': [{'type': 'PodScheduled', 'status': 'False', 'message': 'private-reason'}]}}]}))
+            (failure / 'pvc.final.json').write_text(json.dumps({'items': [
+                {'metadata': {'name': 'private-volume'}, 'status': {'phase': 'Pending'}},
+                {'status': {'phase': 'Bound'}}]}))
+            result = summarize_runtime_failure(root)
+            self.assertEqual(result['runtime_pods']['phases'], {'Pending': 1})
+            self.assertEqual(result['pod_scheduled'], {'False': 1})
+            self.assertEqual(result['home_volume_phases'], {'Bound': 1, 'Pending': 1})
+            self.assertNotIn('private-', json.dumps(result))
 
     def test_symlinked_capture_is_not_followed(self):
         with tempfile.TemporaryDirectory() as temporary:

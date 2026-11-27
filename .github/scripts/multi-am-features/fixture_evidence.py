@@ -11,6 +11,43 @@ ROLES = {'am_a': 'am-a-0', 'am_b': 'am-b-0', 'mongo': 'mongo',
          'storage': 'storage', 'runtime_role': 'am-role'}
 
 
+def _fixture_items(directory, name):
+    path = directory / (name + '.final.json')
+    if path.is_symlink() or not path.is_file():
+        return None
+    rows = json.loads(path.read_bytes())['items']
+    if not isinstance(rows, list) or len(rows) > 200 or not all(isinstance(row, dict) for row in rows):
+        raise ValueError('fixture_resource_sample_bound')
+    return rows
+
+
+def summarize_runtime_failure(directory):
+    """Project the runtime objects captured before the journey retires them."""
+    samples = sorted((path for path in directory.glob('diagnosis-*')
+                      if path.name.removeprefix('diagnosis-').isdigit()
+                      and path.is_dir() and not path.is_symlink()), reverse=True)
+    if not samples:
+        return None
+    sample = samples[0]
+    result = {'scope': 'before_public_retirement'}
+    pods = _fixture_items(sample, 'pods')
+    if pods is not None:
+        runtime = [pod for pod in pods if any(container.get('name') == 'runtime'
+                   for container in pod.get('spec', {}).get('containers', []))]
+        result['runtime_pods'] = summarize_pods({'items': runtime})
+        conditions = {'True', 'False', 'Unknown'}
+        result['pod_scheduled'] = dict(sorted(Counter(
+            known(next((c.get('status') for c in pod.get('status', {}).get('conditions', [])
+                        if c.get('type') == 'PodScheduled'), None), conditions)
+            for pod in runtime).items()))
+    pvcs = _fixture_items(sample, 'pvc')
+    if pvcs is not None:
+        result['home_volume_phases'] = dict(sorted(Counter(
+            known(row.get('status', {}).get('phase'), {'Pending', 'Bound', 'Lost'})
+            for row in pvcs).items()))
+    return result
+
+
 def summarize(directory):
     result = {'scope': 'final_bounded_fixture_samples', 'complete_history': False,
               'root_cause_inferred': False, 'roles': {}, 'files': {}}

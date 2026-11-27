@@ -14,6 +14,7 @@ import urllib.error
 from desktop_policy import install as install_desktop_policy
 from diagnostics import initialization_timeout
 from fixture_evidence import summarize as summarize_fixture
+from fixture_evidence import summarize_runtime_failure
 from infrastructure import Infrastructure
 from release_images import checked_packet
 from stage_evidence import summarize as summarize_stages
@@ -153,6 +154,13 @@ def run(args):
                 result['fixture_evidence'] = summarize_fixture(private)
             except Exception:
                 result['fixture_evidence_failed'] = True
+            if result['verdict'] == 'FAIL':
+                try:
+                    runtime_failure = summarize_runtime_failure(private)
+                    if runtime_failure is not None:
+                        result['runtime_failure_evidence'] = runtime_failure
+                except (AttributeError, OSError, ValueError, TypeError, KeyError):
+                    result['runtime_failure_evidence_failed'] = True
             try:
                 result['scheduler_stage_evidence'] = summarize_stages(private)
             except Exception:
