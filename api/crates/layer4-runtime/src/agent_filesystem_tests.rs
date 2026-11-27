@@ -59,6 +59,7 @@ impl Fixture {
                 sandbox_id: self.0.sandbox_id.clone(),
                 runtime_generation: self.0.generation,
                 boot_id: "a".repeat(32),
+                home_identity: None,
                 path: path.into(),
                 max_bytes,
             },
@@ -309,6 +310,7 @@ fn shared_files_hide_control_credentials_and_refuse_ancestor_deletion() {
                 sandbox_id: fixture.0.sandbox_id.clone(),
                 runtime_generation: fixture.0.generation,
                 boot_id: "a".repeat(32),
+                home_identity: None,
                 path: path.into(),
                 max_bytes: 1024,
             }

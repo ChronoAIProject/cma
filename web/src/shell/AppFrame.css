@@ -148,7 +148,7 @@
   border-left: none;
 }
 
-.frame[data-details-overlay]:not([data-sidebar-overlay]) .frame__details {
+.frame[data-details-overlay]:not([data-sidebar-overlay], [data-details-expanded]) .frame__details {
   position: absolute;
   grid-column: 1 / -1;
   top: 0;
@@ -166,6 +166,16 @@
 
 .frame[data-phone][data-details-overlay]:not([data-sidebar-overlay]) .frame__details {
   width: 100%;
+}
+
+.frame[data-details-expanded] .frame__details {
+  position: absolute;
+  grid-column: 1 / -1;
+  inset: 0;
+  z-index: 10;
+  width: auto;
+  visibility: visible;
+  border: 0;
 }
 
 .frame[data-details-inline] .frame__sidebar {

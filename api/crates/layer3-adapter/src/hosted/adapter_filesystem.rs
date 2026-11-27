@@ -146,13 +146,20 @@ impl HostedAdapter {
         if !home.request.policy.mounts_full_home() {
             return Err(unsupported());
         }
-        let status = measure(Stage::RuntimeStatus, self.inspect_runtime_status(handle)).await?;
         validate_identity(
             &state,
             &request.sandbox_id,
             request.runtime_generation,
             &request.boot_id,
         )?;
+        if let Some(receipt) = self
+            .backend
+            .read_file_with_binding(handle, home, request)
+            .await?
+        {
+            return Ok(receipt);
+        }
+        let status = measure(Stage::RuntimeStatus, self.inspect_runtime_status(handle)).await?;
         if !status.agent_filesystem {
             return Err(unsupported());
         }

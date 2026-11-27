@@ -63,15 +63,10 @@ async fn attach_subject_inner(
         return next.run(request).await;
     }
     let mut observation = crate::request_observation::Resolution::start(&request, "ambient");
-    let personal_agent_inventory = request.method() == axum::http::Method::GET
-        && request.uri().path() == "/api/v1/agents"
-        && !request.uri().query().is_some_and(|query| {
-            url::form_urlencoded::parse(query.as_bytes()).any(|(key, _)| key == "organization")
-        });
+    let personal_inventory = is_personal_inventory(&request);
     // Keep the resolver's state out of each diagnostic scope's future.
-    let resolution = Box::pin(
-        auth.resolve_request_with_proxy_inventory(request.headers(), personal_agent_inventory),
-    );
+    let resolution =
+        Box::pin(auth.resolve_request_with_proxy_inventory(request.headers(), personal_inventory));
     let ((resolved, failure), retry_after) = super::identity_throttle::capture(
         layer2_core::diagnostic_context::DiagnosticContext::current()
             .with_phase("identity")
@@ -211,6 +206,18 @@ async fn attach_subject_inner(
             .insert(AuthenticatedSubject(resolved.subject));
     }
     next.run(request).await
+}
+
+fn is_personal_inventory(request: &axum::extract::Request) -> bool {
+    let path = request.uri().path();
+    request.method() == axum::http::Method::GET
+        && matches!(path, "/api/v1/agents" | "/api/v1/sandboxes")
+        && !request.uri().query().is_some_and(|query| {
+            url::form_urlencoded::parse(query.as_bytes()).any(|(key, value)| {
+                key == "organization"
+                    || (path == "/api/v1/sandboxes" && key == "shared" && value != "false")
+            })
+        })
 }
 
 pub fn identity_failure() -> Response {

@@ -7,6 +7,8 @@ pub(crate) struct NativeRuntimeProof {
     pod: PodBinding,
     request_sha256: String,
     home_identity: String,
+    home_revision: Option<NativeHomeRevision>,
+    home_reused: bool,
 }
 impl NativeRuntimeProof {
     pub(crate) fn member(&self) -> &DynamicObject {
@@ -14,6 +16,12 @@ impl NativeRuntimeProof {
     }
     pub(crate) fn pod(&self) -> &PodBinding {
         &self.pod
+    }
+    pub(crate) fn home_revision(&self) -> Option<&NativeHomeRevision> {
+        self.home_revision.as_ref()
+    }
+    pub(crate) fn home_reused(&self) -> bool {
+        self.home_reused
     }
     pub(crate) fn matches(
         &self,
@@ -110,14 +118,25 @@ impl AgentSandboxClient {
         request: &ProviderSandboxRequest,
         home: &HomeVolumeAttachment,
     ) -> Result<NativeRuntimeProof> {
+        self.native_runtime_proof_with_revision(runtime, request, home, None)
+            .await
+    }
+
+    pub(crate) async fn native_runtime_proof_with_revision(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        prior: Option<&NativeHomeRevision>,
+    ) -> Result<NativeRuntimeProof> {
         let origin = self.native_runtime_home_origin(runtime, home)?;
         let (name, _) = parse_handle(runtime)?;
         let parameters = ListParams::default().labels(&pods::selector(name)).limit(3);
         let (member, pods) = tokio::join!(
-            self.pools.prove_native_home(home),
+            self.pools.prove_native_home_version(home, prior),
             self.pods.list(&parameters)
         );
-        let member = member?;
+        let (member, home_revision, home_reused) = member?;
         let desired = self
             .pools
             .runtime_desired_for_member(origin, home, request, name, &member)?;
@@ -128,6 +147,8 @@ impl AgentSandboxClient {
             pod,
             request_sha256: crate::provider_request_digest(request)?,
             home_identity: home.identity()?,
+            home_revision,
+            home_reused,
         })
     }
 }

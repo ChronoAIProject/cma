@@ -1,5 +1,8 @@
 use super::*;
-use layer2_core::sandbox::store::WorkspaceAdmissionStore;
+use layer2_core::sandbox::store::{
+    SandboxReconciliationStore as _, SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
+    WorkspaceAdmissionStore,
+};
 use layer2_core::sandbox::{SandboxCheckpointConversation, SandboxCheckpointRef};
 use layer3_adapter::{CheckpointReceipt, ConversationSnapshot, WriterState};
 use sha2::{Digest, Sha256};
@@ -17,12 +20,14 @@ async fn completed_retirement(harness: &Harness, remove_runtime: bool, released_
     if remove_runtime {
         harness.adapter.teardown(&harness.runtime).await.unwrap();
     }
-    parent.begin_retirement(stamp.clone()).unwrap();
-    harness
-        .store
-        .save_sandbox(expected, parent.clone())
-        .await
-        .unwrap();
+    if parent.status != SandboxStatus::Retiring {
+        parent.begin_retirement(stamp.clone()).unwrap();
+        harness
+            .store
+            .save_sandbox(expected, parent.clone())
+            .await
+            .unwrap();
+    }
     let expected = parent.revision;
     parent.runtime = None;
     if released_home {
@@ -50,6 +55,115 @@ async fn completed_retirement(harness: &Harness, remove_runtime: bool, released_
         .schedule(layer2_core::sandbox::SandboxWorkStep::WaitForPurge, stamp);
     assert_eq!(parent.validate(), Ok(()));
     harness.store.save_sandbox(expected, parent).await.unwrap();
+}
+
+#[tokio::test]
+async fn retired_sandbox_deletes_an_agent_stopped_during_first_worktree_creation() {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let origin = AgentOrigin::Lifecycle {
+        operation_id: "interrupted-startup".into(),
+    };
+    let creation_key = format!(
+        "lifecycle:{}",
+        layer2_core::profiles::content_digest(&origin).unwrap()
+    );
+    let admission = harness
+        .store
+        .admit_agent(AgentAdmission {
+            binding: None,
+            created_by: None,
+            owner: harness.workspace.owner.clone(),
+            workspace_id: harness.workspace.id.clone(),
+            agent_id: AgentId::generate(),
+            worktree_id: WorktreeId::generate(),
+            profile: agent_profile(Vec::new()),
+            capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
+            title: None,
+            first_message: None,
+            origin,
+            creation_key,
+            event_at: rfc3339_at(harness.now),
+        })
+        .await
+        .unwrap();
+    let admitted = &admission.creation().agent;
+    let mut parent = harness
+        .store
+        .get_sandbox(&admitted.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let at = harness.now + Duration::from_secs(5);
+    let expected = parent.revision;
+    parent.begin_retirement(rfc3339_at(at)).unwrap();
+    harness
+        .store
+        .save_sandbox(expected, parent.clone())
+        .await
+        .unwrap();
+    let outcome = harness
+        .store
+        .recover_runtime_loss(SandboxRuntimeLossRequest {
+            sandbox_id: parent.id.clone(),
+            expected_revision: parent.revision,
+            expected_runtime: parent.runtime.clone(),
+            retain_runtime: false,
+            native_retirement_finality: false,
+            interruption_cause: layer2_core::sandbox::SandboxInterruptionCause::OutOfMemory,
+            observed_at: rfc3339_at(at),
+        })
+        .await
+        .unwrap();
+    assert_eq!(outcome, SandboxRuntimeLossOutcome::RecoveryScheduled);
+    let stopped = harness.stored(&admitted.id).await;
+    assert_eq!(stopped.status, AgentStatus::Stopped);
+    let tree = harness
+        .store
+        .get_worktree(&stopped.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(tree.status, WorktreeStatus::Creating);
+    completed_retirement(&harness, false, true).await;
+    let before = harness.backend.requests().await.len();
+    let at = harness.now + Duration::from_secs(11);
+    assert!(stopped.has_no_runtime_effects());
+    harness
+        .store
+        .schedule_agent_delete(AgentDeleteRequest {
+            target: AgentControlTarget::from(&stopped),
+            requested_at: rfc3339_at(at),
+        })
+        .await
+        .unwrap();
+    assert!(harness.worker.run_one(&stopped.id, at).await.unwrap());
+    let pending = harness.stored(&stopped.id).await;
+    assert_eq!(pending.status, AgentStatus::Stopped);
+    assert_eq!(pending.work.step, AgentWorkStep::EnsureProcessClosed);
+    assert_eq!(pending.work.attempts, 1);
+    assert_eq!(
+        harness.store.get_worktree(&tree.id).await.unwrap(),
+        Some(tree)
+    );
+    assert_eq!(harness.backend.requests().await.len(), before);
+
+    harness.adapter.teardown(&harness.runtime).await.unwrap();
+    let before = harness.backend.requests().await.len();
+    let at = at + Duration::from_secs(60);
+    for _ in 0..4 {
+        harness.worker.run_one(&stopped.id, at).await.unwrap();
+    }
+    let agent = harness.stored(&admitted.id).await;
+    let worktree = harness
+        .store
+        .get_worktree(&agent.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(agent.status, AgentStatus::Deleted);
+    assert_eq!(agent.work.receipts, stopped.work.receipts);
+    assert_eq!(worktree.status, WorktreeStatus::Removed);
+    assert_eq!(harness.backend.requests().await.len(), before);
 }
 
 #[tokio::test]

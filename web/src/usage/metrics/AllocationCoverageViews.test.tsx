@@ -1,3 +1,4 @@
+import { useState, type ComponentProps } from 'react';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
@@ -6,7 +7,15 @@ import { AllocationHistory } from './AllocationHistory';
 import { UsageInventoryRow } from './UsageInventoryRow';
 import { OwnerAllocationChart } from './OwnerAllocationChart';
 import { MetricSummary } from './MetricSummary';
+import type { Metric } from './model';
 import { asOf, metricRow, metricsClient, reportFixture } from './testFixtures';
+
+function InteractiveAllocationChart(
+  props: Omit<ComponentProps<typeof AllocationChart>, 'metric' | 'onMetricChange'>,
+) {
+  const [metric, setMetric] = useState<Metric>('cpu');
+  return <AllocationChart {...props} metric={metric} onMetricChange={setMetric} />;
+}
 
 const props = {
   api: metricsClient(),
@@ -58,7 +67,7 @@ it('does not turn unverified coverage with zero confirmed missing time into a ch
     },
   };
   render(
-    <AllocationChart
+    <InteractiveAllocationChart
       {...props}
       admin={false}
       page={{ report_id: props.reportId, as_of: asOf, next: null, total_count: 1, items: [row] }}
@@ -82,7 +91,7 @@ for (const state of states) {
           <section aria-label="Report coverage">
             <AllocationHistory value={period} />
           </section>
-          <AllocationChart
+          <InteractiveAllocationChart
             {...props}
             admin={false}
             page={{
@@ -163,7 +172,7 @@ it('keeps report, plotted resource ranking, and off-chart row coverage in their 
           }}
         />
       </section>
-      <AllocationChart
+      <InteractiveAllocationChart
         {...props}
         admin={false}
         page={{ report_id: props.reportId, as_of: asOf, next: null, total_count: 100, items }}
@@ -200,7 +209,7 @@ it('adds confirmed and projected durations within a Sandbox group without roundi
     },
   }));
   render(
-    <AllocationChart
+    <InteractiveAllocationChart
       {...props}
       admin={false}
       page={{ report_id: props.reportId, as_of: asOf, next: null, total_count: 1, items }}
@@ -285,7 +294,7 @@ it.each(['CPU', 'Disk'] as const)(
       ],
     });
     render(
-      <AllocationChart
+      <InteractiveAllocationChart
         {...props}
         api={api}
         admin

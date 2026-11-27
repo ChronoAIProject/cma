@@ -1,0 +1,22 @@
+.agent-mascot {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.agent-mascot__artwork {
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+}
+
+.agent-mascot__poster {
+  display: block;
+  image-rendering: pixelated;
+}
+
+.agent-mascot__fallback {
+  inline-size: 50%;
+  block-size: 50%;
+  outline: 1px solid currentColor;
+}

@@ -54,6 +54,7 @@ async fn filesystem_operations_reach_hosted_authority_checks() {
                     sandbox_id: "sandbox".into(),
                     runtime_generation: 1,
                     boot_id: "a".repeat(32),
+                    home_identity: None,
                     path: "file".into(),
                     max_bytes: 1024,
                 },

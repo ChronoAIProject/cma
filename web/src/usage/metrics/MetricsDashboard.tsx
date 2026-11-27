@@ -86,6 +86,7 @@ function MetricsDashboardContent({
   );
   const [group, setGroup] = useState<Group>('total');
   const [metric, setMetric] = useState<Metric>('cpu');
+  const [allocationMetric, setAllocationMetric] = useState<Metric>('cpu');
   const [detail, setDetail] = useState<{ report: string; sandbox: string }>();
   const [blocked, setBlocked] = useState<{ report: string; failure: MetricsFailure }>();
   const preview = state.report ? undefined : state.fallback;
@@ -247,6 +248,8 @@ function MetricsDashboardContent({
             admin={admin}
             active={visible}
             measured={measured}
+            allocationMetric={allocationMetric}
+            onAllocationMetricChange={setAllocationMetric}
             focusedMetric={admin || !measured ? undefined : metric}
             onSort={(sort) =>
               onSelection({
