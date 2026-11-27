@@ -1,6 +1,7 @@
 """Batch selection equals independent comparisons and cannot omit history."""
 
 from contextlib import redirect_stderr, redirect_stdout
+from hashlib import sha256
 import io
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 import batch_selection
+import image_inputs
 from image_inputs import MANIFEST
 from uncertainty import SelectionIntegrityError
 from policy import Workspace
@@ -100,6 +102,27 @@ class BatchTests(unittest.TestCase):
         self.write('.github/scripts/deployables.json', '{}')
         with self.assertRaises(ValueError):
             batch_selection.determine_many(self.root, [self.first])
+
+    def test_reviewed_historical_runtime_recipe_replays_through_hash_repair(self):
+        path = image_inputs.RECIPE
+        previous = sha256((self.root / path).read_bytes()).hexdigest()
+        edited = (self.root / path).read_text() + 'ENV SYNTHETIC_FEATURE=1\n'
+        current = sha256(edited.encode()).hexdigest()
+        self.write(path, edited)
+        stale = self.commit()
+        with patch.object(image_inputs, 'PRE_SEAL_RECIPE', previous), \
+                patch.object(image_inputs, 'SEAL_RECIPE', current):
+            with self.assertRaises(SelectionIntegrityError):
+                batch_selection.determine_many(self.root, [stale])
+            self.pin_recipes()
+            repair = self.commit()
+            plans = batch_selection.determine_many(self.root, [stale, repair])
+            self.assertEqual(plans[1], selection.determine(self.root, {'after': repair}, 'push'))
+            self.assertEqual(plans[1]['deployables'], ['cma-runtime', 'cma-runtime-omarchy'])
+            self.assertIn('cma-runtime', plans[0]['deployables'])
+            with patch.object(image_inputs, 'SEAL_RECIPE', '0' * 64), \
+                    self.assertRaises(SelectionIntegrityError):
+                batch_selection.determine_many(self.root, [stale, repair])
 
     def test_warm_cache_reuses_only_complete_comparisons_then_analyzes_new_source(self):
         cache = SelectionCache(self.root / 'cache', 'e' * 64)
