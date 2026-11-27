@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {preparedSchemaRefusal} from './prepared_schema_refusal.mjs';
 
-function fixture({aborts = 1, refusals = {a: 1, b: 0}, partial = false, restoreFails = false,
+function fixture({aborts = 1, refusals = {a: 1, b: 0}, partial = false, restoreFails = false, changedNativeEffect = false,
   barrier = 'worktree_schema'} = {}) {
   const calls = [];
   const kept = [];
@@ -11,6 +11,12 @@ function fixture({aborts = 1, refusals = {a: 1, b: 0}, partial = false, restoreF
   const before = {agentId: 'agent-1', sandboxId: 'sandbox-1', schema: 1, receipt_count: 2};
   return {calls, kept, barrier, adapter: {
     preparedReady: async () => [before.sandboxId],
+    preparedRuntimeEvidence: async ({sandboxId, operationId}) => {
+      assert.equal(sandboxId, before.sandboxId);
+      assert.ok(operationId === undefined || operationId === record.operationId);
+      return {format: 'indexed', pod_sha256: 'a'.repeat(64),
+        receipts: ['b', 'c', operationId && changedNativeEffect ? 'e' : 'd'].map(value => value.repeat(64))};
+    },
     preparedSchemaBarrier: async ({arm}) => calls.push(arm ? 'arm' : 'disarm'),
     preparedSchemaRace: async scope => {
       const {action, ...lineage} = scope;
@@ -40,6 +46,7 @@ test('a live prepared Worktree refusal proves the old owner and cleans up the fi
   assert.deepEqual(context.calls, ['arm', 'admit', 'inject', 'disarm', 'read', 'restore', 'disarm', 'cleanup']);
   assert.equal(result.prepared_schema_refused, true);
   assert.equal(result.startup_receipt_count, 2);
+  assert.equal(result.runtime_receipt_count, 3);
   assert.equal(result.owner_epoch, 12);
   assert.doesNotMatch(JSON.stringify(result), /agent-1|sandbox-1/);
 });
@@ -66,7 +73,8 @@ test('the exact Agent work lease can change without committing Ready or its open
 test('the schema case fails on a second abort, an unrelated refusal or a partial publication', async () => {
   for (const [context, error] of [[fixture({aborts: 2}), /abort_not_attributed/],
     [fixture({refusals: {a: 1, b: 1}}), /refusal_wrong_manager/],
-    [fixture({partial: true}), /partial_publication/]]) {
+    [fixture({partial: true}), /partial_publication/],
+    [fixture({changedNativeEffect: true}), /runtime_mutation_receipts_changed/]]) {
     await assert.rejects(preparedSchemaRefusal(context), error);
     assert.deepEqual(context.calls.slice(-2), ['restore', 'disarm']);
   }
