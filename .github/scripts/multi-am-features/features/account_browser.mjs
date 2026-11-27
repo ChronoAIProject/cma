@@ -1,4 +1,4 @@
-import {check} from '../cma/core.mjs';
+import {check, id} from '../cma/core.mjs';
 
 const timeout = 15000;
 const account = page => page.getByRole('button', {name: /^Account menu for /});
@@ -75,4 +75,41 @@ export async function accountBuildVersion(page, expectedSource) {
   const value = await page.evaluate(() => navigator.clipboard.readText());
   check(value.split(' · ')[0] === `Web ${version} (${revision})${local ? ' (local)' : ''}`,
     'browser_copied_web_build_unbound');
+}
+
+export async function accountDocumentation(page, agentId) {
+  check(id(agentId), 'browser_docs_agent_required');
+  const resource = '/agents/' + agentId;
+  const openResource = async () => {
+    await Promise.all([
+      page.waitForResponse(async response => response.ok() && response.request().method() === 'GET'
+        && new URL(response.url()).pathname === '/api/v1' + resource
+        && (await response.json()).id === agentId, {timeout}),
+      page.goto(resource, {waitUntil: 'domcontentloaded', timeout}),
+    ]);
+    await page.waitForURL(url => url.pathname === resource, {timeout});
+  };
+  await openResource();
+  await account(page).click({timeout});
+  await page.getByRole('menuitem', {name: 'Docs', exact: true}).click({timeout});
+  await page.waitForURL('**/docs', {timeout});
+  await page.getByRole('heading', {name: 'Docs', exact: true}).waitFor({timeout});
+  await page.getByRole('link', {name: /^Start a task/}).click({timeout});
+  await page.waitForURL('**/docs/start-a-task', {timeout});
+  await page.getByRole('heading', {name: 'Write and review your task', exact: true}).waitFor({timeout});
+  await page.goBack({waitUntil: 'domcontentloaded', timeout});
+  await page.getByRole('link', {name: /^Event Gateway Protocol/}).click({timeout});
+  await page.waitForURL('**/docs/event-gateway', {timeout});
+  await page.getByRole('heading', {name: 'Event Gateway Protocol', level: 1}).waitFor({timeout});
+  const outline = page.getByRole('navigation', {name: 'On this page'});
+  for (const [title, section] of [['Integration guide', 'integration'], ['Architecture', 'architecture'],
+    ['Protocol reference', 'protocol']]) {
+    await outline.getByRole('link', {name: title, exact: true}).click({timeout});
+    await page.waitForURL(`**/docs/event-gateway#${section}`, {timeout});
+    await page.getByRole('region', {name: title, exact: true}).getByRole('heading').first().waitFor({timeout});
+  }
+  await page.getByRole('link', {name: 'Docs', exact: true}).click({timeout});
+  await page.waitForURL('**/docs', {timeout});
+  await openResource();
+  await account(page).waitFor({timeout});
 }

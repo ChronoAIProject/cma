@@ -28,7 +28,7 @@ import {suggestionsCase} from './features/suggestions.mjs';
 import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
 import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_custody.mjs';
 import {competingRenames} from './features/rename_contention.mjs';
-import {accountAppearance, accountBuildVersion, accountTextSize} from './features/account_browser.mjs';
+import {accountAppearance, accountBuildVersion, accountDocumentation, accountTextSize} from './features/account_browser.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -98,9 +98,10 @@ async function withBrowser(am_origins, run, name) {
   return outcome;
 }
 
-async function accountBrowserCases(ams) {
+async function accountBrowserCases(ams, agentId) {
   const cases = [['user.account_appearance', accountAppearance], ['user.account_text_size', accountTextSize],
-    ['user.account_build_version', accountBuildVersion]];
+    ['user.account_build_version', page => accountBuildVersion(page, config.expected_api_source)],
+    ['user.account_documentation', page => accountDocumentation(page, agentId)]];
   await withBrowser(ams, async browser => {
     for (let iteration = 1; iteration <= 3; iteration++) {
       for (const am of ['a', 'b']) {
@@ -108,7 +109,7 @@ async function accountBrowserCases(ams) {
           for (const [name, exercise] of cases) {
             const start = performance.now();
             const row = {case: name, phase, iteration, ams: [am], real_browser: true, verdict: 'RUNNING'};
-            try { await exercise(page, config.expected_api_source); row.verdict = 'PASS'; }
+            try { await exercise(page); row.verdict = 'PASS'; }
             catch (error) { row.verdict = 'FAIL'; throw error; }
             finally { row.elapsed_ms = performance.now() - start; await record(row); }
           }
@@ -168,7 +169,7 @@ try {
     // The same admin groups run before and after actual owner loss. Their public
     // mutations use CAS, peer readback, stale-revision refusal and restoration.
     Object.assign(normal.ams, context.config.ams);
-    await accountBrowserCases(context.config.ams);
+    await accountBrowserCases(context.config.ams, context.record.agentId);
     admin.router = new NonOwnerRouter({adapter: context.adapter,
       record: proof => { adminOwnerProofs.push(proof); observations.push(proof); }});
     admin.bindSandbox(context.record.sandboxId, context.record.agentId);
