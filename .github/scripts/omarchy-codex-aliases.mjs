@@ -32,8 +32,12 @@ export async function codexAliases(agentHome, version, onStage) {
       await delay(50);
     } while (performance.now() < deadline);
     assert.deepEqual(aliases.map(entry => entry.name).sort(), ['apply_patch', 'applypatch', 'codex-linux-sandbox']);
-    onStage('agent-home-helper-targets');
-    for (const entry of aliases) assert.equal(readlinkSync(join(entry.parentPath, entry.name)), executable);
+    for (const entry of aliases) {
+      onStage('agent-home-helper-target-read');
+      const target = readlinkSync(join(entry.parentPath, entry.name));
+      onStage('agent-home-helper-target-mismatch');
+      assert.equal(target, executable);
+    }
   } finally {
     // Simulate an abrupt exit so the original checkpoint tests still prove
     // escaping helpers are refused and exact exclusions preserve retained data.

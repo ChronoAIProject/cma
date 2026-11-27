@@ -36,6 +36,7 @@ export const diagnosticStages = [
   'agent-resource-workspace', 'agent-resource-worktree', 'agent-resource-home',
   'agent-resource-replay', 'agent-resource-stale-fence', 'agent-resource-retained-files',
   'agent-home-helper-process', 'agent-home-helper-layout', 'agent-home-helper-targets',
+  'agent-home-helper-target-read', 'agent-home-helper-target-mismatch',
   'checkpoint-receipt-type', 'checkpoint-receipt-writers', 'checkpoint-receipt-token',
   'checkpoint-writer-stable',
   'checkpoint-refused-codex-temporary-symlink-escape',
