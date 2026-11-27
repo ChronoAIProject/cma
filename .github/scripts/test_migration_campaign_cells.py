@@ -128,6 +128,27 @@ class CampaignCellTests(unittest.TestCase):
         combined = cells.aggregate(plan, [record, second])
         self.assertEqual(combined["counts"]["EXECUTED"], 12)
 
+    def test_release_reader_credit_requires_the_matching_writer_collection(self):
+        plan = release_plan()
+        value = release_evidence(plan, "enabled")
+        collections = {
+            "old-write": ["agents"],
+            "new-read-old-write": ["agents", "auth_api_bearers"],
+            "new-write": ["agents"],
+            "old-read-new-write": ["agents", "auth_api_bearers"],
+        }
+        for row in value["fixtures"]:
+            row["collections"] = collections[row["stage"]]
+        record = self.derived(value)
+        report = cells.aggregate(plan, [record])
+        self.assertEqual(report["counts"], {"EXECUTED": 4,
+                                             "EXECUTED_POLICY_UNATTRIBUTED": 0,
+                                             "NOT_RUN": 32})
+        status = {row["id"]: row for row in report["cells"]}
+        self.assertEqual(status["current-collection-auth-api-bearers-retained"]["status"], "NOT_RUN")
+        self.assertEqual(status["candidate-collection-auth-api-bearers-enabled"]["status"], "NOT_RUN")
+        self.assertEqual(status["recovery-collection-auth-api-bearers-enabled"]["status"], "NOT_RUN")
+
     def test_release_refuses_wrong_reader_or_policy_and_incomplete_success(self):
         plan = release_plan()
         for expected, corrupt in (

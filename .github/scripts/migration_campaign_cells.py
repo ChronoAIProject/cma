@@ -8,7 +8,9 @@ every plan cell exactly one status:
 
 - EXECUTED: a passing stage read or wrote that collection with that reader
   role under a writer the stage determines (old-write and new-read-old-write
-  exercise the `retained` fixtures, whose writer is the old reader).
+  exercise the `retained` fixtures, whose writer is the old reader). For an
+  explicit release probe, a read stage and its matching write stage must both
+  report the collection in the same campaign.
 - EXECUTED_POLICY_UNATTRIBUTED: new-writer stages ran for the collection, but
   the campaign does not select the `disabled` or `enabled` writer policy, so
   neither cell can be credited.
@@ -35,6 +37,7 @@ STAGES = tuple(STAGE_ROLES)
 READERS = {"old-write": ("historical", "recovery"), "new-read-old-write": ("current", "candidate"),
            "new-write": ("current", "candidate"), "old-read-new-write": ("historical", "recovery")}
 RETAINED = {"old-write", "new-read-old-write"}
+WRITER_STAGES = {"new-read-old-write": "old-write", "old-read-new-write": "new-write"}
 NAME = re.compile(r"^[A-Za-z0-9_.-]{1,120}$")
 DIGEST = re.compile(r"^[a-f0-9]{64}$")
 
@@ -151,7 +154,13 @@ def aggregate(plan_bytes, derived):
             readers_at_stage = (STAGE_ROLES[stage],) if release is not None else READERS[stage]
             fixture_policy = "retained" if stage in RETAINED else policy
             label = f"{record['fixture']}:{policy}:{stage}" if policy else f"{record['fixture']}:{stage}"
-            for collection in row["collections"]:
+            collections = row["collections"]
+            if release is not None and stage in WRITER_STAGES:
+                writer = record["stages"][WRITER_STAGES[stage]]
+                if writer["outcome"] != "PASS":
+                    continue
+                collections = set(collections).intersection(writer["collections"])
+            for collection in collections:
                 for reader in readers_at_stage:
                     observed.setdefault((reader, slug(collection), fixture_policy), []).append(label)
     cells, counts = [], {"EXECUTED": 0, "EXECUTED_POLICY_UNATTRIBUTED": 0, "NOT_RUN": 0}
