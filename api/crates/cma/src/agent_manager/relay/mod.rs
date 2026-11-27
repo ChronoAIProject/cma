@@ -207,6 +207,10 @@ impl Relay {
             .layer(axum::middleware::from_fn(ingress::capture))
     }
 
+    pub(crate) fn file_preview_identity_route(router: axum::Router) -> axum::Router {
+        router.layer(axum::middleware::from_fn(ingress::file_preview_identity))
+    }
+
     pub(crate) fn internal_router(
         self: &Arc<Self>,
         router: axum::Router,

@@ -119,6 +119,7 @@ async fn authorize(
             headers: &HeaderMap::new(),
             context,
             credential: None,
+            browser_proof: None,
             capture_write_target: false,
         })
         .await
