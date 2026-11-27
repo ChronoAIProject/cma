@@ -176,8 +176,8 @@ def run_active(api, reservation):
 
 
 def web_writer_failed(api, reservation):
-    # The protected publication can fail while unrelated jobs keep its run
-    # active. Only a terminal publication failure releases the Web owner.
+    # A failed Publish can leave an uploaded receipt. Finalize can consume it
+    # even after that failure, so wait for both jobs before settling the refs.
     run_id, attempt = reservation["run_id"], reservation["run_attempt"]
     result = api.request(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
     jobs = result.get("jobs") if isinstance(result, dict) else None
@@ -185,14 +185,19 @@ def web_writer_failed(api, reservation):
             and all(isinstance(job, dict) and job.get("run_id") == run_id
                     and job.get("run_attempt") == attempt for job in jobs),
             "GitHub API response is invalid")
-    names = {
-        "Release web / Publish",
-        "Publish protected Web / Protect Web rollout / Finalize protected Web / Publish",
+    prefixes = {
+        "Release web",
+        "Publish protected Web / Protect Web rollout / Finalize protected Web",
     }
-    writers = [job for job in jobs if job.get("name") in names]
-    return len(writers) == 1 and writers[0].get("status") == "completed" and writers[0].get("conclusion") in {
-        "failure", "cancelled", "timed_out",
-    }
+    publishers = {prefix + " / Publish": prefix + " / Finalize" for prefix in prefixes}
+    writers = [job for job in jobs if job.get("name") in publishers]
+    if (len(writers) != 1 or writers[0].get("status") != "completed"
+            or writers[0].get("conclusion") not in ("failure", "cancelled", "timed_out")):
+        return False
+    finalizer_name = publishers[writers[0]["name"]]
+    finalizers = [job for job in jobs if job.get("name") == finalizer_name]
+    return (len(finalizers) == 1 and finalizers[0].get("status") == "completed"
+            and finalizers[0].get("conclusion") in ("success", "failure", "cancelled", "timed_out", "skipped"))
 
 
 def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dict, mark=lambda _component, _phase: None):
@@ -220,6 +225,7 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
     changes = durable_baselines(sorted(queue["changes"], key=lambda change: history.position(change["source"])),
                                 pending, finals, history)
     newest = {name: change["source"] for change in changes for name in change["deployables"]}
+    current_event = queue.get("event_source") == queue["head"] == history.head
     owners, busy = {}, set()
     group_sources = [newest[DEPLOYABLES[key]] for key in GROUP if DEPLOYABLES[key] in newest]
     transition = queue.get("contract_transition")
@@ -234,10 +240,11 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
             continue
         if source_is_retired(item["component"], item["source"]):
             continue
-        # Only duplicate work for the very same source needs an owner lookup.
-        # A strictly older owner that has not started building yields to the
-        # successor; one already building finishes unless a higher final lands.
-        if item["source"] != newest[DEPLOYABLES[item["component"]]]:
+        # Check the latest durable Web owner even when a newer source selects
+        # Web. Its failed publication can require the current publisher policy.
+        # In other lanes only duplicate work for the same source needs a lookup.
+        if (item["source"] != newest[DEPLOYABLES[item["component"]]]
+                and not (current_event and item["component"] == "web")):
             continue
         if new_group_source and item["component"] in GROUP and item["source"] != group_tip:
             # A sibling source moves only with an actual group publication.
@@ -258,8 +265,6 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
         owners.setdefault(owner, []).append(item)
 
     final_names = {tag["name"] for tag in finals}
-    current_event = queue.get("event_source") == queue["head"] == history.head
-
     def owner_state(items):
         item = items[0]
         mark(item["component"], "owner-read")
@@ -274,7 +279,8 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
     for items, (active, failed, known) in zip(owners.values(), parallel_read(owner_state, owners.values())):
         for item in items:
             if active and item != failed:
-                busy.add(item["component"])
+                if item["source"] == newest[DEPLOYABLES[item["component"]]]:
+                    busy.add(item["component"])
             elif DEPLOYABLES[item["component"]] + "/v" + item["version"] not in final_names:
                 to_reconcile.append(item)
                 if item == failed:

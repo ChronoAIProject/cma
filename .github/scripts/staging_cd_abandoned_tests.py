@@ -10,6 +10,7 @@ from staging_cd_allocate import allocate_queue, run_active
 from staging_cd_common import Refusal
 from staging_cd_github import GitHub, GitHubNotFound
 from staging_cd_history import DevelopHistory
+from staging_cd_receipts_tests import fixture_receipt, fixture_tag
 from staging_cd_reservations import next_reservation, pending_name
 from staging_cd_versions import DEPLOYABLES, version_tuple
 
@@ -44,56 +45,81 @@ class AbandonedTests(unittest.TestCase):
         writes.list.side_effect = lambda: [am, web]
         writes.final_after_owner.return_value = None
         api = Mock()
-        api.tags.return_value = []
+        api.tags.side_effect = list
         api.history.return_value = DevelopHistory(head, [head, web["source"]])
         run = {"id": 9, "run_attempt": 1, "event": "push", "head_branch": "develop",
                "repository": {"full_name": "ChronoAIProject/cma"}, "status": "in_progress"}
         pr = {"number": 2, "merged": True, "merged_at": "fixture", "merge_commit_sha": head,
               "base": {"ref": "develop", "repo": {"full_name": "ChronoAIProject/cma"}},
               "labels": [{"name": "version-upgrade:patch"}]}
-        web_job = {"name": "Publish protected Web / Protect Web rollout / Finalize protected Web / Publish",
-                   "status": "completed", "conclusion": "failure", "run_id": 9, "run_attempt": 1}
+        listing = {}
         responses = {
             "actions/runs/9/attempts/1": run,
-            "actions/runs/9/attempts/1/jobs?per_page=100": {
-                "total_count": 2, "jobs": [web_job, {"name": "Release am / Publish", "status": "in_progress",
-                                                   "run_id": 9, "run_attempt": 1}],
-            },
+            "actions/runs/9/attempts/1/jobs?per_page=100": listing,
             "git/commits/" + head: {"sha": head, "tree": {"sha": tree}},
             "commits/" + head + "/pulls?per_page=100&page=1": [pr],
             "pulls/2": pr,
         }
         api.request.side_effect = lambda path, **_kwargs: responses[path]
-        result = allocate_queue(queue, api, writes, 10, 1)
-        writes.final_after_owner.assert_called_once_with(web)
-        writes.insert.assert_called_once()
-        [group] = result["include"]
-        [task] = json.loads(group["tasks"])
-        attempted = task["reservation"]
-        self.assertEqual((group["component"], attempted["source"], attempted["tree"], attempted["previous"]),
-                         ("web", head, tree, web["version"]))
 
-        # A successful publication can still finalize. An active one can still
-        # publish. Both keep the reservation.
-        for patch in ({"conclusion": "success"}, {"status": "in_progress", "conclusion": None}):
-            with self.subTest(status=patch):
-                web_job.update(patch)
-                writes.reset_mock()
-                self.assertEqual(allocate_queue(queue, api, writes, 10, 1), {"include": []})
+        def job(name, status, conclusion=None):
+            return {"name": name, "status": status, "conclusion": conclusion, "run_id": 9, "run_attempt": 1}
+
+        def plan(*web_jobs, final=None):
+            writes.reset_mock()
+            writes.final_after_owner.return_value = final
+            jobs = [job("Release am / Publish", "in_progress"), *web_jobs]
+            listing.update(total_count=len(jobs), jobs=jobs)
+            return allocate_queue(queue, api, writes, 10, 1)["include"]
+
+        receipt = fixture_receipt(**{key: value for key, value in web.items() if key != "schema"})
+        for prefix in ("Release web", "Publish protected Web / Protect Web rollout / Finalize protected Web"):
+            publish, finalize = prefix + " / Publish", prefix + " / Finalize"
+            failed_publish = job(publish, "completed", "failure")
+            for web_jobs in (
+                (failed_publish,),
+                (failed_publish, job(finalize, "queued")),
+                (failed_publish, job(finalize, "in_progress")),
+                (job(publish, "completed", "success"), job(finalize, "in_progress")),
+                (job(publish, "in_progress"),),
+            ):
+                with self.subTest(jobs=web_jobs):
+                    self.assertEqual(plan(*web_jobs), [])
+                    writes.insert.assert_not_called()
+                    writes.final_after_owner.assert_not_called()
+
+            with self.subTest(path=prefix, settlement="final arrived"):
+                [group] = plan(failed_publish, job(finalize, "completed", "success"), final=fixture_tag(receipt))
+                self.assertEqual(json.loads(group["tasks"]), [{"component": "web", "mode": "resume", "receipt": receipt}])
+                writes.final_after_owner.assert_called_once_with(web)
                 writes.insert.assert_not_called()
-                writes.final_after_owner.assert_not_called()
 
-        # A terminal owner releases the same failed Web publication. Existing
-        # allocation still handles its other lanes independently.
+            with self.subTest(path=prefix, settlement="skipped without final"):
+                [group] = plan(failed_publish, job(finalize, "completed", "skipped"))
+                writes.final_after_owner.assert_called_once_with(web)
+                writes.insert.assert_called_once()
+                [task] = json.loads(group["tasks"])
+                attempted = task["reservation"]
+                self.assertEqual((group["component"], attempted["source"], attempted["tree"], attempted["previous"]),
+                                 ("web", head, tree, web["version"]))
+
         run["status"] = "completed"
-        web_job.update(status="completed", conclusion="failure")
         writes.list.side_effect = lambda: [web]
         queue["changes"][0]["deployables"] = [DEPLOYABLES["web"]]
-        writes.reset_mock()
-        result = allocate_queue(queue, api, writes, 10, 1)
-        [group] = result["include"]
+        [group] = plan(failed_publish, job(finalize, "completed", "skipped"))
         [task] = json.loads(group["tasks"])
         self.assertEqual(task["reservation"]["source"], head)
+        writes.final_after_owner.assert_called_once_with(web)
+
+        # A later Web change has no reservation yet. Select the policy repair
+        # at head, which also contains that intervening Web change.
+        run["status"] = "in_progress"
+        middle = "e" * 40
+        api.history.return_value = DevelopHistory(head, [head, middle, web["source"]])
+        queue["changes"].append({"source": middle, "tree": "f" * 40, "deployables": [DEPLOYABLES["web"]]})
+        [group] = plan(failed_publish, job(finalize, "completed", "skipped"))
+        [task] = json.loads(group["tasks"])
+        self.assertEqual((task["reservation"]["source"], task["reservation"]["tree"]), (head, tree))
         writes.final_after_owner.assert_called_once_with(web)
 
     def test_both_explicit_404s_are_abandoned(self):
