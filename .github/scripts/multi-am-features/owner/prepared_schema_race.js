@@ -56,9 +56,10 @@
 
   async function currentUpdate(rows) {
     const active = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
-      appName: scope.app, 'command.update': 'worktrees', 'command.autocommit': false,
+      appName: scope.app, active: true, 'command.update': 'worktrees', 'command.autocommit': false,
     }}]).toArray();
-    for (const {command} of active) {
+    let observed = null;
+    for (const {command, opid} of active) {
       // Mongo omits the OP_MSG update sequence from currentOp. Bind the
       // live session to the exact prepared hierarchy it read before writing.
       if (!command.lsid || command.txnNumber == null) continue;
@@ -69,16 +70,20 @@
           {'command.find': 'workspaces', 'command.filter._id': rows.workspace._id},
           {'command.find': 'native_prepared_sandboxes', 'command.filter._id': rows.reservation._id},
         ]}, {command: 1}).limit(16).toArray();
-      if (new Set(reads.map(row => row.command.find)).size === 4) return true;
+      if (new Set(reads.map(row => row.command.find)).size === 4) {
+        if (observed !== null) throw Error('prepared_schema_race_multiple_bound_transactions');
+        observed = {opid, session: command.lsid.id.toString(), transaction: command.txnNumber.toString()};
+      }
     }
-    return false;
+    return observed;
   }
 
   async function inject() {
     const deadline = Date.now() + 4500;
     while (Date.now() < deadline) {
       const rows = await lineage(d);
-      if (rows && await currentUpdate(rows)) {
+      const bound = rows && await currentUpdate(rows);
+      if (bound) {
         const before = proof(rows);
         if (!pending(before) || before.schema !== 1 || before.cleanup_marked || rows.tree.status !== 'creating') {
           throw Error('prepared_schema_race_startup_precondition');
@@ -93,6 +98,11 @@
             agent_prepared_open_ready_fence: {$exists: false},
           }, {$set: {[marker]: {operation: operationId, barrier: scope.barrier}}}, {maxTimeMS: 700});
           if (changed.modifiedCount !== 1) throw Error('prepared_publication_conflict_write_missed');
+          const after = await currentUpdate(rows);
+          if (after?.opid !== bound.opid || after?.session !== bound.session
+              || after?.transaction !== bound.transaction) {
+            throw Error('prepared_publication_conflict_transaction_changed');
+          }
           return before;
         }
         if (leaseChange) {

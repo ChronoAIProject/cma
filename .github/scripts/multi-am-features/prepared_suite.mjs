@@ -90,7 +90,7 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       consumed.add(record.sandboxId);
       const [sandbox, workspace, worktree] = durable.schemas ?? [];
       check(durable.schemas?.length === 3 && [1, 3, 4].includes(sandbox) &&
-        [1, 3, 4].includes(workspace) && worktree === 1, 'prepared_parent_schemas_unbound');
+        [1, 3].includes(workspace) && worktree === 1, 'prepared_parent_schemas_unbound');
       check(durable.ready_fences?.length === 4 && durable.ready_fences.every(count => count === 1),
         'prepared_open_ready_atomic_publication_unproven');
       check(durable.startup_receipts?.length === 3 && durable.startup_receipts.every(count => count === 1),

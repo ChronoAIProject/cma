@@ -174,7 +174,7 @@ test('a Ready Agent cannot stand in for four committed publication fences and su
     await assert.rejects(preparedJourney(context), /prepared_open_ready_atomic_publication_unproven/);
     assert(!context.actions.includes('open-both'));
   }
-  for (const schemas of [[4, 3, 3], [4, 8, 1], [4, '3', 1]]) {
+  for (const schemas of [[4, 3, 3], [4, 4, 1], [4, 8, 1], [4, '3', 1]]) {
     const context = fixture({schemas});
     await assert.rejects(preparedJourney(context), /prepared_parent_schemas_unbound/);
     assert(!context.actions.includes('open-both'));
