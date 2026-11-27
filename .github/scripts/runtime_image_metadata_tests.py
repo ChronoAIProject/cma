@@ -20,6 +20,15 @@ PATH_SPEC.loader.exec_module(LOGIN)
 
 
 class MetadataTests(unittest.TestCase):
+    def test_standard_runtime_ships_the_stale_turn_seal_enabled(self):
+        recipe = (SOURCE.parent.parent / "Dockerfile").read_text()
+        standard = recipe.split("FROM runtime-refreshed AS runtime\n", 1)[1].split("\nFROM ", 1)[0]
+        environment = [line.split()[1:] for line in standard.replace("\\\n", "").splitlines()
+                       if line.startswith("ENV ")]
+        assignments = [item for statement in environment for item in statement
+                       if item.startswith("CHRONO_RUNTIME_STALE_TURN_SEAL_ENABLED=")]
+        self.assertEqual(assignments, ["CHRONO_RUNTIME_STALE_TURN_SEAL_ENABLED=1"])
+
     def test_omarchy_cleanup_ships_in_the_package_producer_layer(self):
         runtime = SOURCE.parent.parent
         installer = (runtime / "src/omarchy/install.sh").read_text().splitlines()
