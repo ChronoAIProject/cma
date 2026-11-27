@@ -54,10 +54,13 @@ class ArchiveHandoffTests(unittest.TestCase):
     def test_normal_release_consumes_the_prepared_archive_without_rebuilding(self):
         self.check_prepared_release(overlap=True)
 
+    def test_matching_ci_archive_skips_build_and_cache_restore(self):
+        self.check_prepared_release(overlap=False, reuse=True)
+
     def test_low_disk_headroom_defers_export_until_verification_scratch_is_removed(self):
         self.check_prepared_release(overlap=False)
 
-    def check_prepared_release(self, *, overlap):
+    def check_prepared_release(self, *, overlap, reuse=False):
         receipt = fixture_receipt(component="am")
         identity = receipt["identity"]
         reservation = identity.copy()
@@ -100,9 +103,21 @@ class ArchiveHandoffTests(unittest.TestCase):
 
             cache.background_export.side_effect = background_export
             cache.export_mounts.side_effect = finish_export
-            stack.enter_context(patch.object(staging_cd_produce, "BuildCache", return_value=cache))
+            producer_cache = stack.enter_context(patch.object(staging_cd_produce, "BuildCache", return_value=cache))
             publisher_cache = stack.enter_context(patch.object(staging_cd_publish, "BuildCache", return_value=cache))
+            stack.enter_context(patch.object(staging_cd_produce, "identity", return_value=(identity, None, None)))
             stack.enter_context(patch.object(staging_cd_publish, "identity", return_value=(identity, None, None)))
+
+            def reuse_or_miss(_release, directory, _api, _token, **options):
+                self.assertTrue(options["require_reserved_label"])
+                if not reuse:
+                    options["on_miss"]("no-artifact")
+                    return None
+                archive = directory / ARCHIVE
+                archive.write_bytes(b"synthetic CI OCI archive")
+                return archive
+
+            reuse_image = stack.enter_context(patch.object(staging_cd_produce, "try_reuse", side_effect=reuse_or_miss))
 
             def build(_root, _reservation, directory, *, progress, **_kwargs):
                 progress["cache_export_error"] = "read-only"
@@ -129,6 +144,23 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertEqual((root / "output").read_text(), "prepared=true\n")
             producer_authority.require_current.assert_called_once_with(reservation, build_started=False)
             self.assertEqual(staging_cd_publish.main(), 0)
+            prepared = load(path_for(root / "cma-prepared-release", reservation), identity)
+            self.assertEqual(publish.call_args.args[0], prepared.path)
+            self.assertEqual(publish.call_args.kwargs["prepared_checksum"], prepared.sha256)
+            self.assertFalse(publish.call_args.kwargs["qualified"])
+            self.assertIn("Staging image reuse result=prepared-reservation", output.getvalue())
+            publisher_authority.require_current.assert_called_once_with(reservation, build_started=True)
+            self.assertEqual(json.loads(Path(env["CD_RECEIPTS_PATH"]).read_text()), [receipt])
+            fallback.assert_not_called()
+            reuse_image.assert_called_once()
+            if reuse:
+                self.assertIn("Staging release producer result=prepared-ci-image", output.getvalue())
+                self.assertIsNone(prepared.cache_day)
+                producer_build.assert_not_called()
+                producer_cache.assert_not_called()
+                publisher_cache.assert_not_called()
+                return
+            self.assertIn("CI image reuse miss reason=no-artifact", output.getvalue())
             self.assertIn("build-cache-artifact=" + cache.key.family.removesuffix("-") + "\n",
                           (root / "output").read_text())
             self.assertIn("build-cache-index=graph-" + cache.key.prefix.removesuffix("-") + "\n",
@@ -143,17 +175,37 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertEqual(output.getvalue().count("CACHE-SAVE cache=build-layers component=am"), 1)
             self.assertIn("result=not-saved reason=read-only", output.getvalue())
             self.assertIn("::warning title=Build cache not saved", output.getvalue())
-            prepared = load(path_for(root / "cma-prepared-release", reservation), identity)
-            self.assertEqual(publish.call_args.args[0], prepared.path)
-            self.assertEqual(publish.call_args.kwargs["prepared_checksum"], prepared.sha256)
-            self.assertIn("Staging image reuse result=prepared-reservation", output.getvalue())
-            publisher_authority.require_current.assert_called_once_with(reservation, build_started=True)
-            self.assertEqual(json.loads(Path(env["CD_RECEIPTS_PATH"]).read_text()), [receipt])
-            fallback.assert_not_called()
             producer_build.assert_called_once()
             with self.assertRaisesRegex(Refusal, "destination already exists"):
                 staging_cd_produce.produce(env, root, Mock(), {})
             producer_build.assert_called_once()
+
+    def test_protected_web_prepares_raw_archive_without_ci_lookup(self):
+        identity = fixture_identity(component="web")
+        reservation = {
+            **{key: value for key, value in identity.items() if key != "build"},
+            "schema": "cma-version-reservation-v1",
+        }
+        task = {"mode": "publish", "reservation": reservation, "component": "web"}
+
+        def build_raw(_root, _reservation, directory, **_options):
+            archive = directory / ARCHIVE
+            archive.write_bytes(b"synthetic raw Web archive")
+            return archive, identity
+
+        with tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
+            root = Path(temporary)
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": identity["source"],
+                   "GITHUB_RUN_ID": str(identity["run_id"]), "GITHUB_RUN_ATTEMPT": str(identity["run_attempt"]),
+                   "CD_COMPONENT": "web", "CD_TASKS": json.dumps([task]),
+                   "CD_WEB_CONTINUITY_RAW": "true", "RUNNER_TEMP": str(root)}
+            for name in ("event_identity", "GitHub", "snapshot", "Reservations"):
+                stack.enter_context(patch.object(staging_cd_produce, name))
+            reuse = stack.enter_context(patch.object(staging_cd_produce, "try_reuse"))
+            build = stack.enter_context(patch.object(staging_cd_produce, "build", side_effect=build_raw))
+            self.assertEqual(staging_cd_produce.produce(env, root, Mock(), {}), "prepared")
+            build.assert_called_once()
+            reuse.assert_not_called()
 
     def test_handoff_refuses_a_different_reservation_or_build(self):
         identity = fixture_identity(component="runtime")

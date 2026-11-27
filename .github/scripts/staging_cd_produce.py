@@ -1,4 +1,4 @@
-"""Build the exact reserved release once, before the registry publisher runs."""
+"""Prepare the exact reserved release before the registry publisher runs."""
 
 import json
 import os
@@ -8,7 +8,8 @@ import time
 from pathlib import Path
 
 from staging_cd_admission import event_identity
-from staging_cd_build import build, snapshot
+from staging_cd_artifacts import try_reuse
+from staging_cd_build import build, identity, snapshot
 from staging_cd_build_cache import SCOPES, BuildCache
 from staging_cd_cache_save import report_layers
 from staging_cd_common import require
@@ -23,7 +24,8 @@ from staging_cd_test_failures import public_summary
 from staging_cd_timing import Timings
 
 
-def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=None, layer_exports=None):
+def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=None, layer_exports=None,
+            on_reuse_miss=None):
     timings = timings or Timings()
     event_identity(env)
     require(env["GITHUB_EVENT_NAME"] == "push", "Image preparation only accepts develop pushes")
@@ -58,20 +60,29 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
         diagnostics.mark("snapshot")
         with timings.stage("source"):
             snapshot(root, reservation["source"], source)
+        archive = None
+        if reservation["component"] in {"am", "runtime", "runtime-omarchy"}:
+            release, _, _ = identity(reservation, source)
+            diagnostics.mark("reuse")
+            with timings.stage("reuse"):
+                # The publisher requires the exact reserved label on a sealed handoff.
+                archive = try_reuse(release, directory, api, token, source_root=source,
+                                    on_miss=on_reuse_miss, require_reserved_label=True)
         cache = None
-        if env.get("CD_BUILD_CACHE") == "enabled":
-            diagnostics.mark("cache_restore")
-            cache = BuildCache(root, env, source, reservation["component"])
-            with timings.stage("cache-restore"):
-                cache.restore()
-            if cache.key is not None and cache_metrics is not None:
-                cache_metrics.append({"operation": "restore", "result": cache.restore_result})
-        diagnostics.mark("build")
-        started = time.time()
-        with timings.stage("build"):
-            _, release = build(root, reservation, directory, source=source, cache=cache, progress=progress)
-        if layer_exports is not None and cache is not None and cache.exports_layers():
-            layer_exports.append(started)
+        if archive is None:
+            if env.get("CD_BUILD_CACHE") == "enabled":
+                diagnostics.mark("cache_restore")
+                cache = BuildCache(root, env, source, reservation["component"])
+                with timings.stage("cache-restore"):
+                    cache.restore()
+                if cache.key is not None and cache_metrics is not None:
+                    cache_metrics.append({"operation": "restore", "result": cache.restore_result})
+            diagnostics.mark("build")
+            started = time.time()
+            with timings.stage("build"):
+                _, release = build(root, reservation, directory, source=source, cache=cache, progress=progress)
+            if layer_exports is not None and cache is not None and cache.exports_layers():
+                layer_exports.append(started)
         if cache is not None and cache.key is not None:
             seal(directory, release, cache.namespace, cache.cache_day)
         else:
@@ -81,7 +92,7 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
         destination.mkdir(mode=0o700, exist_ok=False)
         os.link(directory / ARCHIVE, destination / ARCHIVE)
         os.link(directory / MANIFEST, destination / MANIFEST)
-    return "prepared"
+    return "prepared" if archive is None else "prepared-ci-image"
 
 
 def main():
@@ -91,16 +102,20 @@ def main():
     timings = Timings()
     cache_metrics = []
     layer_exports = []
+    reuse_misses = []
 
     def run(_masker, diagnostics):
         disposition.append(produce(env, Path.cwd(), diagnostics, progress,
-                                   timings=timings, cache_metrics=cache_metrics, layer_exports=layer_exports))
+                                   timings=timings, cache_metrics=cache_metrics, layer_exports=layer_exports,
+                                   on_reuse_miss=reuse_misses.append))
         return True
 
     result = run_publication(run, component=env.get("CD_COMPONENT"))
     if disposition:
-        step_output(env, "prepared", "true" if disposition[0] == "prepared" else "false")
+        step_output(env, "prepared", "true" if disposition[0] in {"prepared", "prepared-ci-image"} else "false")
         print("Staging release producer result=" + disposition[0], flush=True)
+    for reason in reuse_misses:
+        print("CI image reuse miss reason=" + reason, flush=True)
     timings.emit(sys.stdout)
     component = env.get("CD_COMPONENT")
     emit_cache_metrics(component, cache_metrics, sys.stdout)
