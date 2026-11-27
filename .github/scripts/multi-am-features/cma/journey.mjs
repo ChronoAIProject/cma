@@ -14,7 +14,7 @@ import {runtimeLoss} from '../features/runtime_loss.mjs';
 import {lifecycleFailureSummary} from '../failure.mjs';
 
 export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook,
-  preparedHook, triggerHook, retirementHook} = {}) {
+  preparedHook, triggerHook, retirementHook, navigationHook} = {}) {
   const config = normalizeConfig(raw);
   check(config.adapter_module && config.output_dir && config.owner_id, 'config_missing');
   let runtimes = runtimeBindings(config);
@@ -439,6 +439,8 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     let machine;
     await step('desktop_create_b_ready_a', async () => {machine = await create('b', true); return {agent_sha256: hash(machine.agentId)};});
     await step('desktop_open_both', () => openBoth(machine));
+    if (navigationHook) await step('command_search_after_retirement', () =>
+      navigationHook({config, active: machine, retired: plain}));
     await step('desktop_frames_and_cross_am_admission', () => desktop(machine));
     await step('desktop_send_and_interrupt_non_owner', () => interrupt(machine, 'b'));
     await step('both_am_serving_hold_10_minutes', () => holdBothServing(machine));

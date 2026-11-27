@@ -30,7 +30,7 @@ import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
 import {accountAppearance, accountBuildVersion, accountDocumentation, accountSignIn, accountSignOut,
   accountTextSize, gatewayDocumentation, legacyNavigation} from './features/account_browser.mjs';
-import {taskNavigation} from './features/task_navigation.mjs';
+import {commandSearch, taskNavigation} from './features/task_navigation.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -163,7 +163,21 @@ async function heldCases(context, exercise, repetitions = 3) {
 }
 
 try {
-  result.journey = await runJourney(config, {retirementHook: context => {
+  result.journey = await runJourney(config, {navigationHook: async ({config: journeyConfig, active, retired}) => {
+    check(retired.deleted === true, 'browser_search_retirement_unproven');
+    Object.assign(normal.ams, journeyConfig.ams);
+    await withBrowser(journeyConfig.ams, async browser => {
+      for (const am of ['a', 'b']) {
+        const row = {case: 'user.command_search_retirement', phase: 'after_restart', iteration: 1,
+          ams: [am], real_browser: true, verdict: 'RUNNING'};
+        try {
+          await browser.forIngress(am, ({page}) => commandSearch(page, active, retired));
+          row.verdict = 'PASS';
+        } catch (error) { row.verdict = 'FAIL'; throw error; }
+        finally { await record(row); }
+      }
+    }, 'command_search_after_retirement');
+  }, retirementHook: context => {
     Object.assign(normal.ams, context.config.ams);
     return retirementRetention({...context, user, outsider});
   }, triggerHook: context => {

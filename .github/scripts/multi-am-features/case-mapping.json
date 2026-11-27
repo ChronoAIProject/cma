@@ -48,13 +48,11 @@
     ]
   },
   "cma-user.navigation.search": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
-    "minimum_runs": 3,
-    "phases": [
-      "before_restart",
-      "after_restart"
-    ]
+    "cases": ["user.command_search_retirement"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 1,
+    "phases": ["after_restart"]
   },
   "cma-user.account.appearance": {
     "cases": ["user.account_appearance"],

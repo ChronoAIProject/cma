@@ -71,3 +71,35 @@ export async function taskNavigation(page, {agentId, sandboxId, workspaceId}) {
     await page.unroute(sandboxList);
   }
 }
+
+export async function commandSearch(page, active, retired) {
+  const targets = [['agents', active.agentId], ['sandboxes', active.sandboxId], ['workspaces', active.workspaceId]];
+  check([...targets.map(([, key]) => key), retired.agentId, retired.sandboxId].every(id),
+    'browser_search_lineage_required');
+  await page.goto('/agent-manager', {waitUntil: 'domcontentloaded', timeout});
+  await page.getByRole('button', {name: 'Search', exact: true}).click({timeout});
+  const field = page.getByRole('combobox', {name: 'Search commands'});
+  const results = page.getByRole('listbox', {name: 'Results'});
+  for (const command of ['New agent', 'Agent Manager', 'Event Gateway']) {
+    await field.fill(command, {timeout});
+    await results.getByRole('option', {name: command, exact: true}).waitFor({timeout});
+  }
+  for (const [kind, key] of targets) {
+    await field.fill(key, {timeout});
+    const match = results.getByRole('option');
+    await match.first().waitFor({timeout});
+    check(await match.count() === 1, 'browser_search_duplicate_resource');
+    await match.click({timeout});
+    await page.waitForURL(url => url.pathname === `/${kind}/${key}`, {timeout});
+    await field.waitFor({state: 'hidden', timeout});
+    await page.keyboard.press('ControlOrMeta+k');
+    await field.waitFor({timeout});
+  }
+
+  for (const key of [retired.agentId, retired.sandboxId]) {
+    await field.fill(key, {timeout});
+    await results.getByText('No results.', {exact: true}).waitFor({timeout});
+  }
+  await field.fill('Operations', {timeout});
+  await results.getByText('No results.', {exact: true}).waitFor({timeout});
+}
