@@ -143,7 +143,7 @@ def require_settled(code, site):
     return 1
 
 
-def run_active(api, reservation):
+def owner_attempt(api, reservation):
     path = f"actions/runs/{reservation['run_id']}"
     try:
         run = api.request(path + f"/attempts/{reservation['run_attempt']}", allow_not_found=True)
@@ -153,7 +153,7 @@ def run_active(api, reservation):
         except GitHubNotFound:
             # ABANDONED-BURNED: retain this reservation in the watermark.
             # Allocation creates a new version; it never resumes this one.
-            return False
+            return None
         except Refusal as error:
             raise Refusal("Reservation owner run could not be read") from error
         raise Refusal("Reservation run and attempt disagree")
@@ -167,7 +167,32 @@ def run_active(api, reservation):
             "Reservation run identity is invalid")
     require(run.get("status") in ("queued", "in_progress", "waiting", "pending", "requested", "completed"),
             "Reservation run liveness is uncertain")
-    return run["status"] != "completed"
+    return run
+
+
+def run_active(api, reservation):
+    run = owner_attempt(api, reservation)
+    return run is not None and run["status"] != "completed"
+
+
+def web_writer_failed(api, reservation):
+    # The protected publication can fail while unrelated jobs keep its run
+    # active. Only a terminal publication failure releases the Web owner.
+    run_id, attempt = reservation["run_id"], reservation["run_attempt"]
+    result = api.request(f"actions/runs/{run_id}/attempts/{attempt}/jobs?per_page=100")
+    jobs = result.get("jobs") if isinstance(result, dict) else None
+    require(isinstance(jobs, list) and type(result.get("total_count")) is int and result["total_count"] == len(jobs)
+            and all(isinstance(job, dict) and job.get("run_id") == run_id
+                    and job.get("run_attempt") == attempt for job in jobs),
+            "GitHub API response is invalid")
+    names = {
+        "Release web / Publish",
+        "Publish protected Web / Protect Web rollout / Finalize protected Web / Publish",
+    }
+    writers = [job for job in jobs if job.get("name") in names]
+    return len(writers) == 1 and writers[0].get("status") == "completed" and writers[0].get("conclusion") in {
+        "failure", "cancelled", "timed_out",
+    }
 
 
 def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dict, mark=lambda _component, _phase: None):
@@ -232,22 +257,25 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
             continue
         owners.setdefault(owner, []).append(item)
 
-    def owner_active(items):
+    final_names = {tag["name"] for tag in finals}
+    current_event = queue.get("event_source") == queue["head"] == history.head
+
+    def owner_state(items):
         item = items[0]
         mark(item["component"], "owner-read")
-        return run_active(api, item)
+        run = owner_attempt(api, item)
+        active = run is not None and run["status"] != "completed"
+        web = next((item for item in items if item["component"] == "web"), None)
+        failed = web if active and current_event and web is not None and web_writer_failed(api, web) else None
+        return active, failed
 
     to_reconcile = []
-    final_names = {tag["name"] for tag in finals}
-    for items, active in zip(owners.values(), parallel_read(owner_active, owners.values())):
-        if active:
-            for item in items:
+    for items, (active, failed) in zip(owners.values(), parallel_read(owner_state, owners.values())):
+        for item in items:
+            if active and item != failed:
                 busy.add(item["component"])
-        else:
-            for item in items:
-                name = DEPLOYABLES[item["component"]]
-                if name + "/v" + item["version"] not in final_names:
-                    to_reconcile.append(item)
+            elif DEPLOYABLES[item["component"]] + "/v" + item["version"] not in final_names:
+                to_reconcile.append(item)
     if transition and not new_group_source and busy & GROUP:
         # A partial resume would make group completion replace a live publisher.
         # Leave every peer to that owner while independent components proceed.
@@ -255,6 +283,13 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
     if to_reconcile:
         settled = parallel_read(reservations.final_after_owner, to_reconcile)
         finals.extend(tag for tag in settled if tag is not None)
+    # A failed publication owes a release, even at a successor with zero new Web
+    # changes. Build that successor with its current publication policy.
+    if current_event and "web" not in busy:
+        final_sources = {tag["target"] for tag in finals if tag["receipt"]["identity"]["component"] == "web"}
+        if any(item["component"] == "web" and item["source"] not in final_sources for item in to_reconcile):
+            changes = include_web_head(api, changes, history.head)
+            newest[DEPLOYABLES["web"]] = history.head
     latest = {}
     for tag in sorted(finals, key=lambda tag: history.position(tag["target"])):
         receipt = tag["receipt"]
@@ -264,7 +299,6 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
     recoverable = any(component not in busy and newest.get(DEPLOYABLES[component]) == receipt["source"]
                       for component, receipt in latest.items())
     verified = proven_components(read_proofs(), latest, history) if recoverable else set()
-    current_event = queue.get("event_source") == queue["head"] == history.head
     actions, needed_prs = [], {}
     for change in changes:
         source, tree, deployables = (change[key] for key in ("source", "tree", "deployables"))
@@ -323,6 +357,20 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
                for key in DEPLOYABLES if any(job["component"] == key for job in jobs)]
     mark("all", "planned")
     return {"include": grouped}
+
+
+def include_web_head(api, changes, head):
+    rows = {row["source"]: row for row in changes}
+    if head in rows:
+        row = rows[head]
+        rows[head] = dict(row, deployables=sorted({*row["deployables"], DEPLOYABLES["web"]}))
+    else:
+        commit = api.request("git/commits/" + head)
+        tree = commit.get("tree", {}).get("sha") if isinstance(commit, dict) and isinstance(commit.get("tree"), dict) else None
+        require(isinstance(commit, dict) and commit.get("sha") == head and matches(r"[0-9a-f]{40}", tree),
+                "Release change identity is invalid")
+        rows[head] = {"source": head, "tree": tree, "deployables": [DEPLOYABLES["web"]]}
+    return list(rows.values())
 
 
 def main(argv=()):
