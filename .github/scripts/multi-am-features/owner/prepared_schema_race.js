@@ -96,10 +96,11 @@
     for (const {command, opid} of active) {
       if (!command.lsid || command.txnNumber == null) continue;
       const reads = await d.getCollection('system.profile').find({
-        appName: scope.app, 'command.autocommit': false,
+        appName: scope.app, 'command.autocommit': false, nreturned: 1,
         'command.lsid': command.lsid, 'command.txnNumber': command.txnNumber,
         $or: [{'command.find': 'agents', 'command.filter._id': rows.agent._id},
-          {'command.find': 'native_prepared_sandboxes', 'command.filter._id': rows.reservation._id}],
+          {'command.find': 'native_prepared_sandboxes', 'command.filter._id': rows.reservation._id,
+            'command.filter.state': 'claimed'}],
       }, {command: 1}).limit(8).toArray();
       if (new Set(reads.map(row => row.command.find)).size === 2) {
         matches.push({opid, session: command.lsid.id.toString(), transaction: command.txnNumber.toString()});
