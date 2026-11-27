@@ -9,6 +9,7 @@ import {ADMIN_PERMISSIONS, verifyRuntimeInventory} from './features/admin_matrix
 import {userCases} from './features/user.mjs';
 import {browserFileRoundtrip} from './features/files_browser.mjs';
 import {composerAttachments} from './features/composer_attachments.mjs';
+import {answerDeliverables} from './features/answer_deliverables.mjs';
 import {browserChangedFilePreview, withChangedFile} from './features/files_preview.mjs';
 import {documentCases} from './features/documents.mjs';
 import {createDocumentAfterLostReply} from './features/document_creation_browser.mjs';
@@ -465,6 +466,10 @@ try {
                     operationId: context.record.operationId,
                   }), recordFailure: (stage, error) =>
                     retainFailure(config.matrix_output, stage, error, {case: 'user.browser_file_roundtrip', phase, iteration})}));
+                await browserCase(am, iteration, 'user.answer_deliverables', () => answerDeliverables({page, api: user,
+                  outsider, adapter: context.adapter, ingress: am, ownerId: config.owner_id, record: context.record,
+                  recordFailure: (stage, error) =>
+                    retainFailure(config.matrix_output, stage, error, {case: 'user.answer_deliverables', phase, iteration})}));
               });
             }
           }, 'user.agent_open');

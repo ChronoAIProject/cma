@@ -29,7 +29,8 @@ def digest(value):
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-def arm(case_id, marker, access_request=None, suggestions=False, configuration=None, skill=None, title=False):
+def arm(case_id, marker, access_request=None, suggestions=False, configuration=None, skill=None, title=False,
+        deliverables=None):
     global ACTIVE
     if not isinstance(case_id, str) or not 1 <= len(case_id) <= 128:
         raise ValueError('case_id_invalid')
@@ -62,10 +63,17 @@ def arm(case_id, marker, access_request=None, suggestions=False, configuration=N
     file_preview = re.fullmatch(r'WS4_FILE_[a-f0-9]{32}', marker) is not None
     if file_preview and (access_request or suggestions or configuration or skill or title):
         raise ValueError('fixture_file_preview_invalid')
+    if deliverables is not None and (not re.fullmatch(r'WS4_DELIVERY_[a-f0-9]{32}', marker)
+            or access_request or suggestions or configuration or skill or title
+            or not isinstance(deliverables, list) or len(deliverables) != 3
+            or any(not isinstance(value, str) or not re.fullmatch(r'<!--cma-deliverable:v1:[A-Za-z0-9_-]{1,1024}-->', value)
+                   for value in deliverables)):
+        raise ValueError('fixture_answer_deliverables_invalid')
     with LOCK:
         if case_id in CASES:
             raise ValueError('case_already_exists')
         CASES[case_id] = {'marker': marker, 'release': threading.Event(), 'access_request': access_request,
+                         'deliverables': deliverables,
                          'access_call_id': 'call_' + digest(case_id)[:24], 'access_tool_calls': 0,
                          'access_receipt': None, 'file_preview': file_preview,
                          'file_preview_calls': 0, 'file_preview_outputs': 0,
@@ -99,11 +107,13 @@ def snapshot(case_id):
                 'synthetic_effect': 'one_consent_proposal' if case['access_request'] else 'one_text_completion'}
 
 
-def response_events(response_id, model, marker):
+def response_events(response_id, model, marker, deliverables=None):
     item_id = 'msg_' + digest(response_id)[:24]
     text = 'WS4 complete ' + marker
     if re.fullmatch(r'WS4_COPY_[a-f0-9]{32}', marker):
         text += '\n\n```python\nfixture_marker = "' + marker + '"\n```'
+    if deliverables:
+        text += '\n\n' + '\n'.join(deliverables)
     item = {'id': item_id, 'type': 'message', 'status': 'completed', 'role': 'assistant',
             'content': [{'type': 'output_text', 'text': text, 'annotations': []}]}
     response = {'id': response_id, 'object': 'response', 'created_at': int(time.time()),
@@ -316,7 +326,7 @@ class Handler(BaseHTTPRequestHandler):
                 case_id = body['case_id']
                 if path == '/__ws4/arm':
                     arm(case_id, body['marker'], body.get('access_request'), body.get('suggestions', False),
-                        body.get('configuration'), body.get('skill'), body.get('title', False))
+                        body.get('configuration'), body.get('skill'), body.get('title', False), body.get('deliverables'))
                 elif path in ('/__ws4/release', '/__ws4/release-suggestion', '/__ws4/release-title'):
                     with LOCK:
                         gate = {'/__ws4/release': 'release', '/__ws4/release-suggestion': 'suggestion_release',
@@ -398,7 +408,8 @@ class Handler(BaseHTTPRequestHandler):
                 case['events'].append({'event': 'request_admitted', 'ordinal': ordinal, 'at_ns': time.time_ns()})
         if case is None:
             return self.reply(409, {'error': 'no_matching_armed_case'})
-        frames = frames or response_events(response_id, body.get('model', 'ws4-local'), case['marker'])
+        frames = frames or response_events(response_id, body.get('model', 'ws4-local'), case['marker'],
+                                           case.get('deliverables'))
         self.send_response(200)
         self.send_header('Content-Type', 'text/event-stream')
         self.send_header('Cache-Control', 'no-cache')

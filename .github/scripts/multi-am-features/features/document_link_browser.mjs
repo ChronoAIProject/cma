@@ -1,20 +1,16 @@
-import {createHash, randomUUID} from 'node:crypto';
+import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual as equal} from 'node:util';
 import {check, hash, id, other} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
+import {documentIdentity} from './document_identity.mjs';
 
 const timeout = 15000;
 const shareHeader = 'x-cma-document-share-token';
-const oidNamespace = Buffer.from('6ba7b8129dad11d180b400c04fd430c8', 'hex');
 
 async function creationLinkId(documentId, request) {
   const key = await request.headerValue('idempotency-key');
   check(typeof key === 'string' && key.length > 0, 'document_link_browser_create_key_unbound');
-  // Match the document service's UUIDv5 identity for this document and create key.
-  const bytes = createHash('sha1').update(oidNamespace).update(JSON.stringify([documentId, key])).digest();
-  bytes[6] = (bytes[6] & 0x0f) | 0x50;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  return 'dln_' + bytes.subarray(0, 16).toString('hex');
+  return documentIdentity('dln_', [documentId, key]);
 }
 
 export async function documentLinkBrowser({page, ingress, owner, recipient, ownerId, recipientId,
