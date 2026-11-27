@@ -222,6 +222,10 @@ impl Backend for CreationOutcomes {
         &self.config.deployment
     }
 
+    fn terminal_settlement_enabled(&self) -> bool {
+        self.config.terminal_settlement
+    }
+
     async fn lookup(
         &self,
         identity: &Identity<'_>,

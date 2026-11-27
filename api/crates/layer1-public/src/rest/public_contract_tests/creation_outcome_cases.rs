@@ -16,6 +16,10 @@ impl Backend for Reader {
         DEPLOYMENT
     }
 
+    fn terminal_settlement_enabled(&self) -> bool {
+        false
+    }
+
     async fn lookup(
         &self,
         identity: &Identity<'_>,

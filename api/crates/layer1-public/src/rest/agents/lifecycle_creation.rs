@@ -117,19 +117,30 @@ pub(crate) async fn create_lifecycle(
                 .await
         }
     };
-    if let (
-        Err(AgentLifecycleProvisioningError::SandboxLimitReached { .. }),
-        Some(backend),
-        Some(fence),
-    ) = (&result, backend, fence)
-    {
-        if !matches!(
-            backend
-                .refuse_direct(&caller.subject, &fence, RefusalCode::SandboxLimitReached)
-                .await,
-            Ok(true)
-        ) {
-            return problem(StatusCode::SERVICE_UNAVAILABLE);
+    if let (Err(error), Some(backend), Some(fence)) = (&result, backend, fence) {
+        let refusal = match error {
+            AgentLifecycleProvisioningError::SandboxLimitReached { .. } => {
+                Some(RefusalCode::SandboxLimitReached)
+            }
+            // These failures end admission. The proof-store CAS still requires
+            // an unlinked submission, so an operation that won admission keeps authority.
+            AgentLifecycleProvisioningError::Invalid(_)
+            | AgentLifecycleProvisioningError::DesktopUnsupported(_)
+            | AgentLifecycleProvisioningError::ImageAccessDenied
+            | AgentLifecycleProvisioningError::ImageSelectionUnsupported
+                if backend.terminal_settlement_enabled() =>
+            {
+                Some(RefusalCode::CreationFailed)
+            }
+            _ => None,
+        };
+        if let Some(code) = refusal {
+            if !matches!(
+                backend.refuse_direct(&caller.subject, &fence, code).await,
+                Ok(true)
+            ) {
+                return problem(StatusCode::SERVICE_UNAVAILABLE);
+            }
         }
     }
     result
