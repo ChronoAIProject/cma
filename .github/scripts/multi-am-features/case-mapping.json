@@ -942,16 +942,11 @@
     "routing": "both"
   },
   "cma-user.documents.comment": {
-    "cases": [
-      "user.documents_grant_comment_revoke"
-    ],
-    "blocked": "API assertions prepared; required real-browser controls and draft/navigation behavior remain unimplemented",
-    "minimum_runs": 3,
-    "phases": [
-      "before_restart",
-      "after_restart"
-    ],
-    "routing": "both"
+    "cases": ["user.documents_browser_comment"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 1,
+    "phases": ["before_restart", "after_restart"]
   },
   "cma-user.documents.people-sharing": {
     "cases": [

@@ -13,6 +13,7 @@ import {createDocumentAfterLostReply} from './features/document_creation_browser
 import {documentEditAndConflict} from './features/document_edit_browser.mjs';
 import {documentBrowse} from './features/document_browse_browser.mjs';
 import {documentPeople} from './features/document_people_browser.mjs';
+import {documentCommentBrowser} from './features/document_comment_browser.mjs';
 import {busyConfigurationCase, competingSystemPrompts, configurationCases, heldConfigurationCases, assertWriterTitle,
   verifyLifecycleReplay} from './features/agent_configuration.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
@@ -172,6 +173,10 @@ async function accountBrowserCases(ams, witness) {
             recordFailure: (stage, error) => retainFailure(config.matrix_output, stage, error,
               {case: 'user.documents_browser_people_sharing', phase, iteration}),
           }));
+          if (iteration === 1) await browserCase(am, iteration, 'user.documents_browser_comment', () =>
+            documentCommentBrowser({page, user, ingress: am, documentId: document.id, ownerId: config.owner_id,
+              recordFailure: (stage, error) => retainFailure(config.matrix_output, stage, error,
+                {case: 'user.documents_browser_comment', phase, iteration})}));
           await browserCase(am, iteration, 'user.documents_browser_browse', () => documentBrowse({page, ingress: am,
             user, admin, ownerId: config.owner_id, recordFailure: (stage, error) =>
               retainFailure(config.matrix_output, stage, error, {case: 'user.documents_browser_browse', phase, iteration})}));
