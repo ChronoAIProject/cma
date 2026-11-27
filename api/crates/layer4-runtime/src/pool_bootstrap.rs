@@ -262,15 +262,7 @@ async fn accept(
     environment.extend(request.environment);
     environment.remove("CHRONO_RUNTIME_POD_UID");
     environment.remove("CHRONO_RUNTIME_BOOTSTRAP_SOCKET");
-    let mut config = RuntimeConfig::from_values(environment)?;
-    // Managed Standard runtimes supply the seal. Agent Manager still gates
-    // its use on the qualified running digest and the current writer.
-    if !config.machine_included {
-        config
-            .process_env
-            .entry(crate::bridge::STALE_TURN_SEAL_FLAG.into())
-            .or_insert_with(|| "1".into());
-    }
+    let config = RuntimeConfig::from_values(environment)?;
     if socket.starts_with(&config.home) {
         return Err("runtime assignment socket must be outside the tenant home".into());
     }
