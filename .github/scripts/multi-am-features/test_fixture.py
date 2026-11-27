@@ -364,7 +364,7 @@ class OwnershipTests(unittest.TestCase):
         self.assertIn('"timesEntered": 8, "maxTimeMS": 4000', fixture.mongo.call_args.args[0])
         self.assertEqual(fixture.runtimeLossPublicationAbort('disarm'), {'count': 8})
         self.assertIn('"mode": "off"', fixture.mongo.call_args.args[0])
-        with self.assertRaisesRegex(ValueError, 'runtime_loss_abort_action_required'):
+        with self.assertRaisesRegex(ValueError, 'timed_publication_abort_action_required'):
             fixture.runtimeLossPublicationAbort('wait', True)
         fixture.ready['fixture'] = 'prepared'
         with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
