@@ -12,6 +12,9 @@ mod inspection_admission;
 #[path = "backend_policy_read_tests.rs"]
 mod policy_reads;
 
+#[path = "backend_file_read_tests.rs"]
+mod file_reads;
+
 #[path = "backend_post_status_order_tests.rs"]
 mod post_status_order;
 

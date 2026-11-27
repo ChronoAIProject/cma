@@ -6,6 +6,16 @@ use tokio::time::{Duration, Instant};
 const BINDING_VALIDITY: Duration = Duration::from_millis(crate::owner_protocol::RECEIVER_LEASE_MS);
 const DISPATCH_MARGIN: Duration = Duration::from_secs(2);
 
+fn dispatch_deadline(expires: Instant, now: Instant) -> Result<Instant> {
+    if expires > now + DISPATCH_MARGIN {
+        Ok(expires)
+    } else {
+        Err(AdapterError::Unavailable(
+            "file read binding expired".into(),
+        ))
+    }
+}
+
 #[derive(Default)]
 pub(super) struct FileReadBinding {
     verified: Option<(String, Instant)>,
@@ -16,10 +26,8 @@ impl FileReadBinding {
     fn valid_until(&self, boot: &str, now: Instant) -> Option<Instant> {
         self.verified
             .as_ref()
-            .filter(|(verified_boot, expires)| {
-                verified_boot == boot && *expires > now + DISPATCH_MARGIN
-            })
-            .map(|(_, expires)| *expires)
+            .filter(|(verified_boot, _)| verified_boot == boot)
+            .and_then(|(_, expires)| dispatch_deadline(*expires, now).ok())
     }
 }
 
@@ -67,37 +75,38 @@ impl AgentSandboxBackend {
             if proof.legacy_boot.as_ref() == Some(&request.boot_id) {
                 return Ok(None);
             }
-            let now = Instant::now();
-            match proof.valid_until(&request.boot_id, now) {
-                Some(expires) => expires,
-                None => {
-                    proof.verified = None;
-                    measure(ReadStage::ReadBinding, async {
-                        let (current, policy) = tokio::join!(
-                            self.client
-                                .native_runtime_proof(handle, &assigned.request, home),
-                            self.client.verify_native_runtime_policy(handle, home),
-                        );
-                        let current = current?;
-                        self.client.complete_native_runtime_policy(
-                            home,
-                            current.member(),
-                            policy,
-                        )?;
-                        if current.pod() != &assigned.pod
-                            || !current.matches(&assigned.request, home)?
-                        {
-                            return Err(binding_changed());
-                        }
-                        Ok(())
-                    })
-                    .await?;
-                    // Age includes observation time. A slow authority check cannot
-                    // extend the lifetime of the resources it read first.
-                    let expires = now + BINDING_VALIDITY;
-                    proof.verified = Some((request.boot_id.clone(), expires));
-                    expires
+            let started = Instant::now();
+            let policy = || {
+                measure(
+                    ReadStage::ReadPolicy,
+                    self.client.verify_native_runtime_policy(handle, home),
+                )
+            };
+            if let Some(expires) = proof.valid_until(&request.boot_id, started) {
+                drop(proof);
+                // The template can change without changing the Pod, home or boot.
+                // An upgraded retained member may use its own live policy proof.
+                if let Err(error) = policy().await {
+                    let current = self.observe_read_binding(handle, home, &assigned).await?;
+                    self.client.complete_native_runtime_policy(
+                        home,
+                        current.member(),
+                        Err(error),
+                    )?;
                 }
+                expires
+            } else {
+                proof.verified = None;
+                let (current, policy) =
+                    tokio::join!(self.observe_read_binding(handle, home, &assigned), policy());
+                let current = current?;
+                self.client
+                    .complete_native_runtime_policy(home, current.member(), policy)?;
+                // Age includes observation time. A slow authority check cannot
+                // extend the lifetime of the resources it read first.
+                let expires = dispatch_deadline(started + BINDING_VALIDITY, Instant::now())?;
+                proof.verified = Some((request.boot_id.clone(), expires));
+                expires
             }
         };
         if !self.assignment_is_current(handle, &assigned) {
@@ -106,6 +115,7 @@ impl AgentSandboxBackend {
         let mut checked = request.clone();
         checked.home_identity = Some(home_identity);
         let reply = measure(ReadStage::RuntimeRead, async {
+            let expires = dispatch_deadline(expires, Instant::now())?;
             tokio::time::timeout_at(
                 expires,
                 self.transport.exchange_bound_file_read(
@@ -160,6 +170,25 @@ impl AgentSandboxBackend {
             }
             _ => Err(AdapterError::unexpected_reply("file read")),
         }
+    }
+
+    async fn observe_read_binding(
+        &self,
+        handle: &RuntimeHandle,
+        home: &HomeVolumeAttachment,
+        assigned: &binding::Assignment,
+    ) -> Result<crate::agent_sandbox::NativeRuntimeProof> {
+        measure(ReadStage::ReadBinding, async {
+            let current = self
+                .client
+                .native_runtime_proof(handle, &assigned.request, home)
+                .await?;
+            if current.pod() != &assigned.pod || !current.matches(&assigned.request, home)? {
+                return Err(binding_changed());
+            }
+            Ok(current)
+        })
+        .await
     }
 }
 
