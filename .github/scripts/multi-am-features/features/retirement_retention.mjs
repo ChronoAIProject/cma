@@ -132,15 +132,21 @@ export async function unresolvedTitleRetirement({adapter, api, create, cleanup, 
   const paths = ['/api/v1/agents/' + agentId, '/api/v1/sandboxes/' + sandboxId];
   const purged = await observeEligiblePurge({adapter, user: api, record, admissions, paths, titleDigest,
     waitForPurge: poll, afterArm: async (target, armed) => {
-      await poll(() => adapter.retirementTitleDeferral({agentId, sandboxId}), observations =>
-        ['a', 'b'].some(am => observations?.[am]?.title_deferrals >= 1
-          && observations[am].refused_purge_attempts >= 1),
-      {timeout: 30000, code: 'retirement_live_title_did_not_defer_purge'});
+      const match = observations => ['a', 'b'].flatMap(am => {
+        const sample = observations?.[am];
+        return sample?.title_deferrals >= 1 && sample.refused_purge_attempts >= 1
+          ? sample.refused_lease_digests ?? [] : [];
+      });
+      const deferrals = await poll(() => adapter.retirementTitleDeferral({agentId, sandboxId}),
+        observations => match(observations).length > 0,
+        {timeout: 30000, code: 'retirement_live_title_did_not_defer_purge'});
+      const digests = [...new Set(match(deferrals))];
+      check(digests.length === 1 && /^[a-f0-9]{64}$/.test(digests[0]), 'retirement_refused_lease_not_bound');
       const held = await adapter.retirementPurge(target);
       check(held.present === true && held.agents === 1 && held.unresolved_title_active === true
         && ['agent_events', 'sandbox_events', 'workspaces', 'worktrees'].every(key => held[key] === true)
         && held.creation_sha256 === armed.creation_sha256, 'retirement_live_title_retention_unproven');
-      const advanced = await adapter.retirementPurge({...target, advanceTitle: true});
+      const advanced = await adapter.retirementPurge({...target, advanceTitle: true, refusedLeaseSha256: digests[0]});
       check(advanced.title_advanced === true && advanced.creation_sha256 === armed.creation_sha256,
         'retirement_title_window_not_advanced');
     }});

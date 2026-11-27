@@ -1,5 +1,5 @@
 (async () => {
-  const {sandboxId, agentId, operationId, admissions, arm, titleDigest, advanceTitle} = scope;
+  const {sandboxId, agentId, operationId, admissions, arm, titleDigest, advanceTitle, refusedLeaseSha256} = scope;
   const owner = 'native-am-fixture-owner';
   const session = await d.getMongo().startSession();
   try {
@@ -57,23 +57,26 @@
       const lease = sandbox?.record.work?.lease;
       if (!sandbox || !exactChildren || !event || !agentEvent || !workspace || !worktree
           || sandbox.status !== 'retired' || sandbox.record.runtime != null
-          || sandbox.record.work.step !== 'purge' || Date.parse(sandbox.purge_after) > now
+          || sandbox.record.work?.step?.kind !== 'purge' || Date.parse(sandbox.purge_after) > now
           || !Number.isFinite(Date.parse(sandbox.purge_after))
-          || (lease?.expires_at ?? null) !== (sandbox.work_lease_expires_at ?? null)) {
+          || typeof lease?.holder !== 'string' || !lease.holder || !Number.isSafeInteger(Number(lease.fence))
+          || Number(lease.fence) < 1 || lease.expires_at !== sandbox.work_lease_expires_at
+          || !Number.isFinite(Date.parse(lease.expires_at))) {
         throw new Error('retirement_purge_title_deferral_unbound');
       }
+      const leaseSha256 = require('crypto').createHash('sha256')
+        .update(lease.fence.toString() + ':' + lease.holder).digest('hex');
+      if (leaseSha256 !== refusedLeaseSha256) throw new Error('retirement_purge_refused_lease_replaced');
       await moveTitleWindow(now - duration - 1000);
-      if (lease) {
-        // The refused attempt can retain its work lease. Advance only its
-        // exact expiry so the regular scheduler can claim the next attempt.
-        const elapsedLease = new Date(now - 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
-        const update = await snapshot.sandboxes.updateOne({...target, status: 'retired',
-          revision: sandbox.revision, 'record.work.step': 'purge', work_lease_expires_at: lease.expires_at,
-          'record.work.lease.expires_at': lease.expires_at, 'record.work.lease.holder': lease.holder,
-          'record.work.lease.fence': lease.fence}, {$set: {work_lease_expires_at: elapsedLease,
-          'record.work.lease.expires_at': elapsedLease}});
-        if (update.modifiedCount !== 1) throw new Error('retirement_purge_deferred_lease_changed');
-      }
+      // The refused attempt can retain its work lease. Advance only its
+      // exact expiry so the regular scheduler can claim the next attempt.
+      const elapsedLease = new Date(now - 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+      const update = await snapshot.sandboxes.updateOne({...target, status: 'retired',
+        revision: sandbox.revision, 'record.work.step.kind': 'purge', work_lease_expires_at: lease.expires_at,
+        'record.work.lease.expires_at': lease.expires_at, 'record.work.lease.holder': lease.holder,
+        'record.work.lease.fence': lease.fence}, {$set: {work_lease_expires_at: elapsedLease,
+        'record.work.lease.expires_at': elapsedLease}});
+      if (update.modifiedCount !== 1) throw new Error('retirement_purge_deferred_lease_changed');
       await session.commitTransaction();
       print(JSON.stringify({title_advanced: true, creation_sha256: creationDigest}));
       return;
@@ -93,7 +96,7 @@
 
     const initial = sandbox?.purge_after;
     if (sandbox?.status !== 'retired' || sandbox.record.runtime != null
-        || sandbox.record.work?.step !== 'wait_for_purge' || sandbox.work_lease_expires_at != null
+        || sandbox.record.work?.step?.kind !== 'wait_for_purge' || sandbox.work_lease_expires_at != null
         || typeof initial !== 'string' || Date.parse(initial) <= now || !Number.isFinite(Date.parse(initial))
         || sandbox.work_ready_at !== initial || !event || !agentEvent || !workspace || !worktree
         || !exactChildren) {
@@ -104,7 +107,8 @@
     if (titleDigest) await moveTitleWindow(now);
     const elapsed = new Date(now + 1000).toISOString().replace(/\.\d{3}Z$/, 'Z');
     const update = await snapshot.sandboxes.updateOne({...target, status: 'retired', revision: sandbox.revision,
-      last_seq: sandbox.last_seq, purge_after: initial, work_ready_at: initial, work_lease_expires_at: null},
+      last_seq: sandbox.last_seq, 'record.work.step.kind': 'wait_for_purge',
+      purge_after: initial, work_ready_at: initial, work_lease_expires_at: null},
     {$set: {purge_after: elapsed, work_ready_at: elapsed, 'record.purge_after': elapsed, 'record.work.ready_at': elapsed}});
     if (update.modifiedCount !== 1) throw new Error('retirement_purge_schedule_not_advanced');
     await session.commitTransaction();
