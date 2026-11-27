@@ -23,6 +23,7 @@ mod runtime_inventory;
 mod runtime_migration;
 mod state;
 mod stores;
+mod suggestion_control;
 mod usage;
 use crate::{
     auth::AuthState,
@@ -409,6 +410,10 @@ impl ControlPlaneComposition {
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes =
             routes::resource_budgets(resource_routes, &bindings, config, &limits)?;
+        let resource_routes = suggestion_control::routes(
+            resource_routes,
+            stores.sandbox_model.suggestion_control.clone(),
+        );
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,

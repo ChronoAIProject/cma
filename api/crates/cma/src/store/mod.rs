@@ -226,6 +226,7 @@ pub mod settings;
 mod settings_barrier;
 pub(crate) mod settings_defaults;
 mod shared_child_capacity;
+pub(crate) mod suggestion_control;
 mod suggestions;
 pub(crate) mod task_audit;
 mod trigger_definitions;

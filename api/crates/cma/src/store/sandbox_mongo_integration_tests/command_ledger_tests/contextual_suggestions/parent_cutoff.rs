@@ -12,6 +12,60 @@ use gate::{Gate, Point};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires an isolated Mongo replica set"]
+async fn staging_hold_witnesses_pause_before_the_first_publication() {
+    use crate::config::suggestion_control::{Mode, Target};
+    use crate::store::suggestion_control::SuggestionControl;
+    use std::time::Duration;
+
+    let f = Fixture::with_control(Mode::PauseFirst).await;
+    let target = Target {
+        sandbox_id: f.parent.id.to_string(),
+        agent_id: f.agent.id.to_string(),
+    };
+    let operator = SuggestionControl::new(&f.other, target);
+    let attempts_before = f.gate.attempts();
+    let completion = f.complete();
+    let held = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let report = operator.read().await.unwrap().unwrap();
+            if report.held_at_ms.is_some() {
+                break report;
+            }
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    })
+    .await
+    .expect("completion reached its parent-fence checkpoint");
+    assert!(!completion.is_finished());
+    let claim_started_at_ms = i64::try_from(f.claim.started_at_ms.unwrap()).unwrap();
+    assert_eq!(held.claim_started_at_ms, Some(claim_started_at_ms));
+    assert_eq!(f.gate.attempts() - attempts_before, 1);
+    assert_eq!(f.row().await.get_str("status").unwrap(), "running");
+    assert!(!operator.release(claim_started_at_ms).await.unwrap());
+
+    assert!(matches!(
+        f.pause(&f.other).await.unwrap(),
+        SandboxLifecycleCommandResult::Accepted(_)
+    ));
+    assert_eq!(f.row().await.get_str("status").unwrap(), "running");
+    assert!(operator.release(claim_started_at_ms).await.unwrap());
+    completion.await.unwrap().unwrap();
+    assert_eq!(f.gate.attempts() - attempts_before, 2);
+
+    let witnessed = serde_json::to_value(operator.read().await.unwrap().unwrap()).unwrap();
+    assert_eq!(witnessed["durable_status"], "expired");
+    assert_eq!(witnessed["durable_has_set"], false);
+    assert!(
+        witnessed["pause_revision"].as_u64().unwrap()
+            > witnessed["parent_snapshot_revision"].as_u64().unwrap()
+    );
+    assert_eq!(f.row().await.get_str("status").unwrap(), "expired");
+    f.assert_hidden().await;
+    f.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires an isolated Mongo replica set"]
 async fn pause_acknowledged_before_completion_prevents_first_ready_publication() {
     let f = Fixture::new().await;
     let release = f.gate.arm(Point::ParentRead);
