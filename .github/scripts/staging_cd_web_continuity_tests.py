@@ -16,7 +16,8 @@ from staging_cd_receipts_tests import fixture_receipt, fixture_tag
 from staging_cd_resolve import verify
 from staging_cd_set import private_document, release_set, verify_set
 from staging_cd_web_continuity import (
-    BOOTSTRAP_EVIDENCE_SCHEMA, BOOTSTRAP_SCHEMA, PREIMAGE_SCHEMA, PROOF_SCHEMA, binding, retention_scope,
+    BOOTSTRAP_EVIDENCE_SCHEMA, BOOTSTRAP_SCHEMA, PREIMAGE_SCHEMA, PROOF_SCHEMA, binding, production_inputs,
+    retention_scope,
 )
 
 
@@ -251,9 +252,7 @@ class WebContinuityTests(unittest.TestCase):
         promoted_preimage = fixture_preimage(promoted, manifest)
         wider = retention_scope(promoted_preimage, STARTED, [self.receipt])
         self.assertEqual([row["completed_rollouts"] for row in wider["inputs"]], [1, 0, 3])
-        narrower = retention_scope(promoted_preimage, STARTED, [self.receipt], retain_rollouts=2)
-        self.assertEqual([row["image"] for row in narrower["inputs"]], [image("2"), image("3")])
-        self.assertEqual([row["completed_rollouts"] for row in narrower["inputs"]], [1, 0])
+        self.assertEqual(retention_scope(promoted_preimage, STARTED, [self.receipt], retain_rollouts=2), wider)
         with self.assertRaisesRegex(Refusal, "differs from its finalized lineage"):
             incorrect = dict(after_rollback, base_image=self.continuity["candidate_base_image"])
             retention_scope(fixture_preimage(incorrect, manifest), STARTED, [self.receipt])
@@ -261,6 +260,54 @@ class WebContinuityTests(unittest.TestCase):
             retention_scope(fixture_preimage(after_rollback, "b" * 64), STARTED, [self.receipt])
         with self.assertRaisesRegex(Refusal, "differs from its admission"):
             retention_scope(fixture_preimage(after_rollback, manifest), "2026-01-01T00:01:00Z", [self.receipt])
+
+    def test_default_retention_prunes_only_after_the_sixth_successor(self):
+        proof = copy.deepcopy(self.proof)
+        proof["inputs"][2]["completed_rollouts"] = 6
+        proof["inputs"].append({
+            "image": image("7"), "source_sha": "d" * 40, "version": "0.9.1",
+            "catalog_sha256": "7" * 64, "completed_rollouts": 5,
+        })
+        continuity = dict(self.continuity, proof_sha256=sha256(proof))
+        receipt = self.publish(self.original, asset_continuity=continuity, asset_proof=proof)
+        manifest = continuity["asset_manifest_sha256"]
+
+        prepared = dict(continuity["incumbent"], image=continuity["prepare_image"])
+        production = dict(fixture_receipt(source="e" * 40, previous="0.8.0", version="0.8.1"),
+                          digest="sha256:" + "8" * 64)
+        options = {"production_images": [image("8")]}
+        rollback_scope = retention_scope(fixture_preimage(prepared, manifest), STARTED,
+                                         [receipt, production], **options)
+        self.assertEqual(rollback_scope["inputs"][:-1], proof["inputs"])
+        self.assertEqual(rollback_scope["inputs"][-1]["image"], image("8"))
+
+        promoted = {
+            "image": REPOSITORY + "@" + receipt["digest"],
+            "base_image": continuity["candidate_base_image"],
+            "source_sha": receipt["source"],
+            "version": receipt["identity"]["version"],
+        }
+        settled_scope = retention_scope(fixture_preimage(promoted, manifest), STARTED,
+                                        [receipt, production], **options)
+        self.assertEqual(
+            [(row["image"], row["completed_rollouts"]) for row in settled_scope["inputs"]],
+            [(image("2"), 1), (image("3"), 0), (image("7"), 6), (image("8"), 7)],
+        )
+        unpinned_scope = retention_scope(fixture_preimage(promoted, manifest), STARTED, [receipt])
+        self.assertEqual([row["image"] for row in unpinned_scope["inputs"]],
+                         [image("2"), image("3"), image("5"), image("7")])
+
+    def test_production_promote_and_rollback_preserve_the_whole_proven_lineage(self):
+        promote = REPOSITORY + "@" + self.receipt["digest"]
+        prepare = self.continuity["prepare_image"]
+        expected = {
+            row["image"]: dict(row, completed_rollouts=7)
+            for row in self.proof["inputs"]
+        }
+        self.assertEqual(production_inputs([self.receipt], [promote], 6), expected)
+        self.assertEqual(production_inputs([self.receipt], sorted([promote, prepare]), 6), expected)
+        with self.assertRaisesRegex(Refusal, "no unique finalized lineage"):
+            production_inputs([self.receipt], [image("8")], 6)
 
     def test_legacy_raw_preimage_requires_bootstrap_and_full_identity(self):
         legacy = {"image": REPOSITORY + "@" + self.original["digest"],
