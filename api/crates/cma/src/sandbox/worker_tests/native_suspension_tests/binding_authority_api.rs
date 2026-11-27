@@ -24,12 +24,16 @@ pub(super) const POD: &str = "/api/v1/namespaces/cma-test/pods/warm-member";
 pub(super) const VOLUME: &str =
     "/api/v1/namespaces/cma-test/persistentvolumeclaims/home-warm-member";
 
+type DeleteCheck = Box<dyn Fn() -> futures_util::future::BoxFuture<'static, ()> + Send>;
+
 #[derive(Default)]
 pub(super) struct ApiState {
     pub rows: BTreeMap<String, Value>,
     pub calls: Vec<(String, String)>,
     pub assignments: Vec<RuntimeBootstrapRequest>,
     pub assignment_boundaries: Vec<usize>,
+    pub before_delete: Option<DeleteCheck>,
+    pub lose_member_delete: bool,
     version: u64,
 }
 
@@ -75,6 +79,12 @@ async fn request(State(state): State<Arc<Mutex<ApiState>>>, request: Request<Bod
     } else {
         serde_json::from_slice(&bytes).unwrap()
     };
+    if parts.method == "DELETE" {
+        let check = state.lock().unwrap().before_delete.as_ref().map(|f| f());
+        if let Some(check) = check {
+            check.await;
+        }
+    }
     let mut state = state.lock().unwrap();
     let path = parts.uri.path();
     state.calls.push((parts.method.to_string(), path.into()));
@@ -151,6 +161,29 @@ async fn request(State(state): State<Arc<Mutex<ApiState>>>, request: Request<Bod
             }
             state.rows.insert(path.into(), row.clone());
             (200, row)
+        }
+        "DELETE" if state.before_delete.is_some() && state.rows.contains_key(path) => {
+            let metadata = &state.rows[path]["metadata"];
+            assert_eq!(
+                body["preconditions"],
+                json!({"uid":metadata["uid"],"resourceVersion":metadata["resourceVersion"]})
+            );
+            state.rows.remove(path);
+            if path == MEMBER {
+                state.rows.remove(POD);
+                state.rows.remove(VOLUME);
+                if std::mem::take(&mut state.lose_member_delete) {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(json!({"message":"fixture lost delete receipt"})),
+                    )
+                        .into_response();
+                }
+            }
+            (
+                200,
+                json!({"apiVersion":"v1","kind":"Status","status":"Success","code":200}),
+            )
         }
         "DELETE" => (
             403,
