@@ -61,6 +61,18 @@ impl Worktree {
 
     pub fn transition(&mut self, next: WorktreeStatus) -> Result<(), SandboxModelError> {
         let status = self.status.transition(next)?;
+        self.update_status(status)
+    }
+
+    /// Cancel an unfinished Agent Worktree after its Sandbox retirement is proved.
+    pub fn remove_abandoned_agent_worktree(&mut self) -> Result<(), SandboxModelError> {
+        if self.status != WorktreeStatus::Creating || self.agent_id.is_none() {
+            return Err(SandboxModelError::invalid_value("worktree"));
+        }
+        self.update_status(WorktreeStatus::Removing)
+    }
+
+    fn update_status(&mut self, status: WorktreeStatus) -> Result<(), SandboxModelError> {
         let revision = self
             .revision
             .checked_add(1)
