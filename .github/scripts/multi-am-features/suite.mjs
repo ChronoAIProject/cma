@@ -248,6 +248,7 @@ try {
         }};
         if (iteration === 1) {
           await caseContext.runCase('writer.skill_installs_once', () => installSkillCase(caseContext));
+          await caseContext.runCase('writer.skill_publication_retry', () => installSkillCase(caseContext, true));
           await caseContext.runCase('writer.share_and_artifact_receipts',
             () => shareAgentArtifact({...caseContext, user, outsider}));
           await caseContext.runCase('writer.organization_share_membership',
@@ -268,6 +269,7 @@ try {
         }
         await configurationDenials({...caseContext, outsider});
         await configurationCases(caseContext);
+        if (iteration === 1) await configurationCases(caseContext, true);
         await configurationCases({...caseContext, api: admin, conversationApi: context.api,
           runCase: (name, operation) => caseContext.runCase(name.replace('user.', 'admin.'), operation)});
         await matrix.sandboxAlwaysOn(iteration, {

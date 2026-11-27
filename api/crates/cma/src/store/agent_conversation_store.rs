@@ -3,13 +3,17 @@
 use crate::store::agent_log_telemetry::ScanCaller;
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::ids::AgentId;
+use layer2_core::sandbox::agent_live_skills::AgentSkillInstallStatus;
 use layer2_core::sandbox::store::{
     AgentConversationMutation, AgentConversationStore, SandboxStoreError,
 };
-use layer2_core::sandbox::{Agent, AgentLogEntry, PendingAgentApprovals};
+use layer2_core::sandbox::{
+    Agent, AgentLogEntry, AgentLogKind, AgentOperationDelivery, AgentOperationKind,
+    PendingAgentApprovals,
+};
 use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::doc;
-use mongodb::error::{ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR};
+use mongodb::error::{ErrorKind, WriteFailure};
 use mongodb::options::ReadConcern;
 use sha2::{Digest, Sha256};
 
@@ -128,19 +132,32 @@ async fn commit_conversation_inner(
                     ErrorKind::Write(WriteFailure::WriteError(error)) => error.code == 112,
                     _ => false,
                 };
-                if write_conflict
-                    && error.contains_label(TRANSIENT_TRANSACTION_ERROR)
-                    && matches!(mutation.agent_logs.as_slice(),
-                        [layer2_core::sandbox::AgentLogKind::TitleSet { source, .. }]
-                        if source == "owner_override")
-                {
-                    tracing::debug!(
-                        target: "cma::agent_manager::rename_publication",
-                        parent: None,
-                        agent_sha256 = %format_args!("{:x}", Sha256::digest(mutation.agent.id.as_str().as_bytes())),
-                        failure = "known_aborted_cas",
-                        "Rename publication transaction aborted before retry"
-                    );
+                if write_conflict {
+                    let operation = match mutation.agent_logs.as_slice() {
+                        [AgentLogKind::TitleSet { source, .. }] if source == "owner_override" => {
+                            Some("rename")
+                        }
+                        [AgentLogKind::SkillInstallationChanged {
+                            status: AgentSkillInstallStatus::Pending,
+                            ..
+                        }] => Some("skill_install"),
+                        [AgentLogKind::OperationDeliveryChanged {
+                            operation: AgentOperationKind::UpdateSettings,
+                            state: AgentOperationDelivery::DispatchFenced,
+                            ..
+                        }] => Some("settings"),
+                        _ => None,
+                    };
+                    if let Some(operation) = operation {
+                        tracing::debug!(
+                            target: "cma::agent_manager::writer_publication",
+                            parent: None,
+                            agent_sha256 = %format_args!("{:x}", Sha256::digest(mutation.agent.id.as_str().as_bytes())),
+                            operation,
+                            failure = "known_aborted_cas",
+                            "Agent writer publication transaction aborted before retry"
+                        );
+                    }
                 }
                 last_transient = Some(error.to_string());
                 continue;

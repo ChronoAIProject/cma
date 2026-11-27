@@ -15,7 +15,7 @@ export function createAdapter(config) {
     'observeNeverReady','liveOwnerLease','lifecycleSnapshot','organizationMembership',
     'configurationLog','configurationDispatch','publicationEvidence','retirementPurge','removeRuntimePod',
     'artifactPublicationAbort','preparedPublicationAbort','preparedSchemaBarrier','preparedSchemaRace','preparedSchemaRefusals',
-    'renamePublicationAbort','renamePublicationEvidence']
+    'writerPublicationAbort','writerPublicationEvidence','runtimeLossEvidence']
     .map(name=>[name,(body)=>call(name,body)]));
 }
 export default createAdapter;

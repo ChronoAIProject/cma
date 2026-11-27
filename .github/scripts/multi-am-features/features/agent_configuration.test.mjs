@@ -5,7 +5,8 @@ import {competingSystemPrompts, configurationCases, heldConfigurationCases, asse
 
 function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = false,
   mutateOnRefusal = false, effect = [3], staleNativePrompt = false, staleNativeEffort = false,
-  duplicateConfiguration = false, replayWrites = false, dispatchManager = 'b', dispatches = 1} = {}) {
+  duplicateConfiguration = false, replayWrites = false, dispatchManager = 'b', dispatches = 1,
+  abortOn = 'b'} = {}) {
   let preferences = {title: 'Original', system_prompt: 'Original instructions',
     prompt_pending: false, prompt_supported: true, revision: 1};
   let settings = {model: 'fixture-model', reasoning_effort: 'high',
@@ -47,7 +48,7 @@ function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = 
     replies.set(key, response);
     return response;
   }};
-  let armed;
+  let armed, publicationArmed = false, injected = false;
   api.send = async (_am, agentId, input, key) => {
     assert.equal(agentId, record.agentId);
     assert.equal(key, armed.caseId);
@@ -58,6 +59,10 @@ function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = 
   };
   api.router = {dispatch: async (id, operation) => { assert.equal(id, record.agentId); return operation('a'); }};
   api.rawRequest = async (am, method, path, options) => {
+    if (publicationArmed && method === 'PATCH') {
+      assert.equal(am, 'a');
+      injected = true;
+    }
     if (path.endsWith('/preferences') || path.endsWith('/settings')) return api.request(am, method, path, options);
     assert.equal(method, 'GET');
     if (path === '/api/v1/agents/' + record.agentId) return {body: {id: record.agentId, status: 'ready'}};
@@ -73,6 +78,17 @@ function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = 
   const adapter = {prepareTurn: async value => { armed = value; probes.push(value.configuration); },
     releaseTurn: async ({caseId}) => assert.equal(caseId, armed.caseId),
     ownerOf: async () => ({am: 'b', epoch: 1, agent_id: record.agentId, pod_uid: 'owned-pod'}),
+    writerPublicationAbort: async ({arm}) => {
+      publicationArmed = arm;
+      return {count: injected ? 4 : 3};
+    },
+    writerPublicationEvidence: async ({agentId, operation}) => {
+      assert.equal(agentId, record.agentId);
+      assert.equal(operation, 'settings');
+      const counts = {a: 0, b: 0};
+      if (injected) counts[abortOn] += 1;
+      return counts;
+    },
     configurationDispatch: async ({agentId, sequence}) => {
       assert.equal(agentId, record.agentId);
       assert.ok(log.some(row => row.sequence === sequence && row.state === 'dispatch_fenced'));
@@ -98,7 +114,8 @@ function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = 
     return effect;
   }};
   return {api, adapter, record, runCase, recordFailure: async (stage, error) => failures.push({stage, message: error.message}),
-    calls, rows, failures, original, probes, state: () => ({preferences, settings})};
+    calls, rows, failures, original, probes, state: () => ({preferences, settings}),
+    isPublicationArmed: () => publicationArmed};
 }
 
 test('configuration round trips change real values, preserve prompt, refuse stale writes and restore', async () => {
@@ -131,6 +148,18 @@ test('competing prompts require one changed value, one owner dispatch and a stal
   await assert.rejects(competingSystemPrompts(fixture({falseAck: true})), /prompt_race_requires_exactly_one_winner/);
   await assert.rejects(competingSystemPrompts(fixture({duplicateConfiguration: true})),
     /configuration_admission_or_settlement_duplicated_or_missing/);
+});
+
+test('configuration retries one aborted owner publication before dispatching the changed prompt', async () => {
+  const context = fixture();
+  await configurationCases(context, true);
+  assert.deepEqual(context.rows, [{case: 'writer.configuration_publication_retry', verdict: 'PASS'}]);
+  assert.equal(context.isPublicationArmed(), false);
+  assert.equal(context.state().preferences.system_prompt, context.original.preferences.system_prompt);
+  const unrelated = fixture({abortOn: 'a'});
+  await assert.rejects(configurationCases(unrelated, true), /writer_publication_abort_not_attributed_to_owner/);
+  assert.equal(unrelated.isPublicationArmed(), false);
+  assert.equal(unrelated.state().preferences.system_prompt, unrelated.original.preferences.system_prompt);
 });
 
 test('configuration requires one durable admission and settlement and no second receipt on unchanged replay', async () => {

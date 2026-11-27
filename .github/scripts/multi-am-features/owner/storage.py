@@ -16,7 +16,7 @@ import zipfile
 PREFIX = '/api/v1/proxy/s/chrono-storage-service/api/buckets/cma-ci-documents/objects'
 LIMIT = 2 * 1024 * 1024
 SKILL_PATH = re.compile(r'/api/v1/proxy/s/ornn-api/api/v1/skills/'
-                        r'(two-am-(?:before|after)-restart)(/versions/1\.0/download)?')
+                        r'(two-am-(?:retry-)?(?:before|after)-restart)(/versions/1\.0/download)?')
 MODEL_RESPONSES_PATH = '/api/v1/proxy/s/chrono-llm-public/responses'
 
 

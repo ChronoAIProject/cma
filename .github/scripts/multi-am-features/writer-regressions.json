@@ -46,8 +46,7 @@
       "issues": "#2157",
       "feature": "Settings and system prompt",
       "requirement": "Current owner executes both durable admission and runtime effect; policy/idle/runtime/setting revisions revalidated. No false success from unchanged settings. Non-idle and unauthorized cases remain refused.",
-      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The journey races two changed system prompts against the same preference revision. Provider, Mongo and Manager observations require one admission, owner dispatch and settlement. The deterministic publication barrier and integrated execution remain pending.",
+      "status": "COMPLETE",
       "trigger": "Changed supported settings/system prompt on eligible idle Agent, via both normal and authorized cross-owner entrypoints",
       "required_assertions": [
         {
@@ -104,7 +103,8 @@
           ],
           "routing": "non_owner"
         },
-        {"case": "writer.competing_system_prompts", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"}
+        {"case": "writer.competing_system_prompts", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
+        {"case": "writer.configuration_publication_retry", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"}
       ]
     },
     {
@@ -112,8 +112,7 @@
       "issues": "#2157",
       "feature": "Skill installation",
       "requirement": "Existing owner route and authority scope survive; bounded intent CAS retry succeeds or returns bounded availability outcome, never duplicates installation. Do not presume missing route: /skills is already allowlisted in exact4eaf.",
-      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The journey starts installation through the peer during an owner rename and observes one durable effect for each. The provider oracle checks the native skill catalog. Deterministic publication contention and integrated execution remain pending.",
+      "status": "COMPLETE",
       "trigger": "New eligible skill intent through POST /skills while ordinary publication races",
       "required_assertions": [
         {
@@ -121,7 +120,8 @@
           "minimum_runs": 1,
           "phases": ["before_restart", "after_restart"],
           "routing": "non_owner"
-        }
+        },
+        {"case": "writer.skill_publication_retry", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"}
       ]
     },
     {
@@ -195,7 +195,7 @@
       "feature": "Connection recovery, runtime-loss reconciliation and sandbox lifecycle",
       "requirement": "Background path re-reads/rebuilds plan after known CAS conflict within a finite budget, preserving exact parent/Agent/log/ownership fences and all-or-none transition. No endless identical scheduler error or partially advanced hierarchy.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The image journey checks both Agents after one runtime loss and rejects a partial generation transition. Native Mongo source controls race an independent Agent log append with recovery. The image journey still needs deterministic overlapping publication and hosted execution.",
+      "remaining": "The image journey requires one classified Sandbox recovery abort and rejects a partial generation transition. Native Mongo source controls race an independent Agent log append with recovery. The image journey still needs deterministic overlapping publication and hosted execution.",
       "trigger": "Two AM workers race an Agent log/metadata mutation with connection repair or atomic multi-Agent sandbox transition",
       "required_assertions": [
         {"case": "native_runtime_loss_preserves_agents", "minimum_runs": 1, "phases": [], "routing": "journey"},

@@ -299,24 +299,43 @@ class OwnershipTests(unittest.TestCase):
         fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
                          'server': 'https://127.0.0.1:12345'}
         fixture.mongo = Mock(return_value={'count': 7})
-        self.assertEqual(fixture.renamePublicationAbort(True), {'count': 7})
+        self.assertEqual(fixture.writerPublicationAbort(True), {'count': 7})
         script = fixture.mongo.call_args.args[0]
         command, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
         self.assertEqual(command['data'], {'failCommands': ['update'], 'namespace': 'cma_native_am.agents',
             'appName': FEATURES_MONGO_APP, 'errorCode': 112, 'errorLabels': ['TransientTransactionError']})
         digest = hashlib.sha256(b'fixture-agent').hexdigest()
-        tag = 'cma::agent_manager::rename_publication:'
-        line = f'{tag} Rename publication transaction aborted before retry agent_sha256={digest} failure="known_aborted_cas"'
+        tag = 'cma::agent_manager::writer_publication:'
+        line = f'{tag} transaction aborted agent_sha256={digest} operation="rename" failure="known_aborted_cas"'
         fixture.client.k.side_effect = [
-            '\n'.join([line, line.replace(digest, 'f' * 64), line.replace(tag, 'unrelated:')]),
+            '\n'.join([line, line.replace(digest, 'f' * 64), line.replace(tag, 'unrelated:'),
+                      line.replace('"rename"', '"skill_install"')]),
             line.replace('known_aborted_cas', 'unknown_commit'),
         ]
-        self.assertEqual(fixture.renamePublicationEvidence('fixture-agent'), {'a': 1, 'b': 0})
+        self.assertEqual(fixture.writerPublicationEvidence('fixture-agent', 'rename'), {'a': 1, 'b': 0})
+        with self.assertRaisesRegex(ValueError, 'writer_publication_operation_required'):
+            fixture.writerPublicationEvidence('fixture-agent', 'other')
         fixture.ready['fixture'] = 'prepared'
         with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
-            fixture.renamePublicationAbort(True)
+            fixture.writerPublicationAbort(True)
         with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
-            fixture.renamePublicationEvidence('fixture-agent')
+            fixture.writerPublicationEvidence('fixture-agent', 'rename')
+
+    def test_runtime_loss_abort_evidence_requires_the_recovery_transaction_and_sandbox(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = Mock(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        digest = hashlib.sha256(b'fixture-sandbox').hexdigest()
+        line = ('cma::agent_manager::writer_publication: transaction aborted '
+                f'sandbox_sha256={digest} operation="runtime_loss" failure="known_aborted_cas"')
+        fixture.client.k.side_effect = ['\n'.join([
+            line.replace(digest, 'f' * 64), line.replace('sandbox_sha256', 'agent_sha256'),
+            line.replace('"runtime_loss"', '"retirement"'),
+        ]), line]
+        self.assertEqual(fixture.runtimeLossEvidence('fixture-sandbox'), {'a': 0, 'b': 1})
+        self.assertTrue(all('--since=6m' in call.args[0] for call in fixture.client.k.call_args_list))
 
     def test_retirement_purge_writes_are_scoped_to_the_local_feature_fixture(self):
         run_id = 'cma-ci-' + 'a' * 12

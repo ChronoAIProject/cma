@@ -52,7 +52,8 @@ def arm(case_id, marker, access_request=None, suggestions=False, configuration=N
     if skill is not None:
         if (suggestions or access_request is not None or configuration is not None
                 or not isinstance(skill, dict) or set(skill) != {'id', 'present'}
-                or skill['id'] not in ('two-am-before-restart', 'two-am-after-restart')
+                or not isinstance(skill['id'], str)
+                or not re.fullmatch(r'two-am-(?:retry-)?(?:before|after)-restart', skill['id'])
                 or type(skill['present']) is not bool):
             raise ValueError('fixture_skill_invalid')
     if type(title) is not bool or (title and (suggestions or access_request is not None

@@ -3,10 +3,11 @@ import {isDeepStrictEqual as equal} from 'node:util';
 import {assertOwner, check, other, poll} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 import {probeProvider} from './provider_probe.mjs';
+import {retryOwnerPublication} from './writer_publication.mjs';
 
-export async function installSkillCase({api, adapter, record, phase, recordFailure}) {
-  const id = phase === 'before_restart' ? 'two-am-before-restart' : 'two-am-after-restart';
+export async function installSkillCase({api, adapter, record, phase, recordFailure}, publicationRetry = false) {
   check(['before_restart', 'after_restart'].includes(phase), 'skill_restart_phase_required');
+  const id = 'two-am-' + (publicationRetry ? 'retry-' : '') + phase.replace('_', '-');
   const version = '1.0';
   const path = `/api/v1/agents/${record.agentId}/skills`;
   const intent = {key: randomUUID(), body: {id, version}, allowed: [202]};
@@ -16,7 +17,8 @@ export async function installSkillCase({api, adapter, record, phase, recordFailu
   const before = await read();
   check(before.can_install === true && !before.items.some(item => item.id === id), 'skill_fixture_not_idle_or_fresh');
   await observeSkill(false);
-  const admission = await installWithPeerRename({api, adapter, record, path, intent, recordFailure});
+  const fixture = {api, adapter, record, path, intent, recordFailure};
+  const admission = publicationRetry ? await installWithPublicationAbort(fixture) : await installWithPeerRename(fixture);
   check(admission.items.filter(item => item.id === id && item.version === version).length === 1,
     'skill_install_admission_missing');
   const installed = await poll(read, view => {
@@ -34,6 +36,13 @@ export async function installSkillCase({api, adapter, record, phase, recordFailu
     && Number.isSafeInteger(pending.seq) && Number.isSafeInteger(installedChange.seq)
     && pending.seq > 0 && installedChange.seq > pending.seq, 'one_durable_skill_install_required');
   await observeSkill(true);
+}
+
+async function installWithPublicationAbort({api, adapter, record, path, intent, recordFailure}) {
+  const {agentId} = record;
+  const owner = await adapter.ownerOf({agentId});
+  return retryOwnerPublication({api, adapter, agentId, owner, operation: 'skill_install', recordFailure,
+    request: am => api.rawRequest(am, 'POST', path, {...intent, timeout: 10000})});
 }
 
 async function installWithPeerRename({api, adapter, record, path, intent, recordFailure}) {

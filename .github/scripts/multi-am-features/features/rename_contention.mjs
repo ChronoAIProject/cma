@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {assertOwner, check, other} from '../cma/core.mjs';
-import {withRestoration} from '../failure.mjs';
+import {retryOwnerPublication} from './writer_publication.mjs';
 
 export async function renameAfterPublicationAbort({api, adapter, record, recordFailure, recordState = async () => {}}) {
   const {agentId} = record;
@@ -8,38 +8,23 @@ export async function renameAfterPublicationAbort({api, adapter, record, recordF
   const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
   const ingress = other(owner.am);
   const baseline = (await api.rawRequest(owner.am, 'GET', path)).body;
-  const prior = await adapter.renamePublicationEvidence({agentId});
   check(Number.isSafeInteger(baseline.revision), 'rename_abort_baseline_revision_missing');
   const title = 'Retry fixture ' + randomUUID();
   const intent = {key: randomUUID(), allowed: [200], timeout: 10000,
     prefer: 'cma-settings-reasons', body: {title, expected_revision: baseline.revision}};
-  let armed, disarmed, result;
-  await withRestoration(async () => {
-    armed = await adapter.renamePublicationAbort({arm: true});
-    result = await api.router.dispatch(agentId, am => {
-      check(am === ingress, 'rename_abort_owner_changed_before_send');
-      return api.rawRequest(am, 'PATCH', path, intent);
-    });
-  }, async () => {
-    disarmed = await adapter.renamePublicationAbort({arm: false});
-  }, recordFailure);
-  check(Number.isSafeInteger(armed?.count) && disarmed?.count === armed.count + 1,
-    'rename_publication_abort_not_consumed_once');
-  const latest = await adapter.renamePublicationEvidence({agentId});
-  check(Number.isSafeInteger(prior[owner.am]) && Number.isSafeInteger(prior[ingress])
-    && latest[owner.am] === prior[owner.am] + 1 && latest[ingress] === prior[ingress],
-    'rename_publication_abort_not_attributed_to_owner');
-  check(result.body?.title === title && result.body.revision === baseline.revision + 1,
+  const result = await retryOwnerPublication({api, adapter, agentId, owner, operation: 'rename', recordFailure,
+    request: am => api.rawRequest(am, 'PATCH', path, intent)});
+  check(result?.title === title && result.revision === baseline.revision + 1,
     'rename_abort_retry_not_confirmed');
   for (const am of [owner.am, ingress]) {
     const {body: seen} = await api.rawRequest(am, 'GET', path);
-    check(seen.title === title && seen.revision === result.body.revision, 'rename_abort_retry_readback_diverged');
+    check(seen.title === title && seen.revision === result.revision, 'rename_abort_retry_readback_diverged');
   }
   const effects = await adapter.titleEffects({agentId, title});
   check(effects.length === 1 && Number.isSafeInteger(effects[0]) && effects[0] > 0,
     'rename_abort_retry_publication_not_unique');
   await recordState('rename_publication_retry', {
-    owner: owner.am, ingress, known_aborts: 1, confirmed_revision: result.body.revision, publications: effects.length,
+    owner: owner.am, ingress, known_aborts: 1, confirmed_revision: result.revision, publications: effects.length,
   });
 }
 

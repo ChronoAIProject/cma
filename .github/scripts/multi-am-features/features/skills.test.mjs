@@ -3,12 +3,13 @@ import test from 'node:test';
 import {installSkillCase} from './skills.mjs';
 
 function fixture({effects = [{status: 'installed', version: '1.0'}], staleCatalog = false, duplicateRename = false,
-  changes = [{seq: 1, status: 'pending'}, {seq: 2, status: 'installed'}]} = {}) {
+  changes = [{seq: 1, status: 'pending'}, {seq: 2, status: 'installed'}],
+  publicationRetry = false, abortOn = 'a'} = {}) {
   const calls = [];
   const probes = [], renames = [];
-  let armed;
+  let armed, abortArmed = false;
   let preferences = {title: 'Original title', revision: 1};
-  const id = 'two-am-before-restart';
+  const id = publicationRetry ? 'two-am-retry-before-restart' : 'two-am-before-restart';
   const admission = {items: [{id, version: '1.0', status: 'pending'}], pending: true};
   const api = {
     router: {dispatch: async (agentId, operation) => {
@@ -31,7 +32,13 @@ function fixture({effects = [{status: 'installed', version: '1.0'}], staleCatalo
         abort() {}, done: Promise.resolve()};
     },
     async rawRequest(am, method, path, intent) {
-      if (path.endsWith('/skills')) return api.request(am, method, path, intent);
+      if (path.endsWith('/skills')) {
+        if (publicationRetry) {
+          assert.equal(abortArmed, true);
+          assert.equal(am, 'b');
+        }
+        return api.request(am, method, path, intent);
+      }
       if (path.endsWith('/preferences')) {
         if (method === 'PATCH') {
           assert.equal(am, 'a');
@@ -50,6 +57,16 @@ function fixture({effects = [{status: 'installed', version: '1.0'}], staleCatalo
   };
   const adapter = {
     async ownerOf({agentId}) { return {agent_id: agentId, am: 'a', pod_uid: 'pod', epoch: 1}; },
+    async writerPublicationAbort({arm}) {
+      abortArmed = arm;
+      return {count: arm ? 2 : 3};
+    },
+    async writerPublicationEvidence(input) {
+      assert.deepEqual(input, {agentId: 'fixture-agent', operation: 'skill_install'});
+      const evidence = {a: 0, b: 0};
+      if (calls.some(row => row.method === 'POST')) evidence[abortOn] += 1;
+      return evidence;
+    },
     async titleEffects({agentId, title}) {
       assert.equal(agentId, 'fixture-agent');
       assert.equal(title, preferences.title);
@@ -68,7 +85,8 @@ function fixture({effects = [{status: 'installed', version: '1.0'}], staleCatalo
       return {agentFound: true, entries: effects, changes};
     },
   };
-  return {api, adapter, record: {agentId: 'fixture-agent'}, phase: 'before_restart', calls, probes, renames};
+  return {api, adapter, record: {agentId: 'fixture-agent'}, phase: 'before_restart', calls, probes, renames,
+    isAbortArmed: () => abortArmed};
 }
 
 test('installation replays the unchanged receipt and reads one durable effect', async () => {
@@ -97,4 +115,19 @@ test('duplicate durable installation fails even with one public skill row', asyn
 
 test('the installed status cannot pass when the native runtime retains the original skill catalog', async () => {
   await assert.rejects(installSkillCase(fixture({staleCatalog: true})), /native_skill_catalog_mismatch/);
+});
+
+test('the skill intent retries one abort at the owner and installs once', async () => {
+  const context = fixture({publicationRetry: true});
+  await installSkillCase(context, true);
+  assert.equal(context.isAbortArmed(), false);
+  assert.equal(context.calls[1].am, 'b');
+  assert.deepEqual(context.calls[1].intent.body, context.calls[3].intent.body);
+  assert.deepEqual(context.probes.map(probe => probe.present), [false, true]);
+});
+
+test('a skill receipt cannot use evidence from the non-owner', async () => {
+  const context = fixture({publicationRetry: true, abortOn: 'b'});
+  await assert.rejects(installSkillCase(context, true), /writer_publication_abort_not_attributed_to_owner/);
+  assert.equal(context.isAbortArmed(), false);
 });

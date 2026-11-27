@@ -27,7 +27,7 @@ import legacy_manifests as old
 from login import login
 from publication_evidence import (artifact_publication_abort, prepared_publication_abort, prepared_schema_barrier, prepared_schema_race,
                                   prepared_schema_refusals, publication_evidence,
-                                  rename_publication_abort, rename_publication_evidence)
+                                  runtime_loss_evidence, writer_publication_abort, writer_publication_evidence)
 from readiness_scaling import drain_owner, observe_never_ready, observe_scale
 from retirement_purge import retirement_purge
 from runtime_loss import remove_runtime_pod
@@ -49,8 +49,9 @@ class Fixture:
     configurationDispatch = configuration_dispatch
     publicationEvidence = publication_evidence
     artifactPublicationAbort = artifact_publication_abort
-    renamePublicationAbort = rename_publication_abort
-    renamePublicationEvidence = rename_publication_evidence
+    writerPublicationAbort = writer_publication_abort
+    writerPublicationEvidence = writer_publication_evidence
+    runtimeLossEvidence = runtime_loss_evidence
     preparedPublicationAbort = prepared_publication_abort
     preparedSchemaBarrier = prepared_schema_barrier
     preparedSchemaRace = prepared_schema_race
@@ -354,7 +355,7 @@ class Fixture:
     def skillEffects(self, agentId=None, skillId=None):
         if not isinstance(agentId, str) or not 1 <= len(agentId) <= 200:
             raise ValueError('agent_id_required')
-        if skillId not in ('two-am-before-restart', 'two-am-after-restart'):
+        if not isinstance(skillId, str) or not re.fullmatch(r'two-am-(?:retry-)?(?:before|after)-restart', skillId):
             raise ValueError('fixture_skill_required')
         scope = json.dumps({'agentId': agentId, 'skillId': skillId})
         return self.mongo(f'const scope = {scope};\n' + (ROOT / 'skill_evidence.js').read_text())
@@ -410,7 +411,8 @@ class Fixture:
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
                              'organizationMembership','configurationLog','configurationDispatch','publicationEvidence',
                              'retirementPurge','removeRuntimePod','artifactPublicationAbort','preparedPublicationAbort','preparedSchemaBarrier',
-                             'preparedSchemaRace','preparedSchemaRefusals','renamePublicationAbort','renamePublicationEvidence']
+                             'preparedSchemaRace','preparedSchemaRefusals','writerPublicationAbort','writerPublicationEvidence',
+                             'runtimeLossEvidence']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

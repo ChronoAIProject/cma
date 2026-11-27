@@ -3,6 +3,7 @@ import {isDeepStrictEqual as equal} from 'node:util';
 import {assertOwner, check, other} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 import {probeProvider} from './provider_probe.mjs';
+import {retryOwnerPublication} from './writer_publication.mjs';
 
 const settingsBody = value => Object.fromEntries(
   ['model', 'reasoning_effort', 'permission_mode'].map(key => [key, value[key]]));
@@ -38,12 +39,12 @@ async function confirmConfigurationDispatch(adapter, agentId, owner, sequence) {
 // These use the real owner-routed public API. A 200 for an unchanged value is
 // insufficient: both the acknowledgement and a fresh read must show the change.
 export async function configurationCases({api, record: resource, runCase, recordFailure,
-  recordState = async () => {}, adapter, conversationApi = api}) {
+  recordState = async () => {}, adapter, conversationApi = api}, publicationRetry = false) {
   const preferences = preferencesPath(resource), settings = settingsPath(resource);
   const probe = configuration => probeProvider({api: conversationApi, adapter, record: resource},
     {configuration}, 'configuration_matches', 'native_configuration_mismatch');
   const readLog = after => adapter.configurationLog({agentId: resource.agentId, after});
-  await runCase('user.system_prompt_roundtrip', async () => {
+  await runCase(publicationRetry ? 'writer.configuration_publication_retry' : 'user.system_prompt_roundtrip', async () => {
     const before = await read(api, preferences);
     await recordState('prompt_before', before);
     check(before.prompt_supported === true && before.prompt_pending === false
@@ -55,8 +56,12 @@ export async function configurationCases({api, record: resource, runCase, record
     await withRestoration(async () => {
       const owner = await adapter.ownerOf({agentId: resource.agentId});
       const {through} = await readLog(null);
-      const updated = (await patch(api, preferences,
-        {expected_revision: before.revision, system_prompt: desired})).body;
+      const intent = {expected_revision: before.revision, system_prompt: desired};
+      const updated = publicationRetry
+        ? await retryOwnerPublication({api, adapter, agentId: resource.agentId, owner, operation: 'settings',
+          recordFailure, request: am => api.rawRequest(am, 'PATCH', preferences,
+            {body: intent, key: randomUUID(), allowed: [200], timeout: 15000})})
+        : (await patch(api, preferences, intent)).body;
       check(updated.system_prompt === desired && updated.prompt_pending === false
         && updated.revision === before.revision + 1, 'prompt_update_not_confirmed');
       const seen = await read(api, preferences);
@@ -83,6 +88,7 @@ export async function configurationCases({api, record: resource, runCase, record
       await recordState('prompt_restored', restored);
     }, recordFailure);
   });
+  if (publicationRetry) return;
   await runCase('user.session_settings_roundtrip', async () => {
     const before = await read(api, settings), prompt = await read(api, preferences);
     await recordState('settings_before', {settings: before, preferences: prompt});

@@ -1,5 +1,6 @@
 import {isDeepStrictEqual as equal} from 'node:util';
 import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
+import {withRestoration} from '../failure.mjs';
 
 export async function runtimeLoss({adapter, api, record, sibling, openBoth, complete, waitFor = poll}) {
   const {agentId, sandboxId, operationId} = record;
@@ -31,9 +32,7 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
     && id(runtime.pod_uid) && runtime.image === record.runtime.image && id(runtime.home_identity)
     && Array.isArray(runtime.pvc_names) && runtime.pvc_names.length > 0, 'runtime_loss_baseline_unbound');
 
-  const removed = await adapter.removeRuntimePod({agentId, sandboxId, operationId, podUid: runtime.pod_uid});
-  check(removed?.accepted === true && removed.pod_uid === runtime.pod_uid, 'runtime_loss_removal_unbound');
-  const recovered = await waitFor(snapshot, value => {
+  const recoveredSnapshot = value => {
     check(value?.status !== 'failed' && value?.children?.length === agents.length
       && value.children.every(candidate => candidate && !['failed', 'deleted', 'stopped'].includes(candidate.status)),
     'runtime_loss_recovery_terminal');
@@ -49,7 +48,25 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
     check(advanced === 0 || advanced === agents.length, 'runtime_loss_partial_generation_retirement');
     return value.status === 'active' && id(value.boot_id) && value.boot_id !== before.boot_id
       && advanced === agents.length && value.children.every(candidate => candidate.status === 'ready');
-  }, {timeout: 240000, code: 'runtime_loss_recovery_timeout'});
+  };
+  const observeAbort = () => adapter.runtimeLossEvidence({sandboxId});
+  const priorAborts = await observeAbort();
+  let armed, disarmed, observedAborts;
+  await withRestoration(async () => {
+    armed = await adapter.writerPublicationAbort({arm: true});
+    const removed = await adapter.removeRuntimePod({agentId, sandboxId, operationId, podUid: runtime.pod_uid});
+    check(removed?.accepted === true && removed.pod_uid === runtime.pod_uid, 'runtime_loss_removal_unbound');
+    observedAborts = await waitFor(observeAbort, value => ['a', 'b'].some(am => value[am] > priorAborts[am]),
+      {timeout: 90000, code: 'runtime_loss_abort_not_observed'});
+  }, async () => {
+    disarmed = await adapter.writerPublicationAbort({arm: false});
+  });
+  check(Number.isSafeInteger(armed?.count) && disarmed?.count === armed.count + 1,
+    'runtime_loss_abort_not_consumed_once');
+  const aborts = ['a', 'b'].map(am => observedAborts[am] - priorAborts[am]);
+  check(aborts.every(count => count === 0 || count === 1) && aborts[0] + aborts[1] === 1,
+    'runtime_loss_abort_count_unbound');
+  const recovered = await waitFor(snapshot, recoveredSnapshot, {timeout: 240000, code: 'runtime_loss_recovery_timeout'});
   const replacement = await adapter.runtimeFor({agentId});
   check(replacement.ready === true && id(replacement.pod_uid) && replacement.pod_uid !== runtime.pod_uid
     && replacement.image === runtime.image && replacement.sandbox_id === sandboxId
@@ -79,5 +96,6 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
   }
   return {previous_pod_sha256: hash(runtime.pod_uid), replacement_pod_sha256: hash(replacement.pod_uid),
     recovered_agents: agents.length, retained_runtime_image: true, retained_home: true,
-    retained_conversations: true, generation_retirements: agents.length, post_loss_replies: agents.length};
+    retained_conversations: true, known_recovery_aborts: 1,
+    generation_retirements: agents.length, post_loss_replies: agents.length};
 }

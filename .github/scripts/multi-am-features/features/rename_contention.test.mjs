@@ -65,11 +65,13 @@ function abortFixture({abortOn = 'a', consumed = true, duplicate = false, reject
     }};
   const adapter = {
     ownerOf: async () => ({am: 'a', epoch: 2, agent_id: 'agent', pod_uid: 'owner'}),
-    renamePublicationAbort: async ({arm}) => {
+    writerPublicationAbort: async ({arm}) => {
       armed = arm;
       return {count: arm || !consumed ? 7 : 8};
     },
-    renamePublicationEvidence: async () => {
+    writerPublicationEvidence: async ({agentId, operation}) => {
+      assert.equal(agentId, 'agent');
+      assert.equal(operation, 'rename');
       const evidence = {a: 0, b: 0};
       if (revision > 4) evidence[abortOn] += 1;
       return evidence;
@@ -91,9 +93,9 @@ test('peer Rename requires one aborted owner transaction and one visible publica
 
 test('Rename rejects unrelated aborts and duplicates and disarms after a failed request', async () => {
   await assert.rejects(renameAfterPublicationAbort(abortFixture({abortOn: 'b'})),
-    /rename_publication_abort_not_attributed_to_owner/);
+    /writer_publication_abort_not_attributed_to_owner/);
   await assert.rejects(renameAfterPublicationAbort(abortFixture({consumed: false})),
-    /rename_publication_abort_not_consumed_once/);
+    /writer_publication_abort_not_consumed_once/);
   await assert.rejects(renameAfterPublicationAbort(abortFixture({duplicate: true})),
     /rename_abort_retry_publication_not_unique/);
   const context = abortFixture({rejected: true});

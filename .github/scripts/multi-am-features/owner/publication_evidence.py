@@ -12,7 +12,7 @@ STARTUP_STEPS = frozenset(('install_skill', 'wait_for_workspace', 'add_worktree'
                            'open_conversation', 'publish_ready', 'publish_connection', 'dispatch_first_message'))
 LOG_BOUND_BYTES = 2 * 1024 * 1024
 LOG_TARGET = ' agent_scheduler_failure: '
-FIELDS = re.compile(r'(?<!\S)(phase|failure|next_step|agent_sha256|cause_class|origin|agent_hash)="?([a-z0-9_]+)"?(?=\s|$)')
+FIELDS = re.compile(r'(?<!\S)(phase|failure|next_step|agent_sha256|cause_class|origin|agent_hash|operation|sandbox_sha256)="?([a-z0-9_]+)"?(?=\s|$)')
 PREPARED_MONGO_APP = 'cma-two-am-prepared-fixture'
 FEATURES_MONGO_APP = 'cma-two-am-features-fixture'
 SCHEMA_RACE = Path(__file__).with_name('prepared_schema_race.js')
@@ -32,10 +32,10 @@ def artifact_publication_abort(fixture, arm=None):
     return publication_abort(fixture, arm, 'insert', 'agent_artifacts', FEATURES_MONGO_APP)
 
 
-def rename_publication_abort(fixture, arm=None):
+def writer_publication_abort(fixture, arm=None):
     require_feature_fixture(fixture)
     if type(arm) is not bool:
-        raise ValueError('rename_publication_abort_action_required')
+        raise ValueError('writer_publication_abort_action_required')
     return publication_abort(fixture, arm, 'update', 'agents', FEATURES_MONGO_APP)
 
 
@@ -69,21 +69,32 @@ def agent_digest(agentId):
     return hashlib.sha256(agentId.encode()).hexdigest()
 
 
-def rename_publication_evidence(fixture, agentId=None):
+def writer_publication_evidence(fixture, agentId=None, operation=None):
     require_feature_fixture(fixture)
-    digest = agent_digest(agentId)
+    if operation not in ('rename', 'skill_install', 'settings'):
+        raise ValueError('writer_publication_operation_required')
+    return writer_abort_counts(fixture, 'agent_sha256', agent_digest(agentId), operation)
+
+
+def runtime_loss_evidence(fixture, sandboxId=None):
+    require_feature_fixture(fixture)
+    return writer_abort_counts(fixture, 'sandbox_sha256', agent_digest(sandboxId), 'runtime_loss', since='6m')
+
+
+def writer_abort_counts(fixture, identity_field, digest, operation, since='2m'):
     counts = {}
     for manager in ('a', 'b'):
-        raw = fixture.client.k(['logs', f'am-{manager}-0', '--since=2m',
+        raw = fixture.client.k(['logs', f'am-{manager}-0', f'--since={since}',
                                 f'--limit-bytes={LOG_BOUND_BYTES}'], timeout=8)
         if len(raw.encode()) >= LOG_BOUND_BYTES:
-            raise RuntimeError('rename_publication_evidence_log_bound')
+            raise RuntimeError('writer_publication_evidence_log_bound')
         counts[manager] = 0
         for entry in raw.splitlines():
             line = re.sub(r'\x1b\[[0-9;]*m', '', entry)
-            if 'cma::agent_manager::rename_publication:' in line:
+            if 'cma::agent_manager::writer_publication:' in line:
                 fields = dict(FIELDS.findall(line))
-                if fields.get('agent_sha256') == digest and fields.get('failure') == 'known_aborted_cas':
+                if (fields.get(identity_field) == digest and fields.get('operation') == operation
+                        and fields.get('failure') == 'known_aborted_cas'):
                     counts[manager] += 1
     return counts
 
