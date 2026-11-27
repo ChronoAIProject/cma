@@ -11,7 +11,7 @@ use fixture::Fixture;
 use gate::{Gate, Point};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires an isolated Mongo replica set"]
+#[ignore = "requires an isolated Mongo replica set with failpoints"]
 async fn staging_hold_witnesses_pause_before_the_first_publication() {
     use crate::config::suggestion_control::{Mode, Target};
     use crate::store::suggestion_control::SuggestionControl;
@@ -23,6 +23,15 @@ async fn staging_hold_witnesses_pause_before_the_first_publication() {
         agent_id: f.agent.id.to_string(),
     };
     let operator = SuggestionControl::new(&f.other, target);
+    let admin = f.client.database("admin");
+    admin
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": {"times": 1},
+            "data": {"failCommands": ["update"], "appName": &f.app,
+                "writeConcernError": {"code": 64, "errmsg": "synthetic unconfirmed hold acknowledgement"}},
+        })
+        .await
+        .unwrap();
     let attempts_before = f.gate.attempts();
     let completion = f.complete();
     let held = tokio::time::timeout(Duration::from_secs(5), async {
@@ -42,6 +51,35 @@ async fn staging_hold_witnesses_pause_before_the_first_publication() {
     assert_eq!(f.gate.attempts() - attempts_before, 1);
     assert_eq!(f.row().await.get_str("status").unwrap(), "running");
     assert!(!operator.release(claim_started_at_ms).await.unwrap());
+
+    let configured = admin
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": {"times": 1},
+            "data": {"failCommands": ["find"], "appName": &f.app, "errorCode": 2},
+        })
+        .await
+        .unwrap();
+    let entered = configured
+        .get_i64("count")
+        .or_else(|_| configured.get_i32("count").map(i64::from))
+        .unwrap();
+    admin
+        .run_command(doc! {
+            "waitForFailPoint": "failCommand", "timesEntered": entered + 1,
+            "maxTimeMS": 5_000,
+        })
+        .await
+        .unwrap();
+    let reads_after_fault = f.gate.release_marker_reads();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while f.gate.release_marker_reads() <= reads_after_fault {
+            tokio::time::sleep(Duration::from_millis(30)).await;
+        }
+    })
+    .await
+    .expect("an uncertain marker read must leave the hold in place and retry");
+    assert!(!completion.is_finished());
+    assert_eq!(f.row().await.get_str("status").unwrap(), "running");
 
     assert!(matches!(
         f.pause(&f.other).await.unwrap(),

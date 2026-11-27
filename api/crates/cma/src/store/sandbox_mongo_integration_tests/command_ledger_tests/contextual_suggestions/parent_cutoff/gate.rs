@@ -108,6 +108,22 @@ impl Gate {
             .count()
     }
 
+    pub(super) fn release_marker_reads(&self) -> usize {
+        self.state
+            .lock()
+            .unwrap()
+            .commands
+            .iter()
+            .filter(|command| {
+                command
+                    .get_document("projection")
+                    .and_then(|projection| projection.get_i32("released_at_ms"))
+                    .ok()
+                    == Some(1)
+            })
+            .count()
+    }
+
     pub(super) fn commits(&self) -> Vec<Document> {
         self.state
             .lock()

@@ -59,7 +59,7 @@ fn completion(claim: &SuggestionWork) -> SuggestionCompletion {
 }
 
 #[tokio::test]
-#[ignore = "requires an isolated Mongo replica set"]
+#[ignore = "requires an isolated Mongo replica set with failpoints"]
 async fn suggestion_control_excludes_only_one_running_claim_through_release_and_until_cap() {
     let (client, name, store) = database().await;
     let parent = active_sandbox("sbx_control");
@@ -75,10 +75,13 @@ async fn suggestion_control_excludes_only_one_running_claim_through_release_and_
         .unwrap();
 
     let control = SuggestionControl::new(&store, target.clone());
-    let replica_client =
-        mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+    let mut replica_options =
+        mongodb::options::ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
             .await
             .unwrap();
+    let replica_app = format!("suggestion-expiry-{}", uuid::Uuid::new_v4().simple());
+    replica_options.app_name = Some(replica_app.clone());
+    let replica_client = mongodb::Client::with_options(replica_options).unwrap();
     let mut replica = MongoSandboxStore::open(&replica_client, &name)
         .await
         .unwrap();
@@ -97,6 +100,13 @@ async fn suggestion_control_excludes_only_one_running_claim_through_release_and_
     let now = unix_millis();
     let held = work("held", agent.id.clone(), now, 3_000, 5);
     let other = work("other", agent.id, now, 3_000, 9);
+    let unrelated_agent = work(
+        "unrelated-agent",
+        AgentId("agt_unrelated".into()),
+        now,
+        3_000,
+        17,
+    );
     let stale = work(
         "stale",
         held.agent_id.clone(),
@@ -108,7 +118,7 @@ async fn suggestion_control_excludes_only_one_running_claim_through_release_and_
     store
         .suggestions
         .insert_many(
-            [&held, &other, &stale]
+            [&held, &other, &stale, &unrelated_agent]
                 .map(|claim| crate::store::suggestions::document(claim).unwrap()),
         )
         .await
@@ -140,6 +150,27 @@ async fn suggestion_control_excludes_only_one_running_claim_through_release_and_
     assert_eq!(bound.durable_has_set, Some(false));
     let generation = bound.claim_started_at_ms.unwrap();
     assert!(!operator.release(generation).await.unwrap());
+
+    // Lose only the replica's marker lookup at the deadline. Another Agent's
+    // overdue claim can still advance while the configured Agent stays fenced.
+    client
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": {"times": 1},
+            "data": {"appName": &replica_app, "failCommands": ["find"], "errorCode": 2},
+        })
+        .await
+        .unwrap();
+    assert!(replica.claim_suggestions(deadline).await.unwrap().is_none());
+    for (id, expected) in [("held", "running"), ("unrelated-agent", "failed")] {
+        let row = store
+            .suggestions
+            .find_one(doc! {"_id": id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.get_str("status").unwrap(), expected);
+    }
 
     // Drive the scanner at the claim's deadline, as a second worker would.
     for _ in 0..3 {
@@ -183,6 +214,14 @@ async fn suggestion_control_excludes_only_one_running_claim_through_release_and_
     let released = operator.read().await.unwrap().unwrap();
     assert!(released.released_at_ms.is_some());
     assert_eq!(released.durable_status.as_deref(), Some("running"));
+    client
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": {"times": 1},
+            "data": {"appName": replica_app, "failCommands": ["find"], "errorCode": 2},
+        })
+        .await
+        .unwrap();
     assert!(replica
         .claim_suggestions(released.expires_at_ms as u64)
         .await

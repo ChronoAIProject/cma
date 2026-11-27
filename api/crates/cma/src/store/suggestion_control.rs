@@ -247,6 +247,12 @@ impl SuggestionControl {
         let (Some(started), Some(deadline)) = (claim.started_at_ms, claim.deadline_ms) else {
             return;
         };
+        if !matches!(
+            tokio::time::timeout(IO_LIMIT, self.linked_owner(Some(claim.owner.as_str()))).await,
+            Ok(Ok(Some(_)))
+        ) {
+            return;
+        }
         let now = unix_millis() as i64;
         // The expiry scanner can first see this row at the original deadline.
         // Bind before then, allowing the full I/O budget for the marker write.
@@ -261,13 +267,6 @@ impl SuggestionControl {
             return;
         }
         let acquire = async {
-            if self
-                .linked_owner(Some(claim.owner.as_str()))
-                .await?
-                .is_none()
-            {
-                return Ok(false);
-            }
             let mut filter = self.marker();
             filter.extend(doc! {
                 "owner": claim.owner.as_str(), "mode": serialize_to_bson(&mode).map_err(unavailable)?,
@@ -292,9 +291,12 @@ impl SuggestionControl {
                 .map_err(unavailable)?;
             Ok::<_, AgentReadError>(result.matched_count == 1)
         };
-        if !matches!(tokio::time::timeout(IO_LIMIT, acquire).await, Ok(Ok(true))) {
-            return;
-        }
+        let acquisition_confirmed = match tokio::time::timeout(IO_LIMIT, acquire).await {
+            Ok(Ok(false)) => return,
+            Ok(Ok(true)) => true,
+            // The write can still become visible after a lost acknowledgement.
+            Ok(Err(_)) | Err(_) => false,
+        };
         let remaining =
             Duration::from_millis(limit.saturating_sub(unix_millis() as i64).max(0) as u64);
         let mut filter = self.marker();
@@ -307,14 +309,17 @@ impl SuggestionControl {
                 .await;
             }
             loop {
-                match self
+                let read = self
                     .rows
                     .find_one(filter.clone())
-                    .projection(doc! {"released_at_ms": 1})
-                    .await
-                {
-                    Ok(Some(row)) if !row.contains_key("released_at_ms") => {}
-                    _ => return,
+                    .projection(doc! {"released_at_ms": 1});
+                match tokio::time::timeout(IO_LIMIT, read.into_future()).await {
+                    Ok(Ok(Some(row))) if row.get_i64("released_at_ms").is_ok() => return,
+                    Ok(Ok(None)) if acquisition_confirmed => return,
+                    Ok(Ok(_)) => {}
+                    Ok(Err(_)) | Err(_) => {
+                        tracing::debug!("Retrying uncertain staging suggestion release read");
+                    }
                 }
                 tokio::time::sleep(Duration::from_millis(75)).await;
             }
@@ -334,10 +339,23 @@ impl SuggestionControl {
             doc! {"mode":"late_ready", "expires_at_ms":{"$gt":now_ms as i64},
             "claim_deadline_ms":{"$lte":now_ms as i64}, "settled_at_ms":{"$exists":false}},
         );
-        if let Ok(Ok(Some(row))) =
-            tokio::time::timeout(IO_LIMIT, self.rows.find_one(marker).into_future()).await
-        {
-            exclude_claim(filter, &row);
+        let read = self.rows.find_one(marker);
+        match tokio::time::timeout(IO_LIMIT, read.into_future()).await {
+            Ok(Ok(Some(row))) => exclude_claim(filter, &row),
+            Ok(Ok(None)) => {}
+            Ok(Err(_)) | Err(_) => {
+                // Protect only claims that could still be inside the configured hold cap.
+                filter.insert(
+                    "$nor",
+                    [doc! {
+                        "agent_id": &self.target.agent_id, "status": "running",
+                        "deadline_ms": {"$gt": (now_ms as i64).saturating_sub(GRACE_MS)},
+                    }],
+                );
+                tracing::debug!(
+                    "Deferring configured staging Agent suggestion expiry for one scan"
+                );
+            }
         }
     }
 
