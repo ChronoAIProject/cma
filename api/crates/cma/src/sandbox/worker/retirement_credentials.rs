@@ -88,6 +88,7 @@ impl SandboxWorker {
             sandbox.credential.queue_revoke(id.clone(), rfc3339_at(now));
         }
         let mut failure = None;
+        let can_recover = credentials.uses_retirement_reauthorization(sandbox);
         for id in ids {
             let result = async {
                 credentials.revoke(sandbox, &id).await?;
@@ -99,8 +100,11 @@ impl SandboxWorker {
                     .credential
                     .revoke_debt
                     .retain(|debt| debt.provider_key_id != id),
-                Err(error) => {
+                Err(error) if can_recover => {
                     crate::sandbox::credential::retain_strongest_refusal(&mut failure, error)
+                }
+                Err(error) => {
+                    failure.get_or_insert(error);
                 }
             }
         }
@@ -153,7 +157,8 @@ pub(super) fn custody_provider_ids(
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct OwnerReauthorization {
-    pub rejected: Option<layer2_core::sandbox::RetirementAuthorityVersion>,
+    pub previous: layer2_core::sandbox::RetirementAuthorityVersion,
+    pub missing: bool,
 }
 
 pub(super) fn park_reauthorization(
@@ -162,26 +167,26 @@ pub(super) fn park_reauthorization(
     exhausted: bool,
     now: SystemTime,
 ) -> Option<String> {
-    let rejected = authority?.rejected.or_else(|| {
-        sandbox
-            .work
-            .retirement_credential_recovery
-            .and_then(|state| state.admitted)
-    });
+    let OwnerReauthorization { previous, missing } = authority?;
     if !(exhausted || sandbox.work.retirement_credential_recovery.is_some())
         || !sandbox.allows_retirement_credential_recovery()
     {
         return None;
     }
-    let stopped_ms = now
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .ok()
-        .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
-        .unwrap_or(u64::MAX);
+    let newer_than_ms = if missing {
+        let stopped_ms = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+            .unwrap_or(i64::MAX as u64);
+        previous.granted_at_ms.max(stopped_ms)
+    } else {
+        previous.granted_at_ms
+    };
     sandbox.work.retirement_credential_recovery =
         Some(layer2_core::sandbox::RetirementCredentialRecovery {
-            newer_than_ms: rejected.map_or(stopped_ms, |version| version.granted_at_ms),
-            expected_scope: rejected.map(|version| version.scope),
+            newer_than_ms,
+            expected_scope: previous.scope,
             admitted: None,
         });
     Some(rfc3339_at(

@@ -11,6 +11,8 @@ pub(crate) struct MemoryCredentials {
     pub(super) revoke_failures: AtomicUsize,
     pub(super) retirement_authority:
         Mutex<Option<layer2_core::sandbox::RetirementAuthorityVersion>>,
+    pub(super) retirement_issued_authority:
+        Mutex<Option<layer2_core::sandbox::RetirementAuthorityVersion>>,
     pub(super) require_retirement_authority: AtomicBool,
     pub(super) lose_retirement_reply: AtomicBool,
     pub(super) forget_failures: AtomicUsize,
@@ -30,6 +32,7 @@ impl MemoryCredentials {
             issue_failures: Mutex::new(VecDeque::new()),
             revoke_failures: AtomicUsize::new(0),
             retirement_authority: Default::default(),
+            retirement_issued_authority: Default::default(),
             require_retirement_authority: AtomicBool::new(false),
             lose_retirement_reply: AtomicBool::new(false),
             forget_failures: AtomicUsize::new(0),
@@ -75,6 +78,11 @@ impl MemoryCredentials {
 
 #[async_trait::async_trait]
 impl SandboxCredentialController for MemoryCredentials {
+    fn uses_retirement_reauthorization(&self, sandbox: &Sandbox) -> bool {
+        self.require_retirement_authority.load(Ordering::SeqCst)
+            && sandbox.allows_retirement_credential_recovery()
+    }
+
     async fn issue(
         &self,
         sandbox: &Sandbox,
@@ -177,8 +185,7 @@ impl SandboxCredentialController for MemoryCredentials {
         sandbox: &Sandbox,
         provider_key_id: &str,
     ) -> Result<(), CredentialError> {
-        self.actions.push(format!("revoke:{provider_key_id}"));
-        if self.require_retirement_authority.load(Ordering::SeqCst) {
+        if self.uses_retirement_reauthorization(sandbox) {
             let current = *self.retirement_authority.lock().unwrap();
             if current.is_none()
                 || sandbox
@@ -186,8 +193,17 @@ impl SandboxCredentialController for MemoryCredentials {
                     .retirement_credential_recovery
                     .is_some_and(|recovery| recovery.admitted != current)
             {
-                return Err(CredentialError::OwnerReauthorization(None));
+                let Some(previous) = *self.retirement_issued_authority.lock().unwrap() else {
+                    return Err(CredentialError::Security(
+                        "fixture has no issuance scope".into(),
+                    ));
+                };
+                return Err(CredentialError::OwnerReauthorization {
+                    previous,
+                    missing: current.is_none(),
+                });
             }
+            self.actions.push(format!("revoke:{provider_key_id}"));
             if self.lose_retirement_reply.swap(false, Ordering::SeqCst) {
                 self.live_keys.lock().unwrap().remove(provider_key_id);
                 return Err(CredentialError::Unavailable(
@@ -199,6 +215,8 @@ impl SandboxCredentialController for MemoryCredentials {
                     "fixture provider returned 404".into(),
                 ));
             }
+        } else {
+            self.actions.push(format!("revoke:{provider_key_id}"));
         }
         if self
             .revoke_failure_ids

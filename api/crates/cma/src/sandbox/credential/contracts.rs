@@ -200,7 +200,10 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum CredentialError {
     #[error("verified owner reauthorization is required")]
-    OwnerReauthorization(Option<layer2_core::sandbox::RetirementAuthorityVersion>),
+    OwnerReauthorization {
+        previous: layer2_core::sandbox::RetirementAuthorityVersion,
+        missing: bool,
+    },
     #[error("credential issuance is uncertain; retry reconciliation")]
     Uncertain,
     #[error("service is not granted: {0}")]
@@ -237,6 +240,10 @@ impl OwnerTokenSource for AuthState {
 
 #[async_trait::async_trait]
 pub(crate) trait SandboxCredentialController: Send + Sync {
+    fn uses_retirement_reauthorization(&self, _sandbox: &Sandbox) -> bool {
+        false
+    }
+
     async fn retire_channel(
         &self,
         _sandbox: &Sandbox,

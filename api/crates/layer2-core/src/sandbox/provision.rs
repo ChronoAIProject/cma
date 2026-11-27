@@ -70,18 +70,14 @@ pub struct RetirementAuthorityVersion {
 #[serde(deny_unknown_fields)]
 pub struct RetirementCredentialRecovery {
     pub newer_than_ms: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expected_scope: Option<[u8; 32]>,
+    pub expected_scope: [u8; 32],
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admitted: Option<RetirementAuthorityVersion>,
 }
 
 impl RetirementCredentialRecovery {
     pub fn admits(&self, authority: RetirementAuthorityVersion) -> bool {
-        authority.granted_at_ms > self.newer_than_ms
-            && self
-                .expected_scope
-                .is_none_or(|scope| scope == authority.scope)
+        authority.granted_at_ms > self.newer_than_ms && authority.scope == self.expected_scope
     }
 }
 
@@ -252,7 +248,7 @@ mod retirement_authority_tests {
     fn retirement_authority_requires_a_strictly_newer_same_scope_grant() {
         let recovery = RetirementCredentialRecovery {
             newer_than_ms: 42,
-            expected_scope: Some([1; 32]),
+            expected_scope: [1; 32],
             admitted: None,
         };
         let version = RetirementAuthorityVersion {

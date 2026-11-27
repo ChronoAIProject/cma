@@ -121,6 +121,10 @@ impl ManagedSandboxCredentials {
 
 #[async_trait::async_trait]
 impl SandboxCredentialController for ManagedSandboxCredentials {
+    fn uses_retirement_reauthorization(&self, sandbox: &Sandbox) -> bool {
+        self.retirement_reauthorization_enabled && sandbox.allows_retirement_credential_recovery()
+    }
+
     async fn issue(
         &self,
         sandbox: &Sandbox,

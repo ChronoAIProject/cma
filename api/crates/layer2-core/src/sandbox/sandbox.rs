@@ -176,7 +176,11 @@ impl Sandbox {
     pub fn allows_retirement_credential_recovery(&self) -> bool {
         self.status == SandboxStatus::Retiring
             && self.work.step == SandboxWorkStep::RevokeRetirementCredentials
-            && self.credential.source.is_default_managed()
+            && self.has_ordinary_credential_scope()
+    }
+
+    pub fn has_ordinary_credential_scope(&self) -> bool {
+        self.credential.source.is_default_managed()
             && self.credential.service_scope.is_none()
             && self.credential.service_grants.is_empty()
     }

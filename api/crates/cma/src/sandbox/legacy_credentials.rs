@@ -27,6 +27,10 @@ impl LegacySandboxCredentials {
 }
 #[async_trait::async_trait]
 impl SandboxCredentialController for LegacySandboxCredentials {
+    fn uses_retirement_reauthorization(&self, sandbox: &Sandbox) -> bool {
+        self.ordinary.uses_retirement_reauthorization(sandbox)
+    }
+
     async fn retire_channel(
         &self,
         sandbox: &Sandbox,

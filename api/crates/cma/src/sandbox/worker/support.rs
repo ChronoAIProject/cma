@@ -407,13 +407,13 @@ pub(super) use super::install_failure::install_failure;
 
 pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
     match error {
-        CredentialError::OwnerReauthorization(rejected) => {
+        CredentialError::OwnerReauthorization { previous, missing } => {
             let mut failure = WorkerFailure::new(
                 "owner_reauthorization_required",
                 "verified owner reauthorization is required",
                 false,
             );
-            failure.reauthorization = Some(OwnerReauthorization { rejected });
+            failure.reauthorization = Some(OwnerReauthorization { previous, missing });
             failure
         }
         CredentialError::Uncertain => {
