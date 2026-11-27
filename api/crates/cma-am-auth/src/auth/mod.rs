@@ -296,9 +296,18 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
     ) -> Result<Option<RequestAuth>, StoreError> {
+        self.resolve_request_with_proxy_inventory(headers, false)
+            .await
+    }
+
+    async fn resolve_request_with_proxy_inventory(
+        &self,
+        headers: &HeaderMap,
+        personal_agent_inventory: bool,
+    ) -> Result<Option<RequestAuth>, StoreError> {
         if headers.contains_key(nyxid_proxy::HEADER) {
             if self.identity_proxy.is_some() {
-                return self.proxy_request(headers).await;
+                return self.proxy_request(headers, personal_agent_inventory).await;
             }
             nyxid_proxy::note_disabled();
         }
