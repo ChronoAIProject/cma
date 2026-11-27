@@ -48,6 +48,16 @@ impl RuntimeConfig {
         Self::from_values(std::env::vars().collect())
     }
 
+    pub(crate) fn configure_stale_turn_seal(&mut self, control_authenticated: bool) {
+        // Agent Manager qualifies the running image and checks the current
+        // writer before invoking the seal on the native transport.
+        if control_authenticated && !self.machine_included {
+            self.process_env
+                .entry(crate::bridge::STALE_TURN_SEAL_FLAG.into())
+                .or_insert_with(|| "1".into());
+        }
+    }
+
     pub(crate) fn from_values(mut process_env: BTreeMap<String, String>) -> Result<Self, String> {
         let home = process_env
             .get("CHRONO_RUNTIME_HOME")
@@ -356,6 +366,29 @@ mod tests {
             ("CHRONO_RUNTIME_HOME".into(), "/home/cma".into()),
             ("CHRONO_RUNTIME_HOME_IDENTITY".into(), "a".repeat(43)),
         ])
+    }
+
+    #[test]
+    fn authenticated_standard_runtime_defaults_to_stale_turn_seals() {
+        let flag = crate::bridge::STALE_TURN_SEAL_FLAG;
+        for (authenticated, machine, override_value, expected) in [
+            (true, false, None, Some("1")),
+            (true, false, Some("0"), Some("0")),
+            (true, true, None, None),
+            (false, false, None, None),
+        ] {
+            let mut environment = runtime_environment();
+            if machine {
+                environment.insert("CMA_MACHINE_INCLUDED".into(), "1".into());
+            }
+            if let Some(value) = override_value {
+                environment.insert(flag.into(), value.into());
+            }
+            let mut config = RuntimeConfig::from_values(environment).unwrap();
+            config.configure_stale_turn_seal(authenticated);
+            assert_eq!(config.process_env.get(flag).map(String::as_str), expected);
+            assert!(!config.install_env.contains_key(flag));
+        }
     }
 
     #[test]
