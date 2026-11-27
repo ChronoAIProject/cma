@@ -15,6 +15,7 @@ enum Progress {
     Parent,
     Agent,
     ConversationOutput,
+    ConversationUsage,
     TwoAgentRevisions,
     PreparedReady,
     ModelChange,
@@ -101,6 +102,46 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
                     }
                     self.store.save_agent(revision, agent).await.unwrap();
                 }
+                Progress::ConversationUsage => {
+                    let agent = self
+                        .store
+                        .get_agent(&AgentId("agent".into()))
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    let result = crate::sandbox::conversation_observation_fold::usage(
+                        &agent,
+                        &crate::sandbox::AgentMessageAssembly::default(),
+                        &layer3_adapter::ConversationUsage {
+                            turn_id: "active-provider-turn".into(),
+                            input_tokens: 200,
+                            output_tokens: 30,
+                            last_input_tokens: 200,
+                            last_output_tokens: 30,
+                            context_used: 230,
+                            context_window: Some(1000),
+                            counters_reset: false,
+                        },
+                        NOW,
+                    )
+                    .unwrap();
+                    let crate::sandbox::conversation_fold::FoldedConversationUpdate::Changed(
+                        change,
+                    ) = result
+                    else {
+                        panic!("active usage must update the Agent");
+                    };
+                    for log in change.logs {
+                        self.store
+                            .append_agent_log(&agent.id, NOW.into(), log)
+                            .await
+                            .unwrap();
+                    }
+                    self.store
+                        .save_agent(agent.revision, change.agent)
+                        .await
+                        .unwrap();
+                }
                 Progress::SlowFirstPreparation => {}
                 Progress::ModelChange => prepared::complete_then_change_model(&self.store).await,
                 Progress::Policy => {
@@ -131,6 +172,15 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
 
 #[tokio::test]
 async fn queued_message_refreshes_after_output_from_the_same_active_turn() {
+    assert_queued_message_refreshes(Progress::ConversationOutput).await;
+}
+
+#[tokio::test]
+async fn queued_message_refreshes_after_usage_from_the_same_active_turn() {
+    assert_queued_message_refreshes(Progress::ConversationUsage).await;
+}
+
+async fn assert_queued_message_refreshes(progress: Progress) {
     let (store, authority, mut agent) = retry_results::ordinary_fixture().await;
     let revision = agent.revision;
     agent.status = AgentStatus::Working;
@@ -138,7 +188,7 @@ async fn queued_message_refreshes_after_output_from_the_same_active_turn() {
     agent.revision += 1;
     store.save_agent(revision, agent).await.unwrap();
 
-    let (service, progressing) = service(&store, authority, Progress::ConversationOutput);
+    let (service, progressing) = service(&store, authority, progress);
     let owner = context("owner");
     let request = submission("queued-during-output");
     let accepted = service

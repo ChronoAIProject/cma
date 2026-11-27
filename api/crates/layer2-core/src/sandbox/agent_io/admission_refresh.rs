@@ -110,6 +110,37 @@ fn same_retained_target(previous: &AuthorizedResource, next: &AuthorizedResource
         && agent.conversation.last_seq <= updated_agent.conversation.last_seq
     {
         comparable_agent.conversation.last_seq = agent.conversation.last_seq;
+        // The recorder commits a new usage checkpoint together with a log
+        // entry. It does not alter the authority or the target of an append.
+        if agent.conversation.last_seq < updated_agent.conversation.last_seq
+            && updated_agent
+                .conversation
+                .observations
+                .usage
+                .as_ref()
+                .is_some_and(|usage| {
+                    updated_agent.conversation.conversation_id.as_ref()
+                        == Some(&usage.conversation_id)
+                        && usage.current_turn.as_ref().is_some_and(|turn| {
+                            Some(turn.turn_sequence) == updated_agent.conversation.active_turn
+                        })
+                        && agent
+                            .conversation
+                            .observations
+                            .usage
+                            .as_ref()
+                            .is_none_or(|previous| {
+                                previous.input_tokens <= usage.input_tokens
+                                    && previous.output_tokens <= usage.output_tokens
+                            })
+                })
+        {
+            comparable_agent
+                .conversation
+                .observations
+                .usage
+                .clone_from(&agent.conversation.observations.usage);
+        }
     }
     let mut comparable_sandbox = next.sandbox.clone();
     comparable_sandbox.revision = previous.sandbox.revision;
