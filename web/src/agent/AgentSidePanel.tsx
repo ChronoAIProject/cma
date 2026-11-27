@@ -101,12 +101,14 @@ export function AgentSidePanel({
     visitedScope.agentId === agentId &&
     visitedScope.subject === subject;
   const lifecycleHeld = resourceAvailability !== undefined && resourceAvailability.state !== 'live';
+  const runtimeVersion =
+    resourceAvailability?.state === 'live' ? resourceAvailability.runtimeVersion : undefined;
   const environment = useAgentEnvironment(
     client.files,
     agentId,
     computerOpen && !lifecycleHeld,
     subject,
-    resourceAvailability?.state === 'live' ? resourceAvailability.runtimeVersion : undefined,
+    runtimeVersion,
   );
   const lifecycleNotice = lifecycleHeld ? (
     <ComputerLifecycleNotice
@@ -173,17 +175,50 @@ export function AgentSidePanel({
     },
     [reloadAccess, onAccessChanged],
   );
+  const [fileEnvironment, setFileEnvironment] = useState<{
+    client: typeof client;
+    agentId: string;
+    subject?: string;
+    runtimeVersion?: string;
+    listingAllowed?: boolean;
+  }>();
+  const sameFileEnvironment =
+    fileEnvironment?.client === client &&
+    fileEnvironment.agentId === agentId &&
+    fileEnvironment.subject === subject &&
+    fileEnvironment.runtimeVersion === runtimeVersion;
+  const listingAllowed = sameFileEnvironment ? fileEnvironment.listingAllowed : undefined;
+  const environmentReady = environment.state.status === 'ready';
+  const environmentAllowsListing = !features || features.files.state === 'available';
+  const transientEnvironment =
+    environment.state.status === 'error' && environment.state.transient === true;
+  const nextListingAllowed = environmentReady
+    ? environmentAllowsListing
+    : environment.state.status === 'error'
+      ? transientEnvironment && listingAllowed !== false
+      : listingAllowed;
+  if (!sameFileEnvironment || listingAllowed !== nextListingAllowed)
+    setFileEnvironment({
+      client,
+      agentId,
+      subject,
+      runtimeVersion,
+      listingAllowed: nextListingAllowed,
+    });
+  const keepFilesActiveDuringEnvironmentCheck =
+    filesOpen &&
+    document.visibilityState !== 'hidden' &&
+    client.files?.environment &&
+    (transientEnvironment
+      ? listingAllowed !== false
+      : environment.state.status === 'loading' && listingAllowed === true);
   const mayRead =
     computerOpen &&
     !lifecycleHeld &&
     (!shared || authorized?.capabilities.includes('view_files') === true) &&
     (!client.files?.environment ||
-      (environment.state.status === 'ready' &&
-        (!features || features.files.state === 'available')) ||
-      (filesOpen &&
-        document.visibilityState !== 'hidden' &&
-        environment.state.status === 'error' &&
-        environment.state.transient));
+      (environmentReady && environmentAllowsListing) ||
+      keepFilesActiveDuringEnvironmentCheck);
   const mayRetain =
     (!shared ||
       authorized?.capabilities.includes('view_files') === true ||
@@ -197,7 +232,7 @@ export function AgentSidePanel({
     setVisitedScope({ client, agentId, subject, generation: (visitedScope?.generation ?? 0) + 1 });
   const mayWrite = features
     ? features.files.writable
-    : client.files?.environment && environment.state.status === 'loading'
+    : client.files?.environment && !environmentReady
       ? false
       : !shared || authorized?.capabilities.includes('operate_agent') === true;
   const fileAvailability = lifecycleNotice ?? (
