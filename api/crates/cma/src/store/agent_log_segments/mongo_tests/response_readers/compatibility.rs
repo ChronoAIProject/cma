@@ -8,17 +8,27 @@ async fn legacy_response_format_probe_allows_a_newer_revision() {
     let db = client.database(&name);
     schema::migrate(&db).await.unwrap();
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let mut authorized = agent();
-    authorized.id.0 = "agt_legacy_response_fixture".into();
-    authorized.worktree_id.0 = "wkt_legacy_response_fixture".into();
-    authorized.creation_key = "legacy-response-fixture".into();
+    let mut legacy = agent();
+    legacy.id.0 = "agt_legacy_response_fixture".into();
+    legacy.worktree_id.0 = "wkt_legacy_response_fixture".into();
+    legacy.creation_key = "legacy-response-fixture".into();
+    store
+        .agents
+        .insert_one(crate::store::agents::agent_document(&legacy).unwrap())
+        .await
+        .unwrap();
+    let authorized = store.get_agent(&legacy.id).await.unwrap().unwrap();
     let mut current = authorized.clone();
     current.revision += 1;
-    store.create_agent(current.clone()).await.unwrap();
-    assert_eq!(
-        store.get_agent(&authorized.id).await.unwrap(),
-        Some(current)
-    );
+    let updated = store
+        .agents
+        .replace_one(
+            doc! {"_id": legacy.id.as_str()},
+            crate::store::agents::agent_document(&current).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(updated.modified_count, 1);
     assert!(store
         .agent_output_reader(&authorized, Some(3))
         .await
