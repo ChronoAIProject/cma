@@ -337,7 +337,8 @@ class OwnershipTests(unittest.TestCase):
         fixture.client = SimpleNamespace(namespace='cma-native-am')
         fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
                          'server': 'https://127.0.0.1:12345'}
-        fixture.mongo = Mock(side_effect=[{'count': 7}, {'entered': True}, {'entered': True}])
+        identity = [{'id': 'synthetic-session'}, '2', 3]
+        fixture.mongo = Mock(side_effect=[{'count': 7}, {'entered': True}, [identity], [identity], []])
         self.assertEqual(fixture.artifactPublicationRace('arm', agentId='fixture-agent'), {'count': 7})
         script = fixture.mongo.call_args.args[0]
         command, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
@@ -346,17 +347,20 @@ class OwnershipTests(unittest.TestCase):
             'appName': FEATURES_MONGO_APP, 'errorCode': 112, 'errorLabels': ['TransientTransactionError'],
             'blockConnection': True, 'blockTimeMS': 12000,
         }})
-        self.assertEqual(fixture.artifactPublicationRace('wait', 7, 'fixture-agent'), {'entered': True})
+        held = fixture.artifactPublicationRace('wait', 7, 'fixture-agent')
+        self.assertRegex(held['transaction_sha256'], r'^[a-f0-9]{64}$')
         script = fixture.mongo.call_args.args[0]
         self.assertIn('"command.autocommit": false', script)
         self.assertIn('const target = "fixture-agent"', script)
         self.assertIn('command.pipeline?.[0]?.$match?.agent_id === target', script)
+        self.assertEqual(fixture.artifactPublicationRace('sample', agentId='fixture-agent'), held)
+        self.assertEqual(fixture.artifactPublicationRace('sample', agentId='fixture-agent'), {'transaction_sha256': None})
         with self.assertRaisesRegex(ValueError, 'publication_evidence_lineage_required'):
             fixture.artifactPublicationRace('arm', agentId='../foreign-agent')
         fixture.ready['fixture'] = 'prepared'
         with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
             fixture.artifactPublicationRace('arm', agentId='fixture-agent')
-        self.assertEqual(fixture.mongo.call_count, 3)
+        self.assertEqual(fixture.mongo.call_count, 5)
 
     def test_rename_abort_and_evidence_are_scoped_to_the_feature_fixture_and_agent(self):
         fixture = Fixture.__new__(Fixture)

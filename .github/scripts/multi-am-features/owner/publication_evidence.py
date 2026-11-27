@@ -38,21 +38,27 @@ def artifact_publication_abort(fixture, arm=None, outcome='known'):
 def artifact_publication_race(fixture, action=None, count=None, agentId=None):
     require_feature_fixture(fixture)
     agent_digest(agentId)
-    if action not in ('arm', 'wait', 'disarm'):
+    if action not in ('arm', 'wait', 'sample', 'disarm') or (action == 'sample' and count is not None):
         raise ValueError('artifact_publication_race_action_required')
     # Hold the count after its authorization snapshot and before the first
     # lineage write. An insert barrier would already hold the Agent write lock.
-    result = timed_publication_abort(fixture, action, count, 'agent_artifacts', operation='aggregate')
-    if action != 'wait' or not result.get('entered'):
-        return result
+    if action != 'sample':
+        result = timed_publication_abort(fixture, action, count, 'agent_artifacts', operation='aggregate')
+        if action != 'wait':
+            return result
+        if not result.get('entered'):
+            return {'transaction_sha256': None}
     criteria = {'appName': FEATURES_MONGO_APP, 'active': True,
                 'command.aggregate': 'agent_artifacts', 'command.autocommit': False}
-    return fixture.mongo(f'const rows = admin.aggregate([{{$currentOp:{{allUsers:true}}}},'
+    identity = fixture.mongo(f'const rows = admin.aggregate([{{$currentOp:{{allUsers:true}}}},'
         f'{{$match:{json.dumps(criteria)}}},{{$limit:8}}]).toArray();'
         f'const target = {json.dumps(agentId)};'
         'const matching = rows.filter(({command}) => command.lsid && command.txnNumber != null && '
         'command.pipeline?.[0]?.$match?.agent_id === target);'
-        'print(JSON.stringify({entered: matching.length === 1}));')
+        'if (matching.length > 1) throw Error("artifact_publication_multiple_active_transactions");'
+        'print(JSON.stringify(matching.map(({command, opid}) => [command.lsid, command.txnNumber.toString(), opid])));')
+    digest = hashlib.sha256(json.dumps(identity[0], sort_keys=True).encode()).hexdigest() if identity else None
+    return {'transaction_sha256': digest}
 
 
 def writer_publication_abort(fixture, arm=None):

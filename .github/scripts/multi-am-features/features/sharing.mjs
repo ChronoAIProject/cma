@@ -36,14 +36,14 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
   check(Number.isSafeInteger(before?.revision), 'artifact_race_baseline_unbound');
   const title = `Artifact retry ${randomUUID()}`;
   const fault = (action, count) => adapter.artifactPublicationRace({action, count, agentId});
-  let pending, armed, disarmed, advanced, artifact;
+  let pending, armed, disarmed, advanced, artifact, holding;
   let settled = false;
   await withRestoration(async () => {
     armed = await fault('arm');
     check(Number.isSafeInteger(armed?.count), 'artifact_race_fault_count_missing');
     pending = user.rawRequest(ingress, 'POST', artifacts, artifactIntent)
       .then(response => ({response}), error => ({error})).finally(() => { settled = true; });
-    await poll(() => fault('wait', armed.count), value => value.entered === true,
+    holding = await poll(() => fault('wait', armed.count), value => /^[a-f0-9]{64}$/.test(value?.transaction_sha256),
       {timeout: 12000, interval: 100, code: 'artifact_publication_transaction_not_held'});
     const rename = await user.rawRequest(owner.am, 'PATCH', preferences, {
       key: randomUUID(), body: {title, expected_revision: before.revision},
@@ -51,6 +51,9 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
     advanced = rename.body;
     check(advanced?.title === title && advanced.revision === before.revision + 1 && !settled,
       'artifact_owner_revision_did_not_advance_before_retry');
+    const afterRename = await fault('sample');
+    check(afterRename?.transaction_sha256 === holding.transaction_sha256,
+      'artifact_publication_transaction_changed_during_rename');
     const published = await pending;
     if (published.error) throw published.error;
     artifact = published.response.body;
@@ -122,7 +125,8 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
   }, recordFailure);
   await readArtifact(ingress);
   await recordState('artifact_publication_retry', {known_aborts: 1, artifacts: 1,
-    owner: owner.am, ingress, before_revision: before.revision, confirmed_revision: advanced.revision});
+    owner: owner.am, ingress, before_revision: before.revision, confirmed_revision: advanced.revision,
+    transaction_sha256: holding.transaction_sha256});
 }
 
 export async function artifactUnknownPublication({adapter, user, record, recordFailure, recordState = async () => {}}) {

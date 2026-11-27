@@ -7,7 +7,8 @@ import {artifactCommittedWithoutAcknowledgement, artifactUnknownPublication, rev
 const fixtureTime = '2026-01-01T00:00:00Z';
 
 function scenario({duplicateRedemption = false, divergingArtifact = false, aborts = 1,
-  advancedRevision = true, lostRevision = false, publicationSettlesEarly = false} = {}) {
+  advancedRevision = true, lostRevision = false, publicationSettlesEarly = false,
+  sampledTransaction = 'a'.repeat(64)} = {}) {
   const agentId = 'fixture-agent';
   const calls = [];
   const link = {id: 'fixture-link', agent_id: agentId, mode: 'view', revision: 2};
@@ -24,7 +25,11 @@ function scenario({duplicateRedemption = false, divergingArtifact = false, abort
       if (action === 'wait') {
         assert.equal(count, 8);
         assert.equal(typeof finishPublication, 'function');
-        return {entered: true};
+        return {transaction_sha256: 'a'.repeat(64)};
+      }
+      if (action === 'sample') {
+        setImmediate(finishPublication);
+        return {transaction_sha256: sampledTransaction};
       }
       if (action === 'disarm') finishPublication?.();
       return {count: 8 + (action === 'arm' ? 0 : aborts)};
@@ -39,8 +44,6 @@ function scenario({duplicateRedemption = false, divergingArtifact = false, abort
       if (publicationSettlesEarly) {
         finishPublication();
         await new Promise(resolve => setImmediate(resolve));
-      } else {
-        setImmediate(finishPublication);
       }
       preferences = {title: options.body.title, revision: preferences.revision + Number(advancedRevision)};
       return {body: preferences};
@@ -98,7 +101,7 @@ test('both ingresses share one artifact receipt and redeem the same link only on
     [['a', 'GET', 'preferences'], ['b', 'POST', 'artifacts'], ['a', 'PATCH', 'preferences'],
       ['a', 'GET', 'preferences'], ['a', 'GET', 'artifacts'], ['b', 'GET', 'preferences'], ['b', 'GET', 'artifacts'],
       ['a', 'POST', 'artifacts']]);
-  assert.deepEqual(actions, ['arm', 'wait', 'disarm']);
+  assert.deepEqual(actions, ['arm', 'wait', 'sample', 'disarm']);
   assert.deepEqual(failures, []);
   assert(isRevoked());
 });
@@ -107,7 +110,7 @@ test('a clean receipt still fails without one observed artifact transaction abor
   for (const aborts of [0, 2]) {
     const {run, actions, calls} = scenario({aborts});
     await assert.rejects(run, /artifact_publication_abort_not_consumed_once/);
-    assert.deepEqual(actions, ['arm', 'wait', 'disarm']);
+    assert.deepEqual(actions, ['arm', 'wait', 'sample', 'disarm']);
     assert.equal(calls.length, 3);
   }
 });
@@ -132,6 +135,11 @@ test('artifact publication requires a changed owner revision before retry and bo
     const {run, actions} = scenario(options);
     await assert.rejects(run, /artifact_owner_revision_did_not_advance_before_retry/);
     assert.deepEqual(actions, ['arm', 'wait', 'disarm']);
+  }
+  for (const sampledTransaction of [null, 'b'.repeat(64)]) {
+    const {run, actions} = scenario({sampledTransaction});
+    await assert.rejects(run, /artifact_publication_transaction_changed_during_rename/);
+    assert.deepEqual(actions, ['arm', 'wait', 'sample', 'disarm']);
   }
   await assert.rejects(scenario({lostRevision: true}).run(), /artifact_retry_lost_owner_revision/);
 });
