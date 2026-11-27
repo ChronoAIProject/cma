@@ -295,7 +295,7 @@ try {
       if (phase === 'before_restart') savedDocuments.push(document);
     }
     await matrix.run({iterations: 3, groups: ['reads', 'denials', 'settings', 'triggers', 'admission', 'usage'],
-      verifyRuntimeInventory: async (...inventories) => {
+      verifyRuntimeInventory: async (iteration, ...inventories) => {
         const {adapter, record} = context;
         const observation = await adapter.runtimeFor({agentId: record.agentId});
         check(observation.agent_id === record.agentId && observation.sandbox_id === record.sandboxId
@@ -304,6 +304,26 @@ try {
           && observation.runtime_generation > 0 && observation.provider_status === 'ready',
         'runtime_inventory_observer_unbound');
         verifyRuntimeInventory(observation, inventories);
+        if (iteration === 1) {
+          const unavailable = phase === 'before_restart' ? 'a' : 'b';
+          const peer = unavailable === 'a' ? 'b' : 'a';
+          const route = '/api/v1/admin/runtime-inventory';
+          const setAuthority = async allow => {
+            const proof = await adapter.runtimeInventoryAuthority({manager: unavailable, allow});
+            check(proof?.manager === unavailable && proof.allowed === allow && proof.peer_allowed === true,
+              'runtime_inventory_authority_unbound');
+          };
+          await matrix.withRestoration(async () => {
+            await setAuthority(false);
+            const refused = await matrix.call(unavailable, 'GET', route, undefined, [503]);
+            check(refused?.code === 'operator_service_unavailable' && !Object.hasOwn(refused, 'runtimes'),
+              'runtime_inventory_unavailability_untyped');
+            verifyRuntimeInventory(observation, [await matrix.call(peer, 'GET', route)]);
+          }, async () => {
+            await setAuthority(true);
+            verifyRuntimeInventory(observation, [await matrix.call(unavailable, 'GET', route)]);
+          });
+        }
       },
       verifyAdmission: async (ingress, mode) => {
         const {record, create, cleanup} = context;

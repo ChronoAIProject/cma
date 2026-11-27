@@ -126,7 +126,7 @@ export class AdminMatrix {
       if (id === 'admission_read') {
         check(isDeepStrictEqual(admissionSnapshot(first), admissionSnapshot(second)), 'admission_history_peer_mismatch');
       }
-      if (id === 'runtime_inventory' && verifyRuntimeInventory) await verifyRuntimeInventory(first, second);
+      if (id === 'runtime_inventory' && verifyRuntimeInventory) await verifyRuntimeInventory(iteration, first, second);
     });
   }
   async denials(iteration) {

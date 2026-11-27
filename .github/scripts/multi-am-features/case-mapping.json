@@ -1419,9 +1419,10 @@
     ]
   },
   "ADM-037": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "cases": ["admin.runtime_inventory", "admin.runtime_inventory_nonadmin_denial"],
+    "blocked": "Runtime identity, generation, Ready and dependency unavailability are exercised on both Managers across restart. Starting-state observation and independently scoped runtime-inventory authority remain open.",
     "minimum_runs": 3,
+    "routing": "both",
     "phases": [
       "before_restart",
       "after_restart"
