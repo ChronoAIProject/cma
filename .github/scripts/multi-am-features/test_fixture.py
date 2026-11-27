@@ -365,6 +365,26 @@ class OwnershipTests(unittest.TestCase):
             fixture.preparedSchemaBarrier(True, parentEnvelope=True, parentPause=True)
         self.assertEqual(fixture.mongo.call_count, 3)
 
+    def test_owner_fence_conflict_targets_only_the_prepared_owner_collection(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        fixture.mongo = Mock()
+        fixture.preparedSchemaBarrier(True, ownerFence=True)
+        hold = fixture.mongo.call_args.args[0]
+        self.assertIn('"namespace": "cma_native_am.cma_agent_manager_owners"', hold)
+        self.assertIn('"failCommands": ["update"]', hold)
+        self.assertIn('"agents"', hold)
+        fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'owner_fence')
+        with self.assertRaisesRegex(ValueError, 'prepared_schema_race_lineage_required'):
+            fixture.preparedSchemaRace('read', 'exact-operation', ['exact-reservation'], 'owner_fence')
+        fixture.ready['fixture'] = 'features'
+        with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
+            fixture.preparedSchemaBarrier(True, ownerFence=True)
+        self.assertEqual(fixture.mongo.call_count, 2)
+
     def test_artifact_abort_targets_only_the_feature_fixture_insert(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12

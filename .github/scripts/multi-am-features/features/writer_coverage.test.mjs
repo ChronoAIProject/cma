@@ -139,6 +139,7 @@ test('prepared coverage requires the scoped abort, both ingress steps and a comp
     ['prepared_work_lease_refusal', ['PASS', 'NOT_RUN', 'PASS']],
     ['prepared_worktree_schema_refusal', ['PASS', 'NOT_RUN', 'NOT_RUN']],
     ['prepared_create_on_b', ['NOT_RUN', 'PASS', 'NOT_RUN']],
+    ['prepared_owner_fence_conflict', ['NOT_RUN', 'PASS', 'PASS']],
     ['prepared_parent_envelope_4_3', ['PASS', 'PASS', 'NOT_RUN']],
     ['prepared_parent_pause_refusal', ['PASS', 'PASS', 'NOT_RUN']],
   ]) {

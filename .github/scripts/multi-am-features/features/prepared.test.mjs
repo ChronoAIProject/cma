@@ -59,20 +59,21 @@ test('parent-envelope cases require exact schemas and unchanged Runtime receipts
   assert.deepEqual(holds.at(-1), {arm: false});
 });
 
-function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], repeatReservation = false,
+function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b', 'candidate-c'], repeatReservation = false,
   schemas = [4, 3, 1], readyFences = [1, 1, 1, 1], startupReceipts = [1, 1, 1],
   starting = true, ready = true, effects = 1, changedOwner = false, changedIngress = false,
   admissionRequest = 'fixture-admission', repeatRequest = false, collisionMatches = true, observed = 1,
   failCreation = false, abortManager = 'b', createToReadyMs = 5000, reservationBound = true,
   changedNativeReceipt = false, collisionOwner = 'fixture-manager', collisionEpoch = 1,
-  expiredCollisionLease = false, committedWorkLeases = [hash('1:fixture-worker')]} = {}) {
+  expiredCollisionLease = false, committedWorkLeases = [hash('1:fixture-worker')], agentUnchanged = true} = {}) {
   const actions = [];
   const records = [];
   let ownerReads = 0;
   let topologyReads = 0;
   const create = async (am, desktop, overrides, onAgentId, onAdmission) => {
     assert.equal(desktop, false);
-    const sandboxId = overrides?.profile ? 'cold-' + am : 'candidate-' + (repeatReservation ? 'a' : am);
+    const candidate = records.length >= 4 ? 'c' : am;
+    const sandboxId = overrides?.profile ? 'cold-' + am : 'candidate-' + (repeatReservation ? 'a' : candidate);
     const record = {agentId: 'fixture-agent', sandboxId, operationId: 'fixture-operation', am, admissionRequest,
       createToReadyMs, readyObservedAt: Date.now(), runtime: {pod_uid: 'fixture-runtime-pod-' + sandboxId}};
     records.push(record);
@@ -112,19 +113,19 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
       diagnostics[abortManager].known_aborted_cas = {publish_connection: observed};
       return diagnostics;
     },
-    preparedSchemaBarrier: async ({arm}) => {
-      actions.push(arm ? 'arm-worktree-hold' : 'disarm-worktree-hold');
+    preparedSchemaBarrier: async ({arm, ownerFence}) => {
+      actions.push(arm ? (ownerFence ? 'arm-owner-fence-hold' : 'arm-worktree-hold') : 'disarm-worktree-hold');
     },
     preparedSchemaRace: async ({action, operationId, reservations, barrier}) => {
       assert.equal(operationId, 'fixture-operation');
       assert.deepEqual(reservations, readyIds);
-      assert.equal(barrier, 'publication_conflict');
-      actions.push(action + '-reservation-marker');
+      assert.equal(barrier, records.length >= 5 ? 'owner_fence' : 'publication_conflict');
+      actions.push(action + (barrier === 'owner_fence' ? '-owner-marker' : '-reservation-marker'));
       const sandboxId = collisionMatches ? records.at(-1).sandboxId : 'different-reservation';
       return action === 'inject' ? {agentId: 'fixture-agent', sandboxId,
         ownerInstance: collisionOwner, ownerEpoch: collisionEpoch,
         leaseDeadlineMs: Date.now() + (expiredCollisionLease ? -1000 : 60000),
-        workLeaseSha256: hash('1:fixture-worker')} : {restored: 1};
+        workLeaseSha256: hash('1:fixture-worker'), agentUnchanged} : {restored: 1};
     },
   };
   const results = [];
@@ -152,7 +153,8 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   const context = fixture();
   await preparedJourney(context);
   assert.deepEqual(context.results.map(row => row.name),
-    ['cold_comparison_on_a', 'prepared_create_on_a', 'cold_comparison_on_b', 'prepared_create_on_b']);
+    ['cold_comparison_on_a', 'prepared_create_on_a', 'cold_comparison_on_b', 'prepared_create_on_b',
+      'prepared_owner_fence_conflict']);
   assert.deepEqual(context.actions, [
     'create-a-cold-a', 'cleanup-cold-a',
     'create-a-candidate-a', 'starting-a', 'open-both', 'reply-a', 'cleanup-candidate-a',
@@ -160,6 +162,9 @@ test('cold comparison and two ingress checks join the exact prepared reservation
     'arm-worktree-hold', 'create-b-candidate-b', 'inject-reservation-marker', 'starting-b',
     'disarm-worktree-hold', 'restore-reservation-marker',
     'open-both', 'reply-b', 'cleanup-candidate-b',
+    'arm-owner-fence-hold', 'create-a-candidate-c', 'inject-owner-marker', 'starting-a',
+    'disarm-worktree-hold', 'restore-owner-marker',
+    'open-both', 'reply-a', 'cleanup-candidate-c',
   ]);
   assert.equal(context.results[1].atomic_publication_fence_count, 4);
   assert.equal(context.results[1].startup_receipt_count, 3);
@@ -182,6 +187,9 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.equal(context.results[3].runtime_receipt_count, 3);
   assert.equal(context.results[3].create_to_ready_ms, 5000);
   assert.deepEqual(context.results[1].parent_schema_versions, [4, 3, 1]);
+  assert.equal(context.results[4].owner_fence_agent_unchanged, true);
+  assert.equal(context.results[4].observed_known_abort, true);
+  await assert.rejects(preparedJourney(fixture({agentUnchanged: false})), /prepared_owner_fence_agent_changed/);
 });
 
 test('prepared publication binds the collision to admission and retains the owner attribution', async () => {

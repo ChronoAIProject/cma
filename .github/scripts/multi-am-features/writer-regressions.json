@@ -177,10 +177,11 @@
       "feature": "Startup publication",
       "requirement": "Bounded reread checks current holder, work lease, parent, runtime and owner; retries publication only. Agent reaches Ready without waiting for the 18-minute old work lease and without rerunning native preparation.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The prepared fixture checks the exact Runtime mutation receipts both before claim and after Ready. Hosted execution of the Worktree publication abort and a separate ownership-fence contention control remain pending.",
+      "remaining": "The prepared fixture checks both scoped contention cases and the exact Runtime mutation receipts before claim and after Ready. Hosted execution remains pending.",
       "trigger": "Inject known-aborted ownership-fence conflict with byte-identical durable Agent at intent or completion publication after native work has completed",
       "required_assertions": [
-        {"case": "prepared_create_on_b", "minimum_runs": 1, "phases": [], "routing": "journey"}
+        {"case": "prepared_create_on_b", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_owner_fence_conflict", "minimum_runs": 1, "phases": [], "routing": "journey"}
       ]
     },
     {

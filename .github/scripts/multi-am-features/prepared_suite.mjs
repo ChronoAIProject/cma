@@ -24,13 +24,14 @@ async function servingManagers(adapter) {
 }
 
 export async function preparedJourney({adapter, create, openBoth, cleanup, step, browser, recordFailure,
-  recordAbortEvidence = () => {}}) {
+  recordAbortEvidence = () => {}, recordOwnerFenceEvidence = () => {}}) {
   const evidenceFor = record => adapter.preparedEvidence({
     agentId: record.agentId, sandboxId: record.sandboxId, operationId: record.operationId,
   });
   const consumed = new Set();
-  for (const ingress of ['a', 'b']) {
-    await step('cold_comparison_on_' + ingress, async () => {
+  for (const [ingress, barrier] of [['a', null], ['b', 'publication_conflict'], ['a', 'owner_fence']]) {
+    const ownerFence = barrier === 'owner_fence';
+    if (!ownerFence) await step('cold_comparison_on_' + ingress, async () => {
       const record = await create(ingress, false, {profile: {system_prompt: 'CI cold comparison with custom instructions'}});
       const observed = await evidenceFor(record);
       check(observed.agent_ready === true && observed.consumed === false,
@@ -38,7 +39,8 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       await cleanup(record);
       return {ingress, cold_admission_confirmed: true};
     });
-    await step('prepared_create_on_' + ingress, () => browser.forIngress(ingress, async page => {
+    const name = ownerFence ? 'prepared_owner_fence_conflict' : 'prepared_create_on_' + ingress;
+    await step(name, () => browser.forIngress(ingress, async page => {
       const ready = await poll(() => adapter.preparedReady(),
         rows => Array.isArray(rows) && rows.length > 0,
         {timeout: 180000, code: 'no_ready_prepared_reservation'});
@@ -50,14 +52,14 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       const createAndOpen = onAdmission => create(ingress, false, {}, ({agentId}) => {
         opening = page.openStarting(agentId).then(started => ({started}), error => ({error}));
       }, onAdmission);
-      if (ingress === 'b') {
+      if (barrier) {
         let admission, pending;
         const race = action => adapter.preparedSchemaRace({
-          action, operationId: admission.operationId, reservations: ready, barrier: 'publication_conflict',
+          action, operationId: admission.operationId, reservations: ready, barrier,
         });
         const disarm = () => adapter.preparedSchemaBarrier({arm: false});
         await withRestoration(async () => {
-          await adapter.preparedSchemaBarrier({arm: true});
+          await adapter.preparedSchemaBarrier(ownerFence ? {arm: true, ownerFence} : {arm: true});
           record = await createAndOpen(admitted => {
             admission = admitted;
             pending = withRestoration(async () => {
@@ -70,6 +72,7 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
           if (outcome.error) throw outcome.error;
           check(collision?.agentId === record.agentId && collision?.sandboxId === record.sandboxId,
             'prepared_publication_collision_lineage_unbound');
+          check(!ownerFence || collision.agentUnchanged === true, 'prepared_owner_fence_agent_changed');
         }, async () => {
           if (!admission) return disarm();
           await pending;
@@ -130,15 +133,17 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       check(finalManagers[owner.am].instance_id === owner.instance_id && finalManagers[owner.am].pod_uid === owner.pod_uid,
         'prepared_browser_owner_not_bound_to_manager');
       const publicationDiagnostics = await adapter.publicationEvidence({agentId: record.agentId});
-      if (ingress === 'b') {
+      if (barrier) {
         const aborts = am => publicationDiagnostics[am]?.known_aborted_cas?.publish_connection ?? 0;
         const committedLeases = am => publicationDiagnostics[am]?.prepared_commit_work_lease_sha256 ?? [];
         const originalWorkLeaseCommitted = isDigest(collision.workLeaseSha256)
           && equal(committedLeases(owner.am), [collision.workLeaseSha256])
           && committedLeases(owner.am === 'a' ? 'b' : 'a').length === 0;
-        recordAbortEvidence({ingress, owner: owner.am, owner_epoch: owner.epoch,
+        const retain = ownerFence ? recordOwnerFenceEvidence : recordAbortEvidence;
+        retain({ingress, owner: owner.am, owner_epoch: owner.epoch,
           owner_instance_sha256: hash(owner.instance_id), agent_sha256: hash(record.agentId),
-          lifecycle_operation_sha256: hash(record.operationId), exact_reservation_conflict: true,
+          lifecycle_operation_sha256: hash(record.operationId),
+          ...(ownerFence ? {owner_fence_agent_unchanged: collision.agentUnchanged} : {exact_reservation_conflict: true}),
           collision_owner_epoch: collision.ownerEpoch,
           ready_before_collision_lease_deadline: readyBeforeCollisionLeaseDeadline,
           committed_with_collision_work_lease: originalWorkLeaseCommitted,
@@ -155,7 +160,8 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         create_to_ready_ms: record.createToReadyMs,
         ingress_instance_sha256: hash(ingressMember.instance_id), owner_instance_sha256: hash(owner.instance_id),
         request_sha256: requests, publication_diagnostics: publicationDiagnostics,
-        observed_known_abort: ingress === 'b', ready_before_collision_lease_deadline: readyBeforeCollisionLeaseDeadline,
+        observed_known_abort: Boolean(barrier), ready_before_collision_lease_deadline: readyBeforeCollisionLeaseDeadline,
+        owner_fence_agent_unchanged: ownerFence ? collision.agentUnchanged : undefined,
         atomic_publication_fence_count: durable.ready_fences.filter(count => count === 1).length,
         startup_receipt_count: durable.startup_receipts.length,
         runtime_receipt_format: nativeAfter.format, runtime_receipt_count: nativeAfter.receipts.length,
@@ -233,7 +239,7 @@ export async function preparedParentEnvelopes({adapter, create, cleanup, step, r
 if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
   const config = await readConfig(process.stdin);
   const registry = JSON.parse(await readFile(new URL('./writer-regressions.json', import.meta.url)));
-  let abortEvidence = null;
+  let abortEvidence = null, ownerFenceEvidence = null;
   const journey = await runJourney(config, {preparedHook: async context => {
     let browser;
     await withRestoration(async () => {
@@ -242,6 +248,7 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
       });
       await preparedJourney({...context, browser,
         recordAbortEvidence: evidence => { abortEvidence = evidence; },
+        recordOwnerFenceEvidence: evidence => { ownerFenceEvidence = evidence; },
         recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
           {case: 'prepared_publication_abort'})});
       await context.step('prepared_worktree_schema_refusal', () => preparedSchemaRefusal({...context,
@@ -271,16 +278,17 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
     ...journeyFailureSummary(journey),
     writer_coverage: coverage,
     prepared_publication_abort: abortEvidence,
+    prepared_owner_fence_abort: ownerFenceEvidence,
     steps: journey.steps.map(({name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
-      ready_before_collision_lease_deadline, prepared_commit_parent_revisions,
+      ready_before_collision_lease_deadline, prepared_commit_parent_revisions, owner_fence_agent_unchanged,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
       browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
       prepared_work_lease_refused, prepared_parent_pause_refused}) => ({
       name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
-      ready_before_collision_lease_deadline, prepared_commit_parent_revisions,
+      ready_before_collision_lease_deadline, prepared_commit_parent_revisions, owner_fence_agent_unchanged,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
       browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,

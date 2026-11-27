@@ -253,20 +253,21 @@ def prepared_schema_refusals(fixture, agentId=None, barrier='worktree_schema'):
                          for fields in publication_events(fixture, manager)) for manager in ('a', 'b')}
 
 
-def prepared_schema_barrier(fixture, arm=None, parentEnvelope=False, parentPause=False):
+def prepared_schema_barrier(fixture, arm=None, parentEnvelope=False, parentPause=False, ownerFence=False):
     require_feature_fixture(fixture, kind='prepared')
-    if (type(arm) is not bool or type(parentEnvelope) is not bool or type(parentPause) is not bool
-            or (parentEnvelope and parentPause)):
+    if (any(type(value) is not bool for value in (arm, parentEnvelope, parentPause, ownerFence))
+            or sum((parentEnvelope, parentPause, ownerFence)) > 1):
         raise ValueError('prepared_schema_race_action_required')
     command = {'configureFailPoint': 'failCommand', 'mode': 'off'}
     if arm:
+        collection = 'sandboxes' if parentEnvelope else 'cma_agent_manager_owners' if ownerFence else 'worktrees'
         command.update(mode={'times': 20}, data={
             'failCommands': ['find' if parentEnvelope or parentPause else 'update'],
-            'namespace': 'cma_native_am.' + ('sandboxes' if parentEnvelope else 'worktrees'),
+            'namespace': 'cma_native_am.' + collection,
             'appName': PREPARED_MONGO_APP, 'blockConnection': True, 'blockTimeMS': 12000 if parentPause else 2400,
         })
         profile = {'profile': 2, 'filter': {'appName': PREPARED_MONGO_APP, 'command.find': {
-            '$in': ['native_prepared_sandboxes', 'sandboxes', 'workspaces', 'worktrees', *(['agents'] if parentPause else [])],
+            '$in': ['native_prepared_sandboxes', 'sandboxes', 'workspaces', 'worktrees', *(['agents'] if parentPause or ownerFence else [])],
         }}}
         script = f'if (d.runCommand({json.dumps(profile)}).ok !== 1) throw Error("prepared_schema_profile_arm");\n'
         script += f'if (admin.runCommand({json.dumps(command)}).ok !== 1) throw Error("prepared_schema_barrier_arm");'
@@ -280,10 +281,10 @@ def prepared_schema_race(fixture, action=None, operationId=None, reservations=No
                          parentVersions=None):
     require_feature_fixture(fixture, kind='prepared')
     supported = ('worktree_schema', 'worktree_cleanup', 'work_lease', 'publication_conflict',
-                 'parent_envelope', 'parent_pause')
+                 'parent_envelope', 'parent_pause', 'owner_fence')
     actions = ('sample', 'read') if barrier == 'parent_pause' else ('inject', 'read', 'restore')
     if (action not in actions or barrier not in supported
-            or (action == 'read' and barrier == 'publication_conflict')
+            or (action == 'read' and barrier in ('publication_conflict', 'owner_fence'))
             or not isinstance(reservations, list)
             or not 1 <= len(reservations) <= 2 or any(not isinstance(value, str)
             or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in [operationId, *reservations])):

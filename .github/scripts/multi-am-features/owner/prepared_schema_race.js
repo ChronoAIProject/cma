@@ -6,7 +6,8 @@
   const cleanup = 'owned_workspace_cleanup_admission_v1';
   const schemaChange = scope.barrier === 'worktree_schema';
   const leaseChange = scope.barrier === 'work_lease';
-  const publicationConflict = scope.barrier === 'publication_conflict';
+  const ownerFence = scope.barrier === 'owner_fence';
+  const publicationConflict = ownerFence || scope.barrier === 'publication_conflict';
   const parentEnvelope = scope.barrier === 'parent_envelope';
   const parentPause = scope.barrier === 'parent_pause';
 
@@ -57,22 +58,24 @@
   }
 
   async function currentUpdate(rows) {
+    const collection = ownerFence ? 'cma_agent_manager_owners' : 'worktrees';
     const active = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
-      appName: scope.app, active: true, 'command.update': 'worktrees', 'command.autocommit': false,
+      appName: scope.app, active: true, 'command.update': collection, 'command.autocommit': false,
     }}]).toArray();
     let observed = null;
     for (const {command, opid} of active) {
-      // Mongo omits the OP_MSG update sequence from currentOp. Bind the
-      // live session to the exact prepared hierarchy it read before writing.
+      // Mongo omits the OP_MSG update sequence from currentOp. The
+      // earlier reads capture the live transaction's exact target.
       if (!command.lsid || command.txnNumber == null) continue;
+      const expected = ownerFence ? [['agents', rows.agent._id]] : [
+        ['worktrees', rows.tree._id], ['sandboxes', rows.sandbox._id],
+        ['workspaces', rows.workspace._id], ['native_prepared_sandboxes', rows.reservation._id],
+      ];
       const reads = await d.getCollection('system.profile').find({appName: scope.app, 'command.lsid': command.lsid,
-        'command.txnNumber': command.txnNumber, 'command.autocommit': false, $or: [
-          {'command.find': 'worktrees', 'command.filter._id': rows.tree._id},
-          {'command.find': 'sandboxes', 'command.filter._id': rows.sandbox._id},
-          {'command.find': 'workspaces', 'command.filter._id': rows.workspace._id},
-          {'command.find': 'native_prepared_sandboxes', 'command.filter._id': rows.reservation._id},
-        ]}, {command: 1}).limit(16).toArray();
-      if (new Set(reads.map(row => row.command.find)).size === 4) {
+        'command.txnNumber': command.txnNumber, 'command.autocommit': false,
+        $or: expected.map(([collection, id]) => ({'command.find': collection, 'command.filter._id': id})),
+      }, {command: 1}).limit(16).toArray();
+      if (new Set(reads.map(row => row.command.find)).size === expected.length) {
         if (observed !== null) throw Error('prepared_schema_race_multiple_bound_transactions');
         observed = {opid, session: command.lsid.id.toString(), transaction: command.txnNumber.toString()};
       }
@@ -168,7 +171,12 @@
     const deadline = Date.now() + 4500;
     while (Date.now() < deadline) {
       const rows = await lineage(d);
-      const bound = rows && (parentEnvelope ? await hasHeldSandboxRead(rows) : await currentUpdate(rows));
+      const openDebt = rows?.agent.record.work.cleanup_debt;
+      const readyForOwnerFence = !ownerFence || (Array.isArray(openDebt) && openDebt.length === 1
+        && openDebt[0].step === 'open_conversation'
+        && openDebt[0].operation_id === `agent:${rows.agent._id}:open:v1`);
+      const bound = rows && readyForOwnerFence
+        && (parentEnvelope ? await hasHeldSandboxRead(rows) : await currentUpdate(rows));
       if (bound) {
         const before = proof(rows);
         if (!pending(before) || before.schema !== 1 || before.cleanup_marked || rows.tree.status !== 'creating') {
@@ -195,13 +203,16 @@
               || Number(rows.agent.work_lease_fence) !== workFence) {
             throw Error('prepared_publication_original_authority_unbound');
           }
-          // The transaction read this reservation before the held Worktree write.
-          // A marker changes the snapshot without changing prepared authority.
-          const changed = await d.native_prepared_sandboxes.updateOne({
+          const mutation = {$set: {[marker]: {operation: operationId, barrier: scope.barrier}}};
+          const collection = ownerFence ? d.cma_agent_manager_owners : d.native_prepared_sandboxes;
+          // Both writes change the transaction snapshot while keeping authority intact.
+          const filter = ownerFence ? {_id: owner._id, instance_id: owner.instance_id,
+            epoch: owner.epoch, effect_revision: owner.effect_revision, [marker]: {$exists: false}} : {
             ...claim, _id: reservation._id, revision: reservation.revision,
             'record.ownership.owner': rows.agent.owner, [marker]: {$exists: false},
             agent_prepared_open_ready_fence: {$exists: false},
-          }, {$set: {[marker]: {operation: operationId, barrier: scope.barrier}}}, {maxTimeMS: 700});
+          };
+          const changed = await collection.updateOne(filter, mutation, {maxTimeMS: 700});
           if (changed.modifiedCount !== 1) throw Error('prepared_publication_conflict_write_missed');
           const after = await currentUpdate(rows);
           if (after?.opid !== bound.opid || after?.session !== bound.session
@@ -210,7 +221,10 @@
           }
           const workLeaseSha256 = require('crypto').createHash('sha256')
             .update(`${workFence}:${lease.holder}`).digest('hex');
-          return {...before, ownerInstance: owner.instance_id, ownerEpoch, leaseDeadlineMs, workLeaseSha256};
+          const agentUnchanged = !ownerFence || EJSON.stringify(await d.agents.findOne({_id: rows.agent._id}))
+            === EJSON.stringify(rows.agent);
+          return {...before, ownerInstance: owner.instance_id, ownerEpoch, leaseDeadlineMs, workLeaseSha256,
+            agentUnchanged};
         }
         if (leaseChange) {
           await replaceLease(rows.agent);
@@ -271,6 +285,14 @@
 
   async function restore() {
     if (leaseChange) return restoreLease();
+    if (ownerFence) {
+      const rows = await lineage(d);
+      if (!rows) return {restored: 0};
+      const restored = await d.cma_agent_manager_owners.updateOne({_id: rows.agent._id,
+        [`${marker}.operation`]: operationId, [`${marker}.barrier`]: scope.barrier,
+      }, {$unset: {[marker]: ''}}, {maxTimeMS: 700});
+      return {restored: restored.modifiedCount};
+    }
     if (publicationConflict) {
       const restored = await d.native_prepared_sandboxes.updateOne({
         ...claim, _id: {$in: scope.reservations},
