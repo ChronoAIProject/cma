@@ -248,14 +248,15 @@ def prepared_schema_refusals(fixture, agentId=None, barrier='worktree_schema'):
                          for fields in publication_events(fixture, manager)) for manager in ('a', 'b')}
 
 
-def prepared_schema_barrier(fixture, arm=None):
+def prepared_schema_barrier(fixture, arm=None, parentEnvelope=False):
     require_feature_fixture(fixture, kind='prepared')
-    if type(arm) is not bool:
+    if type(arm) is not bool or type(parentEnvelope) is not bool:
         raise ValueError('prepared_schema_race_action_required')
     command = {'configureFailPoint': 'failCommand', 'mode': 'off'}
     if arm:
         command.update(mode={'times': 20}, data={
-            'failCommands': ['update'], 'namespace': 'cma_native_am.worktrees',
+            'failCommands': ['find' if parentEnvelope else 'update'],
+            'namespace': 'cma_native_am.' + ('sandboxes' if parentEnvelope else 'worktrees'),
             'appName': PREPARED_MONGO_APP, 'blockConnection': True, 'blockTimeMS': 2400,
         })
         profile = {'profile': 2, 'filter': {'appName': PREPARED_MONGO_APP, 'command.find': {
@@ -269,15 +270,25 @@ def prepared_schema_barrier(fixture, arm=None):
     return fixture.mongo(script + 'print(JSON.stringify({configured: true}));')
 
 
-def prepared_schema_race(fixture, action=None, operationId=None, reservations=None, barrier='worktree_schema'):
+def prepared_schema_race(fixture, action=None, operationId=None, reservations=None, barrier='worktree_schema',
+                         parentVersions=None):
     require_feature_fixture(fixture, kind='prepared')
-    supported = ('worktree_schema', 'worktree_cleanup', 'work_lease', 'publication_conflict')
+    supported = ('worktree_schema', 'worktree_cleanup', 'work_lease', 'publication_conflict', 'parent_envelope')
     if (action not in ('inject', 'read', 'restore') or barrier not in supported
             or (action == 'read' and barrier == 'publication_conflict')
             or not isinstance(reservations, list)
             or not 1 <= len(reservations) <= 2 or any(not isinstance(value, str)
             or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in [operationId, *reservations])):
         raise ValueError('prepared_schema_race_lineage_required')
-    scope = json.dumps({'action': action, 'operationId': operationId, 'reservations': reservations, 'barrier': barrier,
-                        'app': PREPARED_MONGO_APP})
+    scope = {'action': action, 'operationId': operationId, 'reservations': reservations, 'barrier': barrier,
+             'app': PREPARED_MONGO_APP}
+    if barrier == 'parent_envelope':
+        if (action != 'inject' or not isinstance(parentVersions, list) or len(parentVersions) != 2
+                or any(type(number) is not int for number in parentVersions)
+                or parentVersions[0] not in (1, 3, 4) or parentVersions[1] not in (1, 3)):
+            raise ValueError('prepared_parent_envelope_versions_required')
+        scope['parentVersions'] = parentVersions
+    elif parentVersions is not None:
+        raise ValueError('prepared_parent_envelope_versions_required')
+    scope = json.dumps(scope)
     return fixture.mongo(f'const scope = {scope};\n' + SCHEMA_RACE.read_text())

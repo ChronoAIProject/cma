@@ -2,9 +2,50 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {runInNewContext} from 'node:vm';
-import {preparedJourney} from '../prepared_suite.mjs';
+import {preparedJourney, preparedParentEnvelopes} from '../prepared_suite.mjs';
 import {isPreparedSend} from '../prepared_browser.mjs';
 import {hash} from '../cma/core.mjs';
+
+test('parent-envelope cases require exact schemas and unchanged Runtime receipts on both ingresses', async () => {
+  const steps = [], cleaned = [], holds = [];
+  const originalRuntime = {pod_sha256: hash('synthetic-pod'), receipts: ['first', 'second', 'third']};
+  let pair, malformed = false;
+  const context = {
+    adapter: {
+      preparedReady: async () => ['fixture-home'],
+      preparedRuntimeEvidence: async () => originalRuntime,
+      preparedSchemaBarrier: async value => holds.push(value),
+      preparedSchemaRace: async ({parentVersions, ...scope}) => {
+        assert.deepEqual(scope, {action: 'inject', operationId: 'fixture-operation',
+          reservations: ['fixture-home'], barrier: 'parent_envelope'});
+        pair = parentVersions;
+        return {agentId: 'fixture-agent', sandboxId: 'fixture-home', parentVersions};
+      },
+      preparedEvidence: async () => ({consumed: true, agent_ready: true, reservation_bound: true,
+        installation_bound: true, schemas: malformed ? [4, 3, 1] : [...pair, 1],
+        ready_fences: [1, 1, 1, 1], startup_receipts: [1, 1, 1]}),
+      ownerOf: async () => ({agent_id: 'fixture-agent', am: 'a', epoch: 2, pod_uid: 'fixture-owner-pod'}),
+      publicationEvidence: async () => ({a: {prepared_commit_work_lease_sha256: [hash('fixture-commit')]}, b: {}}),
+    },
+    create: async (ingress, desktop, _overrides, _open, admitted) => {
+      assert.equal(desktop, false);
+      const record = {agentId: 'fixture-agent', sandboxId: 'fixture-home', operationId: 'fixture-operation',
+        createToReadyMs: 4000, runtime: {pod_uid: 'synthetic-pod'}, ingress};
+      admitted(record);
+      return record;
+    },
+    cleanup: async record => cleaned.push(record.ingress),
+    step: async (name, run) => steps.push({name, ...await run()}),
+  };
+  await preparedParentEnvelopes(context);
+  assert.deepEqual(steps.map(step => step.parent_schema_versions),
+    [[1, 1, 1], [1, 3, 1], [3, 1, 1], [3, 3, 1], [4, 1, 1], [4, 3, 1]]);
+  assert.deepEqual(cleaned, ['a', 'b', 'a', 'b', 'a', 'b']);
+  assert.deepEqual(holds.slice(-2), [{arm: true, parentEnvelope: true}, {arm: false}]);
+  malformed = true;
+  await assert.rejects(preparedParentEnvelopes(context), /prepared_parent_envelope_publication_unproven/);
+  assert.deepEqual(holds.at(-1), {arm: false});
+});
 
 function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], repeatReservation = false,
   schemas = [4, 3, 1], readyFences = [1, 1, 1, 1], startupReceipts = [1, 1, 1],

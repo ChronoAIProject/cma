@@ -311,6 +311,23 @@ class OwnershipTests(unittest.TestCase):
             fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'publication_conflict')
         fixture.mongo.assert_called_once()
 
+    def test_prepared_parent_envelope_selector_validates_the_pair_and_holds_sandbox_writes(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        fixture.mongo = Mock()
+        fixture.preparedSchemaBarrier(True, parentEnvelope=True)
+        self.assertIn('"namespace": "cma_native_am.sandboxes"', fixture.mongo.call_args.args[0])
+        fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'parent_envelope', [4, 3])
+        scope, _ = json.JSONDecoder().raw_decode(fixture.mongo.call_args.args[0].removeprefix('const scope = '))
+        self.assertEqual(scope['parentVersions'], [4, 3])
+        for pair in [None, [True, 3], [3, 4], [5, 1], [1, 3, 4]]:
+            with self.assertRaisesRegex(ValueError, 'prepared_parent_envelope_versions_required'):
+                fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'parent_envelope', pair)
+        self.assertEqual(fixture.mongo.call_count, 2)
+
     def test_artifact_abort_targets_only_the_feature_fixture_insert(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12

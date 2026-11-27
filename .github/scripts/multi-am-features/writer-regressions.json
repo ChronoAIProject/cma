@@ -338,7 +338,7 @@
     {
       "id": "SW13",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Hosted coverage of actual prepared consumption, cold comparison, real-Web Starting/Open/Send, and the Worktree schema and cleanup controls. Explicit image execution for all supported parent schemas and paused-parent refusal remains pending.",
+      "remaining": "The fixture exercises all six supported parent schema combinations during prepared Ready publication. Hosted execution and the paused-parent refusal remain pending.",
       "issues": "#2168/#2156",
       "feature": "Prepared startup with renewed parent schemas",
       "requirement": "Supported parent1/3/4 publication succeeds; no repeated schema-filterConflict, no18minute lease stall. Unknown Worktree schema, cleanup and paused parents still refuse. Record request/ingress/owner/epoch and distinguish targetenabled from actualpreparedhit.",
@@ -348,6 +348,12 @@
         {"case": "cold_comparison_on_b", "minimum_runs": 1, "phases": [], "routing": "journey"},
         {"case": "prepared_create_on_a", "minimum_runs": 1, "phases": [], "routing": "journey"},
         {"case": "prepared_create_on_b", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_1_1", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_1_3", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_3_1", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_3_3", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_4_1", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_4_3", "minimum_runs": 1, "phases": [], "routing": "journey"},
         {"case": "prepared_worktree_schema_refusal", "minimum_runs": 1, "phases": [], "routing": "journey"},
         {"case": "prepared_worktree_cleanup_refusal", "minimum_runs": 1, "phases": [], "routing": "journey"}
       ]

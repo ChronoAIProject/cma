@@ -167,6 +167,61 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
   }
 }
 
+export async function preparedParentEnvelopes({adapter, create, cleanup, step, recordFailure}) {
+  for (const parentVersions of [[1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
+    const ingress = parentVersions[1] === 1 ? 'a' : 'b';
+    await step('prepared_parent_envelope_' + parentVersions.join('_'), async () => {
+      const reservations = await poll(() => adapter.preparedReady(),
+        rows => Array.isArray(rows) && rows.length > 0,
+        {timeout: 180000, code: 'no_ready_prepared_reservation'});
+      const originalRuntime = new Map(await Promise.all(reservations.map(async sandboxId =>
+        [sandboxId, await adapter.preparedRuntimeEvidence({sandboxId})])));
+      const disarm = () => adapter.preparedSchemaBarrier({arm: false});
+      let record, collision, pending;
+      await withRestoration(async () => {
+        await adapter.preparedSchemaBarrier({arm: true, parentEnvelope: true});
+        record = await create(ingress, false, {}, undefined, ({operationId}) => {
+          pending = withRestoration(async () => {
+            collision = await poll(() => adapter.preparedSchemaRace({
+              action: 'inject', operationId, reservations, barrier: 'parent_envelope', parentVersions,
+            }), value => value !== null, {timeout: 120000, interval: 100,
+              code: 'prepared_parent_envelope_observation_missing'});
+          }, disarm, recordFailure).then(() => ({}), error => ({error}));
+        });
+      }, () => pending || disarm(), recordFailure);
+      check(pending, 'prepared_parent_envelope_admission_unobserved');
+      const {error} = await pending;
+      if (error) throw error;
+      const {agentId, sandboxId, operationId} = record;
+      check(collision?.agentId === agentId && collision.sandboxId === sandboxId && equal(collision.parentVersions, parentVersions)
+        && reservations.includes(sandboxId), 'prepared_parent_envelope_lineage_unbound');
+      const [durable, runtime] = await Promise.all([
+        adapter.preparedEvidence({agentId, sandboxId, operationId}),
+        adapter.preparedRuntimeEvidence({sandboxId, operationId}),
+      ]);
+      check(durable.consumed === true && durable.agent_ready === true && durable.reservation_bound === true
+        && durable.installation_bound === true && equal(durable.schemas, [...parentVersions, 1])
+        && equal(durable.ready_fences, [1, 1, 1, 1]) && equal(durable.startup_receipts, [1, 1, 1]),
+      'prepared_parent_envelope_publication_unproven');
+      check(equal(runtime, originalRuntime.get(sandboxId)) && runtime?.receipts?.length === 3
+        && runtime.pod_sha256 === hash(record.runtime.pod_uid), 'prepared_parent_envelope_runtime_changed');
+      const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
+      const diagnostics = await adapter.publicationEvidence({agentId});
+      const commits = diagnostics[owner.am]?.prepared_commit_work_lease_sha256;
+      check(commits?.length === 1 && isDigest(commits[0])
+        && !diagnostics[owner.am === 'a' ? 'b' : 'a']?.prepared_commit_work_lease_sha256?.length
+        && record.createToReadyMs > 0 && record.createToReadyMs < OLD_WORK_LEASE_MS,
+      'prepared_parent_envelope_commit_unbound');
+      await cleanup(record);
+      return {ingress, owner: owner.am, owner_epoch: owner.epoch, parent_schema_versions: durable.schemas,
+        create_to_ready_ms: record.createToReadyMs, atomic_publication_fence_count: durable.ready_fences.length,
+        startup_receipt_count: durable.startup_receipts.length, runtime_receipt_count: runtime.receipts.length,
+        lifecycle_operation_sha256: hash(operationId), prepared_reservation_sha256: hash(sandboxId),
+        agent_sha256: hash(agentId)};
+    });
+  }
+}
+
 if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
   const config = await readConfig(process.stdin);
   const registry = JSON.parse(await readFile(new URL('./writer-regressions.json', import.meta.url)));
@@ -190,6 +245,9 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
       await context.step('prepared_work_lease_refusal', () => preparedSchemaRefusal({...context,
         barrier: 'work_lease', recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
           {case: 'prepared_work_lease_refusal'})}));
+      await preparedParentEnvelopes({...context,
+        recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
+          {case: 'prepared_parent_envelope'})});
     }, () => browser?.close(), (stage, error) => retainFailure(config.output_dir, stage, error,
       {case: 'prepared_browser'}));
   }});

@@ -7,6 +7,7 @@
   const schemaChange = scope.barrier === 'worktree_schema';
   const leaseChange = scope.barrier === 'work_lease';
   const publicationConflict = scope.barrier === 'publication_conflict';
+  const parentEnvelope = scope.barrier === 'parent_envelope';
 
   const field = schemaChange ? schema : cleanup;
   const successor = schemaChange ? NumberLong('999') : true;
@@ -78,15 +79,71 @@
     return observed;
   }
 
+  async function heldParentReads(rows) {
+    const active = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
+      appName: scope.app, active: true, 'command.find': 'sandboxes', 'command.filter._id': rows.sandbox._id,
+      'command.autocommit': {$exists: false},
+    }}]).toArray();
+    return active.map(entry => entry.opid);
+  }
+
+  async function replaceParentEnvelopes(rows) {
+    const {sandbox, workspace, reservation} = rows;
+    const [sandboxVersion, workspaceVersion] = scope.parentVersions;
+    const installed = reservation.record.payload.installed_request_sha256;
+    const session = await d.getMongo().startSession();
+    try {
+      await session.startTransaction({readConcern: {level: 'snapshot'}});
+      const database = session.getDatabase(d.getName());
+      for (const [collection, row, version, status, versions] of [
+        ['sandboxes', sandbox, sandboxVersion, 'active', [1, 3, 4]],
+        ['workspaces', workspace, workspaceVersion, 'ready', [1, 3]],
+      ]) {
+        const work = row.record.work;
+        if (!versions.includes(Number(row[schema])) || row.status !== status || work.lease != null
+            || Number(row.revision) !== Number(row.record.revision)) {
+          throw Error('prepared_parent_envelope_not_idle');
+        }
+        const set = {[schema]: NumberLong(String(version))};
+        const unset = {};
+        if (version === 1) unset['record.work.authority_protocol'] = '';
+        else set['record.work.authority_protocol'] = 'renewed_v1';
+        if (collection === 'sandboxes') {
+          if (version === 4) {
+            if (!/^[a-f0-9]{64}$/.test(installed ?? '')) throw Error('prepared_parent_installation_unbound');
+            set['record.work.prepared_installation_digest'] = installed;
+          } else unset['record.work.prepared_installation_digest'] = '';
+        }
+        const filter = {_id: row._id, owner: rows.agent.owner, status, [schema]: row[schema], revision: row.revision,
+          'record.work.lease': null, agent_prepared_open_ready_fence: {$exists: false},
+          [cleanup]: {$exists: false}, channel_reuse_cleanup_execution: {$exists: false}};
+        const update = {$set: set, $inc: {revision: NumberLong('1'), 'record.revision': NumberLong('1')}};
+        if (Object.keys(unset).length) update.$unset = unset;
+        const result = await database[collection].updateOne(filter, update, {maxTimeMS: 700});
+        if (result.modifiedCount !== 1) throw Error('prepared_parent_envelope_write_missed');
+      }
+      await session.commitTransaction();
+    } finally {
+      await session.endSession();
+    }
+  }
+
   async function inject() {
     const deadline = Date.now() + 4500;
     while (Date.now() < deadline) {
       const rows = await lineage(d);
-      const bound = rows && await currentUpdate(rows);
+      const bound = rows && (parentEnvelope ? (await heldParentReads(rows))[0] : await currentUpdate(rows));
       if (bound) {
         const before = proof(rows);
         if (!pending(before) || before.schema !== 1 || before.cleanup_marked || rows.tree.status !== 'creating') {
           throw Error('prepared_schema_race_startup_precondition');
+        }
+        if (parentEnvelope) {
+          await replaceParentEnvelopes(rows);
+          if (!(await heldParentReads(rows)).includes(bound)) {
+            throw Error('prepared_parent_envelope_observation_unbound');
+          }
+          return {...before, parentVersions: scope.parentVersions};
         }
         if (publicationConflict) {
           const reservation = rows.reservation;
