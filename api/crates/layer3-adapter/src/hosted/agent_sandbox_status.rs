@@ -53,9 +53,7 @@ impl AgentSandboxBackend {
                         })?;
                     self.client.verify_explicit_runtime_policy(&object).await?;
                     let pod = self.client.pod_binding(handle).await?;
-                    if pod != assigned.pod
-                        || self.assignments.lock().unwrap().get(handle) != Some(&assigned)
-                    {
+                    if pod != assigned.pod || !self.assignment_is_current(handle, &assigned) {
                         return Err(AdapterError::Rejected(
                             "native status assignment changed during exchange".into(),
                         ));
@@ -66,5 +64,37 @@ impl AgentSandboxBackend {
             .await?;
         }
         Ok(response)
+    }
+    pub(super) async fn exchange_frame(
+        &self,
+        handle: &RuntimeHandle,
+        request: RequestFrame,
+    ) -> Result<ResponseFrame> {
+        if let RequestFrame::RuntimeStatus(status) = request {
+            return self.exchange_bound_status(handle, status).await;
+        }
+        self.transport.exchange(handle, request).await
+    }
+
+    pub(super) fn exchange_admitted_frame<'a>(
+        &'a self,
+        handle: &'a RuntimeHandle,
+        request: OwnedWork<RequestFrame>,
+        policy: &IngressOwnershipPolicy,
+    ) -> std::result::Result<AdmittedOperation<'a, ResponseFrame>, AdmittedError> {
+        if !request.belongs_to(policy) {
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "native exchange request ownership",
+            }
+            .into());
+        }
+        if matches!(&*request, RequestFrame::RuntimeStatus(_)) {
+            // Status must retain exchange_bound_status's assignment and Pod
+            // checks. Its native reads do not yet have admitted ports.
+            return Err(AdmittedError::Unsupported(
+                "native status validation requires admitted reads",
+            ));
+        }
+        self.transport.exchange_admitted(handle, request, policy)
     }
 }

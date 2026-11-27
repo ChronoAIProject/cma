@@ -73,6 +73,17 @@ pub trait HostedControlTransport: Send + Sync {
         request: RequestFrame,
     ) -> crate::Result<ResponseFrame>;
 
+    /// Dispatch a checked read only to the observed native Pod and assignment.
+    async fn exchange_bound_file_read(
+        &self,
+        _handle: &RuntimeHandle,
+        _pod: &crate::agent_sandbox::PodBinding,
+        _request_sha256: &str,
+        _request: crate::AgentFileReadRequest,
+    ) -> crate::Result<Option<ResponseFrame>> {
+        Ok(None)
+    }
+
     /// Admit transport, decode and result storage before constructing work.
     /// The default refuses without boxing or invoking the legacy exchange.
     fn exchange_admitted<'a>(
