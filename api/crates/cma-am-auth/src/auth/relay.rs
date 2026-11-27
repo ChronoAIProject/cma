@@ -7,11 +7,15 @@ use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use layer2_core::resource_access::{CallerContext, CredentialSource};
 use std::{sync::Arc, time::SystemTime};
 
+mod peer;
+pub use peer::{PeerBrowserClaim, PeerBrowserReceipt};
+
 pub struct RelayCaller {
     auth: Arc<AuthState>,
     context: CallerContext,
     browser: Option<(SecretDigest, SubjectAuthState)>,
     verification: Option<Arc<VerifiedSubject>>,
+    peer: Option<PeerBrowserReceipt>,
 }
 
 #[derive(Clone, Copy)]
@@ -60,8 +64,21 @@ impl RelayCaller {
         context: &CallerContext,
         credential: Option<&str>,
         browser_proof: Option<&BrowserRelayProof>,
+        peer: Option<&PeerBrowserReceipt>,
     ) -> Result<Self, StatusCode> {
         valid(context)?;
+        if let Some(peer) = peer {
+            if browser_proof.is_some() || !peer.matches_caller(context, credential) {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+            return Ok(Self {
+                auth,
+                context: context.clone(),
+                browser: None,
+                verification: None,
+                peer: Some(peer.clone()),
+            });
+        }
         if matches!(
             context.credential_source,
             CredentialSource::RequestBoundRead { .. }
@@ -76,6 +93,7 @@ impl RelayCaller {
                 context: context.clone(),
                 browser: None,
                 verification: None,
+                peer: None,
             });
         }
         let browser = if matches!(auth.mode, AuthMode::Provider { .. })
@@ -123,6 +141,7 @@ impl RelayCaller {
                 context: context.clone(),
                 browser,
                 verification: Some(proof.verification.clone()),
+                peer: None,
             };
             caller.current().await?;
             tracing::debug!(
@@ -157,6 +176,7 @@ impl RelayCaller {
             context: context.clone(),
             browser,
             verification: None,
+            peer: None,
         };
         proof.current().await?;
         Ok(proof)
@@ -165,6 +185,9 @@ impl RelayCaller {
     /// Policy IO may overlap logout, credential replacement or expiry.
     pub async fn current(&self) -> Result<(), StatusCode> {
         valid(&self.context)?;
+        if let Some(peer) = &self.peer {
+            return peer.current(&self.auth).await;
+        }
         if let Some((login, state)) = &self.browser {
             cookie_authorization::current_custody(&self.auth, state)
                 .await
@@ -201,18 +224,27 @@ async fn require_login(
     login: &SecretDigest,
     context: &CallerContext,
 ) -> Result<(), StatusCode> {
-    if !auth
-        .store
+    login_expiry(auth, login, &context.caller.subject)
+        .await
+        .map(|_| ())
+}
+
+async fn login_expiry(
+    auth: &AuthState,
+    login: &SecretDigest,
+    subject: &layer2_core::SubjectId,
+) -> Result<SystemTime, StatusCode> {
+    auth.store
         .browser_login(login)
         .await
         .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?
-        .is_some_and(|current| {
-            current.subject == context.caller.subject && current.expires_at > SystemTime::now()
+        .filter(|current| {
+            &current.id == login
+                && &current.subject == subject
+                && current.expires_at > SystemTime::now()
         })
-    {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    Ok(())
+        .map(|current| current.expires_at)
+        .ok_or(StatusCode::UNAUTHORIZED)
 }
 
 #[cfg(any(test, feature = "test-support"))]
