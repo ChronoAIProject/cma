@@ -65,10 +65,22 @@ class FixtureEvidenceTests(unittest.TestCase):
             (failure / 'pvc.final.json').write_text(json.dumps({'items': [
                 {'metadata': {'name': 'private-volume'}, 'status': {'phase': 'Pending'}},
                 {'status': {'phase': 'Bound'}}]}))
+            (failure / 'creation-failure-snapshot.json').write_text(json.dumps({
+                'agent': {'status': 'starting', 'step': 'wait_for_workspace', 'attempts': 3, 'id': 'private-agent'},
+                'sandbox': {'status': 'active', 'step': 'private-step', 'attempts': 'private-value'},
+                'workspace': {'status': 'ready', 'step': 'none', 'attempts': 0, 'commit_resolved': True},
+                'worktree': {'status': 'creating', 'base_bound': False},
+            }))
             result = summarize_runtime_failure(root)
             self.assertEqual(result['runtime_pods']['phases'], {'Pending': 1})
             self.assertEqual(result['pod_scheduled'], {'False': 1})
             self.assertEqual(result['home_volume_phases'], {'Bound': 1, 'Pending': 1})
+            self.assertEqual(result['creation_progress'], {
+                'agent': {'status': 'starting', 'step': 'wait_for_workspace', 'attempts': 3},
+                'sandbox': {'status': 'active', 'step': 'Other', 'attempts': None},
+                'workspace': {'status': 'ready', 'step': 'none', 'attempts': 0, 'commit_resolved': True},
+                'worktree': {'status': 'creating', 'base_bound': False},
+            })
             self.assertNotIn('private-', json.dumps(result))
 
     def test_symlinked_capture_is_not_followed(self):

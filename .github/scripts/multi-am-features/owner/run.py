@@ -430,7 +430,7 @@ class Fixture:
         self.thread=threading.Thread(target=self.server.serve_forever,daemon=True);self.thread.start()
         return 'http://127.0.0.1:'+str(self.server.server_port)
 
-    def captureFailure(self, reason=None, **_):
+    def captureFailure(self, reason=None, operationId=None, **_):
         destination=self.output/('diagnosis-'+str(time.time_ns()))
         destination.mkdir(mode=0o700,exist_ok=False)
         result={'started_at':utc(),'reason':reason,'mutating_requests':0,'errors':[]}
@@ -438,6 +438,13 @@ class Fixture:
         self.client.deadline=time.monotonic()+90
         try:
             self.capture(destination)
+            if isinstance(operationId, str) and re.fullmatch(r'[-A-Za-z0-9_]{1,160}', operationId):
+                try:
+                    script = f'const operationId = {json.dumps(operationId)};\n'
+                    snapshot = self.mongo(script + (ROOT / 'creation_failure_snapshot.js').read_text())
+                    write(destination/'creation-failure-snapshot.json', snapshot)
+                except Exception as exc:
+                    result['errors'].append({'scope': 'creation_snapshot', 'error': type(exc).__name__})
             try:
                 database=self.mongo("print(EJSON.stringify({"
                     "agents:d.agents.find({}).limit(10).toArray(),"

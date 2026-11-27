@@ -18,6 +18,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
   const config = normalizeConfig(raw);
   check(config.adapter_module && config.output_dir && config.owner_id, 'config_missing');
   let runtimes = runtimeBindings(config);
+  let failedCreation;
   check(typeof config.expected_api_image === 'string' && /@sha256:[a-f0-9]{64}$/.test(config.expected_api_image), 'exact_api_image_required');
   const apiSource = config.expected_api_source;
   const apiRelease = 'ci-checkout';
@@ -90,6 +91,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       }, value => value.status === 'succeeded' && id(record.agentId),
       {timeout: 420000, interval: onAgentId ? 250 : 1000, code: 'create_lifecycle_timeout'});
     } catch (error) {
+      failedCreation = record.operationId;
       const operationHash = hash(record.operationId);
       result.create_failure = {operation_sha256: operationHash,
         agent_sha256: record.agentId ? hash(record.agentId) : null,
@@ -112,6 +114,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
         check(!['failed', 'deleted'].includes(body.status), 'created_agent_failed'); return body;
       }, value => value.status === 'ready' && value.sandbox?.status === 'active', {timeout: 180000, code: 'agent_ready_timeout'});
     } catch (error) {
+      failedCreation = record.operationId;
       const failurePath = join(config.output_dir, 'create-readiness-failure-' + hash(record.agentId) + '.private.json');
       await writeFile(failurePath, JSON.stringify({am:other(am), observations:readinessObservations,
         error:safeError(error), error_response:error.response ?? null}, null, 2)+'\n', {mode:0o600,flag:'wx'});
@@ -454,7 +457,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     // release or public retirement can remove the failing runtime evidence.
     if (typeof adapter.captureFailure === 'function') {
       try {
-        const captured = await adapter.captureFailure({reason:result.failure});
+        const captured = await adapter.captureFailure({reason:result.failure, operationId: failedCreation});
         await retainTurn('owner_failure_capture', {result:captured});
         result.failure_capture = {attempted:captured.attempted === true, path:captured.path ?? null,
           error_count:Array.isArray(captured.errors) ? captured.errors.length : null,

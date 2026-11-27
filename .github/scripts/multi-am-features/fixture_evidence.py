@@ -5,10 +5,44 @@ import json
 
 from diagnostics import command_outcome
 from setup_evidence import EVENTS, REASONS, known, summarize_pods
+from stage_evidence import WORK_STEPS
 
 ROLES = {'am_a': 'am-a-0', 'am_b': 'am-b-0', 'mongo': 'mongo',
          'identity': 'identity', 'provider': 'provider', 'api_proxy': 'api-proxy',
          'storage': 'storage', 'runtime_role': 'am-role'}
+
+CREATION_STATES = {
+    'agent': {'starting', 'ready', 'working', 'waiting_approval', 'paused', 'stopped', 'deleted', 'failed'},
+    'sandbox': {'provisioning', 'installing', 'active', 'pausing', 'paused', 'reviving',
+                'credential_rotating', 'rotating', 'failed', 'retiring', 'retired'},
+    'workspace': {'preparing', 'ready', 'failed', 'removing', 'removed'},
+    'worktree': {'creating', 'ready', 'failed', 'removing', 'removed'},
+}
+CREATION_STEPS = {
+    'agent': WORK_STEPS,
+    'sandbox': {'provision_runtime', 'run_install', 'mint_initial_credential', 'deliver_initial_credential',
+                'create_profile_workspace', 'activate', 'none'},
+    'workspace': {'prepare', 'recover_prepare', 'setup', 'remove', 'none'},
+}
+
+
+def _creation_progress(snapshot):
+    result = {}
+    for resource, statuses in CREATION_STATES.items():
+        row = snapshot.get(resource)
+        if not isinstance(row, dict):
+            result[resource] = None
+            continue
+        progress = {'status': known(row.get('status'), statuses)}
+        if resource in CREATION_STEPS:
+            progress['step'] = known(row.get('step'), CREATION_STEPS[resource])
+            attempts = row.get('attempts')
+            progress['attempts'] = attempts if type(attempts) is int and 0 <= attempts < 2**32 else None
+        for name in ('commit_resolved', 'base_bound'):
+            if type(row.get(name)) is bool:
+                progress[name] = row[name]
+        result[resource] = progress
+    return result
 
 
 def _fixture_items(directory, name):
@@ -30,6 +64,11 @@ def summarize_runtime_failure(directory):
         return None
     sample = samples[0]
     result = {'scope': 'before_public_retirement'}
+    creation = sample / 'creation-failure-snapshot.json'
+    if creation.is_file() and not creation.is_symlink():
+        snapshot = json.loads(creation.read_bytes())
+        if isinstance(snapshot, dict):
+            result['creation_progress'] = _creation_progress(snapshot)
     pods = _fixture_items(sample, 'pods')
     if pods is not None:
         runtime = [pod for pod in pods if any(container.get('name') == 'runtime'
