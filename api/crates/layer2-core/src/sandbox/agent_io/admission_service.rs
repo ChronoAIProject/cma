@@ -235,9 +235,9 @@ impl AgentCommandService {
                         &mut deferred_refusal,
                     )
                     .await?;
-                if matches!(result, Err(CommandLedgerError::Conflict)) && may_refresh {
+                if matches!(result, Err(CommandLedgerError::KnownAborted)) && may_refresh {
                     // The store reports an uncertain commit as Unavailable.
-                    // Refresh only after a known-aborted reservation.
+                    // Refresh only after an acknowledged transaction abort.
                     expected.require_current_authority()?;
                     let (fresh_authorized, mut fresh) = tokio::time::timeout_at(
                         retry_deadline,

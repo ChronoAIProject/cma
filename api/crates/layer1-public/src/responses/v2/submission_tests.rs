@@ -1,10 +1,241 @@
 use super::*;
+use async_trait::async_trait;
 use layer2_core::sandbox::{
     store::{AgentLogStore, SandboxStore},
     AgentLogKind, SandboxHome,
 };
 use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+#[derive(Clone, Copy)]
+enum AdmissionFailure {
+    KnownAborted,
+    Conflict,
+    Unavailable,
+}
+
+struct AdmissionFailureStore {
+    inner: Arc<InMemorySandboxStore>,
+    first: AdmissionFailure,
+    attempts: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+#[async_trait]
+impl AgentCommandStore for AdmissionFailureStore {
+    async fn reserve_command(
+        &self,
+        request: CommandReservation,
+    ) -> Result<CommandReservationResult, CommandLedgerError> {
+        let attempt = self.attempts.fetch_add(1, Ordering::SeqCst);
+        if attempt == 0 {
+            return Err(match self.first {
+                AdmissionFailure::KnownAborted => CommandLedgerError::KnownAborted,
+                AdmissionFailure::Conflict => CommandLedgerError::Conflict,
+                AdmissionFailure::Unavailable => CommandLedgerError::Unavailable,
+            });
+        }
+        AgentCommandStore::reserve_command(&*self.inner, request).await
+    }
+
+    async fn get_admitted_command(
+        &self,
+        scope: &str,
+        key_sha256: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        AgentCommandStore::get_admitted_command(&*self.inner, scope, key_sha256).await
+    }
+
+    async fn get_command(
+        &self,
+        id: &layer2_core::ids::AgentCommandId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        AgentCommandStore::get_command(&*self.inner, id).await
+    }
+
+    async fn get_response_command(
+        &self,
+        id: &layer2_core::ids::AgentResponseId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        AgentCommandStore::get_response_command(&*self.inner, id).await
+    }
+}
+
+async fn admission_fixture(
+    first: AdmissionFailure,
+) -> (
+    Router,
+    Arc<InMemorySandboxStore>,
+    Arc<std::sync::atomic::AtomicUsize>,
+) {
+    let (state, store) = fixtures::conversation_fixture().await;
+    fixtures::insert_agent(
+        &store,
+        fixtures::seeded_agent("agt_fixture", AgentStatus::Working, 3, Some(1)),
+        vec![AgentLogKind::TurnStarted {
+            turn_sequence: 1,
+            origin_key: None,
+            model: None,
+        }],
+    )
+    .await;
+    let mut parent = store
+        .get_sandbox(&layer2_core::SandboxId("sbx_route".into()))
+        .await
+        .unwrap()
+        .unwrap();
+    let mut home = SandboxHome::reserve(
+        &parent.id,
+        HomeVolumePolicy {
+            mode: Default::default(),
+            storage_class: "fixture-storage".into(),
+            capacity_gib: 8,
+            template_name: "fixture-home".into(),
+            template_generation: "fixture-generation".into(),
+        },
+    )
+    .unwrap();
+    home.bind(HomeVolumeReceipt {
+        native_authority: None,
+        volume_id: home.request.volume_id.clone(),
+        request_sha256: home.request.computed_sha256(),
+        storage_reference: "fixture-volume".into(),
+        storage_generation: "fixture-volume-generation".into(),
+    })
+    .unwrap();
+    parent.lifecycle.home = Some(Box::new(home));
+    parent.runtime.as_mut().unwrap().boot_id = Some("f".repeat(32));
+    let revision = parent.revision;
+    parent.revision += 1;
+    store.save_sandbox(revision, parent).await.unwrap();
+    let authority = Arc::new(super::Authority);
+    let access = Arc::new(ResourceAccessService::new(store.clone(), authority.clone()));
+    let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let commands = AgentCommandService::new(
+        Arc::new(AdmissionFailureStore {
+            inner: store.clone(),
+            first,
+            attempts: attempts.clone(),
+        }),
+        access.clone(),
+        authority,
+    );
+    let reads = state.reads.with_resource_access(access);
+    let router = crate::responses::v2::router(crate::responses::v2::ResponsesV2State::new(
+        crate::agent_page::AgentPageOrigin::test(),
+        commands,
+        reads,
+    ));
+    (router, store, attempts)
+}
+
+#[tokio::test]
+async fn gate3_known_aborted_followup_refreshes_once_and_receipt_is_recoverable() {
+    let (router, store, attempts) = admission_fixture(AdmissionFailure::KnownAborted).await;
+    let body = json!({"input":"Research follow-up", "stream":true});
+    let response = router
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            "/api/v2/agents/agt_fixture/responses",
+            "owner-a",
+            Some("same-key"),
+            Some(body.clone()),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    let response_id = response.headers()["x-cma-response-id"].to_str().unwrap();
+    let command_id = response.headers()["x-cma-command-id"].to_str().unwrap();
+    assert_eq!(
+        store
+            .command_work_page(&PageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+    let (status, receipt) = read_json(
+        &router,
+        Method::POST,
+        "/api/v2/agents/agt_fixture/responses/receipt",
+        "owner-a",
+        Some(body),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(receipt["receipt"]["response_id"], response_id);
+    assert_eq!(receipt["receipt"]["command_id"], command_id);
+}
+
+#[tokio::test]
+async fn gate3_generic_conflict_is_lookup_only() {
+    let (router, store, attempts) = admission_fixture(AdmissionFailure::Conflict).await;
+    let body = json!({"input":"Research follow-up", "stream":true});
+    let (status, error) = read_json(
+        &router,
+        Method::POST,
+        "/api/v2/agents/agt_fixture/responses",
+        "owner-a",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(error["error"]["code"], "agent_command_admission_conflict");
+    for _ in 0..2 {
+        let (status, receipt) = read_json(
+            &router,
+            Method::POST,
+            "/api/v2/agents/agt_fixture/responses/receipt",
+            "owner-a",
+            Some(body.clone()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(receipt.is_null());
+    }
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert!(store
+        .command_work_page(&PageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+}
+
+#[tokio::test]
+async fn gate3_ambiguous_conflict_receipt_null_does_not_write_again() {
+    let (router, store, attempts) = admission_fixture(AdmissionFailure::Unavailable).await;
+    let body = json!({"input":"Research follow-up", "stream":true});
+    let (status, error) = read_json(
+        &router,
+        Method::POST,
+        "/api/v2/agents/agt_fixture/responses",
+        "owner-a",
+        Some(body.clone()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(error["error"]["code"], "response_unavailable");
+    let (receipt_status, receipt) = read_json(
+        &router,
+        Method::POST,
+        "/api/v2/agents/agt_fixture/responses/receipt",
+        "owner-a",
+        Some(body),
+    )
+    .await;
+    assert_eq!(receipt_status, StatusCode::OK);
+    assert!(receipt.is_null());
+    assert_eq!(attempts.load(Ordering::SeqCst), 1);
+    assert!(store
+        .command_work_page(&PageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+}
 
 struct OutputDuringAuthorization {
     store: Arc<InMemorySandboxStore>,
@@ -89,7 +320,11 @@ async fn owner_responses_append_refreshes_after_output_from_the_active_turn() {
         Arc::new(Authority),
     ));
     let commands = AgentCommandService::new(
-        store.clone(),
+        Arc::new(AdmissionFailureStore {
+            inner: store.clone(),
+            first: AdmissionFailure::KnownAborted,
+            attempts: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        }),
         access.clone(),
         Arc::new(OutputDuringAuthorization {
             store: store.clone(),
