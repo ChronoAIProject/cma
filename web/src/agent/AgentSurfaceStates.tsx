@@ -11,6 +11,7 @@ import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { isConnectionReport, type ConnectionReport } from '../connections/client';
 import type { useConnectionGate } from '../connections/useConnectionGate';
 import type { AgentController } from './controller';
+import type { AgentResourceState } from './controllerTypes';
 
 export function AgentConnectionSetup({
   agentId,
@@ -147,16 +148,15 @@ export function AgentOpening({ headingRef }: { readonly headingRef: Ref<HTMLHead
 
 /** The Agent surface when its Agent could not be read, with one way to retry. */
 export function AgentUnavailable({
-  message,
-  retryAt,
+  state,
   headingRef,
   onRetry,
 }: {
-  readonly message?: string;
-  readonly retryAt?: number;
+  readonly state: Extract<AgentResourceState, { status: 'error' }>;
   readonly headingRef: Ref<HTMLHeadingElement>;
   readonly onRetry: () => void;
 }) {
+  const { message, retryAt, workspaceUnavailable } = state;
   return (
     <section className="agent-surface agent-surface--error" role="alert">
       <div>
@@ -164,7 +164,7 @@ export function AgentUnavailable({
         <h1 ref={headingRef} tabIndex={-1}>
           {retryAt ? 'Opening Agent' : 'Agent unavailable'}
         </h1>
-        {message === undefined ? null : <p>{message}</p>}
+        {retryAt === undefined || workspaceUnavailable ? <p>{message}</p> : null}
         {retryAt === undefined ? null : <RetryNotice at={retryAt} />}
         <Button variant="outline" onClick={onRetry} disabled={retryAt !== undefined}>
           Try again

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import base64
 import copy
+import hashlib
 import json
 import tempfile
 import unittest
@@ -117,16 +118,20 @@ class MigrationKindRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / 'plan.json'
             plan.write_text(json.dumps({'schema': 'cma-migration-matrix-plan-v1'}))
-            campaign = runner.Campaign(Path(directory), '/bin/false', 1, plan)
+            campaign = runner.Campaign(Path(directory), '/bin/false', 1, plan.read_bytes())
             self.assertEqual(campaign.cluster.startswith('cma-matrix-'), True)
             self.assertTrue(campaign.kubeconfig.name.endswith('.private'))
+            self.assertEqual(campaign.plan_path.parent, Path(directory).resolve())
+            self.assertNotEqual(campaign.plan_path, plan)
+            self.assertEqual(campaign.plan_path.read_bytes(), plan.read_bytes())
+            self.assertEqual(campaign.plan_sha256, hashlib.sha256(plan.read_bytes()).hexdigest())
 
     def test_generated_authentication_manifests_are_streamed_and_never_saved(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
             plan = output / 'plan.json'
             plan.write_text('{}')
-            campaign = runner.Campaign(output, 'kind-not-invoked', 1, plan)
+            campaign = runner.Campaign(output, 'kind-not-invoked', 1, plan.read_bytes())
             campaign.images = ['local-api', 'local-mongo']
             objects = runner.manifests('local-api', 'runtime-private-fixture',
                                        'admin-private-fixture', 'encryption-private-fixture',

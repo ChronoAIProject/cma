@@ -106,6 +106,31 @@ class MigrationInterruptionTests(unittest.TestCase):
         self.assertEqual(self.receipt(), result)
         self.campaign.cleanup.assert_called_once_with()
 
+    def test_legacy_campaign_uses_distinct_boot_aliases_for_equal_artifacts(self):
+        self.args.new_image = self.args.old_image
+        self.args.new_source = self.args.old_source
+        result = runner.run(self.args)
+        self.assertEqual(result["outcome"], "UNVERIFIED")
+        self.assertEqual([call.args[0] for call in self.campaign.boot.call_args_list],
+                         ["old", "new", "old"])
+
+    def test_release_probe_refuses_pairwise_only_overlays(self):
+        old = {"image": self.args.old_image, "source": self.args.old_source}
+        new = {"image": self.args.new_image, "source": self.args.new_source}
+        plan = json.loads(self.args.plan.read_text())
+        plan["candidate"] = new
+        plan["readers"] = [
+            {"id": role, "role": role, "artifact": artifact}
+            for role, artifact in zip(("historical", "current", "candidate", "recovery"),
+                                      (old, new, new, old))
+        ]
+        self.args.plan.write_text(json.dumps(plan))
+        self.args.writer_policy = "enabled"
+        self.args.membership_fixture = True
+        with self.assertRaisesRegex(runner.RunnerError, "requires pairwise reader aliases"):
+            runner.run(self.args)
+        self.campaign.create.assert_not_called()
+
 
 if __name__ == '__main__':
     unittest.main()

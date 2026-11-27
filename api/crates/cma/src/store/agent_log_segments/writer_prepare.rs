@@ -3,7 +3,7 @@ use super::*;
 use crate::store::agent_log_segments::{
     capture::CapturedFormat,
     collections::collection,
-    corrupt, digest, projection,
+    corrupt, digest, projection, source_keys,
     writer_admission::{self, AdmissionKind},
     writer_plan::{self, RolloverPermission},
     writer_projection, EVIDENCE, PUBLICATIONS,
@@ -116,6 +116,10 @@ pub(super) async fn assemble(
                 input.operation,
                 admitted,
             )?;
+            // The first segmented head must satisfy the same source-key
+            // checks as its readers, even if the catalog changed after admission.
+            let database = store.client.database(&store.agents.namespace().db);
+            source_keys::prove(&database, &head, scope.session(), false).await?;
             (head, Some(permit), permission)
         }
         SourceFormat::Segmented => {

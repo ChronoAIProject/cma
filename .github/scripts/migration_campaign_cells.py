@@ -51,6 +51,8 @@ def derive(evidence_path, fixture):
     evidence = json.loads(raw)
     require(isinstance(evidence, dict) and evidence.get("schema") == "cma-migration-kind-evidence-v1",
             "campaign schema differs")
+    require("release_probe" not in evidence,
+            "explicit release probes require per-role execution evidence")
     require(isinstance(fixture, str) and re.fullmatch(r"[a-z][a-z0-9-]{0,40}", fixture), "fixture name invalid")
     plan = evidence.get("plan_sha256")
     require(isinstance(plan, str) and DIGEST.fullmatch(plan), "plan binding missing")

@@ -42,21 +42,39 @@ async fn startup_keeps_the_admitted_image_when_the_runtime_default_changes() {
 
 #[tokio::test]
 async fn startup_holds_admitted_spec_drift_without_adopting_or_reclaiming_the_runtime() {
+    check_startup_spec_drift("/spec/operatingMode", None).await;
+}
+
+#[tokio::test]
+async fn startup_holds_admitted_native_vct_memory_request_drift() {
+    check_startup_spec_drift(
+        "/spec/podTemplate/spec/containers/0/resources/requests/memory",
+        Some(json!("4095Mi")),
+    )
+    .await;
+}
+
+async fn check_startup_spec_drift(path: &str, replacement: Option<serde_json::Value>) {
     let new_default = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
     let fixture = NativeStartup::with_default_image(false, false, None, Some(new_default)).await;
-    let provider_before = {
+    let (original_member, provider_before) = {
         let mut state = fixture.native.api.state.lock().unwrap();
         let member = state.rows.get_mut(api::MEMBER).unwrap();
-        // The pool still owns this exact member. Its live Sandbox spec no
-        // longer contains an admitted value checked at runtime binding.
-        assert_eq!(
-            member["spec"]
-                .as_object_mut()
-                .unwrap()
-                .remove("operatingMode"),
-            Some(json!("Running"))
-        );
-        member.clone()
+        let original = member.clone();
+        if let Some(replacement) = replacement {
+            let value = member.pointer_mut(path).unwrap();
+            assert_ne!(*value, replacement);
+            *value = replacement;
+        } else {
+            assert_eq!(
+                member["spec"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("operatingMode"),
+                Some(json!("Running"))
+            );
+        }
+        (original, member.clone())
     };
     fixture.control.other_gate.add_permits(64);
     fixture.control.status_gate.add_permits(16);
@@ -85,7 +103,7 @@ async fn startup_holds_admitted_spec_drift_without_adopting_or_reclaiming_the_ru
         let mut state = fixture.native.api.state.lock().unwrap();
         assert_eq!(state.rows[api::MEMBER], provider_before);
         assert!(state.assignments.is_empty());
-        state.rows.get_mut(api::MEMBER).unwrap()["spec"]["operatingMode"] = json!("Running");
+        state.rows.insert(api::MEMBER.into(), original_member);
     }
 
     fixture

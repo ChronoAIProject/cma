@@ -25,7 +25,7 @@ pub(in crate::store) mod publication;
 mod reads;
 pub(in crate::store) mod retention;
 pub(in crate::store) mod schema;
-mod source_keys;
+pub(in crate::store) mod source_keys;
 pub(in crate::store) mod transaction_scope;
 pub(in crate::store) mod writer_admission;
 pub(in crate::store) mod writer_bootstrap;
