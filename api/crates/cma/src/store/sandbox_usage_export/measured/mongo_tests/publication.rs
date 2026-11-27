@@ -132,11 +132,24 @@ async fn cross_owner_physical_claims_retain_hold_without_an_invented_fact() {
     let lease = f.lease().await;
     let input = f.input(&lease).await;
     assert_eq!(input.bindings.len(), 2);
-    let publication = input.freeze(f.samples(60.0), true).unwrap();
+    let mut samples = f.samples(60.0);
+    samples[0].samples[0].value = Some(-0.0);
+    let publication = input.clone().freeze(samples.clone(), true).unwrap();
     assert_eq!(
         publication.manifest.hold.as_deref(),
         Some("physical_attribution_conflict")
     );
+    let restored: super::super::freeze::Manifest =
+        serde_json::from_slice(&publication.bytes).unwrap();
+    assert_eq!(restored.rejected_samples, samples);
+    assert_eq!(restored.rejected_sample_bits[0][0][1], "8000000000000000");
+    assert_eq!(serde_json::to_vec(&restored).unwrap(), publication.bytes);
+
+    samples[0].samples[0].value = None;
+    assert!(matches!(
+        input.freeze(samples, true),
+        Err(SandboxStoreError::Unavailable(_))
+    ));
     assert!(!f
         .store
         .publish_measured(&lease, &publication)

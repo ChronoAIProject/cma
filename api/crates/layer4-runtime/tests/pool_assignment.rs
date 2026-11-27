@@ -369,6 +369,9 @@ async fn staging_startup_failure_requires_exact_confirmation_and_clears_on_the_s
     obsolete.staging_startup_confirmed = true;
     fixture.assign(&obsolete, false).await;
     fixture.assign(&confirm, true).await;
+    let mut ordinary = request.clone();
+    ordinary.staging_startup_failure = None;
+    fixture.assign(&ordinary, false).await;
     let output = tokio::time::timeout(Duration::from_secs(10), runtime.wait_with_output())
         .await
         .unwrap()
@@ -384,6 +387,25 @@ async fn staging_startup_failure_requires_exact_confirmation_and_clears_on_the_s
     fixture.assign(&request, true).await;
     assert!(!fixture.status(&request).await.installation_ready);
     recovered.kill().await.unwrap();
+}
+
+#[tokio::test]
+async fn ordinary_reassignment_before_confirmation_disarms_the_running_process() {
+    let fixture = Fixture::new();
+    let request = faulty_request(&fixture, "disarmed-incarnation");
+    let mut runtime = fixture.waiting("original-pod").await;
+    fixture.assign(&request, true).await;
+
+    let mut ordinary = request.clone();
+    ordinary.staging_startup_failure = None;
+    fixture.assign(&ordinary, true).await;
+    let mut stale_confirmation = request;
+    stale_confirmation.staging_startup_confirmed = true;
+    fixture.assign(&stale_confirmation, false).await;
+    fixture.assign(&ordinary, true).await;
+    assert!(!fixture.status(&ordinary).await.installation_ready);
+    assert!(runtime.try_wait().unwrap().is_none());
+    runtime.kill().await.unwrap();
 }
 
 #[tokio::test]

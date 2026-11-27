@@ -8,7 +8,7 @@ clean boot from the last surviving pod alone.
 import json
 from urllib.parse import urlencode
 
-from migration_kind_pods import PodSelectionError
+from migration_kind_pods import PodSelectionError, matches_image, matches_identity
 
 
 class BootObservationError(PodSelectionError):
@@ -17,11 +17,6 @@ class BootObservationError(PodSelectionError):
 
 FAILED_WAITING = {'CrashLoopBackOff', 'ImagePullBackOff', 'ErrImagePull',
                   'CreateContainerConfigError', 'CreateContainerError', 'RunContainerError'}
-
-
-def _matches(image, expected):
-    return (image in (expected, expected + ':latest')
-            or image.endswith('/' + expected + ':latest'))
 
 
 def observe_boot(kubectl, namespace, before, selected, image, config):
@@ -71,7 +66,7 @@ def evaluate(raw, existing, selected, image, config, version):
             continue  # The previous serving pod is deliberately retired by Recreate.
         containers = pod.get('spec', {}).get('containers', [])
         if (len(containers) != 1 or containers[0].get('name') != 'api'
-                or not _matches(containers[0].get('image', ''), image)):
+                or not matches_image(containers[0].get('image', ''), image)):
             raise BootObservationError('startup watch saw an unexpected API image')
         if kind == 'ADDED':
             added.add(uid)
@@ -95,15 +90,7 @@ def evaluate(raw, existing, selected, image, config, version):
                     and any(c.get('type') == 'Ready' and c.get('status') == 'True'
                             for c in status.get('conditions', [])))
         if is_ready:
-            identity = container.get('imageID', '')
-            for prefix in ('containerd://', 'docker-pullable://'):
-                if identity.startswith(prefix):
-                    identity = identity[len(prefix):]
-                    break
-            accepted = {config}
-            if '@sha256:' in image:
-                accepted.update((image, image.split('@')[1]))
-            if identity not in accepted:
+            if not matches_identity(container.get('imageID', ''), image, config):
                 raise BootObservationError('startup watch image config differs from selected reader')
             ready.add(uid)
         if kind == 'DELETED' and uid not in ready:

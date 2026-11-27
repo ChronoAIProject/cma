@@ -1,5 +1,7 @@
 use super::*;
-use crate::store::agent_log_segments::{writer_admission, writer_bootstrap, writer_gate::slots};
+use crate::store::agent_log_segments::{
+    source_keys, writer_admission, writer_bootstrap, writer_gate::slots,
+};
 use mongodb::bson::DateTime;
 
 pub(in crate::store) async fn prepare(
@@ -12,6 +14,11 @@ pub(in crate::store) async fn prepare(
         return Ok((None, None));
     };
     let database = store.client.database(&store.agents.namespace().db);
+    if kind == AdmissionKind::Activation {
+        source_keys::require_index(&database, None)
+            .await
+            .map_err(domain)?;
+    }
     let mut session = store.client.start_session().await.map_err(driver)?;
     start_transaction(&mut session).await.map_err(driver)?;
     let result = async {

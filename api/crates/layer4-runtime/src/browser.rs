@@ -14,6 +14,7 @@ pub(crate) struct Browser {
     output: BufReader<ChildStdout>,
     incoming: Vec<u8>,
     sequence: u64,
+    transport_closed: bool,
     _managed: crate::writer_fence::ManagedChild,
 }
 
@@ -77,8 +78,13 @@ impl Browser {
             output,
             incoming: Vec::new(),
             sequence: 0,
+            transport_closed: false,
             _managed: managed,
         })
+    }
+
+    pub(crate) fn transport_closed(&self) -> bool {
+        self.transport_closed
     }
 
     pub(crate) async fn exchange(
@@ -126,17 +132,17 @@ impl Browser {
             value["id"] = serde_json::json!(self.sequence);
             let mut encoded = serde_json::to_vec(&value).map_err(|_| unavailable())?;
             encoded.push(b'\n');
-            self.input
-                .write_all(&encoded)
-                .await
-                .map_err(|_| unavailable())?;
+            if self.input.write_all(&encoded).await.is_err() {
+                self.transport_closed = true;
+                return Err(unavailable());
+            }
             let value = loop {
-                (&mut self.output)
+                let read = (&mut self.output)
                     .take(360000_u64.saturating_sub(self.incoming.len() as u64))
                     .read_until(b'\n', &mut self.incoming)
-                    .await
-                    .map_err(|_| unavailable())?;
-                if self.incoming.last() != Some(&b'\n') {
+                    .await;
+                if read.is_err() || self.incoming.last() != Some(&b'\n') {
+                    self.transport_closed = true;
                     return Err(unavailable());
                 }
                 let encoded = std::mem::take(&mut self.incoming);

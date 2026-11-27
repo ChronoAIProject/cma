@@ -14,6 +14,7 @@ pub(crate) use issuance::{
 };
 pub(crate) mod owner_tokens;
 mod provided;
+mod retirement_settlement;
 pub(crate) use contracts::*;
 
 pub(crate) struct ManagedSandboxCredentials {
@@ -21,6 +22,7 @@ pub(crate) struct ManagedSandboxCredentials {
     tokens: Arc<dyn OwnerTokenSource>,
     custody: Arc<dyn SandboxCredentialCustody>,
     exact_connections: Option<Arc<crate::trigger::CmaServiceConnectionBroker>>,
+    retirement_receipts_enabled: bool,
 }
 
 impl ManagedSandboxCredentials {
@@ -34,6 +36,7 @@ impl ManagedSandboxCredentials {
             tokens,
             custody,
             exact_connections: None,
+            retirement_receipts_enabled: false,
         })
     }
 
@@ -205,7 +208,7 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
                 ));
             }
             if intent.state == IssuanceState::Unknown {
-                return Err(CredentialError::Uncertain);
+                self.settle_unknown_retirement(sandbox, &intent).await?;
             }
         }
         self.settle_queued(sandbox).await

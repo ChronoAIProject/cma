@@ -2,6 +2,39 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn image_origin_allows_fenced_credential_issuance_and_replay() {
+    use layer2_core::sandbox::SandboxRuntimeImageOrigin::*;
+
+    for origin in [ManagedDesktop, UserSelected, ManagedMachine] {
+        let mut fixture =
+            Fixture::new_with_image_origin("mint_image_origin", true, Some(origin)).await;
+        let mut issuing = fixture.issue(1);
+        let mint = tokio::select! {
+            mint = fixture.prepare() => mint,
+            outcome = &mut issuing => panic!("{origin:?} issuance ended before dispatch: {outcome:?}"),
+        };
+        let intent = fixture
+            .custody
+            .issuance(&fixture.claim)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(intent.state, crate::sandbox::IssuanceState::Unknown);
+        accepted(mint);
+        let issued = issuing.await.unwrap().unwrap().unwrap();
+        assert_eq!(issued.owner, fixture.claim.owner);
+        assert_eq!(issued.authority.generation, 1);
+
+        fixture.takeover().await;
+        let replay = fixture.issue(1).await.unwrap().unwrap().unwrap();
+        assert_eq!(replay.authority, issued.authority);
+        assert_eq!(fixture.peer.count_route("POST", "/api/v1/api-keys"), 1);
+        fixture.cleanup().await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn accepted_mint_lost_response_remains_unknown_through_takeover_and_retries() {
     let mut fixture = Fixture::new("mint_unknown_takeover").await;
     let original = fixture.issue(1);

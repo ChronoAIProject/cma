@@ -1,9 +1,11 @@
 """Exercise live process ownership and clean browser closure in a fixture Pod."""
 import base64
+import errno
 import importlib.util
 import json
 import os
 from pathlib import Path
+import runpy
 import socket
 import subprocess
 import time
@@ -12,13 +14,21 @@ import types
 m = types.ModuleType("desktop_recovery_probe")
 source = Path("/opt/codex-fixtures")
 # A web page in the shared browser cannot bypass CMA through the local listener.
-with socket.create_connection(("127.0.0.1", 6080), timeout=3) as direct:
-    key = base64.b64encode(os.urandom(16)).decode()
-    direct.sendall(("GET /websockify HTTP/1.1\r\nHost: 127.0.0.1:6080\r\n"
-                   "Origin: https://untrusted.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
-                   f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
-    first = direct.recv(4096)
-    assert not first.startswith(b"HTTP/1.1 101"), "loopback desktop bypassed CMA authentication"
+supervised = os.environ.get("CHRONO_RUNTIME_DESKTOP_SUPERVISION_ENABLED") == "true"
+if supervised:
+    for port in (6080, 5900):
+        with socket.socket() as direct:
+            direct.settimeout(3)
+            assert direct.connect_ex(("127.0.0.1", port)) == errno.ECONNREFUSED, (
+                f"supervised desktop exposed a TCP listener on port {port}")
+else:
+    with socket.create_connection(("127.0.0.1", 6080), timeout=3) as direct:
+        key = base64.b64encode(os.urandom(16)).decode()
+        direct.sendall(("GET /websockify HTTP/1.1\r\nHost: 127.0.0.1:6080\r\n"
+                       "Origin: https://untrusted.example\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n"
+                       f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n").encode())
+        first = direct.recv(4096)
+        assert not first.startswith(b"HTTP/1.1 101"), "loopback desktop bypassed CMA authentication"
 exec(compile((source / "recovery_io.py").read_text() + "\n" +
              (source / "recovery.py").read_text(), "recovery", "exec"), m.__dict__)
 deadline = time.monotonic() + 10
@@ -85,8 +95,15 @@ while subprocess.run(["xdotool", "search", "--onlyvisible", "--class", "chromium
     assert time.monotonic() < deadline, "Chromium did not close"
     time.sleep(0.1)
 browser_input.wait_process_exit(pid, identity)
-with socket.create_connection(("127.0.0.1", 5900), timeout=3) as stream:
-    assert stream.recv(12).startswith(b"RFB ")
+if supervised:
+    stream = runpy.run_path("/opt/desktop-vnc-probe.py")["Stream"]()
+    try:
+        assert stream.read(12) == b"RFB 003.008\n"
+    finally:
+        stream.transport.close()
+else:
+    with socket.create_connection(("127.0.0.1", 5900), timeout=3) as stream:
+        assert stream.recv(12).startswith(b"RFB ")
 assert m.validate_services(plan, m.inventory())
 for shell in ["xfce4-panel", "xfdesktop"]:
     subprocess.run(["xdotool", "search", "--onlyvisible", "--class", shell],

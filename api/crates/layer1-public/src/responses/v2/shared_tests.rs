@@ -1,15 +1,17 @@
 use super::*;
 use layer2_core::sandbox::{agent_observation::*, Agent, AgentReadError, AgentReadService};
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 pub(super) struct Facts {
     store: Arc<InMemorySandboxStore>,
+    commands: Arc<dyn AgentCommandStore>,
     pub generation: AtomicUsize,
+    ready: AtomicBool,
 }
 #[async_trait]
 impl AgentObservationStore for Facts {
     fn ready(&self) -> bool {
-        true
+        self.ready.load(Ordering::SeqCst)
     }
     async fn commands(
         &self,
@@ -18,7 +20,7 @@ impl AgentObservationStore for Facts {
         let mut rows = Vec::new();
         for id in ids {
             rows.push(
-                self.store
+                self.commands
                     .get_response_command(id)
                     .await
                     .map_err(|_| AgentReadError::NotFound)
@@ -77,9 +79,24 @@ pub(super) fn install(
     Arc<AgentObservationAuthority>,
     Arc<Facts>,
 ) {
+    install_with_commands(reads, store.clone(), store, agent)
+}
+
+pub(super) fn install_with_commands(
+    reads: Arc<AgentReadService>,
+    store: Arc<InMemorySandboxStore>,
+    commands: Arc<dyn AgentCommandStore>,
+    agent: &Agent,
+) -> (
+    Arc<AgentReadService>,
+    Arc<AgentObservationAuthority>,
+    Arc<Facts>,
+) {
     let facts = Arc::new(Facts {
         store,
+        commands,
         generation: AtomicUsize::new(1),
+        ready: AtomicBool::new(true),
     });
     let service = AgentObservationService::new(reads.clone(), facts.clone());
     let custody = AgentObservationAuthority::new(
@@ -132,6 +149,87 @@ async fn command_only_rejection_invalidates_shared_queued_projection_without_log
     assert_eq!(events(&next)[0]["sequence_number"], 1);
     assert!(body.next().await.is_none());
     assert_eq!(agent, f.store.get_agent(&agent.id).await.unwrap().unwrap());
+}
+
+#[tokio::test]
+async fn personal_response_resumes_at_the_same_cursor_after_shared_custody_is_lost() {
+    let (f, observer) = fixture_with_events_and_standing(
+        None,
+        true,
+        true,
+        Arc::new(layer2_core::account_deletion::AvailableAccounts),
+    )
+    .await;
+    let response = create(&f, false).await;
+    let id = response.headers()["x-cma-response-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    let mut body = response.into_body().into_data_stream();
+    let first = body.next().await.unwrap().unwrap();
+    assert_eq!(events(&first)[0]["type"], "response.created");
+    assert_eq!(events(&first)[0]["sequence_number"], 0);
+
+    observer.unwrap().0.revoke();
+    let record = f
+        .store
+        .command_work_page(&PageRequest::default())
+        .await
+        .unwrap()
+        .items
+        .remove(0);
+    f.store
+        .reject_unclaimed_command(
+            &record.receipt.envelope.command_id,
+            record.revision,
+            CommandFailureCode::AuthorityRevoked,
+            layer2_core::now_rfc3339(),
+        )
+        .await
+        .unwrap();
+
+    let frame = tokio::time::timeout(Duration::from_secs(4), body.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let observed = events(&frame);
+    assert_eq!(observed[0]["type"], "response.failed");
+    assert_eq!(observed[0]["sequence_number"], 1);
+    assert_eq!(observed[0]["response"]["id"], id);
+    assert!(body.next().await.is_none());
+}
+
+#[tokio::test]
+async fn personal_replay_keeps_shared_subscription_refusals() {
+    let (f, observer) = fixture_with_events_and_standing(
+        None,
+        true,
+        true,
+        Arc::new(layer2_core::account_deletion::AvailableAccounts),
+    )
+    .await;
+    let response = create(&f, false).await;
+    let id = response.headers()["x-cma-response-id"]
+        .to_str()
+        .unwrap()
+        .to_owned();
+    drop(response);
+
+    observer.unwrap().1.ready.store(false, Ordering::SeqCst);
+    let response = f
+        .router
+        .oneshot(request(
+            Method::GET,
+            &format!("/api/v2/responses/{id}/events"),
+            "owner-a",
+            None,
+            None,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!response.headers().contains_key("x-cma-response-id"));
 }
 
 #[tokio::test]

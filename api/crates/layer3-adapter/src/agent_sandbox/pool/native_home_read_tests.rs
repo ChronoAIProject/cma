@@ -208,17 +208,19 @@ async fn native_home_recovery_preserves_member_result_before_faster_pvc_failure(
         match change {
             "absent" | "deleting" | "annotation" => assert_eq!(result.unwrap(), None, "{change}"),
             "api" => assert!(matches!(result, Err(crate::AdapterError::AtCapacity(_)))),
-            _ => {
-                let crate::AdapterError::Rejected(detail) = result.unwrap_err() else {
-                    panic!("{change}: member identity must reject before PVC API failure");
-                };
+            "owner" | "uid" | "spec" => {
                 let expected = match change {
                     "owner" => "native pool member is not owned by the admitted claim",
                     "uid" => "native Sandbox UID changed",
-                    _ => "native VCT ownership cannot be converted",
+                    _ => "Kubernetes rejected Sandbox operation (403)",
                 };
-                assert_eq!(detail, expected, "{change}");
+                assert_eq!(
+                    result.unwrap_err(),
+                    crate::AdapterError::Rejected(expected.into()),
+                    "{change}"
+                );
             }
+            _ => unreachable!(),
         }
     }
 }

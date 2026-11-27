@@ -11,6 +11,7 @@ use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 
 mod baseline;
 mod cancellation;
+mod certification;
 mod counter_accounting;
 #[cfg(test)]
 mod counter_tests;
@@ -50,6 +51,8 @@ struct TurnRecord {
     period_start: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     period_shard: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    certification: Option<certification::Certification>,
 }
 
 fn domain(reason: BudgetError) -> ApplyError {
@@ -59,6 +62,12 @@ fn domain(reason: BudgetError) -> ApplyError {
 }
 
 fn decode<T: serde::de::DeserializeOwned>(document: &Document) -> Result<T, ApplyError> {
+    if document
+        .get_document("record")
+        .is_ok_and(certification::present)
+    {
+        return Err(domain(BudgetError::Unavailable));
+    }
     super::sandbox_mongo::read_record(document).map_err(|_| domain(BudgetError::Unavailable))
 }
 
@@ -70,10 +79,14 @@ async fn save<T: Serialize>(
 ) -> Result<(), ApplyError> {
     let record =
         mongodb::bson::serialize_to_bson(record).map_err(|_| domain(BudgetError::Unavailable))?;
+    if record.as_document().is_some_and(certification::present) {
+        return Err(domain(BudgetError::Unavailable));
+    }
+    // The target may be a canonical turn copied from a command reservation.
     store
         .model_budget
         .replace_one(
-            doc! {"_id": key},
+            doc! {"_id": key, "record.certification": {"$exists": false}},
             doc! {
                 "_id": key, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "record": record,
             },
@@ -266,6 +279,7 @@ async fn reserve(
             reservation: TurnReservation::new(policy, now),
             period_start: charge.map(|charge| charge.start),
             period_shard: charge.and_then(|charge| charge.shard),
+            certification: None,
         },
         session,
     )

@@ -253,3 +253,72 @@ pub struct AgentTranscriptPage {
     pub transcript: AgentTranscript,
     pub next: Option<AgentTranscriptPageRequest>,
 }
+
+impl AgentTranscript {
+    /// Page a materialized transcript from one verified source snapshot.
+    pub fn into_page(
+        mut self,
+        request: &AgentTranscriptPageRequest,
+    ) -> Result<AgentTranscriptPage, super::AgentReadError> {
+        request.validate()?;
+        if request
+            .through
+            .is_some_and(|through| through != self.through_seq)
+        {
+            return Err(super::AgentReadError::InvalidPage);
+        }
+        let index = match request.turn {
+            Some(sequence) => self
+                .turns
+                .iter()
+                .position(|turn| turn.turn_sequence == sequence)
+                .ok_or(super::AgentReadError::InvalidPage)?,
+            None if self.turns.is_empty() => {
+                return Ok(AgentTranscriptPage {
+                    transcript: self,
+                    next: None,
+                })
+            }
+            None => 0,
+        };
+        let mut turn = self.turns[index].clone();
+        let after = request.after.unwrap_or(turn.turn_sequence - 1);
+        let end = self
+            .turns
+            .get(index + 1)
+            .map_or(self.through_seq, |turn| turn.turn_sequence - 1);
+        if after < turn.turn_sequence - 1 || after >= end {
+            return Err(super::AgentReadError::InvalidPage);
+        }
+        let through = end.min(after + u64::from(request.limit));
+        turn.messages.retain(|message| {
+            message.sequence <= through
+                && (message.sequence > after
+                    || (after == turn.turn_sequence - 1 && message.sequence < turn.turn_sequence))
+        });
+        turn.agent_messages = turn
+            .messages
+            .iter()
+            .filter(|message| message.role == crate::sandbox::AgentTranscriptRole::Agent)
+            .map(|message| message.content.clone())
+            .collect();
+        let next = if through < end {
+            Some((turn.turn_sequence, through))
+        } else {
+            self.turns
+                .get(index + 1)
+                .map(|next| (next.turn_sequence, next.turn_sequence - 1))
+        }
+        .map(|(turn, after)| AgentTranscriptPageRequest {
+            turn: Some(turn),
+            after: Some(after),
+            through: Some(self.through_seq),
+            limit: request.limit,
+        });
+        self.turns = vec![turn];
+        Ok(AgentTranscriptPage {
+            transcript: self,
+            next,
+        })
+    }
+}

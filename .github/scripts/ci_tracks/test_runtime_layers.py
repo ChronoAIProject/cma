@@ -45,7 +45,10 @@ class RuntimeLayerInputsTests(unittest.TestCase):
         recipe = (root / "api/crates/layer4-runtime/Dockerfile").read_text()
         self.assert_checked_payloads(recipe)
         for changed in (
-            recipe.replace("FROM runtime AS default-runtime", "RUN touch /late-file\nFROM runtime AS default-runtime"),
+            recipe.replace(
+                "COPY --link --from=runtime-application /payload/ /\n",
+                "COPY --link --from=runtime-application /payload/ /\nRUN touch /late-file\n",
+            ),
             recipe.replace("-B /tmp/assert-no-private-keyrings.py /payload", "-B /tmp/omitted-payload-check.py /payload"),
             recipe.replace("&& python -B /tmp/assert-no-private-keyrings.py\nWORKDIR", "&& true\nWORKDIR"),
         ):

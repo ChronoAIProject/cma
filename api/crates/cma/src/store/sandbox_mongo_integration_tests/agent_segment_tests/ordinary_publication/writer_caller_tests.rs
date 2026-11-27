@@ -369,11 +369,12 @@ async fn writer_caller_staged_source_conflict_cannot_adopt_or_replan() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn writer_caller_reserved_command_naturally_adopts_then_publishes_and_settles() {
+    use crate::store::migrations::{agent_log_active_proofs, agent_log_source_keys};
+
     let (client, name) = database("caller_command").await;
-    segments::schema::migrate(&client.database(&name))
-        .await
-        .unwrap();
-    let store = MongoSandboxStore::open(&client, &name)
+    let database = client.database(&name);
+    segments::schema::migrate(&database).await.unwrap();
+    let mut store = MongoSandboxStore::open(&client, &name)
         .await
         .unwrap()
         .with_segment_adoption_enabled(true);
@@ -382,6 +383,12 @@ async fn writer_caller_reserved_command_naturally_adopts_then_publishes_and_sett
         super::super::retained_assessment::ready_source(&store, "caller_command").await,
     )
     .await;
+    for (_, index) in agent_log_active_proofs::inspect(&database).await.unwrap() {
+        agent_log_active_proofs::create(&database, index)
+            .await
+            .unwrap();
+    }
+    store.active_log_proofs = true;
     gate(&client, &name, &ready, true, true).await;
     let parent = store.get_sandbox(&ready.sandbox_id).await.unwrap().unwrap();
     let command = record(
@@ -406,6 +413,27 @@ async fn writer_caller_reserved_command_naturally_adopts_then_publishes_and_sett
         .unwrap();
     let claim = claimed.work.lease.as_ref().unwrap().claim.clone();
     let mutation = message_mutation(&ready, &parent, &claim);
+    store
+        .agent_log
+        .drop_index(agent_log_source_keys::INDEX)
+        .await
+        .unwrap();
+    let before = snapshot_raw(&store).await;
+    let original_history = store.agent_log(&ready.id, 0, 100).await.unwrap();
+    let result = store.commit_agent_conversation(mutation.clone()).await;
+    assert!(
+        matches!(&result, Err(SandboxStoreError::Unavailable(message))
+            if message.contains("source-key index migration")),
+        "adoption should refuse before publication: {result:?}"
+    );
+    assert_eq!(snapshot_raw(&store).await, before);
+    assert_eq!(version(&store, &ready).await, 1);
+    assert_eq!(
+        store.agent_log(&ready.id, 0, 100).await.unwrap(),
+        original_history
+    );
+    agent_log_source_keys::prepare_for_test(&database).await;
+
     assert_eq!(
         store
             .commit_agent_conversation(mutation.clone())
@@ -414,6 +442,24 @@ async fn writer_caller_reserved_command_naturally_adopts_then_publishes_and_sett
         conversation::conversation_logs(&mutation).unwrap()
     );
     assert_eq!(version(&store, &ready).await, 2);
+    let adopted = store.get_agent(&ready.id).await.unwrap().unwrap();
+    assert_eq!(
+        adopted.conversation.conversation_id,
+        ready.conversation.conversation_id
+    );
+    assert_eq!(
+        store
+            .agent_log(&ready.id, ready.conversation.last_seq, 10)
+            .await
+            .unwrap(),
+        conversation::conversation_logs(&mutation).unwrap()
+    );
+    assert_eq!(
+        segments::active_proof::prepare(&client, &database, ready.id.as_str())
+            .await
+            .unwrap(),
+        1
+    );
     let recorder = DurableAgentUpdateRecorder::new(Arc::new(store.clone()));
     recorder
         .record_update(

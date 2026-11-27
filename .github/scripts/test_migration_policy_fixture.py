@@ -1,5 +1,6 @@
 """Settings readback must survive pagination without hiding changed receipts."""
 import copy
+import hashlib
 import json
 from pathlib import Path
 import tempfile
@@ -87,6 +88,18 @@ class PolicyFixtureTests(unittest.TestCase):
         self.pages[1]['items'] = [activity(1), activity(3)]
         with self.assertRaisesRegex(RuntimeError, 'activity changed'):
             self.read()
+
+    def test_derived_actor_reference_preserves_retained_activity(self):
+        actor = 'fixture-actor'
+        ref = 'actor-' + hashlib.sha256(b'cma:operator-activity:actor:v1\0' + actor.encode()).hexdigest()[:16]
+        self.expected['activity'][0]['actor'] = actor
+        self.pages[1]['items'] = [dict(self.expected['activity'][0], actor_reference=ref)]
+        path = self.fixture.output / 'old-write-policy.private.json'
+        path.write_text(json.dumps(self.expected))
+        self.assertEqual(self.read('new-read-old-write')['activity'][0]['actor_reference'], ref)
+        self.pages[1]['items'][0]['actor_reference'] = 'actor-incorrect'
+        with self.assertRaisesRegex(RuntimeError, 'activity changed'):
+            self.read('new-read-old-write')
 
     def test_settings_or_usage_semantic_changes_are_not_ignored(self):
         self.settings['settings']['usage_reporting']['measured_visible'] = True

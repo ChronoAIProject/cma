@@ -343,6 +343,7 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
                 false,
                 route,
                 credential.generation,
+                None,
             )
         }
         Err(error) => return (StatusCode::BAD_REQUEST, error.detail).into_response(),
@@ -420,6 +421,15 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
             scope,
             credential.generation.unwrap_or_default(),
             credential.value.as_bytes(),
+        )
+        .await;
+    }
+    if github_client.is_some() {
+        return github_write::complete_response(
+            response,
+            credential.value.as_bytes(),
+            route,
+            credential.generation,
         )
         .await;
     }

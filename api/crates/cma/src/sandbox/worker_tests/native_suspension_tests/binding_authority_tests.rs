@@ -96,11 +96,13 @@ async fn due_reserved_native_status_rechecks_every_authority_and_protects_cleanu
                 // These changes also invalidate cleanup inventory itself. Its
                 // exact refusal must retain protection, never grant authority.
                 let cleanup_refusal = match change {
-                    "claim_uid" | "assignment" => Some("native home belongs to another claim"),
+                    "claim_uid" | "assignment" => {
+                        Some("runtime rejected request: native home belongs to another claim")
+                    }
                     "pvc" => Some(
-                        "native PVC differs from its admitted storage and controller authority",
+                        "runtime rejected request: native PVC differs from its admitted storage and controller authority",
                     ),
-                    "image" => Some("native VCT ownership cannot be converted"),
+                    "image" => Some("Sandbox spec differs from its admitted configuration"),
                     _ => None,
                 };
                 let mut completed = false;
@@ -117,7 +119,7 @@ async fn due_reserved_native_status_rechecks_every_authority_and_protects_cleanu
                                 cleanup_refusal.expect("cleanup must complete for this authority");
                             assert!(
                                 matches!(error, SandboxStoreError::Unavailable(ref message)
-                                if message == &format!("sandbox runtime authority is unavailable: runtime rejected request: {detail}")),
+                                if message == &format!("sandbox runtime authority is unavailable: {detail}")),
                                 "{change}, after={boundary}, fresh={fresh}: {error:?}"
                             );
                             refused = true;

@@ -5,24 +5,42 @@ class PodSelectionError(RuntimeError):
     """The deployment did not expose exactly one ready selected reader."""
 
 
+def matches_image(image, expected):
+    if '/' in expected or ':' in expected or '@' in expected:
+        return image == expected
+    return image in (expected, expected + ':latest', 'docker.io/library/' + expected,
+                     'docker.io/library/' + expected + ':latest')
+
+
+def matches_identity(image_id, image, config):
+    for prefix in ('containerd://', 'docker-pullable://'):
+        if image_id.startswith(prefix):
+            image_id = image_id[len(prefix):]
+            break
+    accepted = {config}
+    if '@sha256:' in image:
+        accepted.update((image, image.split('@')[1]))
+    return image_id in accepted
+
+
 def select_ready_api_pod(document, expected_alias, expected_config):
-    """Return the sole ready pod matching alias and immutable image ID."""
+    """Bind the declared reader alias and immutable running image identity."""
     rows = []
     for pod in document.get("items", []):
         status = pod.get("status", {})
         containers = status.get("containerStatuses") or []
-        if status.get("phase") != "Running" or len(containers) != 1:
+        spec = pod.get("spec", {}).get("containers", [])
+        if status.get("phase") != "Running" or len(containers) != 1 or len(spec) != 1:
             continue
         container = containers[0]
-        if not container.get("ready") or container.get("restartCount", 0):
+        if (spec[0].get("name") != "api" or container.get("name") != "api"
+                or not container.get("ready") or container.get("restartCount", 0)):
             continue
         image = container.get("image", "")
         image_id = container.get("imageID", "")
-        if image not in (expected_alias, f"{expected_alias}:latest") and not image.endswith(
-            f"/{expected_alias}:latest"
-        ):
+        if not matches_image(spec[0].get("image", ""), expected_alias):
             continue
-        if expected_config not in image_id:
+        if not matches_identity(image_id, expected_alias, expected_config):
             continue
         rows.append({
             "name": pod.get("metadata", {}).get("name"),

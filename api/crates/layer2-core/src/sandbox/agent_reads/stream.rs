@@ -46,6 +46,12 @@ impl AgentEventStreamAuthorization {
         self.personal_caller.is_some()
     }
 
+    /// Use the owner's independently fenced durable read path after losing
+    /// shared read custody. Keep the original caller, lineage, and grant.
+    pub fn use_personal_durable_reads(&mut self) -> bool {
+        self.is_personal_owner() && self.observing.take().is_some()
+    }
+
     pub fn can_review_external_approval(&self) -> bool {
         self.is_personal_owner() && self.held.decision.allows(ResourceCapability::Interact)
     }

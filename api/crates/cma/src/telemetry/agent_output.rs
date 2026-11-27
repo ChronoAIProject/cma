@@ -38,6 +38,13 @@ pub(crate) fn command_started() {
     let _ = COMMANDS.try_with(|commands| commands.count.fetch_add(1, Ordering::Relaxed));
 }
 
+#[cfg(test)]
+pub(crate) async fn count_commands<F: Future>(future: F) -> (F::Output, u64) {
+    let observed = Arc::new(Commands::default());
+    let result = COMMANDS.scope(observed.clone(), future).await;
+    (result, observed.count.load(Ordering::Relaxed))
+}
+
 /// Capture before spawning: task-local state is not inherited by Tokio tasks.
 pub(crate) fn inherit_commands<F: Future>(future: F) -> impl Future<Output = F::Output> {
     let inherited = COMMANDS.try_with(Clone::clone).ok();

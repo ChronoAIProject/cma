@@ -348,12 +348,17 @@ impl AgentObservationSubscription {
             .await
     }
     pub fn current(&self) -> bool {
-        !self.receiver.borrow().as_ref().is_some_and(Result::is_err)
-            && self.authority.current()
-            && self
+        !self.receiver.borrow().as_ref().is_some_and(Result::is_err) && !self.custody_lost()
+    }
+
+    /// Reports observation infrastructure loss independently of the caller's
+    /// policy decision and of subscriber admission limits.
+    pub fn custody_lost(&self) -> bool {
+        !self.authority.current()
+            || self
                 .service
                 .upgrade()
-                .is_some_and(|service| service.store.ready())
+                .is_none_or(|service| !service.store.ready())
     }
 }
 impl Drop for AgentObservationSubscription {

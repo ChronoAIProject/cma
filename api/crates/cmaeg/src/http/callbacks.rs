@@ -38,6 +38,9 @@ use std::time::Duration;
 use tracing::Instrument;
 use utoipa::ToSchema;
 
+#[path = "callback_media_refusals.rs"]
+mod media_refusals;
+
 const SOURCE: &str = "nyxid_relay";
 
 pub fn router(state: IngressState) -> Router {
@@ -216,20 +219,23 @@ async fn admit_callback(
     let media_event_id = (platform == cmaeg_core::channel::Platform::Telegram)
         .then(|| EventId::new(verified.payload.message_id.clone()).ok())
         .flatten();
+    let receipt = media_event_id
+        .as_ref()
+        .and_then(|event| media_refusals::receipt(&channel, &verified.payload, event));
     let refuse = |reason| {
-        if let (Refusal::AttachmentUnsupported, Some(event_id)) = (reason, &media_event_id) {
-            state
-                .activity
-                .refused(&record, SOURCE, Some(event_id), "attachment_unsupported");
-            tracing::info!(
-                source = SOURCE,
-                channel = %crate::telemetry::channel_hash(channel_id),
-                media_enabled = state.media_enabled,
-                "Telegram relay attachment refused"
-            );
-            return refused(reason);
+        media_refusals::refuse(state, &record, channel_id, media_event_id.as_ref(), reason)
+    };
+    let refuse_media = async |reason| {
+        if let Some(receipt) = &receipt {
+            if receipt.persist(state, &record, reason).await.is_err() {
+                return problem(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    ProblemCode::ProviderUnavailable,
+                    "source refusal persistence unavailable",
+                );
+            }
         }
-        authenticated_refusal(state, &record, SOURCE, reason)
+        refuse(reason)
     };
     let reject = |error| authenticated_invalid(state, &record, SOURCE, error);
     let observation = if state.relay_telegram_member_joins_enabled {
@@ -240,7 +246,7 @@ async fn admit_callback(
     .unwrap_or_else(|| observe(source, &verified.payload, state.media_enabled));
     let mut facts = match observation {
         Ok(Observation::Message(facts)) => facts,
-        Ok(Observation::Refused(reason)) => return Err(refuse(reason)),
+        Ok(Observation::Refused(reason)) => return Err(refuse_media(reason).await),
         Err(error) => return Err(reject(error)),
     };
     if crate::interactions::lark::supported(platform) {
@@ -360,7 +366,7 @@ async fn admit_callback(
     ) {
         Ok(Built::Launch(request)) => *request,
         // A 202 refusal, because NyxID never retries a rejected callback.
-        Ok(Built::Refused(reason)) => return Err(refuse(reason)),
+        Ok(Built::Refused(reason)) => return Err(refuse_media(reason).await),
         Err(reason) => {
             state.activity.refused(&record, SOURCE, None, reason);
             return Err(problem(

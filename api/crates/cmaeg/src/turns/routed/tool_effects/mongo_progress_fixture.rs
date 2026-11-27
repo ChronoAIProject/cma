@@ -42,7 +42,7 @@ pub(super) async fn with_partitioned_harness(
     );
     run_harness(Harness::with_request(request, false).await, test).await;
 }
-async fn run_harness(
+pub(super) async fn run_harness(
     mut h: Harness,
     test: impl for<'a> FnOnce(&'a mut Harness) -> BoxFuture<'a, ()>,
 ) {
@@ -157,6 +157,8 @@ pub(super) async fn plan_with_expiry(
     let mut activity = fixture::message("later independent turn");
     activity.event_id = EventId::new(event_id).unwrap();
     activity.conversation.id = conversation.into();
+    activity.conversation.kind = h.plan.activity.conversation.kind;
+    activity.source = h.plan.activity.source.clone();
     let mut request = fixture::request(
         |v| {
             v["routing"]["default_targets"] = serde_json::json!(["default"]);
@@ -169,6 +171,8 @@ pub(super) async fn plan_with_expiry(
         .open(&fixture::keys(), fixture::NOW)
         .unwrap()
         .payload;
+    event.channel_id = request.channel.id.clone();
+    event.record_id = request.channel.pointer.record_id.clone();
     event.expires_at = expires_at;
     event.partition_key = request
         .activity

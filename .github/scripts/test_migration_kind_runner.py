@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import base64
 import copy
+import hashlib
 import json
 import tempfile
 import unittest
@@ -27,6 +28,16 @@ def inspect(revision=OLD, image=IMAGE):
 
 
 class MigrationKindRunnerTests(unittest.TestCase):
+    def test_manifest_accepts_only_bounded_explicit_runtime_stack(self):
+        args = (IMAGE, 'runtime-password', 'admin-password', 'key', MONGO, {})
+        for stack_bytes in (None, 16777216):
+            objects = runner.manifests(*args, runtime_stack_bytes=stack_bytes)
+            values = next(value['data'] for value in objects if value['metadata']['name'] == 'api-env')
+            self.assertEqual(values.get('RUST_MIN_STACK'), None if stack_bytes is None else str(stack_bytes))
+        for stack_bytes in (True, '16777216', 1048575, 67108865):
+            with self.subTest(stack_bytes=stack_bytes), self.assertRaisesRegex(ValueError, 'stack budget'):
+                runner.manifests(*args, runtime_stack_bytes=stack_bytes)
+
     def test_identity_requires_exact_source_digest_platform_and_label(self):
         command = lambda argv: json.dumps(inspect())
         value = runner.checked_identity(command, IMAGE, OLD)
@@ -117,16 +128,20 @@ class MigrationKindRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / 'plan.json'
             plan.write_text(json.dumps({'schema': 'cma-migration-matrix-plan-v1'}))
-            campaign = runner.Campaign(Path(directory), '/bin/false', 1, plan)
+            campaign = runner.Campaign(Path(directory), '/bin/false', 1, plan.read_bytes())
             self.assertEqual(campaign.cluster.startswith('cma-matrix-'), True)
             self.assertTrue(campaign.kubeconfig.name.endswith('.private'))
+            self.assertEqual(campaign.plan_path.parent, Path(directory).resolve())
+            self.assertNotEqual(campaign.plan_path, plan)
+            self.assertEqual(campaign.plan_path.read_bytes(), plan.read_bytes())
+            self.assertEqual(campaign.plan_sha256, hashlib.sha256(plan.read_bytes()).hexdigest())
 
     def test_generated_authentication_manifests_are_streamed_and_never_saved(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory)
             plan = output / 'plan.json'
             plan.write_text('{}')
-            campaign = runner.Campaign(output, 'kind-not-invoked', 1, plan)
+            campaign = runner.Campaign(output, 'kind-not-invoked', 1, plan.read_bytes())
             campaign.images = ['local-api', 'local-mongo']
             objects = runner.manifests('local-api', 'runtime-private-fixture',
                                        'admin-private-fixture', 'encryption-private-fixture',
@@ -175,14 +190,29 @@ class MigrationKindRunnerTests(unittest.TestCase):
 
     def test_pod_binding_requires_one_ready_selected_image(self):
         pod = {'metadata': {'name': 'api-1', 'uid': 'uid-1'},
+               'spec': {'containers': [{'name': 'api', 'image': 'cma-matrix-old'}]},
                'status': {'phase': 'Running', 'containerStatuses': [{
-                   'ready': True, 'restartCount': 0,
+                   'name': 'api', 'ready': True, 'restartCount': 0,
                    'image': 'cma-matrix-old',
                    'imageID': 'docker-pullable://sha256:' + '4' * 64}]}}
-        selected = runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', '4' * 64)
+        config = 'sha256:' + '4' * 64
+        selected = runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)
         self.assertEqual(selected['uid'], 'uid-1')
         with self.assertRaises(RuntimeError):
-            runner.select_ready_api_pod({'items': [pod, pod]}, 'cma-matrix-old', '4' * 64)
+            runner.select_ready_api_pod({'items': [pod, pod]}, 'cma-matrix-old', config)
+        pod['status']['containerStatuses'][0]['image'] = 'cma-matrix-current'
+        self.assertEqual(runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)['uid'], 'uid-1')
+        with self.assertRaises(RuntimeError):
+            runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-current', config)
+        pod['spec']['containers'][0]['image'] = 'docker.io/library/cma-matrix-old:latest'
+        self.assertEqual(runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)['uid'], 'uid-1')
+        pod['spec']['containers'][0]['image'] = 'example.invalid/other/cma-matrix-old:latest'
+        with self.assertRaises(RuntimeError):
+            runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)
+        pod['spec']['containers'][0]['image'] = 'cma-matrix-old'
+        pod['status']['containerStatuses'][0]['imageID'] = 'wrong-' + config
+        with self.assertRaises(RuntimeError):
+            runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)
 
 
 if __name__ == '__main__':

@@ -5,17 +5,34 @@ pub(super) async fn start(
     store: &MongoSandboxCredentialStore,
     sandbox: &Sandbox,
 ) -> Result<ClientSession, CredentialCustodyError> {
+    start_with_marker(
+        store,
+        sandbox,
+        doc! {"$or":[{"credential_issuance_fence":{"$exists":false}},
+        {"credential_issuance_fence":{"$type":"long","$lt":i64::MAX}}]},
+    )
+    .await
+}
+
+pub(super) async fn start_with_marker(
+    store: &MongoSandboxCredentialStore,
+    sandbox: &Sandbox,
+    marker_filter: Document,
+) -> Result<ClientSession, CredentialCustodyError> {
     let mut session = store.client.start_session().await.map_err(unavailable)?;
     start_transaction(&mut session).await.map_err(unavailable)?;
     let outcome = async {
-        if sandbox.work.authority_protocol.is_none() { return Err(corrupt()); }
+        let protocol = sandbox.work.authority_protocol.ok_or_else(corrupt)?;
         let identity = crate::store::work_claim_authority::sandbox_claim(sandbox).map_err(|_| corrupt())?;
         let identity = crate::store::work_publication::sandbox(identity, sandbox.id.as_str()).map_err(|_| corrupt())?;
-        let result = store.sandboxes.update_one(doc! {"$and":[identity,{
-            "document_schema_version":3_i64,
+        let envelope = crate::store::work_schema::sandbox_version(sandbox);
+        let protocol = mongodb::bson::serialize_to_bson(&protocol).map_err(|_| corrupt())?;
+        let result = store.sandboxes.update_one(doc! {"$and":[identity,marker_filter,{
+            "$expr":{"$and":[
+                {"$eq":["$document_schema_version",envelope]},
+                {"$eq":["$record.work.authority_protocol",{"$literal":protocol}]},
+            ]},
             "record.credential":mongodb::bson::serialize_to_bson(&sandbox.credential).map_err(|_| corrupt())?,
-            "$or":[{"credential_issuance_fence":{"$exists":false}},
-                {"credential_issuance_fence":{"$type":"long","$lt":i64::MAX}}],
         }]},doc! {"$inc":{"credential_issuance_fence":1_i64}})
             .session(&mut session).await.map_err(unavailable)?;
         if result.matched_count != 1 { return Err(corrupt()); }

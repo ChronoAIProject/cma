@@ -157,21 +157,106 @@ it('uses a slow fallback for an empty active queue and stays idle after the turn
   hook.unmount();
 });
 
-it('bounds stream-driven queue reads while preserving both fresh authorization checks', async () => {
+it('keeps the empty queue cadence under stream hints and refreshes after submission', async () => {
   const h = fixture();
   const hook = renderHook(
-    ({ revision }) => useQueuedInputs(h.session, true, true, revision, unchangedIdentity),
-    { initialProps: { revision: '0' } },
+    ({ revision, request }) =>
+      useQueuedInputs(h.session, true, true, revision, unchangedIdentity, request),
+    { initialProps: { revision: '0', request: 0 } },
   );
   await advance(0);
   for (let n = 1; n <= 300; n++) {
-    hook.rerender({ revision: String(n) });
+    hook.rerender({ revision: String(n), request: 0 });
     await advance(200);
   }
-  expect(h.listQueued.mock.calls.length).toBeGreaterThanOrEqual(30);
-  expect(h.listQueued.mock.calls.length).toBeLessThanOrEqual(31);
-  expect(h.currentUser).toHaveBeenCalledTimes(2 * h.listQueued.mock.calls.length);
+  expect(h.listQueued).toHaveBeenCalledTimes(7);
+  expect(h.currentUser).toHaveBeenCalledTimes(14);
+  h.listQueued.mockImplementation(async () => json(queuedPage('New queued message')));
+  hook.rerender({ revision: '300', request: 1 });
+  await advance(100);
+  expect(h.listQueued).toHaveBeenCalledTimes(8);
+  expect(hook.result.current.items[0]?.input).toBe('New queued message');
   expect(h.post).not.toHaveBeenCalled();
+  hook.unmount();
+});
+
+it('slows unchanged nonempty queues under sustained hints and keeps post-submit discovery prompt', async () => {
+  const h = fixture();
+  h.listQueued.mockImplementation(async () => json(queuedPage('Waiting message')));
+  const hook = renderHook(
+    ({ revision, request }) =>
+      useQueuedInputs(h.session, true, true, revision, unchangedIdentity, request),
+    { initialProps: { revision: '0', request: 0 } },
+  );
+  await advance(0);
+  for (let tick = 1; tick <= 180; tick++) {
+    hook.rerender({ revision: String(tick), request: 0 });
+    await advance(1000);
+  }
+  expect(h.listQueued).toHaveBeenCalledTimes(19);
+  expect(hook.result.current.items[0]?.input).toBe('Waiting message');
+  h.listQueued.mockImplementation(async () => json(queuedPage('New waiting message')));
+  hook.rerender({ revision: '180', request: 1 });
+  await advance(100);
+  expect(h.listQueued).toHaveBeenCalledTimes(20);
+  expect(hook.result.current.items[0]?.input).toBe('New waiting message');
+  hook.unmount();
+});
+
+it('keeps a post-submit refresh pending while an older queue read completes', async () => {
+  const h = fixture();
+  let finishRead!: (response: Response) => void;
+  h.listQueued.mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        finishRead = resolve;
+      }),
+  );
+  const hook = renderHook(
+    ({ request }) => useQueuedInputs(h.session, true, true, '0', unchangedIdentity, request),
+    { initialProps: { request: 0 } },
+  );
+  await advance(0);
+  expect(h.listQueued).toHaveBeenCalledOnce();
+  hook.rerender({ request: 1 });
+  h.listQueued.mockImplementation(async () => json(queuedPage('New queued message')));
+  await act(async () => finishRead(json({ ...queuedPage(), data: [] })));
+  await advance(100);
+  expect(h.listQueued).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.items[0]?.input).toBe('New queued message');
+  hook.unmount();
+});
+
+it('honors Retry-After when an older queue read refuses a pending post-submit refresh', async () => {
+  vi.spyOn(Math, 'random').mockReturnValue(0);
+  const h = fixture();
+  let finishRead!: (response: Response) => void;
+  h.listQueued.mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        finishRead = resolve;
+      }),
+  );
+  const hook = renderHook(
+    ({ request }) => useQueuedInputs(h.session, true, true, '0', unchangedIdentity, request),
+    { initialProps: { request: 0 } },
+  );
+  await advance(0);
+  hook.rerender({ request: 1 });
+  h.listQueued.mockImplementation(async () => json(queuedPage('New queued message')));
+  await act(async () => {
+    finishRead(
+      Response.json(
+        { error: { type: 'rate_limit_error', code: 'rate_limited', message: 'Busy', param: null } },
+        { status: 429, headers: { 'Retry-After': '15' } },
+      ),
+    );
+  });
+  await advance(14_999);
+  expect(h.listQueued).toHaveBeenCalledOnce();
+  await advance(1);
+  expect(h.listQueued).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.items[0]?.input).toBe('New queued message');
   hook.unmount();
 });
 

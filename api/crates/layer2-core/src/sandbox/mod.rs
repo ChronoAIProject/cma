@@ -17,6 +17,8 @@ pub use auto_pause_operator::{
     AUTO_PAUSE_MAX_BATCH,
 };
 mod agent;
+pub mod agent_access;
+pub mod agent_access_tool;
 pub mod agent_artifacts;
 pub mod agent_attachments;
 pub mod agent_browser_control;
@@ -261,18 +263,17 @@ pub use title_effect::{
 mod title_store;
 mod warmup;
 mod workspace;
+mod workspace_prepare_observations;
 mod workspace_prepare_recovery;
 mod workspace_service;
 mod workspace_work;
+pub use workspace_prepare_observations::{
+    WorkspacePrepareObservation, WorkspacePrepareObservations,
+};
 pub use workspace_prepare_recovery::{
     WorkspacePrepareRecovery, WorkspacePrepareRecoveryAttempt, WorkspacePrepareRecoveryCompletion,
 };
 mod worktree;
-pub use home_recovery::{SandboxHomeRecovery, SandboxRecoveryPause};
-pub use warmup::{
-    WarmAgent, WarmSandbox, WarmSandboxPlan, WarmSandboxState, WarmWorkspace, WarmWorkspacePlan,
-};
-
 pub use admin::{
     AgentAdminSummary, OperatorError, SandboxAdminQuery, SandboxAdminStore, SandboxAdminSummary,
     SandboxAdminView, SandboxOperatorService, SandboxRetirement, SandboxRetirementResult,
@@ -367,6 +368,7 @@ pub use hierarchy::{
     WorkspaceHierarchyView, WorktreeHierarchyReading, WorktreeHierarchySummary,
 };
 pub use home::SandboxHome;
+pub use home_recovery::{SandboxHomeRecovery, SandboxRecoveryPause};
 pub use inactivity::{
     has_open_desktop_session, inactivity_pause_notice, is_inactivity_pause_candidate,
     is_platform_stop_pause_candidate, is_quiet_pause_candidate, register_open_desktop_session,
@@ -420,6 +422,9 @@ pub use title_store::{
     AgentTitleClaim, AgentTitleClaimMode, AgentTitleClaimRequest, AgentTitleStore,
     AgentTitleStoreError, InMemoryAgentTitleStore, SetAgentTitleOutcome, StoredAgentTitle,
 };
+pub use warmup::{
+    WarmAgent, WarmSandbox, WarmSandboxPlan, WarmSandboxState, WarmWorkspace, WarmWorkspacePlan,
+};
 pub use workspace::{Workspace, WorkspaceOrigin, WorkspaceSource};
 pub use workspace_service::{
     CreateInlineWorkspace, CreateWorkspace, InlineWorkspaceSource, WorkspaceService,
@@ -436,6 +441,8 @@ mod agent_operation_tests;
 mod agent_reads_tests;
 #[cfg(test)]
 mod agent_service_tests;
+#[cfg(test)]
+mod always_on_tests;
 #[cfg(test)]
 mod checkpoint_tests;
 #[cfg(test)]
@@ -458,13 +465,23 @@ mod lifecycle_tests;
 mod revive_tests;
 #[cfg(test)]
 mod rotate_tests;
+mod runtime_capacity;
 #[cfg(test)]
 mod runtime_generation_tests;
+#[cfg(test)]
+mod runtime_update_lifecycle_tests;
+#[cfg(test)]
+mod runtime_update_resume_tests;
+#[cfg(test)]
+mod runtime_update_test_support;
+#[cfg(test)]
+mod runtime_update_tests;
 #[cfg(test)]
 #[path = "../sandbox_usage_tests.rs"]
 mod sandbox_usage_tests;
 #[cfg(test)]
 mod service_tests;
+mod suspended_runtime;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
@@ -479,22 +496,5 @@ mod title_store_tests;
 mod title_value_tests;
 #[cfg(test)]
 mod workspace_service_tests;
-
-pub mod agent_access;
-pub mod agent_access_tool;
-#[cfg(test)]
-mod runtime_update_lifecycle_tests;
-#[cfg(test)]
-mod runtime_update_resume_tests;
-#[cfg(test)]
-mod runtime_update_test_support;
-#[cfg(test)]
-mod runtime_update_tests;
-mod suspended_runtime;
-
-#[cfg(test)]
-mod always_on_tests;
-
-mod runtime_capacity;
 pub use runtime_capacity::RuntimeCapacityError;
 pub mod model_credit;

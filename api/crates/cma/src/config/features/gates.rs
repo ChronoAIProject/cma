@@ -1,5 +1,8 @@
 pub(super) const RETIREMENT_CAPTURE: &str = "CHRONO_NATIVE_RETIREMENT_CAPTURE_ENABLED";
 
+pub(super) const WORKSPACE_PREPARE_OBSERVATIONS: &str =
+    "CHRONO_WORKSPACE_PREPARE_OBSERVATIONS_ENABLED";
+
 /// Rollout gates graduated to default-on after their rollout completed in
 /// every environment. Unset means enabled; an explicit `false` remains the
 /// emergency off-switch, and any other value keeps the strict-boolean error.
@@ -24,3 +27,4 @@ pub(in crate::config) fn flag(
         _ => Err(format!("{key} must be true or false")),
     }
 }
+pub(super) const CREDENTIAL_RETIREMENT_RECEIPTS: &str = "CHRONO_CREDENTIAL_RETIREMENT_RECEIPTS";

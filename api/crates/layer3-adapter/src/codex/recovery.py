@@ -42,6 +42,8 @@ DESKTOP_SOURCES = {
     "3127c5d454316efaf7e147665f871825aae2eda00cea250d2f89fd18f351263d",
 }
 DESKTOP_PATH = "/usr/local/bin/cma-desktop-session"
+RUNTIME_PATH = "/usr/local/bin/layer4-runtime"
+DESKTOP_GUARDIAN = b"--desktop-generation-guardian"
 
 
 def relay_command(command):
@@ -68,29 +70,52 @@ def services(processes):
     return result + desktop_services(processes)
 
 
+def desktop_command(pid):
+    return read(f"{PROC}/{pid}/cmdline", 32768, True).rstrip(b"\0").split(b"\0")
+
+
 def desktop_services(processes):
     roots = []
+    launcher_command = [b"/bin/bash", DESKTOP_PATH.encode()]
     for pid, item in processes.items():
         if item["ppid"] != 1 or item["sid"] != pid:
             continue
         try:
-            command = read(f"{PROC}/{pid}/cmdline", 32768, True).rstrip(b"\0").split(b"\0")
-            if command != [b"/bin/bash", DESKTOP_PATH.encode()]:
+            command = desktop_command(pid)
+            launcher = pid
+            if command == [RUNTIME_PATH.encode(), DESKTOP_GUARDIAN]:
+                # The runtime holds the guardian's private control pipe for this generation.
+                require(os.readlink(f"{PROC}/1/exe") == os.readlink(f"{PROC}/{pid}/exe") == RUNTIME_PATH,
+                        "desktop_identity")
+                stdin = stdin_owner(pid, 1, (1, pid))
+                require(stdin["reader"].startswith("pipe:["), "desktop_identity")
+                launchers = [child for child, process in processes.items()
+                             if process["ppid"] == pid and process["sid"] == pid
+                             and desktop_command(child) == launcher_command]
+                require(len(launchers) == 1, "desktop_identity")
+                launcher = launchers[0]
+            elif command != launcher_command:
                 continue
-            require(os.readlink(f"{PROC}/{pid}/exe") == os.path.realpath("/bin/bash")
+            require(os.readlink(f"{PROC}/{launcher}/exe") == os.path.realpath("/bin/bash")
                     and digest_file(DESKTOP_PATH) in DESKTOP_SOURCES, "desktop_identity")
-            env = environment(pid)
+            env = environment(launcher)
             require(env.get(b"DISPLAY") == b":99" and env.get(b"HOME") == HOME.encode()
                     and b"CODEX_HOME" not in env, "desktop_environment")
-            roots.append({**proc_identity(pid), "desktopRoot": True})
+            root = proc_identity(pid)
+            require(all(root[key] == item[key] for key in ("start", "ppid", "sid")), "desktop_changed")
+            if launcher != pid:
+                child = proc_identity(launcher)
+                require(child["start"] == processes[launcher]["start"] and child["ppid"] == child["sid"] == pid,
+                        "desktop_changed")
+                root["desktopLauncher"] = child
+            roots.append({**root, "desktopRoot": True})
         except FileNotFoundError:
             pass
     require(len(roots) <= 1, "desktop_limit")
     if not roots:
         return []
     root = roots[0]
-    # The runtime makes this exact launcher a child subreaper. Even browser
-    # helpers that double-fork remain in its tree; unrelated siblings never do.
+    # The launcher or its guardian acts as the subreaper for desktop helpers.
     tree = descendants([root["pid"]], processes)
     require(len(tree) <= 256, "desktop_limit")
     return roots + [{k: processes[pid][k] for k in ("pid", "start", "ppid", "sid")}
@@ -251,7 +276,7 @@ def inspect(request):
         supervisors = []
         for pid in agent_processes:
             try:
-                if os.readlink(f"{PROC}/{pid}/exe") == "/usr/local/bin/layer4-runtime":
+                if os.readlink(f"{PROC}/{pid}/exe") == RUNTIME_PATH:
                     supervisors.append(pid)
             except FileNotFoundError:
                 pass

@@ -78,6 +78,7 @@ pub use github_repository_scope::{GithubRepositoryScope, GithubRepositoryScopeNe
 pub mod runtime_versions;
 mod tool_proxy;
 mod workspace;
+pub mod workspace_prepare_observation;
 mod workspace_prepare_recovery;
 mod workspace_removal;
 
