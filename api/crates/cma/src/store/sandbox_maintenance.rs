@@ -5,9 +5,10 @@ use futures_util::TryStreamExt;
 use layer2_core::ids::SandboxId;
 use layer2_core::now_rfc3339;
 use layer2_core::sandbox::store::{
-    validate_image_rotation_request, validate_inactivity_pause_request, Page, PageRequest,
-    SandboxImageRotationRequest, SandboxInactivityPauseRequest, SandboxMaintenanceOutcome,
-    SandboxMaintenanceStore, SandboxStore, SandboxStoreError, MAX_PAGE_SIZE,
+    validate_image_rotation_request, validate_inactivity_pause_request, InactivityPausePreview,
+    Page, PageRequest, SandboxImageRotationRequest, SandboxInactivityPauseRequest,
+    SandboxMaintenanceOutcome, SandboxMaintenanceStore, SandboxStore, SandboxStoreError,
+    MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::{Sandbox, SandboxStatus};
 use mongodb::bson::doc;
@@ -91,7 +92,16 @@ impl SandboxMaintenanceStore for MongoSandboxStore {
             layer2_core::sandbox::store::InactivityPauseCause::OperatorInactivity => "operator",
             layer2_core::sandbox::store::InactivityPauseCause::PlatformSpendStop => "spend_stop",
         };
-        let result = schedule(self, MaintenanceRequest::Inactivity(request)).await;
+        let prepare = request.auto_pause_enabled
+            && request.expected_policy_revision.is_none()
+            && request.cause == layer2_core::sandbox::store::InactivityPauseCause::Inactivity;
+        let result = schedule_receipt(self, MaintenanceRequest::Inactivity(request)).await;
+        if prepare {
+            if let Ok(receipt) = &result {
+                evidence::certified_legacy::prepare_next(self, &receipt.unproven_logs).await;
+            }
+        }
+        let result = result.map(|receipt| receipt.outcome);
         let outcome = match &result {
             Ok(SandboxMaintenanceOutcome::Scheduled) => "scheduled",
             Ok(SandboxMaintenanceOutcome::AlreadyScheduled) => "already_scheduled",
@@ -106,8 +116,22 @@ impl SandboxMaintenanceStore for MongoSandboxStore {
         &self,
         request: SandboxInactivityPauseRequest,
     ) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+        Ok(self
+            .preview_inactivity_pause_with_reason(request)
+            .await?
+            .outcome)
+    }
+
+    async fn preview_inactivity_pause_with_reason(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<InactivityPausePreview, SandboxStoreError> {
         validate_inactivity_pause_request(&request)?;
-        preview(self, MaintenanceRequest::Inactivity(request)).await
+        let receipt = preview(self, MaintenanceRequest::Inactivity(request)).await?;
+        Ok(InactivityPausePreview {
+            outcome: receipt.outcome,
+            refusal: receipt.refusal,
+        })
     }
 
     async fn set_sandbox_always_on(
@@ -302,7 +326,7 @@ async fn schedule_owned(
 async fn preview(
     store: &MongoSandboxStore,
     request: MaintenanceRequest,
-) -> Result<SandboxMaintenanceOutcome, SandboxStoreError> {
+) -> Result<transaction::MaintenanceReceipt, SandboxStoreError> {
     let mut session = store
         .client
         .start_session()
@@ -321,7 +345,7 @@ async fn preview(
         abort.map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
     }
     match result {
-        Ok(receipt) => Ok(receipt.outcome),
+        Ok(receipt) => Ok(receipt),
         Err(ApplyError::Domain(error)) => Err(error),
         Err(ApplyError::Driver(error)) => Err(SandboxStoreError::Unavailable(error.to_string())),
     }

@@ -17,10 +17,19 @@ use crate::AuthenticatedCaller;
 pub(crate) struct AutoPausePreviewView {
     /// Eligible Sandboxes in this bounded page; follow next for further pages.
     pub candidates: u64,
+    /// Fixed refusal codes for Sandboxes evaluated on this page.
+    pub refusals: Vec<AutoPauseSandboxRefusalView>,
     pub failed: u64,
     pub next: Option<String>,
     pub enabled: bool,
     pub policy_revision: u64,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub(crate) struct AutoPauseSandboxRefusalView {
+    pub sandbox_id: String,
+    #[schema(value_type = String)]
+    pub reason: layer2_core::sandbox::InactivityPauseRefusal,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -84,6 +93,14 @@ pub(crate) async fn preview(
         .map_err(CollectionProblem::from)?;
     Ok(Json(AutoPausePreviewView {
         candidates: batch.candidates,
+        refusals: batch
+            .refusals
+            .into_iter()
+            .map(|refusal| AutoPauseSandboxRefusalView {
+                sandbox_id: refusal.sandbox_id.to_string(),
+                reason: refusal.reason,
+            })
+            .collect(),
         failed: batch.failed,
         next: batch.next,
         enabled: batch.enabled,

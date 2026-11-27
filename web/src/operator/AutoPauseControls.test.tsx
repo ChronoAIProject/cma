@@ -24,6 +24,24 @@ it('previews bounded pages and keeps prior counts when a read fails', async () =
   expect(client.admin.pauseIdleNow).not.toHaveBeenCalled();
 });
 
+it('shows each Sandbox with its own preview refusal', async () => {
+  const client = operatorClient();
+  client.admin.previewAutoPause.mockResolvedValueOnce({
+    candidates: 0,
+    refusals: [
+      { sandbox_id: 'sbx_legacy', reason: 'legacy_log_expected_rows' },
+      { sandbox_id: 'sbx_recent', reason: 'recent_agent_activity' },
+    ],
+  });
+  const user = userEvent.setup();
+  render(<AutoPauseControls client={client} disabled={false} />);
+  await user.click(screen.getByRole('button', { name: 'Preview idle Sandboxes' }));
+  await screen.findByRole('list', { name: 'Sandbox preview refusals' });
+  const [legacy, recent] = screen.getAllByRole('listitem');
+  expect(legacy).toHaveTextContent('sbx_legacy · legacy log expected rows');
+  expect(recent).toHaveTextContent('sbx_recent · recent agent activity');
+});
+
 it('requires confirmation for each batch and retains an uncertain first-candidate cursor', async () => {
   const client = operatorClient();
   client.admin.pauseIdleNow.mockResolvedValueOnce({

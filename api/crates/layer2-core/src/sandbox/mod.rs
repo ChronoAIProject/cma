@@ -13,7 +13,8 @@ pub use runtime_migration_guard::{
 mod admin;
 mod auto_pause_operator;
 pub use auto_pause_operator::{
-    AutoPauseBatch, SandboxAutoPauseService, AUTO_PAUSE_BATCH_LIMIT, AUTO_PAUSE_MAX_BATCH,
+    AutoPauseBatch, AutoPauseSandboxRefusal, SandboxAutoPauseService, AUTO_PAUSE_BATCH_LIMIT,
+    AUTO_PAUSE_MAX_BATCH,
 };
 mod agent;
 pub mod agent_artifacts;
@@ -152,7 +153,7 @@ pub use home_restore::{
 };
 mod idle_evidence;
 mod inactivity;
-pub use idle_evidence::agentless_idle_with_children;
+pub use idle_evidence::{agentless_idle_refusal, agentless_idle_with_children};
 mod interruption;
 mod launch_recovery;
 mod launch_service;
@@ -369,8 +370,8 @@ pub use home::SandboxHome;
 pub use inactivity::{
     has_open_desktop_session, inactivity_pause_notice, is_inactivity_pause_candidate,
     is_platform_stop_pause_candidate, is_quiet_pause_candidate, register_open_desktop_session,
-    unregister_open_desktop_session, SandboxAgentActivity, SandboxAgentLogActivity,
-    PLATFORM_SPEND_PAUSE_NOTICE,
+    unregister_open_desktop_session, InactivityPauseRefusal, SandboxAgentActivity,
+    SandboxAgentLogActivity, PLATFORM_SPEND_PAUSE_NOTICE,
 };
 pub use interruption::{SandboxInterruption, SandboxInterruptionCause};
 pub use lifecycle::{

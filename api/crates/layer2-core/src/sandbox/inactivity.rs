@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::ids::{AgentId, SandboxId};
 use crate::{seconds_from_rfc3339, MAX_PAUSE_AFTER_SECONDS, MIN_PAUSE_AFTER_SECONDS};
 
+use super::store::SandboxMaintenanceOutcome;
 use super::{Agent, AgentLogEntry, AgentStatus, Sandbox, SandboxModelError, SandboxStatus};
 
 static OPEN_DESKTOP_SESSIONS: OnceLock<Mutex<BTreeSet<SandboxId>>> = OnceLock::new();
@@ -109,78 +110,159 @@ impl SandboxAgentActivity {
     }
 }
 
-/// Decide from one complete projection of all live agents at a single store read.
-///
-/// The store integration must supply exactly one row for every live Agent. Missing
-/// log evidence remains a row with `newest_log: None`, which fails closed here.
+/// Fixed and content-free refusal from one inactivity evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InactivityPauseRefusal {
+    AlwaysOn,
+    PendingControl,
+    LegacyLogAgentCount,
+    LegacyLogExpectedRows,
+    LegacyLogRetainedRows,
+    LegacyLogBytes,
+    LegacyLogProofPending,
+    LegacyLogProofByteLimit,
+    OpenSession,
+    SessionEvidenceUnclear,
+    PendingWorkspaceWork,
+    SandboxNotActive,
+    InvalidRuntime,
+    InvalidActivityTime,
+    RecentSandboxActivity,
+    RecentRuntimeActivity,
+    RecentWorkspaceActivity,
+    NoLiveAgents,
+    InvalidAgentSet,
+    AgentNotQuiet,
+    MissingConversation,
+    PendingAgentWork,
+    PendingCommand,
+    MissingLogEvidence,
+    InvalidLogEvidence,
+    InvalidStoredEvidence,
+    RecentAgentActivity,
+    PendingLegacyReuse,
+    PolicyChanged,
+    PolicyGrace,
+    SpendStopLifted,
+    EvidenceUnavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InactivityPausePreview {
+    pub outcome: SandboxMaintenanceOutcome,
+    pub refusal: Option<InactivityPauseRefusal>,
+}
+
+use InactivityPauseRefusal as Refusal;
+
+/// Decide from one complete projection of all live Agents at a single store read.
 pub fn is_inactivity_pause_candidate(
     sandbox: &Sandbox,
     live_agents: &[SandboxAgentActivity],
     now: &str,
     pause_after_seconds: u64,
 ) -> bool {
-    (MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS).contains(&pause_after_seconds)
-        && sandbox_activity_idle(sandbox, now, pause_after_seconds)
-        && is_quiet_pause_candidate(sandbox, live_agents, now, pause_after_seconds)
+    inactivity_pause_refusal(sandbox, live_agents, now, pause_after_seconds).is_none()
 }
 
-/// Owner work admitted on the Sandbox itself, such as an added Workspace or
-/// Agent, is recorded in `last_activity_at`. A quiet Agent's old log does not
-/// prove that work is a full interval old (#1330). Fails closed on a malformed
-/// timestamp. The platform spend stop keeps its own zero-threshold predicate.
-fn sandbox_activity_idle(sandbox: &Sandbox, now: &str, pause_after_seconds: u64) -> bool {
-    match (
-        seconds_from_rfc3339(now),
-        seconds_from_rfc3339(&sandbox.last_activity_at),
-    ) {
-        (Some(now), Some(at)) => now > at.saturating_add(pause_after_seconds),
-        _ => false,
+pub(super) fn inactivity_pause_refusal(
+    sandbox: &Sandbox,
+    live_agents: &[SandboxAgentActivity],
+    now: &str,
+    pause_after_seconds: u64,
+) -> Option<InactivityPauseRefusal> {
+    let Some((now, at)) =
+        seconds_from_rfc3339(now).zip(seconds_from_rfc3339(&sandbox.last_activity_at))
+    else {
+        return Some(Refusal::InvalidActivityTime);
+    };
+    if !(MIN_PAUSE_AFTER_SECONDS..=MAX_PAUSE_AFTER_SECONDS).contains(&pause_after_seconds) {
+        return Some(Refusal::PolicyChanged);
     }
+    if now <= at.saturating_add(pause_after_seconds) {
+        return Some(Refusal::RecentSandboxActivity);
+    }
+    quiet_pause_refusal(sandbox, live_agents, now, pause_after_seconds)
 }
 
-/// The quiet-pause eligibility predicate without an inactivity threshold
-/// bound: a platform spend stop pauses every quiet Sandbox immediately.
+/// Quiet-pause eligibility without an inactivity threshold bound.
 pub fn is_quiet_pause_candidate(
     sandbox: &Sandbox,
     live_agents: &[SandboxAgentActivity],
     now: &str,
     idle_after_seconds: u64,
 ) -> bool {
-    let pause_after_seconds = idle_after_seconds;
-    let Some(now) = seconds_from_rfc3339(now) else {
-        return false;
-    };
-    let Some(runtime) = sandbox.runtime.as_ref() else {
-        return false;
-    };
-    if sandbox.status != SandboxStatus::Active
-        || runtime.runtime_id.trim().is_empty()
-        || runtime.runtime_version.trim().is_empty()
-        || seconds_from_rfc3339(&runtime.bound_at).is_none()
-        || live_agents.is_empty()
-    {
-        return false;
-    }
-
-    let mut agent_ids = BTreeSet::new();
-    live_agents.iter().all(|activity| {
-        activity.sandbox_id == sandbox.id
-            && agent_ids.insert(&activity.agent_id)
-            && matches!(activity.status, AgentStatus::Ready | AgentStatus::Paused)
-            && complete_conversation_identity(activity)
-            && activity.active_turn.is_none()
-            && !activity.work_pending
-            && !activity.stop_requested
-            && !activity.queued_messages_present
-            && !activity.external_activity_present
-            && !activity.open_terminal_or_desktop_session
-            && activity.newest_log.as_ref().is_some_and(|newest| {
-                newest.agent_id == activity.agent_id
-                    && newest.seq == activity.last_seq
-                    && seconds_from_rfc3339(&newest.appended_at)
-                        .is_some_and(|appended| now > appended.saturating_add(pause_after_seconds))
-            })
+    seconds_from_rfc3339(now).is_some_and(|now| {
+        quiet_pause_refusal(sandbox, live_agents, now, idle_after_seconds).is_none()
     })
+}
+
+fn quiet_pause_refusal(
+    sandbox: &Sandbox,
+    live_agents: &[SandboxAgentActivity],
+    now: u64,
+    idle_after_seconds: u64,
+) -> Option<InactivityPauseRefusal> {
+    if sandbox.status != SandboxStatus::Active {
+        return Some(Refusal::SandboxNotActive);
+    }
+    if !sandbox.runtime.as_ref().is_some_and(|runtime| {
+        !runtime.runtime_id.trim().is_empty()
+            && !runtime.runtime_version.trim().is_empty()
+            && seconds_from_rfc3339(&runtime.bound_at).is_some()
+    }) {
+        return Some(Refusal::InvalidRuntime);
+    }
+    if live_agents.is_empty() {
+        return Some(Refusal::NoLiveAgents);
+    }
+    let mut agent_ids = BTreeSet::new();
+    for activity in live_agents {
+        if activity.sandbox_id != sandbox.id || !agent_ids.insert(&activity.agent_id) {
+            return Some(Refusal::InvalidAgentSet);
+        }
+        if let Some(refusal) = agent_pause_refusal(activity, now, idle_after_seconds) {
+            return Some(refusal);
+        }
+    }
+    None
+}
+
+fn agent_pause_refusal(
+    activity: &SandboxAgentActivity,
+    now: u64,
+    idle_after_seconds: u64,
+) -> Option<InactivityPauseRefusal> {
+    if !matches!(activity.status, AgentStatus::Ready | AgentStatus::Paused) {
+        return Some(Refusal::AgentNotQuiet);
+    }
+    if !complete_conversation_identity(activity) {
+        return Some(Refusal::MissingConversation);
+    }
+    if activity.active_turn.is_some()
+        || activity.work_pending
+        || activity.stop_requested
+        || activity.queued_messages_present
+    {
+        return Some(Refusal::PendingAgentWork);
+    }
+    if activity.external_activity_present {
+        return Some(Refusal::PendingCommand);
+    }
+    if activity.open_terminal_or_desktop_session {
+        return Some(Refusal::OpenSession);
+    }
+    let Some(newest) = &activity.newest_log else {
+        return Some(Refusal::MissingLogEvidence);
+    };
+    let Some(appended_at) = seconds_from_rfc3339(&newest.appended_at) else {
+        return Some(Refusal::InvalidLogEvidence);
+    };
+    if newest.agent_id != activity.agent_id || newest.seq != activity.last_seq {
+        return Some(Refusal::InvalidLogEvidence);
+    }
+    (now <= appended_at.saturating_add(idle_after_seconds)).then_some(Refusal::RecentAgentActivity)
 }
 
 /// Pause eligibility under a platform spend stop (decision 26). Every live
