@@ -11,6 +11,7 @@ from unittest.mock import Mock, patch
 
 from cleanup import cleanup
 from application_fixture import objects as application_objects
+from desktop_policy import install as install_desktop_policy
 from infrastructure import Infrastructure
 from run_ci import run as run_ci
 
@@ -617,6 +618,22 @@ class DesktopPolicyTests(unittest.TestCase):
         request = self.request()
         request['object']['spec']['containers'][0]['securityContext']['capabilities']['add'] = ['SYS_ADMIN']
         self.assertFalse(self.module.admit(request)['allowed'])
+
+    def test_api_server_calls_fail_closed_webhook_only_for_exact_desktop_image(self):
+        with tempfile.TemporaryDirectory() as directory:
+            infrastructure = Mock(output=Path(directory), node='disposable-kind-node')
+            for name in ('desktop-amd64.seccomp.json', 'admission.crt', 'admission.key'):
+                (infrastructure.output / name).write_text('synthetic fixture')
+            infrastructure.command.side_effect = ['x86_64', 'test-kernel', '', '', '', '']
+            install_desktop_policy(infrastructure, self.module.IMAGE, 'utility-image')
+            webhook = json.loads(infrastructure.k.call_args.kwargs['data'])['webhooks'][0]
+        self.assertEqual(webhook['failurePolicy'], 'Fail')
+        self.assertEqual(webhook['namespaceSelector'], {
+            'matchLabels': {'kubernetes.io/metadata.name': 'cma-native-am'},
+        })
+        self.assertEqual(webhook['matchConditions'], [{'name': 'desktop-runtime', 'expression':
+            'object.spec.containers.exists(container, container.name == "runtime" && '
+            f'container.image == {json.dumps(self.module.IMAGE)})'}])
 
 
 if __name__ == '__main__':

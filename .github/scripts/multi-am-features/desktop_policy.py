@@ -49,6 +49,11 @@ def install(infra, image, utility_image):
             'name': 'desktop.multi-am.cma.invalid', 'admissionReviewVersions': ['v1'],
             'sideEffects': 'None', 'failurePolicy': 'Fail', 'timeoutSeconds': 5,
             'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'cma-native-am'}},
+            # Match the same exact runtime image as the handler. A desktop
+            # admission outage must not prevent unrelated fixture Pods starting.
+            'matchConditions': [{'name': 'desktop-runtime', 'expression':
+                'object.spec.containers.exists(container, container.name == "runtime" && '
+                f'container.image == {json.dumps(image)})'}],
             'clientConfig': {'caBundle': base64.b64encode(cert.read_bytes()).decode(),
                 'service': {'namespace': 'cma-native-am', 'name': 'desktop-policy', 'path': '/mutate', 'port': 443}},
             'rules': [{'operations': ['CREATE'], 'apiGroups': [''], 'apiVersions': ['v1'], 'resources': ['pods']}],
