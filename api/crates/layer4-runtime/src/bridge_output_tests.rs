@@ -67,6 +67,32 @@ async fn wrong_stream_zero_and_future_acknowledgements_preserve_output() {
 }
 
 #[tokio::test]
+async fn cursor_exhaustion_disables_replay_without_wrapping_or_acknowledging_new_output() {
+    let output = OutputRetention::default();
+    let durable_cursor = u64::MAX - 1;
+    {
+        let mut journal = output.journal.lock().await;
+        journal.last_cursor = durable_cursor;
+        journal.acknowledged = Some((durable_cursor, [0; 32]));
+    }
+    output.retain(b"last representable frame").await;
+    let frames = output.snapshot(durable_cursor).await.unwrap().frames;
+    assert_eq!(frames.len(), 1);
+    assert_eq!(frames[0].cursor, u64::MAX);
+    assert!(output.recovery_evidence().await.is_none());
+
+    let changes = output.subscribe();
+    output.retain(b"cannot assign an output position").await;
+    assert!(changes.has_changed().unwrap());
+    assert_eq!(output.snapshot(durable_cursor).await.err(), Some(1));
+    assert!(output.recovery_evidence().await.is_none());
+    let journal = output.journal.lock().await;
+    assert_eq!(journal.last_cursor, u64::MAX);
+    assert_eq!(journal.acknowledged_through(), durable_cursor);
+    assert_eq!(journal.held.front(), frames.first());
+}
+
+#[tokio::test]
 async fn delayed_consumer_recovers_more_than_the_legacy_broadcast_capacity() {
     let output = OutputRetention::default();
     let mut changed = output.subscribe();

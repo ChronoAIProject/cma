@@ -22,6 +22,7 @@
           "policy_revision": 2,
           "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
           "revalidate_at": null,
+          "access_revalidate_at": null,
           "files": {
             "state": "available",
             "reason": "authorized_mounted_home",
@@ -78,6 +79,7 @@
           "policy_revision": 4,
           "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
           "revalidate_at": "2030-01-01T00:00:00Z",
+          "access_revalidate_at": "2030-01-01T00:00:00Z",
           "files": {
             "state": "available",
             "reason": "authorized_mounted_home",
@@ -136,6 +138,7 @@
           "policy_revision": 4,
           "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
           "revalidate_at": "2030-01-01T00:00:00Z",
+          "access_revalidate_at": "2030-01-01T00:00:00Z",
           "files": {
             "state": "available",
             "reason": "authorized_mounted_home",
@@ -194,6 +197,7 @@
           "policy_revision": 2,
           "runtime_incarnation": null,
           "revalidate_at": null,
+          "access_revalidate_at": null,
           "files": {
             "state": "temporarily_unavailable",
             "reason": "runtime_not_ready",
@@ -250,6 +254,7 @@
           "policy_revision": 2,
           "runtime_incarnation": null,
           "revalidate_at": null,
+          "access_revalidate_at": null,
           "files": {
             "state": "unsupported",
             "reason": "mounted_home_unsupported",
@@ -306,6 +311,7 @@
           "policy_revision": 2,
           "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
           "revalidate_at": null,
+          "access_revalidate_at": null,
           "files": {
             "state": "not_enabled",
             "reason": "runtime_not_active",

@@ -1,5 +1,7 @@
 //! Majority-durable Mongo execution for agent control plans.
 
+use std::time::Duration;
+
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::sandbox::store::{
     AgentControlResult, AgentControlStoreError, AgentDeleteRequest, AgentStopRequest,
@@ -20,6 +22,7 @@ use super::sandbox_mongo::{
 };
 
 const CONTROL_ATTEMPTS: usize = 8;
+const CONTROL_WRITER_WAIT: Duration = Duration::from_secs(5);
 pub(super) mod restart;
 pub(super) mod restart_cancel;
 pub(super) mod restart_dispatch;
@@ -77,6 +80,24 @@ async fn schedule_control(
     request: ControlRequest,
 ) -> Result<AgentControlResult, AgentControlStoreError> {
     let operation = ControlOperation::new(request);
+    // Use the same local queue as conversation publication and targeted
+    // commands. Mongo still fences concurrent writers on other replicas.
+    let _writer = if store.agent_control_write_coordination {
+        let deadline = tokio::time::Instant::now() + CONTROL_WRITER_WAIT;
+        Some(
+            store
+                .agent_writes
+                .lock_until(&operation.request.target().agent_id, deadline)
+                .await
+                .ok_or_else(|| {
+                    AgentControlStoreError::Unavailable(
+                        "timed out waiting for the Agent writer".into(),
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
     let row = store
         .agents
         .find_one(doc! {"_id":operation.request.target().agent_id.as_str()})
@@ -97,9 +118,7 @@ async fn schedule_control(
     let mut last_transient = None;
     let mut last_was_conflict = false;
     for attempt in 0..CONTROL_ATTEMPTS {
-        if attempt > 0 {
-            tokio::task::yield_now().await;
-        }
+        super::contention::backoff(attempt).await;
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if is_transient(&error) => {

@@ -339,16 +339,21 @@ async fn prepared_connection_executes_concurrent_stop_instead_of_stranding_its_l
         .await
         .unwrap()
         .unwrap();
+    let now = SystemTime::now();
     fixture
         .store
         .schedule_agent_stop(AgentStopRequest {
             target: AgentControlTarget::from(&ready),
             reason: layer2_core::sandbox::AgentStopReason::Owner,
-            requested_at: rfc3339_at(at()),
+            requested_at: rfc3339_at(now),
         })
         .await
         .unwrap();
-    finish(&fixture, &fixture.context).await;
+    fixture
+        .worker
+        .publish_prepared_connection(&fixture.agent, &fixture.context, &fixture.attachment, now)
+        .await
+        .unwrap();
     let current = fixture
         .store
         .get_agent(&fixture.agent.id)
