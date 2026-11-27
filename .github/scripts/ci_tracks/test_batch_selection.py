@@ -127,6 +127,24 @@ class BatchTests(unittest.TestCase):
                     self.assertRaises(SelectionIntegrityError):
                 batch_selection.determine_many(self.root, [stale, repair])
 
+    def test_web_recipe_manifest_repair_replays_the_stale_historical_revision(self):
+        path = 'web/Dockerfile'
+        previous = sha256((self.root / path).read_bytes()).hexdigest()
+        self.write(path, (self.root / path).read_text() + 'ENV WEB_DRAIN_FIXTURE=1\n')
+        current = sha256((self.root / path).read_bytes()).hexdigest()
+        stale = self.commit()
+        with self.assertRaises(SelectionIntegrityError):
+            batch_selection.determine_many(self.root, [stale])
+        manifest = self.root / '.github/scripts/deployables.json'
+        self.write('.github/scripts/deployables.json', manifest.read_text().replace(previous, current))
+        repaired = self.commit()
+        with patch.object(image_inputs, 'PRE_WEB_DRAIN_RECIPE', previous), \
+                patch.object(image_inputs, 'WEB_DRAIN_RECIPE', current):
+            plans = batch_selection.determine_many(self.root, [stale, repaired])
+            self.assertEqual([row['deployables'] for row in plans], [['cma-web'], ['cma-web']])
+        with self.assertRaises(SelectionIntegrityError):
+            batch_selection.determine_many(self.root, [stale, repaired])
+
     def test_warm_cache_reuses_only_complete_comparisons_then_analyzes_new_source(self):
         cache = SelectionCache(self.root / 'cache', 'e' * 64)
         old = batch_selection.determine_many(self.root, self.revisions[:2], cache)

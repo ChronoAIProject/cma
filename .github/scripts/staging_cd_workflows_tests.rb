@@ -463,7 +463,7 @@ class StagingWorkflowTest < Minitest::Test
     deploy = workflow('staging-deploy')
     job = deploy['jobs']['deploy']
     # Verification or, after it, the coordinator under the set lock may find the set overtaken.
-    assert_equal '${{ steps.release.outputs.disposition || steps.coordinate.outputs.disposition }}',
+    assert_equal '${{ steps.release.outputs.disposition || steps.web-admission.outputs.disposition || steps.coordinate.outputs.disposition }}',
                  job.dig('outputs', 'disposition')
     trigger = deploy['on'] || deploy.fetch(true)
     assert_equal '${{ jobs.deploy.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
@@ -492,6 +492,21 @@ class StagingWorkflowTest < Minitest::Test
     admit = promote['jobs']['admit']
     assert_equal '${{ steps.set.outputs.disposition }}', admit.dig('outputs', 'disposition')
     assert_equal 'automatic', admit['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_RESOLVE_MODE')
+  end
+
+  def test_web_admission_runs_after_private_setup_for_both_attempts
+    deploy = workflow('staging-deploy').dig('jobs', 'deploy', 'steps')
+    verify = deploy.index { |step| step['id'] == 'web-admission' }
+    coordinate = deploy.index { |step| step['id'] == 'coordinate' }
+    assert_operator deploy.index { |step| step['name'] == 'Install reviewed private controller requirements' }, :<, verify
+    assert_equal verify + 1, coordinate
+    assert_equal 'verify-web-at-deploy', deploy[verify].dig('env', 'CD_RESOLVE_MODE')
+    assert_includes deploy[coordinate]['if'], "steps.web-admission.outputs.disposition == ''"
+    assert_includes deploy[coordinate].dig('env', 'CD_STARTED_AT'), 'steps.web-admission.outputs.started_at'
+    %w[deploy redeploy].each do |name|
+      assert_equal "${{ inputs.lane == 'web' }}",
+                   workflow('staging-promote').dig('jobs', name, 'with', 'verify_web_at_deploy')
+    end
   end
 
   def test_only_the_locked_staging_promotion_admission_reads_prior_proofs

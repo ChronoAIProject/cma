@@ -4,18 +4,52 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from staging_cd_admission import event_identity, maintainer_dispatch
 from staging_cd_common import Refusal
 from staging_cd_history import DevelopHistory
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
-from staging_cd_resolve import components, resolve, verify
+from staging_cd_resolve import components, main, resolve, verify
 
 
 class ResolveTests(unittest.TestCase):
     def setUp(self):
         self.history = DevelopHistory("f" * 40, ["f" * 40, "a" * 40])
+
+    def test_expired_automatic_web_stamp_is_replaced_only_after_verifying_candidate(self):
+        release = {"receipts": {"web": fixture_receipt()}}
+        env = {"CD_RESOLVE_MODE": "verify-web-at-deploy", "CD_DEPLOY_MODE": "release",
+               "CD_STARTED_AT": "2000-01-01T00:00:00Z", "GITHUB_EVENT_NAME": "push",
+               "CD_RELEASE_SET": json.dumps(release)}
+        trace = []
+        def verify_candidate(candidate, *_args, **kwargs):
+            self.assertEqual(candidate, release)
+            self.assertTrue(kwargs["automatic"])
+            trace.append("verified")
+            return candidate
+        def stamp():
+            self.assertEqual(trace, ["verified"])
+            return "2026-11-28T00:00:01Z"
+        with tempfile.TemporaryDirectory() as temp, \
+                patch.dict(os.environ, env | {"GITHUB_OUTPUT": str(Path(temp) / "out")}, clear=True), \
+                patch("staging_cd_resolve.GitHub"), patch("staging_cd_resolve.Registry"), \
+                patch("staging_cd_resolve.event_identity"), patch("staging_cd_clock.run_created") as authorize, \
+                patch("staging_cd_set.verify_set", side_effect=verify_candidate) as verify_set, \
+                patch("staging_cd_clock.timestamp", side_effect=stamp) as timestamp, \
+                patch("staging_cd_clock.remaining") as remaining:
+            self.assertEqual(main(), 0)
+            authorize.assert_called_once()
+            remaining.assert_called_once_with("2026-11-28T00:00:01Z", mode="release", env=os.environ)
+            self.assertIn("started_at=2026-11-28T00:00:01Z", (Path(temp) / "out").read_text())
+            verify_set.reset_mock(side_effect=True)
+            timestamp.reset_mock()
+            for change in ({"GITHUB_EVENT_NAME": "workflow_dispatch"}, {"CD_TARGET": "production"},
+                           {"CD_DEPLOY_MODE": "bootstrap"}, {"CD_RELEASE_SET": '{"receipts":{"am":{}}}'}):
+                with self.subTest(change), patch.dict(os.environ, change):
+                    self.assertNotEqual(main(), 0)
+            verify_set.assert_not_called()
+            timestamp.assert_not_called()
 
     def test_parallel_component_selection_is_exact(self):
         self.assertEqual(components("am,eg,web"), ["am", "eg", "web"])
