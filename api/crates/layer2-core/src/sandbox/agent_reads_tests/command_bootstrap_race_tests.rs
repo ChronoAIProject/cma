@@ -14,6 +14,7 @@ mod prepared;
 enum Progress {
     Parent,
     Agent,
+    ConversationOutput,
     TwoAgentRevisions,
     PreparedReady,
     ModelChange,
@@ -61,6 +62,7 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
         {
             match self.progress {
                 Progress::Agent
+                | Progress::ConversationOutput
                 | Progress::TwoAgentRevisions
                 | Progress::PreparedReady
                 | Progress::Stop => {
@@ -72,6 +74,20 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
                         .unwrap();
                     let revision = agent.revision;
                     agent.revision += 1;
+                    if matches!(self.progress, Progress::ConversationOutput) {
+                        let appended = self
+                            .store
+                            .append_agent_log(
+                                &agent.id,
+                                NOW.into(),
+                                AgentLogKind::AgentMessage {
+                                    content: "Output from the active turn".into(),
+                                },
+                            )
+                            .await
+                            .unwrap();
+                        agent.conversation.last_seq = appended.seq;
+                    }
                     if matches!(self.progress, Progress::Stop) {
                         agent.requested_stop_reason = Some(AgentStopReason::Owner);
                     }
@@ -111,6 +127,52 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
             .command_admission_authority(context, credential, owner)
             .await
     }
+}
+
+#[tokio::test]
+async fn queued_message_refreshes_after_output_from_the_same_active_turn() {
+    let (store, authority, mut agent) = retry_results::ordinary_fixture().await;
+    let revision = agent.revision;
+    agent.status = AgentStatus::Working;
+    agent.conversation.active_turn = Some(1);
+    agent.revision += 1;
+    store.save_agent(revision, agent).await.unwrap();
+
+    let (service, progressing) = service(&store, authority, Progress::ConversationOutput);
+    let owner = context("owner");
+    let request = submission("queued-during-output");
+    let accepted = service
+        .admit(
+            &owner,
+            "selected-credential",
+            CommandSubmissionSource::Api,
+            request.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.status, AgentResponseStatus::Queued);
+    assert_eq!(progressing.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        service
+            .lookup_admitted(
+                &owner,
+                "selected-credential",
+                CommandSubmissionSource::Api,
+                request
+            )
+            .await
+            .unwrap(),
+        Some(accepted)
+    );
+    assert_eq!(
+        store
+            .command_work_page(&PageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
 }
 
 async fn bootstrap_fixture() -> (Arc<InMemorySandboxStore>, Arc<Authority>, Agent) {

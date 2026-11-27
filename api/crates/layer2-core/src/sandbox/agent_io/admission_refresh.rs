@@ -100,11 +100,17 @@ fn same_retained_target(previous: &AuthorizedResource, next: &AuthorizedResource
     {
         return false;
     }
-    // Exclude only record stamps. The retained boot, conversation, settings and
-    // lifecycle state must still be the ones the caller authorized.
     let mut comparable_agent = updated_agent.clone();
     comparable_agent.revision = agent.revision;
     comparable_agent.updated_at.clone_from(&agent.updated_at);
+    // Output can advance the history cursor while the same turn is active.
+    // Keep the turn, retained boot, settings and lifecycle in the comparison.
+    if agent.conversation.active_turn.is_some()
+        && agent.conversation.active_turn == updated_agent.conversation.active_turn
+        && agent.conversation.last_seq <= updated_agent.conversation.last_seq
+    {
+        comparable_agent.conversation.last_seq = agent.conversation.last_seq;
+    }
     let mut comparable_sandbox = next.sandbox.clone();
     comparable_sandbox.revision = previous.sandbox.revision;
     comparable_sandbox
