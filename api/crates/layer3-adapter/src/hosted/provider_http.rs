@@ -5,7 +5,10 @@ use crate::AdapterError;
 
 pub(super) const CONTROL_RESPONSE_BYTES: usize = 384 * 1024 * 1024;
 
-pub(super) async fn decode_control(response: reqwest::Response) -> crate::Result<ResponseFrame> {
+pub(super) async fn decode_control(
+    response: reqwest::Response,
+    operation: crate::wire::WireOperation,
+) -> crate::Result<ResponseFrame> {
     let status = response.status();
     if response
         .content_length()
@@ -19,6 +22,7 @@ pub(super) async fn decode_control(response: reqwest::Response) -> crate::Result
     let mut stream = response.bytes_stream();
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| {
+            crate::workspace_prepare_observation::transport(operation);
             AdapterError::Unavailable(format!("runtime control response failed: {error}"))
         })?;
         if bytes.len().saturating_add(chunk.len()) > CONTROL_RESPONSE_BYTES {
