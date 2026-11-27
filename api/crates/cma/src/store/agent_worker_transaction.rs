@@ -218,6 +218,15 @@ async fn apply_publication_observed(
     {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
+    #[cfg(test)]
+    if current.work.step == AgentWorkStep::FenceInteraction {
+        use pending_adoption::test_hooks::{self, Boundary};
+        test_hooks::stop(
+            &store.agents.namespace().db,
+            Boundary::BeforeInteractionFenceAuthority,
+        )
+        .await;
+    }
     store
         .fence_agent_effect_transaction(&mutation.agent.id, session)
         .await
