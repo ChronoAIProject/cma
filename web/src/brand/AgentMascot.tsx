@@ -11,6 +11,7 @@ interface AgentMascotProps {
   readonly size: AgentMascotSize;
   readonly ref?: Ref<HTMLSpanElement>;
   readonly playback?: MascotPlayback;
+  readonly decorative?: boolean;
 }
 
 function resolvedTheme() {
@@ -21,6 +22,10 @@ function subscribeToTheme(notify: () => void) {
   const observer = new MutationObserver(notify);
   observer.observe(document.body, { attributeFilter: ['data-ds-dark-theme'] });
   return () => observer.disconnect();
+}
+
+export function useBrandTheme() {
+  return useSyncExternalStore(subscribeToTheme, resolvedTheme);
 }
 
 function Poster({ src, size }: { readonly src: string; readonly size: AgentMascotSize }) {
@@ -70,8 +75,8 @@ function Sprite({
   );
 }
 
-export function AgentMascot({ visual, size, ref, playback }: AgentMascotProps) {
-  const theme = useSyncExternalStore(subscribeToTheme, resolvedTheme);
+export function AgentMascot({ visual, size, ref, playback, decorative }: AgentMascotProps) {
+  const theme = useBrandTheme();
   const slot = useRef<HTMLSpanElement>(null);
   useImperativeHandle(ref, () => slot.current!, []);
   const motion = agentMascotAssets[visual.action];
@@ -101,7 +106,7 @@ export function AgentMascot({ visual, size, ref, playback }: AgentMascotProps) {
           />
         )}
       </span>
-      <span>{visual.label}</span>
+      {decorative ? null : <span>{visual.label}</span>}
     </span>
   );
 }

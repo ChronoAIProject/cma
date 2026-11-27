@@ -52,7 +52,7 @@ it('retains the current authorized retired Agent once without inventing hierarch
   );
   expect(screen.getByText('Shown because you’re viewing it.')).toBeVisible();
   expect(screen.getByText('No other agents to show.')).toBeVisible();
-  expect(container.querySelector('.character-avatar')).toHaveAttribute('data-motion', 'still');
+  expect(container.querySelector('img')?.src).toContain('/rest/poster-');
   expect(screen.queryByRole('button', { name: /Options/ })).not.toBeInTheDocument();
   expect(props.navigation.items).toEqual([]);
 });

@@ -1,9 +1,8 @@
-import { render, screen, within } from '@testing-library/react';
+import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { navigationFixture } from '../test/hierarchy';
 import { activityLabel } from './Tree';
-import { agentSignal } from './treePresentation';
 import { renderTree } from './Tree.test-support';
 
 it.each(['agent', 'sandbox'] as const)(
@@ -128,14 +127,12 @@ describe('Sandbox navigation tree', () => {
     expect(agent).not.toHaveAttribute('data-dimmed');
     expect(within(agent as HTMLElement).getByText('Ready')).toBeInTheDocument();
     expect(screen.queryByText('agent/one')).not.toBeInTheDocument();
-    // The Agent leads with its still, settled character rather than a generic glyph.
-    const character = agent?.querySelector('.tree-row__icon .character-avatar');
-    expect(character).toHaveAttribute('data-pose', 'idle');
-    expect(character).toHaveAttribute('data-motion', 'still');
-    expect(character).toHaveStyle({ width: '20px', height: '20px' });
+    const poster = agent?.querySelector('.tree-row__icon .agent-mascot__poster');
+    expect(poster?.getAttribute('src')).toContain('/ready/poster-');
+    expect(poster).toHaveAttribute('width', '16');
   });
 
-  it('dresses each Agent in its Sandbox colour', () => {
+  it('keeps Sandbox colour beside the Agent poster', () => {
     renderTree({
       items: navigationFixture().map((item) => ({
         ...item,
@@ -143,21 +140,9 @@ describe('Sandbox navigation tree', () => {
       })),
     });
     const agent = screen.getByText('Agent one').closest('[role="treeitem"]');
-    const character = agent?.querySelector<HTMLElement>('.tree-row__icon .character-avatar');
-    expect(character?.style.color).toBe('rgb(47, 150, 250)');
-  });
-
-  it('lets approval and failure colours replace the Sandbox colour', () => {
-    for (const [status, tone] of [
-      ['waiting_approval', 'warning'],
-      ['failed', 'error'],
-    ] as const) {
-      const { container, unmount } = render(<>{agentSignal(status, 'agt_1', 20, '#2f96fa')}</>);
-      const character = container.querySelector<HTMLElement>('.character-avatar');
-      expect(character).toHaveAttribute('data-tone', tone);
-      expect(character?.style.color).toBe('');
-      unmount();
-    }
+    expect(agent?.querySelector('.tree-row__signal-color')).toHaveStyle({
+      backgroundColor: '#2f96fa',
+    });
   });
 });
 

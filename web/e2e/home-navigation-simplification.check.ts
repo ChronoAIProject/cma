@@ -303,7 +303,7 @@ for (const width of [1440, 390, 320]) {
         'page',
       );
       await expect(sidebar.getByRole('treeitem')).toHaveCount(1);
-      await expect(group.locator('.character-avatar')).toHaveAttribute('data-motion', 'still');
+      await expect(group.locator('.agent-mascot__poster')).toHaveAttribute('src', /poster-/);
       await expect(sidebar.getByText('No other agents to show.')).toBeVisible();
       await sidebar.getByRole('button', { name: 'Filter', exact: true }).click();
       await sidebar.getByRole('button', { name: 'Agent status filter' }).click();

@@ -4,9 +4,9 @@ import { NavigationSettingsContext } from './sidebarContext';
 import type { AppRoute } from '../routing/routes';
 import { routePath } from '../routing/routes';
 import { ServiceMenu } from '../services/ServiceMenu';
-import markMarkup from '../assets/brand/cma-mark.svg?raw';
+import { pixelBrand } from '../assets/brand/pixel/identity';
+import { useBrandTheme } from '../brand/AgentMascot';
 import './Sidebar.css';
-const markHtml = { __html: markMarkup };
 
 /** One navigation row under the action row, such as Triggers. */
 export interface SidebarLink {
@@ -65,6 +65,7 @@ export function Sidebar({
   route = { kind: 'agent_manager' },
   onNavigate,
 }: SidebarProps) {
+  const mark = pixelBrand.mark[useBrandTheme()];
   const unavailableId = 'sidebar-new-agent-reason';
   const [settingsHost, setSettingsHost] = useState<HTMLDivElement | null>(null);
   return (
@@ -86,7 +87,7 @@ export function Sidebar({
             else onNavigate?.({ kind: 'home' });
           }}
         >
-          <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
+          <img className="sidebar__mark" src={mark} alt="" width={32} height={32} />
         </a>
         <ServiceMenu route={route} collapsed={collapsed} onNavigate={onNavigate ?? (() => {})} />
         {onToggleCollapsed === undefined ? null : (
