@@ -33,11 +33,14 @@ fn covered_request(
 #[tokio::test]
 #[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
 async fn covered_validation_refusal_is_atomic_and_replays_with_no_allocation() {
-    let (mut store, reader, today) = fixture().await;
+    let (mut store, mut rotated, today) = fixture().await;
     let owner = SubjectId::new("owner");
     let (off, _, _off_workers) = routes(&store).await;
     store.config.validation_settlement = true;
     let (on, _, _on_workers) = routes(&store).await;
+    rotated.config.validation_settlement = true;
+    rotated.config.epoch = "f".repeat(32);
+    let (after_rotation, _, _rotated_workers) = routes(&rotated).await;
     for (nonce, body, problem_code, field) in [
         (
             "a",
@@ -65,7 +68,7 @@ async fn covered_validation_refusal_is_atomic_and_replays_with_no_allocation() {
         assert_eq!(baseline["field"].as_str(), field);
         let exact = identity(&store, &owner, &request);
         assert_eq!(
-            reader.lookup(&exact, &request).await.unwrap(),
+            store.lookup(&exact, &request).await.unwrap(),
             Outcome::Unknown {
                 reason: UnknownReason::CoverageUnavailable,
             }
@@ -75,7 +78,7 @@ async fn covered_validation_refusal_is_atomic_and_replays_with_no_allocation() {
         let first = on.clone().oneshot(submit(body)).await.unwrap();
         assert_eq!(first.status(), StatusCode::UNPROCESSABLE_ENTITY);
         drop(first);
-        let proof = reader.lookup(&exact, &request).await.unwrap();
+        let proof = rotated.lookup(&exact, &request).await.unwrap();
         assert!(matches!(
             proof,
             Outcome::Refused {
@@ -90,8 +93,49 @@ async fn covered_validation_refusal_is_atomic_and_replays_with_no_allocation() {
         );
         // A wire change preserves the semantic error but cannot reuse the key.
         call(&on, submit(&format!("{body} ")), StatusCode::CONFLICT).await;
-        assert_eq!(reader.lookup(&exact, &request).await.unwrap(), proof);
+        let before = store.records.count_documents(doc! {}).await.unwrap();
+        assert_eq!(
+            call(
+                &after_rotation,
+                submit(body),
+                StatusCode::UNPROCESSABLE_ENTITY
+            )
+            .await,
+            baseline
+        );
+        call(
+            &after_rotation,
+            submit(&format!("{body} ")),
+            StatusCode::CONFLICT,
+        )
+        .await;
+        assert_eq!(rotated.lookup(&exact, &request).await.unwrap(), proof);
+        assert!(matches!(
+            rotated.begin(&exact).await.unwrap(),
+            Begin::Closed
+        ));
+        assert_eq!(
+            store.records.count_documents(doc! {}).await.unwrap(),
+            before
+        );
     }
+    let unadmitted_body = r#"{"name":"Unadmitted Fixture Desktop","desktop":true}"#;
+    let unadmitted = covered_request(&store, &owner, today, &"3".repeat(32), unadmitted_body);
+    let before = store.records.count_documents(doc! {}).await.unwrap();
+    call(
+        &after_rotation,
+        Request::post(Operation::AgentBootstrap.path())
+            .header("content-type", "application/json")
+            .header("Idempotency-Key", &unadmitted.idempotency_key)
+            .body(Body::from(unadmitted_body))
+            .unwrap(),
+        StatusCode::CONFLICT,
+    )
+    .await;
+    assert_eq!(
+        store.records.count_documents(doc! {}).await.unwrap(),
+        before
+    );
     assert_no_allocations(&store).await;
     store.database.drop().await.unwrap();
 }
