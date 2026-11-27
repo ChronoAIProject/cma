@@ -18,7 +18,7 @@ from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapsho
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical
-from staging_cd_reservations import next_reservation
+from staging_cd_reservations import next_reservation, pending_name
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
 from staging_cd_promotion import available_proofs, proven_components
@@ -175,7 +175,7 @@ def run_active(api, reservation):
     return run is not None and run["status"] != "completed"
 
 
-def web_writer_failed(api, reservation):
+def web_finalizer_outcome(api, reservation):
     # A failed Publish can leave an uploaded receipt. Finalize can consume it
     # even after that failure, so wait for both jobs before settling the refs.
     run_id, attempt = reservation["run_id"], reservation["run_attempt"]
@@ -193,11 +193,14 @@ def web_writer_failed(api, reservation):
     writers = [job for job in jobs if job.get("name") in publishers]
     if (len(writers) != 1 or writers[0].get("status") != "completed"
             or writers[0].get("conclusion") not in ("failure", "cancelled", "timed_out")):
-        return False
+        return None
     finalizer_name = publishers[writers[0]["name"]]
     finalizers = [job for job in jobs if job.get("name") == finalizer_name]
-    return (len(finalizers) == 1 and finalizers[0].get("status") == "completed"
-            and finalizers[0].get("conclusion") in ("success", "failure", "cancelled", "timed_out", "skipped"))
+    if len(finalizers) == 1 and finalizers[0].get("status") == "completed":
+        conclusion = finalizers[0].get("conclusion")
+        if conclusion in ("success", "failure", "cancelled", "timed_out", "skipped"):
+            return conclusion
+    return None
 
 
 def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dict, mark=lambda _component, _phase: None):
@@ -265,6 +268,7 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
         owners.setdefault(owner, []).append(item)
 
     final_names = {tag["name"] for tag in finals}
+
     def owner_state(items):
         item = items[0]
         mark(item["component"], "owner-read")
@@ -272,35 +276,48 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, read_proofs=dic
         active = run is not None and run["status"] != "completed"
         web = next((item for item in items if item["component"] == "web"
                     and "cma-web/v" + item["version"] not in final_names), None)
-        failed = web if active and current_event and web is not None and web_writer_failed(api, web) else None
-        return active, failed, run is not None
+        outcome = None
+        if (run is not None and current_event and web is not None
+                and (active or web["source"] != newest[DEPLOYABLES["web"]])):
+            outcome = web_finalizer_outcome(api, web)
+        return active, web, outcome, run is not None
 
-    to_reconcile, abandoned_web, failed_web = [], [], []
-    for items, (active, failed, known) in zip(owners.values(), parallel_read(owner_state, owners.values())):
+    to_reconcile, web_outcomes = [], {}
+    for items, (active, web, outcome, known) in zip(owners.values(), parallel_read(owner_state, owners.values())):
         for item in items:
-            if active and item != failed:
-                if item["source"] == newest[DEPLOYABLES[item["component"]]]:
-                    busy.add(item["component"])
+            selected = item["source"] == newest[DEPLOYABLES[item["component"]]]
+            if not selected and (item != web or outcome is None):
+                continue
+            if active and (item != web or outcome is None):
+                busy.add(item["component"])
             elif DEPLOYABLES[item["component"]] + "/v" + item["version"] not in final_names:
                 to_reconcile.append(item)
-                if item == failed:
-                    failed_web.append(item)
-                elif known and item["component"] == "web":
-                    abandoned_web.append(item)
+                if current_event and known and item == web:
+                    web_outcomes[pending_name(item)] = outcome
     if transition and not new_group_source and busy & GROUP:
         # A partial resume would make group completion replace a live publisher.
         # Leave every peer to that owner while independent components proceed.
         busy.update(GROUP)
-    if to_reconcile:
-        settled = parallel_read(reservations.final_after_owner, to_reconcile)
-        finals.extend(tag for tag in settled if tag is not None)
+    failed_web = []
+    settled = parallel_read(reservations.final_after_owner, to_reconcile) if to_reconcile else []
+    for item, tag in zip(to_reconcile, settled):
+        if tag is not None:
+            finals.append(tag)
+            continue
+        name = pending_name(item)
+        if name not in web_outcomes:
+            continue
+        outcome = web_outcomes[name] or web_finalizer_outcome(api, item)
+        # Successful Finalize proves a final exists. A pending-only advertisement
+        # at this point is stale, so use the existing transient allocation retry.
+        require(outcome != "success", "Terminal reservation settlement is uncertain")
+        if outcome is not None:
+            failed_web.append(item["source"])
     # A failed publication owes a release, even at a successor with zero new Web
     # changes. Build that successor with its current publication policy.
-    if current_event and "web" not in busy:
+    if failed_web and "web" not in busy:
         final_sources = {tag["target"] for tag in finals if tag["receipt"]["identity"]["component"] == "web"}
-        failed = any(item["source"] not in final_sources for item in failed_web)
-        if failed or any(item["source"] not in final_sources and web_writer_failed(api, item)
-                         for item in abandoned_web):
+        if any(source not in final_sources for source in failed_web):
             changes = include_web_head(api, changes, history.head)
             newest[DEPLOYABLES["web"]] = history.head
     latest = {}

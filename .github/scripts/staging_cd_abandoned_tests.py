@@ -94,6 +94,15 @@ class AbandonedTests(unittest.TestCase):
                 writes.final_after_owner.assert_called_once_with(web)
                 writes.insert.assert_not_called()
 
+            for owner_status in ("in_progress", "completed"):
+                with self.subTest(path=prefix, owner_status=owner_status, settlement="successful but missing"):
+                    run["status"] = owner_status
+                    with self.assertRaisesRegex(Refusal, "Terminal reservation settlement is uncertain"):
+                        plan(failed_publish, job(finalize, "completed", "success"))
+                    writes.final_after_owner.assert_any_call(web)
+                    writes.insert.assert_not_called()
+            run["status"] = "in_progress"
+
             with self.subTest(path=prefix, settlement="skipped without final"):
                 [group] = plan(failed_publish, job(finalize, "completed", "skipped"))
                 writes.final_after_owner.assert_called_once_with(web)
