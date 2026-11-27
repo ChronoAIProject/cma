@@ -70,9 +70,13 @@ impl Source {
     }
 
     pub(super) async fn run(&self, f: &Fixture) -> bool {
+        self.run_with_store(f, &f.store).await
+    }
+
+    pub(super) async fn run_with_store(&self, f: &Fixture, store: &CaptureStore) -> bool {
         crate::sandbox_metrics::measured_fixture(
             self.reporting.clone(),
-            &f.store,
+            store,
             self.client.clone(),
             &keys::stream("fixture", &f.stream.id),
         )
