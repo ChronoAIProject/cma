@@ -132,6 +132,28 @@ export async function taskNavigation(page, {agentId, sandboxId, workspaceId}) {
   }
 }
 
+export async function agentOpen(page, {agentId}, {input, answer}) {
+  check(id(agentId) && typeof input === 'string' && input.length > 0
+    && typeof answer === 'string' && answer.length > 0, 'browser_open_turn_witness_required');
+  const agentPath = `/agents/${agentId}`;
+  const views = page.getByRole('group', {name: 'Navigation view', exact: true});
+  const task = page.getByRole('treeitem').locator(`a[href="${agentPath}"]`);
+  const composer = page.getByRole('form', {name: 'Message Agent', exact: true});
+  const message = composer.getByRole('textbox', {name: 'Message', exact: true});
+  const send = composer.getByRole('button', {name: 'Send message', exact: true});
+  for (let visit = 0; visit < 2; visit++) {
+    await page.goto('/agent-manager', {waitUntil: 'domcontentloaded', timeout});
+    await views.getByRole('button', {name: 'Tasks', exact: true}).click({timeout});
+    await task.click({timeout});
+    await page.waitForURL(url => url.pathname === agentPath, {timeout});
+    await page.getByText(input, {exact: true}).waitFor({timeout});
+    await page.getByText(answer, {exact: true}).waitFor({timeout});
+    await message.fill('Check whether the composer is ready.', {timeout});
+    await send.click({trial: true, timeout});
+    await message.fill('', {timeout});
+  }
+}
+
 export async function commandSearch(page, active, retired) {
   const targets = [['agents', active.agentId], ['sandboxes', active.sandboxId], ['workspaces', active.workspaceId]];
   check([...targets.map(([, key]) => key), retired.agentId, retired.sandboxId].every(id),

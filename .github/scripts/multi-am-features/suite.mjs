@@ -34,7 +34,7 @@ import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
 import {accountAppearance, accountBuildVersion, accountDocumentation, accountSignIn, accountSignOut,
   accountTextSize, gatewayDocumentation, gatewayNavigation, legacyNavigation} from './features/account_browser.mjs';
-import {commandSearch, taskDraft, taskNavigation} from './features/task_navigation.mjs';
+import {agentOpen, commandSearch, taskDraft, taskNavigation} from './features/task_navigation.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -117,6 +117,14 @@ async function withBrowser(am_origins, run, name) {
   return outcome;
 }
 
+async function browserCase(am, iteration, name, run) {
+  const start = performance.now();
+  const row = {case: name, phase, iteration, ams: [am], real_browser: true, verdict: 'RUNNING'};
+  try { await run(); row.verdict = 'PASS'; }
+  catch (error) { row.verdict = 'FAIL'; throw error; }
+  finally { row.elapsed_ms = performance.now() - start; await record(row); }
+}
+
 async function accountBrowserCases(ams, witness) {
   const cases = [['user.account_appearance', accountAppearance], ['user.account_text_size', accountTextSize],
     ['user.account_build_version', page => accountBuildVersion(page, config.expected_api_source)],
@@ -126,19 +134,12 @@ async function accountBrowserCases(ams, witness) {
     ['user.navigation_eg_transition', page => gatewayNavigation(page, witness, config.owner_id)],
     ['user.task_draft', page => taskDraft(page, witness)]];
   if (config.eg_origin) cases.push(['eg.public_documentation', gatewayDocumentation]);
-  async function exercise(am, iteration, name, run) {
-    const start = performance.now();
-    const row = {case: name, phase, iteration, ams: [am], real_browser: true, verdict: 'RUNNING'};
-    try { await run(); row.verdict = 'PASS'; }
-    catch (error) { row.verdict = 'FAIL'; throw error; }
-    finally { row.elapsed_ms = performance.now() - start; await record(row); }
-  }
   await withBrowser(ams, async browser => {
     for (let iteration = 1; iteration <= 3; iteration++) {
       for (const am of ['a', 'b']) {
         await browser.forIngress(am, async ({page}) => {
           for (const [name, run] of cases) {
-            await exercise(am, iteration, name, () => run(page));
+            await browserCase(am, iteration, name, () => run(page));
           }
           let document;
           await exercise(am, iteration, 'user.documents_browser_create_after_lost_reply', async () => {
@@ -149,8 +150,8 @@ async function accountBrowserCases(ams, witness) {
         });
         await browser.forIngress(am, async ({page}) => {
           const peer = am === 'a' ? 'b' : 'a';
-          await exercise(am, iteration, 'user.account_sign_in', () => accountSignIn(page, config.owner_id));
-          await exercise(am, iteration, 'user.account_sign_out', () => accountSignOut(page, ams[peer], config.host));
+          await browserCase(am, iteration, 'user.account_sign_in', () => accountSignIn(page, config.owner_id));
+          await browserCase(am, iteration, 'user.account_sign_out', () => accountSignOut(page, ams[peer], config.host));
         }, {freshSession: true});
       }
     }
@@ -332,7 +333,16 @@ try {
           await caseContext.runCase('writer.competing_renames', () => competingRenames(caseContext));
           await caseContext.runCase('writer.rename_publication_retry', () => renameAfterPublicationAbort(caseContext));
           await caseContext.runCase('writer.competing_system_prompts', () => competingSystemPrompts(caseContext));
-          await caseContext.runCase('writer.shared_conversation_ingress', () => sharedIngressReceipt(caseContext));
+          let transcriptWitness;
+          await caseContext.runCase('writer.shared_conversation_ingress', async () => {
+            transcriptWitness = await sharedIngressReceipt(caseContext);
+          });
+          await withBrowser(context.config.ams, async browser => {
+            for (const am of ['a', 'b']) {
+              await browser.forIngress(am, ({page}) => browserCase(am, iteration, 'user.agent_open',
+                () => agentOpen(page, context.record, transcriptWitness)));
+            }
+          }, 'user.agent_open');
           await caseContext.runCase('writer.suggestions_publish_once', () => suggestionsCase(caseContext, false));
           await caseContext.runCase('writer.suggestions_expire_after_rename', () => suggestionsCase(caseContext, true));
         }

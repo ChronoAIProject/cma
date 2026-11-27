@@ -123,4 +123,5 @@ export async function sharedIngressReceipt({api, adapter, record, recordState, r
       await Promise.all(streams.map(stream => stream.done));
     }
   }, recordFailure);
+  return {input, answer: 'WS4 complete ' + marker};
 }
