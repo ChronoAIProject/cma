@@ -69,6 +69,7 @@ impl ResourceCommandExecution {
 fn readiness_error(readiness: CommandReadiness) -> CommandPreparationError {
     match readiness {
         CommandReadiness::Reject(code) => CommandPreparationError::Rejected(code),
+        CommandReadiness::WaitingForActiveTurn => CommandPreparationError::StateChanged,
         _ => CommandPreparationError::AuthorityUnavailable,
     }
 }

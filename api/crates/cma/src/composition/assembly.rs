@@ -263,7 +263,8 @@ impl ControlPlaneComposition {
             config.features.command_reconcile_pacing,
             adapters.model_funding.clone(),
         )?
-        .with_cancel_wake(cancel_wake.clone());
+        .with_cancel_wake(cancel_wake.clone())
+        .with_turn_terminal_wake(stores.sandbox_model.agent_turn_terminal.clone());
         let (sandbox_control_scheduler, sandbox_control_service) = access::sandbox_control(
             &stores,
             resource_access.clone(),
