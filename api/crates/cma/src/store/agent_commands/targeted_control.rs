@@ -151,7 +151,10 @@ async fn execute(
         "response control transaction retries exhausted"
     );
     record_outcome("conflict_exhausted", attempt);
-    Err(CommandLedgerError::Conflict)
+    // A busy store leaves the exact intent recoverable. Only an expired
+    // authority deadline or a domain refusal should become a conflict.
+    request.command.require_current_authority()?;
+    Err(CommandLedgerError::ControlBusy)
 }
 
 fn record_outcome(outcome: &'static str, attempts: u32) {

@@ -183,9 +183,10 @@ async function send(
     )
       throw new Error('The retained control changed while its receipt was being recovered.');
   };
-  return recovery.retry(async () => {
+  const sendAttempt = async () => {
     if (accepted === undefined) {
       await authorize(session, intent.body.command, signal);
+      recovery.checkDeadline();
       requireRetained();
       try {
         accepted = await session.responses.submitControl(
@@ -208,5 +209,13 @@ async function send(
     session.journal.acceptedControl(intent.key, accepted.control.receipt.command_id);
     // Admission or delivery does not end the displayed turn. Only durable replay does.
     return accepted;
-  });
+  };
+  return recovery.retry(
+    sendAttempt,
+    (error) =>
+      intent.body.command.type === 'cancel' &&
+      error instanceof ApiError &&
+      error.status === 503 &&
+      error.code === 'response_control_busy',
+  );
 }
