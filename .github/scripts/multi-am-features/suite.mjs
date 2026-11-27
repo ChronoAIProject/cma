@@ -450,7 +450,7 @@ try {
           });
           await withBrowser(context.config.ams, async browser => {
             for (const am of ['a', 'b']) {
-              await browser.forIngress(am, async ({page}) => {
+              await browser.forIngress(am, async ({page, origin}) => {
                 await browserCase(am, iteration, 'user.agent_open', () => agentOpen(page, context.record, transcriptWitness));
                 await browserCase(am, iteration, 'user.agent_copy_response', () => copyAgentResponse(page, transcriptWitness));
                 await browserCase(am, iteration, 'user.agent_rename', () => agentRename({page, ingress: am, api: user,
@@ -466,7 +466,7 @@ try {
                     operationId: context.record.operationId,
                   }), recordFailure: (stage, error) =>
                     retainFailure(config.matrix_output, stage, error, {case: 'user.browser_file_roundtrip', phase, iteration})}));
-                await browserCase(am, iteration, 'user.answer_deliverables', () => answerDeliverables({page, api: user,
+                await browserCase(am, iteration, 'user.answer_deliverables', () => answerDeliverables({page, origin, api: user,
                   outsider, adapter: context.adapter, ingress: am, ownerId: config.owner_id, record: context.record,
                   recordFailure: (stage, error) =>
                     retainFailure(config.matrix_output, stage, error, {case: 'user.answer_deliverables', phase, iteration})}));

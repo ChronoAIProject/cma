@@ -8,7 +8,7 @@ import {removeFixtureDirectory} from './files_browser.mjs';
 
 const timeout = 20000;
 
-export async function answerDeliverables({page, api, outsider, adapter, ingress, ownerId, record, recordFailure}) {
+export async function answerDeliverables({page, origin, api, outsider, adapter, ingress, ownerId, record, recordFailure}) {
   const {agentId, sandboxId, operationId} = record;
   check([agentId, sandboxId, operationId, ownerId].every(id), 'deliverable_fixture_lineage_required');
   const peer = other(ingress);
@@ -25,7 +25,8 @@ export async function answerDeliverables({page, api, outsider, adapter, ingress,
   const reportText = 'Answer deliverable ' + suffix + '\n';
   const documentTitle = 'deliverable-' + suffix;
   const source = '# Original deliverable ' + suffix + '\n';
-  const updatedSource = source + '\nNew draft.\n';
+  const updatedHeading = 'Edited deliverable ' + suffix;
+  const updatedSource = '# ' + updatedHeading + '\n\nNew draft.\n';
   const createKey = randomUUID();
   const documentId = documentIdentity('doc_', [ownerId, createKey]);
   const documentPath = documents + '/' + documentId;
@@ -41,7 +42,21 @@ export async function answerDeliverables({page, api, outsider, adapter, ingress,
     check(body?.path === target && body.deleted === true, 'deliverable_fixture_file_remove_unbound');
   };
 
-  let folderAttempted, documentAttempted, folder, document, stream;
+  const browserDownloads = new Set();
+  const browserDownloadPath = request => {
+    const url = new URL(request.url());
+    if (request.method() === 'GET' && url.origin === origin
+        && url.pathname.startsWith(agent + '/answers/') && url.pathname.endsWith('/download')) {
+      return decodeURIComponent(url.pathname);
+    }
+    return null;
+  };
+  const observeDownload = request => {
+    const path = browserDownloadPath(request);
+    if (path) browserDownloads.add(path);
+  };
+  let folderAttempted, documentAttempted, folder, document, stream, largeDownload;
+  page.on('request', observeDownload);
   await withRestoration(async () => {
     // Each cleanup target belongs to this journey and is installed only once.
     folderAttempted = true;
@@ -58,7 +73,8 @@ export async function answerDeliverables({page, api, outsider, adapter, ingress,
       key: createKey, allowed: [201], body: {title: documentTitle, markdown: source},
     })).body;
     check(document?.id === documentId && document.title === documentTitle && document.owner_subject === ownerId
-      && document.sha256 === hash(source) && Number.isSafeInteger(document.source_revision),
+      && document.sha256 === hash(source) && Number.isSafeInteger(document.source_revision)
+      && Number.isSafeInteger(document.revision),
     'deliverable_fixture_document_unbound');
     const resources = [{kind: 'live_file', path: report}, {kind: 'live_file', path: large},
       {kind: 'document', id: document.id, revision: document.source_revision}];
@@ -114,6 +130,7 @@ export async function answerDeliverables({page, api, outsider, adapter, ingress,
     const [reportItem, largeItem, documentItem] = descriptions.map(({reference}) =>
       items.find(item => equal(item.reference, reference)));
     const downloadPath = item => listPath + '/' + item.id + '/download';
+    largeDownload = decodeURIComponent(downloadPath(largeItem));
     for (const am of ams) {
       const denied = await outsider.rawRequest(am, 'GET', downloadPath(reportItem),
         {allowed: [403, 404], discardSuccessfulReply: true});
@@ -121,7 +138,6 @@ export async function answerDeliverables({page, api, outsider, adapter, ingress,
         'deliverable_fixture_outsider_download_untyped');
     }
     await page.goto('/agents/' + agentId, {waitUntil: 'domcontentloaded', timeout});
-    const origin = new URL(page.url()).origin;
     await page.getByText(answer, {exact: true}).waitFor({timeout});
     const list = page.getByRole('list', {name: 'Answer deliverables', exact: true})
       .filter({has: page.getByRole('button', {name: 'Preview ' + reportName, exact: true})});
@@ -133,14 +149,10 @@ export async function answerDeliverables({page, api, outsider, adapter, ingress,
       await preview.getByRole('heading', {name: item.reference.name, exact: true}).waitFor({timeout});
     };
     const close = () => preview.getByRole('button', {name: 'Close preview', exact: true}).click({timeout});
-    const isDownload = (request, item) => {
-      const url = new URL(request.url());
-      return request.method() === 'GET' && url.origin === origin
-        && decodeURIComponent(url.pathname) === decodeURIComponent(downloadPath(item));
-    };
     const download = async (item, bytes) => {
+      const target = decodeURIComponent(downloadPath(item));
       const [saved, response] = await Promise.all([page.waitForEvent('download', {timeout}),
-        page.waitForResponse(reply => isDownload(reply.request(), item), {timeout}),
+        page.waitForResponse(reply => browserDownloadPath(reply.request()) === target, {timeout}),
         preview.getByRole('button', {name: 'Download ' + item.reference.name, exact: true}).click({timeout})]);
       try {
         check(response.status() === 200 && saved.suggestedFilename() === item.reference.name
@@ -175,31 +187,29 @@ export async function answerDeliverables({page, api, outsider, adapter, ingress,
     await open(reportItem);
     await preview.getByText('File deleted', {exact: true}).waitFor({timeout});
     await close();
-    const attempted = [];
-    const observeLargeDownload = request => {
-      if (isDownload(request, largeItem)) attempted.push(request);
-    };
-    page.on('request', observeLargeDownload);
-    try {
-      await open(largeItem);
-      await preview.getByText('Preview exceeds the 1 MiB limit. Download to view this file.', {exact: true}).waitFor({timeout});
-      await close();
-    } finally {
-      page.off('request', observeLargeDownload);
-    }
-    check(attempted.length === 0, 'deliverable_fixture_oversize_preview_fetched');
+    await open(largeItem);
+    await preview.getByText('Preview exceeds the 1 MiB limit. Download to view this file.', {exact: true}).waitFor({timeout});
+    await close();
 
     const updated = (await request(peer, 'PATCH', documentPath, {
       key: randomUUID(), body: {expected_revision: document.revision, markdown: updatedSource},
     })).body;
-    check(updated?.id === document.id && updated.source_revision > document.source_revision
-      && updated.revision === updated.source_revision, 'deliverable_fixture_document_update_unbound');
+    check(updated?.id === document.id && updated.revision === document.revision + 1
+      && updated.source_revision > document.source_revision && updated.revision === updated.source_revision
+      && updated.sha256 === hash(updatedSource), 'deliverable_fixture_document_update_unbound');
+    for (const am of ams) {
+      const {body} = await request(am, 'GET', documentPath + '/source');
+      check(body?.id === document.id && body.revision === updated.source_revision
+        && body.markdown === updatedSource, 'deliverable_fixture_document_current_source_changed');
+    }
     await verify(documentItem, 'version_changed');
     await open(documentItem);
     const originalHeading = preview.getByText('Original deliverable ' + suffix, {exact: true});
+    const latestHeading = preview.getByText(updatedHeading, {exact: true});
     const previewFailure = preview.getByText(/^(Preview failed; retry\.|File changed since this answer)$/);
     await poll(async () => {
-      check(!await previewFailure.isVisible(), 'deliverable_fixture_document_preview_changed');
+      check(!await previewFailure.isVisible() && !await latestHeading.isVisible(),
+        'deliverable_fixture_document_preview_changed');
       return originalHeading.isVisible();
     }, Boolean, {timeout, code: 'deliverable_fixture_document_preview_missing'});
     await preview.getByText('Document has a newer revision; download keeps this revision', {exact: true}).waitFor({timeout});
@@ -223,5 +233,6 @@ export async function answerDeliverables({page, api, outsider, adapter, ingress,
         check(body?.code === 'document_not_found', 'deliverable_fixture_document_cleanup_unbound');
       }
     }, recordFailure);
-  }, recordFailure);
+  }, recordFailure).finally(() => page.off('request', observeDownload));
+  check(!browserDownloads.has(largeDownload), 'deliverable_fixture_oversize_preview_fetched');
 }
