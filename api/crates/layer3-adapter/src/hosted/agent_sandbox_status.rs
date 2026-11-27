@@ -53,7 +53,11 @@ impl AgentSandboxBackend {
                         })?;
                     self.client.verify_explicit_runtime_policy(&object).await?;
                     let pod = self.client.pod_binding(handle).await?;
-                    if pod != assigned.pod || !self.assignment_is_current(handle, &assigned) {
+                    // Bootstrap can replay the same assignment while status is in flight.
+                    // Compare its authority after the fresh Pod and policy reads.
+                    if pod != assigned.pod
+                        || self.assignments.lock().unwrap().get(handle) != Some(&assigned)
+                    {
                         return Err(AdapterError::Rejected(
                             "native status assignment changed during exchange".into(),
                         ));
