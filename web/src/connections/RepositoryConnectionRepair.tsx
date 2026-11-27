@@ -238,13 +238,7 @@ function ConnectionDetails({ target, owner, selection }: ConnectionDetailsProps)
           </ul>
         </>
       ) : null}
-      {selection &&
-      !selection.id &&
-      result !== undefined &&
-      (!result.inventory?.connections?.length ||
-        result.inventory.connections.some(
-          (row) => row.granted_scopes?.includes('repo') && !row.account?.observed_scopes,
-        )) ? (
+      {selection && !selection.id && result !== undefined ? (
         <Button
           size="sm"
           disabled={selection.disabled}
