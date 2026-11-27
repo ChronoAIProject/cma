@@ -142,6 +142,7 @@ impl Fixture {
             &self.context,
             Some("test-access"),
             None,
+            None,
         )
         .await
     }
@@ -181,6 +182,7 @@ impl Fixture {
             &self.context,
             Some("test-access"),
             Some(proof),
+            None,
         )
         .await
     }
@@ -188,6 +190,87 @@ impl Fixture {
 
 #[cfg(test)]
 const PREVIEW: &str = "/api/v1/agents/fixture/files/content?path=sample";
+
+#[tokio::test]
+async fn peer_preview_checks_local_custody_without_provider_io() {
+    let f = Fixture::new(true).await;
+    let proof = f.capture(PREVIEW).await;
+    let uri = PREVIEW.parse().unwrap();
+    let claim = proof.peer_claim(&f.auth, &Method::GET, &uri).await.unwrap();
+    let before = f.provider_calls();
+    let (_, receipt) = claim
+        .clone()
+        .resolve(&f.auth, &f.headers, &Method::GET, &uri)
+        .await
+        .unwrap();
+    assert!(receipt.matches(&Method::GET, &uri));
+    assert!(receipt.current(&f.auth).await.is_ok());
+    assert!(matches!(
+        claim
+            .clone()
+            .resolve(&f.auth, &f.headers, &Method::HEAD, &uri)
+            .await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+    let other = "/api/v1/agents/fixture/files/content?path=other"
+        .parse()
+        .unwrap();
+    assert!(matches!(
+        claim
+            .clone()
+            .resolve(&f.auth, &f.headers, &Method::GET, &other)
+            .await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+    let mut state = f
+        .store
+        .subject(&f.context.caller.subject)
+        .await
+        .unwrap()
+        .unwrap();
+    state.revision += 1;
+    state.token_generation += 1;
+    f.store.put_subject(state).await.unwrap();
+    assert_eq!(
+        receipt.current(&f.auth).await,
+        Err(StatusCode::UNAUTHORIZED)
+    );
+    assert!(matches!(
+        claim.resolve(&f.auth, &f.headers, &Method::GET, &uri).await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+    assert_eq!(f.provider_calls(), before);
+}
+
+#[tokio::test]
+async fn peer_preview_refuses_logout_deadline_and_source_epoch_change() {
+    let f = Fixture::new(true).await;
+    let uri = PREVIEW.parse().unwrap();
+    let proof = f.capture(PREVIEW).await;
+    let claim = proof.peer_claim(&f.auth, &Method::GET, &uri).await.unwrap();
+    let (_, receipt) = claim
+        .clone()
+        .resolve(&f.auth, &f.headers, &Method::GET, &uri)
+        .await
+        .unwrap();
+    f.auth.identity_store.invalidate_token("test-access");
+    assert!(matches!(
+        proof.peer_claim(&f.auth, &Method::GET, &uri).await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(10)).await;
+    assert_eq!(
+        receipt.current(&f.auth).await,
+        Err(StatusCode::UNAUTHORIZED)
+    );
+    tokio::time::resume();
+    f.logout().await;
+    assert!(matches!(
+        claim.resolve(&f.auth, &f.headers, &Method::GET, &uri).await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+}
 
 #[tokio::test]
 async fn file_preview_proof_reuses_one_verification_and_is_bound_to_the_request_target() {

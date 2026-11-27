@@ -76,6 +76,15 @@ pub(super) fn current(auth: &AuthState, evidence: &VerifiedSubject) -> bool {
     failure(auth, evidence).is_none()
 }
 
+/// Project the original monotonic deadline to a wall time without extending it.
+pub(super) fn relay_expiry(evidence: &VerifiedSubject, now: SystemTime) -> Option<SystemTime> {
+    let lifetime = evidence.verification.as_ref()?;
+    let wall = lifetime.expires_at?;
+    let monotonic = lifetime.deadline?;
+    let remaining = monotonic.checked_duration_since(Instant::now())?;
+    Some(now.checked_add(remaining)?.min(wall))
+}
+
 pub(super) fn failure(auth: &AuthState, evidence: &VerifiedSubject) -> Option<VerificationCause> {
     if evidence
         .token_expires_at

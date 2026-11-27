@@ -2,6 +2,7 @@
 mod authentication;
 mod control;
 pub(crate) use control::{prestop, DRAIN};
+mod file_identity;
 mod file_read;
 mod file_write;
 mod forward;
@@ -55,6 +56,7 @@ pub(crate) struct Relay {
     authentication: authentication::Authentication,
     public_access: std::sync::OnceLock<Arc<dyn public_access::PublicAuthorization>>,
     settings_owner_routing: std::sync::OnceLock<()>,
+    file_preview_peer_identity: std::sync::OnceLock<()>,
     client: reqwest::Client,
     reopen_client: reqwest::Client,
     slots: Arc<Semaphore>,
@@ -63,6 +65,7 @@ pub(crate) struct Relay {
     body_budget: Arc<Semaphore>,
 }
 
+#[derive(Clone)]
 pub(super) struct Destination {
     member: Member,
     token: OwnershipToken,
@@ -93,6 +96,7 @@ impl Relay {
             authentication: authentication::Authentication::new(key),
             public_access: std::sync::OnceLock::new(),
             settings_owner_routing: std::sync::OnceLock::new(),
+            file_preview_peer_identity: std::sync::OnceLock::new(),
             client: peer_client()
                 .read_timeout(Duration::from_secs(10))
                 .build()
@@ -121,6 +125,10 @@ impl Relay {
 
     pub(crate) fn enable_file_write_handoff(&self) {
         self.authentication.enable_file_write_handoff();
+    }
+
+    pub(crate) fn enable_file_preview_peer_identity(&self) {
+        self.file_preview_peer_identity.get_or_init(|| ());
     }
 
     async fn destination(&self, id: &AgentId) -> Result<Destination, Refusal> {
@@ -199,12 +207,20 @@ impl Relay {
             )),
             None => router,
         };
-        router
+        let router = router
             .layer(axum::middleware::from_fn_with_state(
                 auth,
                 crate::auth::attach_subject,
             ))
-            .layer(axum::middleware::from_fn(ingress::capture))
+            .layer(axum::middleware::from_fn(ingress::capture));
+        if self.file_preview_peer_identity.get().is_some() {
+            router.layer(axum::middleware::from_fn_with_state(
+                self.clone(),
+                file_identity::receive,
+            ))
+        } else {
+            router
+        }
     }
 
     pub(crate) fn file_preview_identity_route(router: axum::Router) -> axum::Router {

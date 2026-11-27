@@ -40,6 +40,12 @@ async fn attach_subject_inner(
     mut request: axum::extract::Request,
     next: Next,
 ) -> Response {
+    let peer_claim = request
+        .extensions_mut()
+        .remove::<super::relay::PeerBrowserClaim>();
+    if let Some(claim) = peer_claim {
+        return attach_file_preview_peer(&auth, request, next, claim).await;
+    }
     if request.uri().path() == layer1_public::rest::creation_outcomes::LOOKUP_PATH {
         if !auth.creation_outcomes_enabled {
             return StatusCode::NOT_FOUND.into_response();
@@ -220,6 +226,57 @@ async fn attach_subject_inner(
             .insert(AuthenticatedSubject(resolved.subject));
     }
     next.run(request).await
+}
+
+async fn attach_file_preview_peer(
+    auth: &AuthState,
+    mut request: axum::extract::Request,
+    next: Next,
+    claim: super::relay::PeerBrowserClaim,
+) -> Response {
+    let mut observation = crate::request_observation::Resolution::start(&request, "relay_browser");
+    let (resolved, receipt) = match claim
+        .resolve(auth, request.headers(), request.method(), request.uri())
+        .await
+    {
+        Ok(value) => value,
+        Err(StatusCode::SERVICE_UNAVAILABLE) => return observation.rejected(store_failure()),
+        Err(status) => return observation.rejected(status.into_response()),
+    };
+    if let Some(response) = auth
+        .account_gate(
+            request.method().as_str(),
+            request.uri().path(),
+            &resolved.subject,
+            auth.owner_session_authority(&resolved).is_some(),
+        )
+        .await
+    {
+        return observation.rejected(response);
+    }
+    if let Err(status) = receipt.require_time() {
+        return observation.rejected(status.into_response());
+    }
+    request
+        .extensions_mut()
+        .insert(auth.resource_request_context(&resolved));
+    request.extensions_mut().insert(resolved.authorization);
+    request.extensions_mut().insert(resolved.profile);
+    request
+        .extensions_mut()
+        .insert(AuthenticatedSubject(resolved.subject));
+    if let Some(credential) = resolved.delegated_credential {
+        request
+            .extensions_mut()
+            .insert(DelegatedCredential::new(credential));
+    }
+    request.extensions_mut().insert(receipt.clone());
+    observation.finish("resolved", crate::request_observation::Consumer::PublicUser);
+    drop(observation);
+    match tokio::time::timeout_at(receipt.deadline(), next.run(request)).await {
+        Ok(response) if receipt.require_time().is_ok() => response,
+        _ => StatusCode::UNAUTHORIZED.into_response(),
+    }
 }
 
 fn is_personal_inventory(request: &axum::extract::Request) -> bool {
