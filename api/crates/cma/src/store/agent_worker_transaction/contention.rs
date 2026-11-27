@@ -33,6 +33,17 @@ pub(super) fn diagnose_write_conflict(mutation: &AgentWorkMutation, error: &mong
     }
 }
 
+pub(super) fn diagnose_prepared_commit(mutation: &AgentWorkMutation) {
+    let work_lease = format!("{}:{}", mutation.fence, mutation.holder);
+    tracing::info!(
+        target: "agent_scheduler_failure",
+        phase = "prepared_commit",
+        agent_sha256 = %format_args!("{:x}", Sha256::digest(mutation.agent.id.as_str().as_bytes())),
+        work_lease_sha256 = %format_args!("{:x}", Sha256::digest(work_lease.as_bytes())),
+        "Prepared Agent Ready publication committed"
+    );
+}
+
 pub(super) fn ownership_error(
     mutation: &AgentWorkMutation,
     error: super::super::agent_ownership::FenceError,

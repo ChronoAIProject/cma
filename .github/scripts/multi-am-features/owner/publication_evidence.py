@@ -13,7 +13,7 @@ STARTUP_STEPS = frozenset(('install_skill', 'wait_for_workspace', 'add_worktree'
                            'open_conversation', 'publish_ready', 'publish_connection', 'dispatch_first_message'))
 LOG_BOUND_BYTES = 2 * 1024 * 1024
 LOG_TARGET = ' agent_scheduler_failure: '
-FIELDS = re.compile(r'(?<!\S)(phase|failure|next_step|agent_sha256|cause_class|origin|agent_hash|operation|sandbox_sha256)="?([a-z0-9_]+)"?(?=\s|$)')
+FIELDS = re.compile(r'(?<!\S)(phase|failure|next_step|agent_sha256|cause_class|origin|agent_hash|operation|sandbox_sha256|work_lease_sha256)="?([a-z0-9_]+)"?(?=\s|$)')
 RECOVERY_FIELDS = re.compile(r'(?<!\S)(sandbox_id|outcome)="?([-A-Za-z0-9_]+)"?(?=\s|$)')
 PREPARED_MONGO_APP = 'cma-two-am-prepared-fixture'
 FEATURES_MONGO_APP = 'cma-two-am-features-fixture'
@@ -216,7 +216,15 @@ def publication_evidence(fixture, agentId=None):
     for manager in ('a', 'b'):
         counts = {}
         for fields in publication_events(fixture, manager):
-            if fields.get('agent_sha256') != digest or fields.get('phase') != 'publication':
+            if fields.get('agent_sha256') != digest:
+                continue
+            if fields.get('phase') == 'prepared_commit':
+                work_lease = fields.get('work_lease_sha256', '')
+                if not re.fullmatch(r'[a-f0-9]{64}', work_lease):
+                    raise RuntimeError('prepared_publication_invalid_work_lease_digest')
+                counts.setdefault('prepared_commit_work_lease_sha256', []).append(work_lease)
+                continue
+            if fields.get('phase') != 'publication':
                 continue
             failure, step = fields.get('failure'), fields.get('next_step')
             if failure not in FAILURES or not step:

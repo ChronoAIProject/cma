@@ -132,17 +132,23 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       const publicationDiagnostics = await adapter.publicationEvidence({agentId: record.agentId});
       if (ingress === 'b') {
         const aborts = am => publicationDiagnostics[am]?.known_aborted_cas?.publish_connection ?? 0;
+        const committedLeases = am => publicationDiagnostics[am]?.prepared_commit_work_lease_sha256 ?? [];
+        const originalWorkLeaseCommitted = isDigest(collision.workLeaseSha256)
+          && equal(committedLeases(owner.am), [collision.workLeaseSha256])
+          && committedLeases(owner.am === 'a' ? 'b' : 'a').length === 0;
         recordAbortEvidence({ingress, owner: owner.am, owner_epoch: owner.epoch,
           owner_instance_sha256: hash(owner.instance_id), agent_sha256: hash(record.agentId),
           lifecycle_operation_sha256: hash(record.operationId), exact_reservation_conflict: true,
           collision_owner_epoch: collision.ownerEpoch,
           ready_before_collision_lease_deadline: readyBeforeCollisionLeaseDeadline,
+          committed_with_collision_work_lease: originalWorkLeaseCommitted,
           publication_diagnostics: publicationDiagnostics});
         check(collision.ownerInstance === owner.instance_id && collision.ownerEpoch === owner.epoch,
           'prepared_publication_owner_changed_since_collision');
         check(readyBeforeCollisionLeaseDeadline, 'prepared_publication_original_work_lease_elapsed');
         check(aborts(owner.am) === 1 && aborts(owner.am === 'a' ? 'b' : 'a') === 0,
           'prepared_publication_abort_not_attributed');
+        check(originalWorkLeaseCommitted, 'prepared_publication_work_holder_or_fence_changed');
       }
       await cleanup(record);
       return {ingress, owner: owner.am, owner_epoch: owner.epoch, parent_schema_versions: durable.schemas,

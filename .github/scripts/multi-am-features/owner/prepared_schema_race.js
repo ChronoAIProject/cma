@@ -92,14 +92,17 @@
           const reservation = rows.reservation;
           const lease = rows.agent.record.work.lease;
           const leaseDeadlineMs = Date.parse(lease?.expires_at);
+          const workFence = Number(lease?.fence);
           const owner = await d.cma_agent_manager_owners.findOne({_id: rows.agent._id,
             instance_id: {$type: 'string'}, $expr: {$gt: ['$expires_at', '$$NOW']}});
           const ownerEpoch = Number(owner?.epoch);
           if (!owner?.instance_id || !Number.isSafeInteger(ownerEpoch) || ownerEpoch < 1
               || !Number.isFinite(leaseDeadlineMs) || leaseDeadlineMs <= Date.now()
               || rows.agent.work_lease_expires_at !== lease?.expires_at
-              || rows.agent.work_lease_holder !== lease?.holder
-              || Number(rows.agent.work_lease_fence) !== Number(lease?.fence)) {
+              || typeof lease?.holder !== 'string' || !lease.holder
+              || rows.agent.work_lease_holder !== lease.holder
+              || !Number.isSafeInteger(workFence) || workFence < 1
+              || Number(rows.agent.work_lease_fence) !== workFence) {
             throw Error('prepared_publication_original_authority_unbound');
           }
           // The transaction read this reservation before the held Worktree write.
@@ -115,7 +118,9 @@
               || after?.transaction !== bound.transaction) {
             throw Error('prepared_publication_conflict_transaction_changed');
           }
-          return {...before, ownerInstance: owner.instance_id, ownerEpoch, leaseDeadlineMs};
+          const workLeaseSha256 = require('crypto').createHash('sha256')
+            .update(`${workFence}:${lease.holder}`).digest('hex');
+          return {...before, ownerInstance: owner.instance_id, ownerEpoch, leaseDeadlineMs, workLeaseSha256};
         }
         if (leaseChange) {
           await replaceLease(rows.agent);

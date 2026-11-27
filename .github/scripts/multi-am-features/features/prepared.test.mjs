@@ -12,7 +12,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
   admissionRequest = 'fixture-admission', repeatRequest = false, collisionMatches = true, observed = 1,
   failCreation = false, abortManager = 'b', createToReadyMs = 5000, reservationBound = true,
   changedNativeReceipt = false, collisionOwner = 'fixture-manager', collisionEpoch = 1,
-  expiredCollisionLease = false} = {}) {
+  expiredCollisionLease = false, committedWorkLeases = [hash('1:fixture-worker')]} = {}) {
   const actions = [];
   const records = [];
   let ownerReads = 0;
@@ -54,8 +54,11 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
     },
     ownerOf: async () => ({agent_id: 'fixture-agent', am: 'b', epoch: ++ownerReads > 1 && changedOwner ? 2 : 1,
       instance_id: 'fixture-manager', pod_uid: 'fixture-pod'}),
-    publicationEvidence: async () => ({a: {}, b: {},
-      [abortManager]: {known_aborted_cas: {publish_connection: observed}}}),
+    publicationEvidence: async () => {
+      const diagnostics = {a: {}, b: {prepared_commit_work_lease_sha256: committedWorkLeases}};
+      diagnostics[abortManager].known_aborted_cas = {publish_connection: observed};
+      return diagnostics;
+    },
     preparedSchemaBarrier: async ({arm}) => {
       actions.push(arm ? 'arm-worktree-hold' : 'disarm-worktree-hold');
     },
@@ -67,7 +70,8 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
       const sandboxId = collisionMatches ? records.at(-1).sandboxId : 'different-reservation';
       return action === 'inject' ? {agentId: 'fixture-agent', sandboxId,
         ownerInstance: collisionOwner, ownerEpoch: collisionEpoch,
-        leaseDeadlineMs: Date.now() + (expiredCollisionLease ? -1000 : 60000)} : {restored: 1};
+        leaseDeadlineMs: Date.now() + (expiredCollisionLease ? -1000 : 60000),
+        workLeaseSha256: hash('1:fixture-worker')} : {restored: 1};
     },
   };
   const results = [];
@@ -116,7 +120,8 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.equal(context.results[1].request_sha256.browser_ready, 'c'.repeat(64));
   assert.equal(context.results[1].request_sha256.browser_send, 'd'.repeat(64));
   assert.match(context.results[1].request_sha256.admission, /^[a-f0-9]{64}$/);
-  assert.deepEqual(context.results[1].publication_diagnostics.b, {known_aborted_cas: {publish_connection: 1}});
+  assert.deepEqual(context.results[1].publication_diagnostics.b, {known_aborted_cas: {publish_connection: 1},
+    prepared_commit_work_lease_sha256: [hash('1:fixture-worker')]});
   assert.equal(context.results[1].observed_known_abort, false);
   assert.equal(context.results[3].observed_known_abort, true);
   assert.equal(context.results[3].ready_before_collision_lease_deadline, true);
@@ -138,7 +143,9 @@ test('prepared publication binds the collision to admission and retains the owne
     owner_instance_sha256: hash('fixture-manager'), agent_sha256: hash('fixture-agent'),
     lifecycle_operation_sha256: hash('fixture-operation'), exact_reservation_conflict: true,
     collision_owner_epoch: 1, ready_before_collision_lease_deadline: true,
-    publication_diagnostics: {a: {known_aborted_cas: {publish_connection: 1}}, b: {}}}]);
+    committed_with_collision_work_lease: true,
+    publication_diagnostics: {a: {known_aborted_cas: {publish_connection: 1}},
+      b: {prepared_commit_work_lease_sha256: [hash('1:fixture-worker')]}}}]);
   const failed = fixture({failCreation: true});
   await assert.rejects(preparedJourney(failed), /fixture_admission_failed/);
   assert.deepEqual(failed.actions.slice(-2), ['disarm-worktree-hold', 'restore-reservation-marker']);
@@ -151,6 +158,10 @@ test('prepared Ready requires the collision owner and precedes its observed work
     /prepared_publication_owner_changed_since_collision/);
   await assert.rejects(preparedJourney(fixture({expiredCollisionLease: true})),
     /prepared_publication_original_work_lease_elapsed/);
+  for (const committedWorkLeases of [[], [hash('2:fixture-worker')], [hash('1:other-worker')]]) {
+    await assert.rejects(preparedJourney(fixture({committedWorkLeases})),
+      /prepared_publication_work_holder_or_fence_changed/);
+  }
 });
 
 test('prepared publication retry must preserve the Runtime receipts present before the claim', async () => {

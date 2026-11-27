@@ -266,9 +266,13 @@ class OwnershipTests(unittest.TestCase):
                     f'failure="{failure}" next_step="{step}" agent_sha256={digest}')
 
         known = entry('known_aborted_cas')
+        lease = hashlib.sha256(b'1:fixture-worker').hexdigest()
+        committed = (f'INFO agent_scheduler_failure: Prepared Agent Ready publication committed '
+                     f'phase="prepared_commit" agent_sha256={wanted} work_lease_sha256={lease}')
         logs = {'am-a-0': [known, known, entry('owner_authority_refused', digest='a' * 64)],
                 'am-b-0': [entry('unknown_commit', 'publish_connection'),
-                           entry('work_lease_changed', 'publish_deleted'), entry('unknown_commit', target='unrelated')]}
+                           entry('work_lease_changed', 'publish_deleted'), entry('unknown_commit', target='unrelated'),
+                           committed, committed.replace(wanted, 'a' * 64)]}
         fixture = Fixture.__new__(Fixture)
 
         def read(args, *, timeout):
@@ -280,7 +284,7 @@ class OwnershipTests(unittest.TestCase):
         fixture.client = SimpleNamespace(k=read)
         self.assertEqual(fixture.publicationEvidence('fixture-agent'), {
             'a': {'known_aborted_cas': {'open_conversation': 2}},
-            'b': {'unknown_commit': {'publish_connection': 1}}})
+            'b': {'unknown_commit': {'publish_connection': 1}, 'prepared_commit_work_lease_sha256': [lease]}})
         with self.assertRaisesRegex(ValueError, 'publication_evidence_lineage_required'):
             fixture.publicationEvidence('../foreign-agent')
         logs['am-b-0'].append(entry('unexpected_classification'))
