@@ -8,7 +8,7 @@ use axum::{
 use layer2_core::{
     admission::AdmissionCeilings,
     sandbox::{
-        store::{SandboxAdmission, SandboxAdmissionName},
+        store::{SandboxAdmission, SandboxAdmissionName, SandboxAdmissionStore},
         SandboxOrigin,
     },
 };
