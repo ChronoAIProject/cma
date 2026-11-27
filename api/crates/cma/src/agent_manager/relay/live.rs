@@ -126,7 +126,7 @@ impl Relay {
         }
     }
 
-    async fn follow_remote(
+    pub(super) async fn follow_remote(
         &self,
         destination: Destination,
         publisher: &AgentLivePublisher,
@@ -187,8 +187,22 @@ impl Relay {
                 if frame.owner != destination.token || !self.coordinator.is_ready() {
                     return Err(());
                 }
-                bounded(self.coordinator.store.check(&frame.owner))
-                    .await
+                let started = tokio::time::Instant::now();
+                let remaining =
+                    bounded(self.coordinator.store.live_lease_remaining_ms(&frame.owner))
+                        .await
+                        .map_err(|_| ())?;
+                // The peer only observes store renewals. Start the local
+                // deadline before the read and never revive expired authority.
+                let deadline = started
+                    .checked_add(Duration::from_millis(remaining))
+                    .ok_or(())?;
+                if !self.coordinator.is_ready() {
+                    return Err(());
+                }
+                destination
+                    .authority
+                    .renew_until(deadline)
                     .map_err(|_| ())?;
                 if frame.head_changed {
                     let updates = self.updates.upgrade().ok_or(())?;
