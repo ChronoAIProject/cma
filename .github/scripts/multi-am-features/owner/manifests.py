@@ -5,6 +5,7 @@ import re
 import secrets
 from pathlib import Path
 import legacy_manifests as old
+from identity import ADMIN
 from publication_evidence import FEATURES_MONGO_APP, PREPARED_MONGO_APP
 
 API = None
@@ -134,10 +135,13 @@ def managers(secret, ready):
         env['stringData']['CHRONO_MACHINE_SANDBOX_IMAGE']=desktop
         env['stringData']['CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE']=desktop
         capabilities = ['task_home_admission', 'desktop_enable']
+        accounts = ['native-am-fixture-owner']
+        if ready.get('fixture') == 'features':
+            accounts.append(ADMIN)
         if not prepared:
             capabilities.append('suggested_followup_admission')
         env['stringData']['CHRONO_TASK_EXPERIENCE_POLICY']=json.dumps({
-            'mode':'accounts','accounts':['native-am-fixture-owner'],
+            'mode':'accounts','accounts':accounts,
             'capabilities':capabilities},separators=(',',':'))
         # This fixture retires its Standard home before starting the desktop.
         # Keep the one-CPU request and give either family enough memory for desktop.

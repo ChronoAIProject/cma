@@ -147,7 +147,8 @@ async function accountBrowserCases(ams, witness) {
     ['user.navigation_legacy_routes', legacyNavigation],
     ['user.navigation_tasks', page => taskNavigation(page, witness)],
     ['user.navigation_eg_transition', page => gatewayNavigation(page, witness, config.owner_id)],
-    ['user.task_draft', page => taskDraft(page, witness)]];
+    ['user.task_draft', page => taskDraft(page, witness, {owner: config.owner_id,
+      recipient: 'native-am-fixture-admin', recipientCookie: config.recipient_browser_session_cookie})]];
   if (config.eg_origin) cases.push(['eg.public_documentation', gatewayDocumentation]);
   await withBrowser(ams, async browser => {
     for (let iteration = 1; iteration <= 3; iteration++) {

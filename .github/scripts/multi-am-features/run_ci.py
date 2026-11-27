@@ -94,6 +94,7 @@ def run(args):
             'browser_session_cookie': fixture.browser_cookie}
         if args.fixture == 'features':
             config['identity_origin'] = fixture.client.forward('identity', 8080)
+            config['recipient_browser_session_cookie'] = fixture.recipient_browser_cookie
         if include_gateway:
             result['stage'] = 'event_gateway_initialization'
             config['eg_origin'] = initialize_gateway(fixture)

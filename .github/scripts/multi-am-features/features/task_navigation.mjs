@@ -3,8 +3,10 @@ import {check, id} from '../cma/core.mjs';
 
 const timeout = 15000;
 
-export async function taskDraft(page, {workspaceId}) {
+export async function taskDraft(page, {workspaceId}, {owner, recipient, recipientCookie}) {
   check(id(workspaceId), 'browser_draft_workspace_required');
+  check(id(owner) && id(recipient) && owner !== recipient && typeof recipientCookie === 'string'
+    && recipientCookie.length > 0, 'browser_draft_distinct_accounts_required');
   const draft = 'Keep this fixture draft ' + randomUUID();
   const workspaceDraft = 'Keep this Workspace draft ' + randomUUID();
   const newTask = '/agent-manager';
@@ -56,6 +58,34 @@ export async function taskDraft(page, {workspaceId}) {
     await page.getByRole('button', {name: 'Cloud computer · Shared desktop', exact: true}).waitFor({timeout});
     await openWorkspaceDraft();
     check(await scopedDraft.inputValue() === workspaceDraft, 'browser_workspace_draft_lost_after_navigation');
+
+    const context = page.context();
+    const host = new URL(page.url()).hostname;
+    const [ownerCookie] = (await context.cookies()).filter(cookie => cookie.name === 'cma_session'
+      && cookie.domain === host && cookie.path === '/');
+    check(ownerCookie?.httpOnly && ownerCookie.sameSite === 'Lax' && ownerCookie.value !== recipientCookie,
+      'browser_draft_distinct_sessions_required');
+    const switchAccount = async (cookie, subject) => {
+      await context.addCookies([cookie]);
+      await visit(newTask);
+      const state = await page.evaluate(async deadline => {
+        const response = await fetch('/auth/session', {credentials: 'same-origin', redirect: 'error',
+          cache: 'no-store', signal: AbortSignal.timeout(deadline)});
+        if (!response.ok) return null;
+        const {authenticated, subject} = await response.json();
+        return {authenticated, subject};
+      }, timeout);
+      check(state?.authenticated === true && state.subject === subject, 'browser_draft_account_switch_unbound');
+      await field.waitFor({timeout});
+    };
+    try {
+      await switchAccount({...ownerCookie, value: recipientCookie}, recipient);
+      check(await field.inputValue() === '', 'browser_draft_leaked_to_recipient');
+      await field.fill('The other account has its own fixture draft.', {timeout});
+    } finally {
+      await switchAccount(ownerCookie, owner);
+    }
+    check(await field.inputValue() === '', 'browser_draft_retained_after_account_switch');
     check(submissions === 0, 'browser_draft_submitted_without_confirmation');
   } finally {
     await page.unroute(admission, rejectSubmission);
