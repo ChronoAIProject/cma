@@ -2,7 +2,7 @@ name: Supervised Debian Desktop qualification
 
 on:
   push:
-    branches: [tl/runtime/1811-native-fixture-qualification]
+    branches: [tl/runtime/1811-native-scan-evidence]
     paths: [.github/workflows/desktop-fixture-qualification.yml]
 
 permissions:
@@ -98,6 +98,8 @@ jobs:
             "$CD_COMPONENT" "$FIXTURE_SOURCE" "$RUNNER_TEMP/ci-native-image"
           PYTHONPATH=.github/scripts python3 -B - \
             "$CD_COMPONENT" "$RUNNER_TEMP/ci-native-image" "$FIXTURE_SOURCE" <<'PY'
+          import json
+
           import ci_image_secret_scan as scan
           from image_scan_evidence import project
 
@@ -106,6 +108,15 @@ jobs:
           def report(component, error):
               if isinstance(error.package_report, dict) and error.package_report.get("complete") is True:
                   error.evidence = project(error.package_report, error.outcome)
+                  # The normal summary shows 20 findings. Retain every sanitized
+                  # location for package attribution while preserving the refusal.
+                  for finding in error.evidence["findings"]:
+                      location = {
+                          field: finding[field]
+                          for field in ("path", "rule", "scope", "layer")
+                          if field in finding
+                      }
+                      print("scan-location " + json.dumps(location), flush=True)
               report_refusal(component, error)
 
           scan.report_refusal = report
