@@ -14,6 +14,7 @@ use crate::store::{
     sandbox_events::append_in_transaction,
     sandbox_mongo::MongoSandboxStore,
     sandboxes::read_sandbox,
+    work_claim_authority::without_ledger_maintenance,
     workspaces::read_workspace,
     worktrees::worktree_document,
 };
@@ -122,7 +123,9 @@ pub(in crate::store) async fn apply_catalogue(
     }
     let sandbox = store
         .sandboxes
-        .find_one(doc! { "_id": workspace.sandbox_id.as_str() })
+        .find_one(without_ledger_maintenance(
+            doc! { "_id": workspace.sandbox_id.as_str() },
+        ))
         .session(scope.session())
         .await
         .map_err(ApplyError::Driver)?

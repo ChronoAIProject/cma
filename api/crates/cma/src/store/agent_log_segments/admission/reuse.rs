@@ -80,6 +80,26 @@ pub(super) async fn reuse_profile_agent(
     if !admission.can_reuse(&agent, workspace, reuse_existing) {
         return Ok(None);
     }
+    if !reuse_existing && !prepared_only {
+        // An automatic profile slot can select a Trigger Agent without
+        // advancing the Sandbox. Serialize that selection with a hold too.
+        let fenced = crate::store::work_lease_update::with_fence(
+            &store.sandboxes,
+            doc! {
+                "_id":sandbox.id.as_str(), "owner":sandbox.owner.as_str(),
+                "revision":signed(sandbox.revision,"sandbox revision")
+                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+            },
+            None,
+            "workspace_admission_fence",
+            scope.session(),
+        )
+        .await
+        .map_err(ApplyError::Driver)?;
+        if fenced.matched_count != 1 {
+            return Err(ApplyError::Domain(SandboxStoreError::SandboxNotReady));
+        }
+    }
     // Selection always writes the actual candidate, including reuse that only
     // binds a creation key and adds no first prompt. Closure must serialize
     // with this transaction before the binding can commit.
