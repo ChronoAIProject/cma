@@ -10,6 +10,7 @@ import http.client
 import json
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -24,6 +25,9 @@ STORE_DOWN = {
 WORKERS_DOWN = {
     "status": "not-ready", "reason": "workers", "dependency": {"reason": None}
 }
+STREAM_OPEN = b"event: open\ndata: started\n\n"
+STREAM_END = b"event: completed\ndata: finished\n\n"
+STREAM_BODY = STREAM_OPEN + b"data: " + b"x" * 4096 + b"\n\n" + STREAM_END
 
 
 def docker(*args):
@@ -99,6 +103,12 @@ server {
         return 401 '{"code":"authentication_required"}';
     }
 """
+        config += """    location = /api/drain-stream {
+        default_type text/event-stream;
+        limit_rate 1024;
+        alias /tmp/readiness-static/drain-stream;
+    }
+"""
         # Any API body the web proxy forwards reaches the fake Agent Manager.
         config += """    location /api/ {
         client_max_body_size 64m;
@@ -110,24 +120,37 @@ server {
         config += "server { listen 18081; return 404; }\n"
         (directory / "default.conf").write_text(config)
         (directory / "index.html").write_text("<!doctype html><title>SPA fixture</title>")
+        (directory / "drain-stream").write_bytes(STREAM_BODY)
+        for name in ("web-clear-drain.sh", "web-prestop.sh"):
+            script = directory / name
+            shutil.copyfile(ROOT / "web/scripts" / name, script)
+            script.chmod(0o755)
         image = re.search(r"^FROM (nginxinc/\S+) AS runtime$", (ROOT / "web/Dockerfile").read_text(), re.M)[1]
         cls.container = docker(
-            "run", "--detach", "--rm", "--publish", "127.0.0.1::8080",
+            "run", "--detach", "--publish", "127.0.0.1::8080",
             "--volume", f"{directory}/default.conf:/etc/nginx/conf.d/default.conf:ro",
             "--volume", f"{directory}/index.html:/tmp/readiness-static/index.html:ro",
+            "--volume", f"{directory}/drain-stream:/tmp/readiness-static/drain-stream:ro",
+            "--volume", f"{directory}/web-clear-drain.sh:/docker-entrypoint.d/40-clear-web-drain.sh:ro",
+            "--volume", f"{directory}/web-prestop.sh:/usr/local/bin/cma-web-prestop:ro",
             image,
         )
         cls.addClassCleanup(docker, "rm", "--force", cls.container)
         cls.port = int(docker("port", cls.container, "8080/tcp").rsplit(":", 1)[1])
+        cls.wait_for_status("/", 200)
+
+    @classmethod
+    def wait_for_status(cls, path, status):
         deadline = time.monotonic() + 15
-        while True:
+        while time.monotonic() < deadline:
             try:
-                cls.get("/")
-                break
+                response = cls.get(path)
+                if response[0] == status:
+                    return response
             except (OSError, http.client.HTTPException):
-                if time.monotonic() >= deadline:
-                    raise AssertionError(docker("logs", cls.container))
-                time.sleep(0.1)
+                pass
+            time.sleep(0.1)
+        raise AssertionError(docker("logs", cls.container))
 
     @classmethod
     def get(cls, path):
@@ -156,6 +179,32 @@ server {
         self.assertEqual(response[1]["cache-control"], "no-store")
         self.assertNotIn("location", response[1])
         self.assertEqual(response[2], json.dumps(READY).encode())
+
+    def test_web_prestop_withdraws_readiness_while_proxy_stream_completes(self):
+        status, headers, body = self.get("/web-readyz")
+        self.assertEqual((status, headers["cache-control"], body), (200, "no-store", b"ready\n"))
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=10)
+        hook = None
+        try:
+            connection.request("GET", "/api/agent-manager/drain-stream")
+            stream = connection.getresponse()
+            self.assertEqual(stream.status, 200)
+            self.assertEqual(stream.read(len(STREAM_OPEN)), STREAM_OPEN)
+            hook = subprocess.Popen(["docker", "exec", self.container, "/usr/local/bin/cma-web-prestop"])
+            _, headers, body = self.wait_for_status("/web-readyz", 503)
+            self.assertEqual((headers["cache-control"], body), ("no-store", b"draining\n"))
+            self.assertEqual(self.get("/")[0], 200)
+            self.assertTrue(ready(self.get("/ready")))
+            self.assertEqual(stream.read(), STREAM_BODY[len(STREAM_OPEN):])
+            self.assertIsNone(hook.poll(), "preStop returned before the stream completed")
+        finally:
+            connection.close()
+            docker("restart", "--timeout", "5", self.container)
+            if hook is not None:
+                hook.wait(timeout=10)
+            type(self).port = int(docker("port", self.container, "8080/tcp").rsplit(":", 1)[1])
+        _, headers, body = self.wait_for_status("/web-readyz", 200)
+        self.assertEqual((headers["cache-control"], body), ("no-store", b"ready\n"))
 
     def test_not_ready_preserves_503_and_body(self):
         for state, body in [("store", STORE_DOWN), ("workers", WORKERS_DOWN)]:
