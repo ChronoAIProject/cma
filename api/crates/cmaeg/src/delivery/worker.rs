@@ -75,6 +75,7 @@ async fn handle(
             let step = match reply.source {
                 ReplySource::Tool => DeliveryStep::ToolReply,
                 ReplySource::Stream => DeliveryStep::Answer,
+                ReplySource::Acknowledgement => DeliveryStep::Ack,
             };
             sender
                 .observe_at(
@@ -152,6 +153,7 @@ async fn handle(
             let step = match source {
                 ReplySource::Tool => DeliveryStep::ToolReply,
                 ReplySource::Stream => DeliveryStep::Answer,
+                ReplySource::Acknowledgement => DeliveryStep::Ack,
             };
             let result = reply(sender, state, &message, step, None).await;
             if matches!(
