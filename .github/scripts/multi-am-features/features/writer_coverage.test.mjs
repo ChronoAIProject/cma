@@ -20,7 +20,7 @@ test('all thirteen writer groups remain required independently of C275', async (
   assert.equal(new Set(groups.map(row => row.id)).size, 13);
   assert.equal(features.groups.at(-1).id, 'SW12');
   assert.deepEqual(prepared.groups.map(row => row.id), ['SW05', 'SW06', 'SW13']);
-  const executableGroups = ['SW01', 'SW02', 'SW03', 'SW09', 'SW12'];
+  const executableGroups = ['SW01', 'SW02', 'SW03', 'SW07', 'SW09', 'SW12'];
   for (const id of executableGroups) assert.equal(groups.find(row => row.id === id).verdict, 'NOT_RUN');
   assert.ok(groups.filter(row => !executableGroups.includes(row.id)).every(row => row.verdict === 'BLOCKED'));
   for (const fixture of ['features', 'prepared']) {
@@ -29,6 +29,21 @@ test('all thirteen writer groups remain required independently of C275', async (
     }
   }
   assert.throws(() => writerCoverage(actual, [], undefined, 'invalid'), /writer_fixture/);
+});
+
+test('SW07 requires runtime-loss continuity, atomic pause and both revived Agents', async () => {
+  const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
+  const journey = {verdict: 'LOCAL_TWO_AM_JOURNEY_PASS', steps: [
+    {name: 'native_runtime_loss_preserves_agents', verdict: 'PASS'},
+    {name: 'two_agent_pause_all_or_none', verdict: 'PASS'},
+    {name: 'two_agent_revival_restores_both', verdict: 'PASS'},
+  ]};
+  const evaluate = () => writerCoverage(registry, [], journey, 'features').groups.find(row => row.id === 'SW07');
+  assert.equal(evaluate().verdict, 'PASS');
+  journey.steps.pop();
+  assert.equal(evaluate().verdict, 'NOT_RUN');
+  journey.steps[0].verdict = 'FAIL';
+  assert.equal(evaluate().verdict, 'FAIL');
 });
 
 test('readiness coverage requires drain, HPA convergence and the never-Ready witness', async () => {

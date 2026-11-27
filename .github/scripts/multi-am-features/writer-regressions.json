@@ -201,8 +201,7 @@
       "issues": "#2147",
       "feature": "Connection recovery, runtime-loss reconciliation and sandbox lifecycle",
       "requirement": "Background path re-reads/rebuilds plan after known CAS conflict within a finite budget, preserving exact parent/Agent/log/ownership fences and all-or-none transition. No endless identical scheduler error or partially advanced hierarchy.",
-      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The fixture scopes native inventory to the peer during recovery and requires the same Sandbox transaction on both sides of the competing metadata write. Hosted execution is pending.",
+      "status": "COMPLETE",
       "trigger": "Two AM workers race an Agent log/metadata mutation with connection repair or atomic multi-Agent sandbox transition",
       "required_assertions": [
         {"case": "native_runtime_loss_preserves_agents", "minimum_runs": 1, "phases": [], "routing": "journey"},
