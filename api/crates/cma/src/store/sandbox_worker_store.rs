@@ -62,12 +62,22 @@ impl SandboxWorkerStore for MongoSandboxStore {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
+        let filter = crate::store::work_schema::query(without_ledger_maintenance(doc! {
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "work_pending": true,
+            "$nor": [{"record.lifecycle.retirement_archive.verified": {"$type":"null"}}],
+            "work_ready_at": { "$lte": now },
+            "$or": [
+                { "work_lease_expires_at": Bson::Null },
+                { "work_lease_expires_at": { "$lte": now } },
+            ],
+        }));
         if self
             .empty_discovery
             .empty(
                 super::empty_discovery::Kind::Sandboxes,
                 &self.sandboxes,
-                doc! {"work_pending":true},
+                filter.clone(),
             )
             .await
         {
@@ -75,18 +85,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
         }
         let mut cursor = self
             .sandboxes
-            .find(crate::store::work_schema::query(
-                without_ledger_maintenance(doc! {
-                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                    "work_pending": true,
-                    "$nor": [{"record.lifecycle.retirement_archive.verified": {"$type":"null"}}],
-                    "work_ready_at": { "$lte": now },
-                    "$or": [
-                        { "work_lease_expires_at": Bson::Null },
-                        { "work_lease_expires_at": { "$lte": now } },
-                    ],
-                }),
-            ))
+            .find(filter)
             .projection(doc! { "_id": 1 })
             .sort(doc! { "work_ready_at": 1, "_id": 1 })
             .limit(i64::from(limit))

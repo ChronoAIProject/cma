@@ -99,11 +99,11 @@ async fn all_empty_boundaries_coalesce_without_reusing_a_completed_absence() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn future_due_and_lease_expiry_stay_on_ordinary_discovery_with_cursor_errors() {
+async fn future_due_and_live_leases_coalesce_without_delaying_new_work() {
     let (client, name, store, launches) = fixture("future_discovery").await;
     empty_sweep(&store, &launches).await;
-    // A pending population stays on the original query even while no row is
-    // due, so moving time forward needs no new insert or notification.
+    // Future work and live leases share an empty probe. The next request
+    // evaluates its own cutoff without an insertion or a local notification.
     store
         .workspaces
         .insert_one(
@@ -112,21 +112,37 @@ async fn future_due_and_lease_expiry_stay_on_ordinary_discovery_with_cursor_erro
         )
         .await
         .unwrap();
-    let (early, other) = tokio::join!(
-        store.due_workspace_work(NOW, 10),
-        store.due_agent_work(NOW, 10)
-    );
-    assert!(early.unwrap().is_empty());
-    assert!(other.unwrap().is_empty());
-    assert!(store
-        .due_workspace_work(MINUTE, 10)
+    store
+        .sandboxes
+        .insert_one(
+            doc! {"_id":"sbx_future","document_schema_version":DOCUMENT_SCHEMA_VERSION,
+            "work_pending":true,"work_ready_at":MINUTE,"work_lease_expires_at":TWO_MINUTES},
+        )
         .await
-        .unwrap()
-        .is_empty());
+        .unwrap();
+    let (_, skipped_before) = store.empty_discovery.counts();
+    let (workspace_before, sandbox_before) = tokio::join!(
+        store.due_workspace_work(NOW, 10),
+        store.due_sandbox_work(NOW, 10)
+    );
+    assert!(workspace_before.unwrap().is_empty());
+    assert!(sandbox_before.unwrap().is_empty());
+    assert_eq!(store.empty_discovery.counts().1 - skipped_before, 2);
+    let (workspace_held, sandbox_held) = tokio::join!(
+        store.due_workspace_work(MINUTE, 10),
+        store.due_sandbox_work(MINUTE, 10)
+    );
+    assert!(workspace_held.unwrap().is_empty());
+    assert!(sandbox_held.unwrap().is_empty());
+    let (workspace_due, sandbox_due) = tokio::join!(
+        store.due_workspace_work(TWO_MINUTES, 10),
+        store.due_sandbox_work(TWO_MINUTES, 10)
+    );
     assert_eq!(
-        store.due_workspace_work(TWO_MINUTES, 10).await.unwrap(),
+        workspace_due.unwrap(),
         vec![WorkspaceId("wsp_future".into())]
     );
+    assert_eq!(sandbox_due.unwrap(), vec![SandboxId("sbx_future".into())]);
     // Cursor continuation cannot inherit a global empty page. Both malformed
     // lookahead and first-page rows remain validation failures.
     store
