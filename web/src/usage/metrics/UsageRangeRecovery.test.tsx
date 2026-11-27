@@ -1,4 +1,4 @@
-import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiError, ProtocolError, TransportError } from '@cma/client';
 import { defaultSelection, type Selection } from './model';
@@ -71,6 +71,47 @@ it('exhausts four attempts, stops periodic resubmission, and allows deliberate r
   act(() => hook.result.current.refresh());
   await flush();
   expect(hook.result.current.report).toBeDefined();
+});
+
+it('preserves the seven-day allocation resource and units after one successful Retry', async () => {
+  clock();
+  const api = metricsClient();
+  render(
+    <MetricsDashboard
+      api={api}
+      history={{ events: vi.fn() }}
+      admin={false}
+      principal={owner}
+      selection={{ ...defaultSelection, range: '7d' }}
+      onSelection={() => {}}
+    />,
+  );
+  await flush();
+  const chart = () => within(screen.getByRole('region', { name: 'Allocation comparison chart' }));
+  fireEvent.click(chart().getByRole('button', { name: 'Allocation chart resource' }));
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'Memory' }));
+  expect(chart().getByText('Memory · GiB-hours in the report period')).toBeVisible();
+
+  api.create.mockRejectedValue(new TransportError('Disconnected'));
+  fireEvent.click(screen.getByRole('button', { name: 'Refresh usage' }));
+  await flush();
+  await act(async () => vi.advanceTimersByTimeAsync(7000));
+  expect(screen.getByText('Could not load usage')).toBeVisible();
+
+  api.create.mockResolvedValue(reportFixture(false, 'recovered-report'));
+  await act(async () => vi.advanceTimersByTimeAsync(8000));
+  const attemptsBeforeRetry = api.create.mock.calls.length;
+  fireEvent.click(screen.getByRole('button', { name: 'Retry usage' }));
+  await flush();
+
+  expect(screen.queryByText('Could not load usage')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Usage time range' })).toHaveTextContent('Last 7 days');
+  expect(api.create).toHaveBeenCalledTimes(attemptsBeforeRetry + 1);
+  expect(api.sandboxes).toHaveBeenLastCalledWith('recovered-report', expect.anything());
+  expect(chart().getByRole('button', { name: 'Allocation chart resource' })).toHaveTextContent(
+    'Memory',
+  );
+  expect(chart().getByRole('img')).toHaveAccessibleName('Memory allocated GiB-hours by sandbox');
 });
 
 it.each([400, 401, 403, 404, 410])(
