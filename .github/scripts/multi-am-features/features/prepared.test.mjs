@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
@@ -66,7 +67,7 @@ test('prepared acknowledgement loss requires exact attribution, unique fences an
   const runtime = {pod_sha256: hash('fixture-runtime'), receipts: ['first', 'second', 'third']};
   const configs = [], cleanups = [], opens = [];
   let diagnostics = {a: {unknown_commit: {publish_connection: 1}}, b: {}};
-  let fences = [1, 1, 1, 1], readback = runtime;
+  let fences = [1, 1, 1, 1], readback = runtime, lostCommits = 5;
   const context = {
     adapter: {
       preparedReady: async () => [sandboxId],
@@ -80,7 +81,7 @@ test('prepared acknowledgement loss requires exact attribution, unique fences an
         }
         assert.equal(action, 'verify_commit');
         assert.deepEqual(scope, {...common, commitProof});
-        return {commitAcknowledgementsLost: 5};
+        return {commitAcknowledgementsLost: lostCommits};
       },
       ownerOf: async () => ({agent_id: agentId, am: 'a', epoch: 2, pod_uid: 'fixture-owner-pod'}),
       publicationEvidence: async () => diagnostics,
@@ -102,6 +103,9 @@ test('prepared acknowledgement loss requires exact attribution, unique fences an
   diagnostics = {a: {unknown_commit: {publish_connection: 1}}, b: {unknown_commit: {publish_connection: 1}}};
   await assert.rejects(preparedCommitAcknowledgement(context), /prepared_ack_outcome_unproven/);
   diagnostics.b = {};
+  lostCommits = 10;
+  await assert.rejects(preparedCommitAcknowledgement(context), /prepared_ack_fault_budget_unproven/);
+  lostCommits = 5;
   fences = [1, 2, 1, 1];
   await assert.rejects(preparedCommitAcknowledgement(context), /prepared_ack_durable_commit_unproven/);
   fences = [1, 1, 1, 1];
@@ -109,6 +113,31 @@ test('prepared acknowledgement loss requires exact attribution, unique fences an
   await assert.rejects(preparedCommitAcknowledgement(context), /prepared_ack_runtime_receipts_changed/);
   assert.deepEqual(configs.at(-1), {arm: false, commitAcknowledgement: true});
   assert.deepEqual(cleanups, [record]);
+});
+
+test('Mongo acknowledgement verification refuses equal log counts after a mixed transaction exhausts the fault', async () => {
+  const script = await readFile(new URL('../owner/prepared_schema_race.js', import.meta.url), 'utf8');
+  const app = 'synthetic-manager';
+  const command = (id, affected) => JSON.stringify({
+    msg: 'Slow query',
+    attr: {appName: app, command: {commitTransaction: 1, lsid: {id}, txnNumber: 2},
+      ...(affected ? {writeConcernError: {code: 50}} : {})},
+  });
+  const target = 'fixture-target', other = 'fixture-unrelated', baseline = 12;
+  const scope = {action: 'verify_commit', app, commitProof: {transaction: hash(target + ':2'), baseline}};
+  const targetErrors = Array.from({length: 5}, () => command(target, true));
+  const verify = async (affected, log) => {
+    let result;
+    await runInNewContext(script, {scope, d: {}, EJSON: JSON,
+      require: name => { assert.equal(name, 'crypto'); return {createHash}; },
+      admin: {runCommand: request => request.getLog ? {ok: 1, log} : {ok: 1, count: baseline + affected}},
+      print: line => { result = JSON.parse(line); }});
+    return result;
+  };
+  assert.deepEqual(await verify(5, targetErrors), {commitAcknowledgementsLost: 5});
+  await assert.rejects(verify(10, [...targetErrors,
+    ...Array.from({length: 5}, () => command(other, true)),
+    ...Array.from({length: 5}, () => command(target, false))]), /prepared_ack_fault_budget_unproven/);
 });
 
 function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b', 'candidate-c'], repeatReservation = false,

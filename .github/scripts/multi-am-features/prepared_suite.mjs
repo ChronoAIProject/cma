@@ -195,7 +195,7 @@ export async function preparedCommitAcknowledgement({adapter, create, openBoth, 
   const before = new Map(await Promise.all(reservations.map(async sandboxId =>
     [sandboxId, await adapter.preparedRuntimeEvidence({sandboxId})])));
   const configure = arm => adapter.preparedSchemaBarrier({arm, commitAcknowledgement: true});
-  let record, armed, pending, lost;
+  let record, armed, pending, lost, owner, diagnostics;
   await withRestoration(async () => {
     await configure(true);
     record = await create(ingress, false, {}, undefined, ({operationId}) => {
@@ -213,6 +213,17 @@ export async function preparedCommitAcknowledgement({adapter, create, openBoth, 
     check(armed?.agentId === record.agentId && armed.sandboxId === record.sandboxId
       && armed.receipt_count === 2 && reservations.includes(record.sandboxId),
     'prepared_ack_held_lineage_unbound');
+    const {agentId} = record;
+    owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
+    diagnostics = await poll(() => adapter.publicationEvidence({agentId}), byManager => {
+      const observed = byManager?.[owner.am];
+      return Boolean(observed?.unknown_commit?.publish_connection
+        || observed?.prepared_commit_work_lease_sha256?.length);
+    }, {timeout: 12000, code: 'prepared_ack_publication_outcome_missing'});
+    const onOwner = diagnostics[owner.am], onPeer = diagnostics[other(owner.am)];
+    check(equal(onOwner?.unknown_commit, {publish_connection: 1}) && !onPeer?.unknown_commit
+      && [onOwner, onPeer].every(observed => !observed?.known_aborted_cas?.publish_connection
+        && !observed?.prepared_commit_work_lease_sha256?.length), 'prepared_ack_outcome_unproven');
     lost = await adapter.preparedSchemaRace({action: 'verify_commit', operationId: record.operationId,
       reservations, barrier, commitProof: armed.commitProof});
   }, async () => {
@@ -221,14 +232,9 @@ export async function preparedCommitAcknowledgement({adapter, create, openBoth, 
   }, recordFailure);
 
   const {agentId, sandboxId, operationId} = record;
-  const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
-  const diagnostics = await adapter.publicationEvidence({agentId});
-  const onOwner = diagnostics[owner.am], onPeer = diagnostics[other(owner.am)];
   const lostCommits = lost?.commitAcknowledgementsLost;
-  check(Number.isSafeInteger(lostCommits) && lostCommits >= 5 && lostCommits <= 10
-    && equal(onOwner?.unknown_commit, {publish_connection: 1}) && !onPeer?.unknown_commit
-    && [onOwner, onPeer].every(observed => !observed?.known_aborted_cas?.publish_connection
-      && !observed?.prepared_commit_work_lease_sha256?.length), 'prepared_ack_outcome_unproven');
+  check(Number.isSafeInteger(lostCommits) && lostCommits >= 5 && lostCommits < 10,
+    'prepared_ack_fault_budget_unproven');
   const [durable, runtime] = await Promise.all([
     adapter.preparedEvidence({agentId, sandboxId, operationId}),
     adapter.preparedRuntimeEvidence({sandboxId, operationId}),
