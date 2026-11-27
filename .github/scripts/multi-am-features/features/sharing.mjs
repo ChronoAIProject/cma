@@ -90,8 +90,11 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
   });
   check(typeof link.id === 'string' && link.agent_id === agentId, 'share_link_admission_identity');
   const redeem = '/api/v1/agent-share-links/' + encodeURIComponent(link.id) + '/redeem';
-  const publicationDenied = async am => outsider.request(am, 'POST', artifacts,
-    {body: artifactInput, key: randomUUID(), allowed: [404]});
+  const publicationDenied = async (am, status, code) => {
+    const {body} = await outsider.request(am, 'POST', artifacts,
+      {body: artifactInput, key: randomUUID(), allowed: [status]});
+    check(body?.code === code, 'artifact_publication_refusal_untyped');
+  };
   await withRestoration(async () => {
     check(link.mode === 'view' && !JSON.stringify(link).includes(token), 'share_link_scope_or_token');
     await outsider.request(owner.am, 'POST', redeem, {
@@ -110,7 +113,7 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
       const {body: seen} = await outsider.request(am, 'GET', artifactPath);
       check(seen.id === artifact.id && seen.sha256 === artifact.sha256, 'share_artifact_peer_readback');
     }
-    await publicationDenied(ingress);
+    await publicationDenied(ingress, 403, 'resource_forbidden');
   }, async () => {
     const {body: listing} = await user.request(owner.am, 'GET', links);
     const current = listing.items.find(row => row.id === link.id);
@@ -122,7 +125,7 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
       await outsider.request(am, 'GET', artifactPath, {allowed: [404]});
     }
     await outsider.request(owner.am, 'POST', redeem, {body: {token}, allowed: [404]});
-    await publicationDenied(owner.am);
+    await publicationDenied(owner.am, 404, 'resource_not_found');
   }, recordFailure);
   await readArtifact(ingress);
   await recordState('artifact_publication_retry', {known_aborts: 1, artifacts: 1,

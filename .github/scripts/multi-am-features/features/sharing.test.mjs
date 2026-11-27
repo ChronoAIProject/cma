@@ -8,7 +8,7 @@ const fixtureTime = '2026-01-01T00:00:00Z';
 
 function scenario({duplicateRedemption = false, divergingArtifact = false, aborts = 1,
   advancedRevision = true, lostRevision = false, publicationSettlesEarly = false,
-  sampledTransaction = 'a'.repeat(64)} = {}) {
+  sampledTransaction = 'a'.repeat(64), publicationDeniedCode} = {}) {
   const agentId = 'fixture-agent';
   const calls = [];
   const link = {id: 'fixture-link', agent_id: agentId, mode: 'view', revision: 2};
@@ -70,6 +70,11 @@ function scenario({duplicateRedemption = false, divergingArtifact = false, abort
   }};
   user.rawRequest = user.request;
   const outsider = {request: async (am, method, route, options) => {
+    if (method === 'POST' && route.endsWith('/artifacts')) {
+      const status = revoked ? 404 : 403;
+      assert.deepEqual(options.allowed, [status]);
+      return {status, body: {code: revoked ? 'resource_not_found' : publicationDeniedCode ?? 'resource_forbidden'}};
+    }
     if (options?.allowed?.includes(404)) {
       if (redeemed === 2 && method === 'GET') assert(revoked);
       return {status: 404};
@@ -113,6 +118,12 @@ test('a clean receipt still fails without one observed artifact transaction abor
     assert.deepEqual(actions, ['arm', 'wait', 'sample', 'disarm']);
     assert.equal(calls.length, 3);
   }
+});
+
+test('an active viewer must receive the publication-specific access refusal', async () => {
+  const {run, isRevoked} = scenario({publicationDeniedCode: 'account_deletion_in_progress'});
+  await assert.rejects(run, /artifact_publication_refusal_untyped/);
+  assert(isRevoked());
 });
 
 test('duplicate redemption fails the case and still revokes the owned fixture link', async () => {
