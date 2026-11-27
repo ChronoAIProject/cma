@@ -470,14 +470,19 @@ class OwnershipTests(unittest.TestCase):
         fixture.ready = local
         script = []
         fixture.mongo = lambda query: script.append(query) or {'armed': True}
-        self.assertEqual(fixture.retirementPurge('fixture-agent', 'fixture-sandbox', 'fixture-create', True),
+        admissions = [{'agentId': 'fixture-agent', 'operationId': 'fixture-create'},
+                      {'agentId': 'fixture-child', 'operationId': 'fixture-child-create'}]
+        self.assertEqual(fixture.retirementPurge('fixture-agent', 'fixture-sandbox', 'fixture-create', admissions, True),
                          {'armed': True})
         self.assertIn('"arm": true', script[0])
+        for unbound in [admissions[1:], [admissions[0], admissions[0]]]:
+            with self.assertRaisesRegex(ValueError, 'retirement_purge_fixture_scope_required'):
+                fixture.retirementPurge('fixture-agent', 'fixture-sandbox', 'fixture-create', unbound, True)
         for changes in [{'fixture': 'prepared'}, {'context': 'another-kind-context'},
                         {'server': 'https://example.invalid'}, {'run_id': 'foreign'}]:
             fixture.ready = {**local, **changes}
             with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
-                fixture.retirementPurge('fixture-agent', 'fixture-sandbox', 'fixture-create', True)
+                fixture.retirementPurge('fixture-agent', 'fixture-sandbox', 'fixture-create', admissions, True)
         self.assertEqual(len(script), 1)
 
     def test_runtime_loss_uses_the_exact_owned_pod_uid_as_a_delete_precondition(self):

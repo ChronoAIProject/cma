@@ -1,7 +1,7 @@
 import {randomUUID} from 'node:crypto';
 import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
 
-export async function retirementRetention({adapter, user, outsider, record, cleanup, waitForPurge = poll}) {
+export async function retirementRetention({adapter, user, outsider, record, cleanup, admissions, waitForPurge = poll}) {
   const {agentId, sandboxId} = record;
   check(id(agentId) && id(sandboxId), 'retirement_lineage_required');
   const agentPath = `/api/v1/agents/${agentId}`;
@@ -91,18 +91,18 @@ export async function retirementRetention({adapter, user, outsider, record, clea
   check(title?.accepted === true && title.request_sha256 === record.generatedTitleProof?.digest
     && title.turn_sequence === record.generatedTitleProof?.turnSequence,
   'retirement_title_custody_changed');
-  const purged = await observeEligiblePurge({adapter, user, record, paths: [agentPath, sandboxPath], waitForPurge});
+  const purged = await observeEligiblePurge({adapter, user, record, admissions, paths: [agentPath, sandboxPath], waitForPurge});
   return {agent_sha256: hash(agentId), sandbox_sha256: hash(sandboxId), terminal_event_count: 1,
     stop_ingress: ingress, stop_owner: owner.am, stop_owner_epoch: owner.epoch, stop_events: 1, delete_events: 1,
     retained_history: true, observed_future_purge_deadline: true, retained_title_custody: true, ...purged};
 }
 
-async function observeEligiblePurge({adapter, user, record, paths, waitForPurge}) {
+async function observeEligiblePurge({adapter, user, record, admissions, paths, waitForPurge}) {
   const {agentId, sandboxId, operationId} = record;
   check(id(operationId), 'retirement_purge_lifecycle_required');
-  const target = {agentId, sandboxId, operationId};
+  const target = {agentId, sandboxId, operationId, admissions};
   const armed = await adapter.retirementPurge({...target, arm: true});
-  check(armed?.armed === true && [1, 2].includes(armed.agents)
+  check(armed?.armed === true && armed.agents === admissions.length
     && /^[a-f0-9]{64}$/.test(armed.creation_sha256 ?? ''), 'retirement_purge_not_armed');
   const fields = ['agent_events', 'sandbox_events', 'workspaces', 'worktrees'];
   let samples = 0;

@@ -1,5 +1,5 @@
 (async () => {
-  const {sandboxId, agentId, operationId, arm} = scope;
+  const {sandboxId, agentId, operationId, admissions, arm} = scope;
   const owner = 'native-am-fixture-owner';
   const session = await d.getMongo().startSession();
   try {
@@ -12,7 +12,10 @@
     });
     const children = await snapshot.agents.find({sandbox_id: sandboxId}, {
       status: 1, owner: 1, 'record.origin.operation_id': 1,
-    }).limit(3).toArray();
+    }).limit(admissions.length + 1).toArray();
+    const expected = new Map(admissions.map(row => [row.agentId, row.operationId]));
+    const exactChildren = children.length === expected.size && children.every(row => row.owner === owner
+      && row.status === 'deleted' && expected.get(row._id) === row.record?.origin?.operation_id);
     const tail = collection => snapshot.getCollection(collection).findOne({sandbox_id: sandboxId}, {_id: 1});
     const event = await tail('sandbox_events');
     const workspace = await tail('workspaces');
@@ -25,8 +28,12 @@
     if (!creation) throw new Error('retirement_creation_provenance_missing');
     const creationDigest = require('crypto').createHash('sha256').update(EJSON.stringify(creation)).digest('hex');
     if (!arm) {
+      if ((!sandbox && children.length !== 0) || (sandbox && !exactChildren)) {
+        throw new Error('retirement_purge_changed_admission_set');
+      }
       const foreign = !sandbox && await snapshot.sandboxes.findOne({_id: sandboxId}, {_id: 1});
-      print(JSON.stringify({present: Boolean(sandbox || foreign), agents: children.length,
+      if (foreign) throw new Error('retirement_purge_changed_sandbox');
+      print(JSON.stringify({present: Boolean(sandbox), agents: children.length,
         sandbox_events: Boolean(event), agent_events: Boolean(agentEvent),
         workspaces: Boolean(workspace), worktrees: Boolean(worktree), creation_sha256: creationDigest}));
       return;
@@ -38,9 +45,7 @@
         || sandbox.record.work?.step !== 'wait_for_purge' || sandbox.work_lease_expires_at != null
         || typeof initial !== 'string' || Date.parse(initial) <= now || !Number.isFinite(Date.parse(initial))
         || sandbox.work_ready_at !== initial || !event || !agentEvent || !workspace || !worktree
-        || children.length < 1 || children.length > 2
-        || children.some(row => row.owner !== owner || row.status !== 'deleted')
-        || !children.some(row => row._id === agentId && row.record?.origin?.operation_id === operationId)) {
+        || !exactChildren) {
       throw new Error('retirement_purge_terminal_lineage_required');
     }
     // Move only the elapsed-time inputs. The actual production worker still

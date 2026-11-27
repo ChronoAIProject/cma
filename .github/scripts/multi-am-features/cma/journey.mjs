@@ -441,9 +441,15 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
         await restoreKilledAm();
       }});
     await step('plain_public_stop_retire', async () => {
-      if (retirementHook) await step('retirement_retains_terminal_evidence', () => retirementHook({adapter,
-        record: plain, cleanup, config}));
-      else await cleanup(plain);
+      if (retirementHook) {
+        await step('retirement_retains_terminal_evidence', () => {
+          const children = records.filter(record => record !== plain && record.sandboxId === plain.sandboxId);
+          check(children.every(child => child.sharedSandbox && child.deleted && id(child.agentId)
+            && id(child.operationId)), 'retirement_child_admission_unbound');
+          const admissions = [plain, ...children].map(({agentId, operationId}) => ({agentId, operationId}));
+          return retirementHook({adapter, record: plain, cleanup, config, admissions});
+        });
+      } else await cleanup(plain);
       return {retired: true};
     });
     if (triggerHook) await step('trigger_origin_always_on_and_replay', () => triggerHook({adapter, config}));
