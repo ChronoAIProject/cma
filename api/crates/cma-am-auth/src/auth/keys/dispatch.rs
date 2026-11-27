@@ -18,6 +18,23 @@ pub struct PreparedMint {
     provider_identity: String,
 }
 
+#[derive(Debug)]
+pub struct MintDispatchFailure {
+    pub phase: &'static str,
+    pub http_status: Option<u16>,
+    pub error: KeyIssuerError,
+}
+
+impl MintDispatchFailure {
+    fn new(phase: &'static str, http_status: Option<u16>, error: KeyIssuerError) -> Self {
+        Self {
+            phase,
+            http_status,
+            error,
+        }
+    }
+}
+
 impl PreparedMint {
     pub fn request_digest(&self) -> &str {
         &self.request_digest
@@ -26,16 +43,19 @@ impl PreparedMint {
         &self.provider_identity
     }
 
-    pub async fn dispatch(self) -> Result<MintedKey, KeyIssuerError> {
+    pub async fn dispatch(self) -> Result<MintedKey, MintDispatchFailure> {
         // Renewal owns the local window; preparation and intent persistence
         // cannot reserve a fresh window or recover an expired permit.
-        let authorities = layer2_core::sandbox::store::WorkAuthority::current()
-            .map_err(|_| KeyIssuerError::UnexpectedAuthority)?;
+        let missing_authority = |_| {
+            MintDispatchFailure::new("work_authority", None, KeyIssuerError::UnexpectedAuthority)
+        };
+        let authorities =
+            layer2_core::sandbox::store::WorkAuthority::current().map_err(missing_authority)?;
         let deadline = authorities
             .iter()
             .map(|authority| authority.deadline())
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|_| KeyIssuerError::UnexpectedAuthority)?
+            .map_err(missing_authority)?
             .into_iter()
             .min();
         let request = match deadline {
@@ -44,24 +64,40 @@ impl PreparedMint {
                 .timeout(deadline.saturating_duration_since(tokio::time::Instant::now())),
             None => self.request,
         };
-        let response = request
-            .send()
-            .await
-            .map_err(|error| KeyIssuerError::Unavailable(error.to_string()))?;
-        if !response.status().is_success() {
-            return Err(KeyIssuerError::Refused(response.status().as_u16()));
+        let response = request.send().await.map_err(|error| {
+            MintDispatchFailure::new("send", None, KeyIssuerError::Unavailable(error.to_string()))
+        })?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(MintDispatchFailure::new(
+                "response_status",
+                Some(status.as_u16()),
+                KeyIssuerError::Refused(status.as_u16()),
+            ));
         }
         let response = response
             .json::<MintedKeyResponse>()
             .await
-            .map_err(|error| KeyIssuerError::Unavailable(error.to_string()))?;
+            .map_err(|error| {
+                MintDispatchFailure::new(
+                    "response_decode",
+                    Some(status.as_u16()),
+                    KeyIssuerError::Unavailable(error.to_string()),
+                )
+            })?;
         minted_key_from_response(
             response,
             &self.allowed_services,
             &self.allowed_nodes,
             self.expires_at,
         )
-        .ok_or(KeyIssuerError::UnexpectedAuthority)
+        .ok_or_else(|| {
+            MintDispatchFailure::new(
+                "response_authority",
+                Some(status.as_u16()),
+                KeyIssuerError::UnexpectedAuthority,
+            )
+        })
     }
 }
 

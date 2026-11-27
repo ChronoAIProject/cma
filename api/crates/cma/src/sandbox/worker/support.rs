@@ -167,6 +167,14 @@ impl SandboxWorker {
             .checked_add(1)
             .ok_or(SandboxStoreError::Conflict)?;
         sandbox.updated_at = event_at.clone();
+        let typed = if exhausted && failure.credential_issuance_pending {
+            TypedFailure {
+                class: "credential_issuance_unresolved".into(),
+                detail: "Retirement requires authoritative settlement of the original credential issuance".into(),
+            }
+        } else {
+            failure.typed()
+        };
         commit_advance(
             &self.dependencies.store,
             expected_revision,
@@ -174,7 +182,7 @@ impl SandboxWorker {
             event_at,
             SandboxEventKind::WorkStepFailed {
                 step,
-                failure: failure.typed(),
+                failure: typed,
             },
         )
         .await?;
