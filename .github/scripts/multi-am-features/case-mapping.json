@@ -1,7 +1,8 @@
 {
   "cma-user.account.sign-in": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "cases": ["user.account_sign_in"],
+    "browser": true,
+    "routing": "both",
     "minimum_runs": 3,
     "phases": [
       "before_restart",
@@ -9,8 +10,9 @@
     ]
   },
   "cma-user.account.sign-out": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "cases": ["user.account_sign_out"],
+    "browser": true,
+    "routing": "both",
     "minimum_runs": 3,
     "phases": [
       "before_restart",

@@ -28,7 +28,8 @@ import {suggestionsCase} from './features/suggestions.mjs';
 import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
 import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_custody.mjs';
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
-import {accountAppearance, accountBuildVersion, accountDocumentation, accountTextSize} from './features/account_browser.mjs';
+import {accountAppearance, accountBuildVersion, accountDocumentation, accountSignIn, accountSignOut,
+  accountTextSize} from './features/account_browser.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -102,18 +103,26 @@ async function accountBrowserCases(ams, agentId) {
   const cases = [['user.account_appearance', accountAppearance], ['user.account_text_size', accountTextSize],
     ['user.account_build_version', page => accountBuildVersion(page, config.expected_api_source)],
     ['user.account_documentation', page => accountDocumentation(page, agentId)]];
+  async function exercise(am, iteration, name, run) {
+    const start = performance.now();
+    const row = {case: name, phase, iteration, ams: [am], real_browser: true, verdict: 'RUNNING'};
+    try { await run(); row.verdict = 'PASS'; }
+    catch (error) { row.verdict = 'FAIL'; throw error; }
+    finally { row.elapsed_ms = performance.now() - start; await record(row); }
+  }
   await withBrowser(ams, async browser => {
     for (let iteration = 1; iteration <= 3; iteration++) {
       for (const am of ['a', 'b']) {
         await browser.forIngress(am, async ({page}) => {
-          for (const [name, exercise] of cases) {
-            const start = performance.now();
-            const row = {case: name, phase, iteration, ams: [am], real_browser: true, verdict: 'RUNNING'};
-            try { await exercise(page); row.verdict = 'PASS'; }
-            catch (error) { row.verdict = 'FAIL'; throw error; }
-            finally { row.elapsed_ms = performance.now() - start; await record(row); }
+          for (const [name, run] of cases) {
+            await exercise(am, iteration, name, () => run(page));
           }
         });
+        await browser.forIngress(am, async ({page}) => {
+          const peer = am === 'a' ? 'b' : 'a';
+          await exercise(am, iteration, 'user.account_sign_in', () => accountSignIn(page, config.owner_id));
+          await exercise(am, iteration, 'user.account_sign_out', () => accountSignOut(page, ams[peer], config.host));
+        }, {freshSession: true});
       }
     }
   }, 'account_browser');

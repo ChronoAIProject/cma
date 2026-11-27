@@ -27,40 +27,64 @@ export async function openPreparedBrowser(config) {
   const browser = await chromium.launch({headless: true, timeout: 20000});
   return {
     close: () => browser.close(),
-    async forIngress(am, run) {
+    async forIngress(am, run, {freshSession = false} = {}) {
       check(Object.hasOwn(ams, am), 'prepared_browser_invalid_ingress');
+      const proxyRoutes = {'^/(?:(?:api|auth)/|openapi\\.json(?:\\?|$))': {
+        target: ams[am],
+        configure(proxy) {
+          proxy.on('proxyReq', (outgoing, incoming) => {
+            outgoing.setHeader('Host', publicOrigin.host);
+            if (incoming.headers.origin) outgoing.setHeader('Origin', publicOrigin.origin);
+          });
+          if (freshSession) proxy.on('proxyRes', (incoming, request) => {
+            if (new URL(request.url, publicOrigin).pathname !== '/auth/login'
+                || !incoming.headers.location) return;
+            const authorize = new URL(incoming.headers.location, publicOrigin);
+            if (authorize.origin === 'http://identity:8080' && authorize.pathname === '/authorize') {
+              incoming.headers.location = '/fixture/authorize' + authorize.search;
+            }
+          });
+        },
+      }};
+      if (freshSession) proxyRoutes['^/fixture/authorize(?:\\?|$)'] = {
+        target: loopback(config.identity_origin),
+        rewrite: path => path.replace('/fixture/authorize', '/authorize'),
+        configure(proxy) {
+          proxy.on('proxyRes', incoming => {
+            if (!incoming.headers.location) return;
+            const callback = new URL(incoming.headers.location, publicOrigin);
+            if (callback.origin === publicOrigin.origin && callback.pathname === '/auth/callback') {
+              incoming.headers.location = callback.pathname + callback.search;
+            }
+          });
+        },
+      };
       const server = await preview({root: webRoot, configFile: false,
-        preview: {host: '127.0.0.1', port: 0, strictPort: true, proxy: {'^/(?:(?:api|auth)/|openapi\\.json(?:\\?|$))': {
-          target: ams[am],
-          configure(proxy) {
-            proxy.on('proxyReq', (outgoing, incoming) => {
-              outgoing.setHeader('Host', publicOrigin.host);
-              if (incoming.headers.origin) outgoing.setHeader('Origin', publicOrigin.origin);
-            });
-          },
-        }}}});
+        preview: {host: '127.0.0.1', port: 0, strictPort: true, proxy: proxyRoutes}});
       let context;
       try {
         const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
         context = await browser.newContext({baseURL: origin, serviceWorkers: 'block'});
         await context.route('**/*', route => new URL(route.request().url()).origin === origin
           ? route.continue() : route.abort('blockedbyclient'));
-        await context.addCookies([{name: 'cma_session', value: config.browser_session_cookie, url: origin,
-          httpOnly: true, secure: true, sameSite: 'Lax'}]);
-        const sessionPage = await context.newPage();
-        await sessionPage.goto('/', {waitUntil: 'domcontentloaded', timeout: 20000});
-        const session = await sessionPage.evaluate(async () => {
-          const response = await fetch('/auth/session', {credentials: 'same-origin', redirect: 'error'});
-          if (!response.ok) return null;
-          const value = await response.json();
-          return {authenticated: value.authenticated, subject: value.subject};
-        });
-        check(session?.authenticated === true && session.subject === config.owner_id,
-          'prepared_browser_identity_unbound');
+        if (!freshSession) {
+          await context.addCookies([{name: 'cma_session', value: config.browser_session_cookie, url: origin,
+            httpOnly: true, secure: true, sameSite: 'Lax'}]);
+          const sessionPage = await context.newPage();
+          await sessionPage.goto('/', {waitUntil: 'domcontentloaded', timeout: 20000});
+          const session = await sessionPage.evaluate(async () => {
+            const response = await fetch('/auth/session', {credentials: 'same-origin', redirect: 'error'});
+            if (!response.ok) return null;
+            const value = await response.json();
+            return {authenticated: value.authenticated, subject: value.subject};
+          });
+          check(session?.authenticated === true && session.subject === config.owner_id,
+            'prepared_browser_identity_unbound');
+          // The home page can prefetch an Agent or Sandbox before the test opens it.
+          await sessionPage.close();
+        }
         const info = await context.request.get('/build-info.json', {maxRedirects: 0, timeout: 5000});
         check(info.ok() && (await info.json()).revision === config.expected_api_source, 'prepared_browser_source_mismatch');
-        // The home page can prefetch an Agent or Sandbox before the test opens it.
-        await sessionPage.close();
         const page = await context.newPage();
         return await run(new PreparedAgentPage(page, origin));
       } finally {

@@ -5,6 +5,58 @@ const account = page => page.getByRole('button', {name: /^Account menu for /});
 const choice = (page, group, name, options = {}) => page.getByRole('group', {name: group, exact: true})
   .getByRole('menuitemradio', {name, exact: true, ...options});
 
+async function browserSession(page, status, owner) {
+  const observed = await page.evaluate(async timeoutMs => {
+    const response = await fetch('/auth/session', {credentials: 'same-origin', redirect: 'error',
+      cache: 'no-store', signal: AbortSignal.timeout(timeoutMs)});
+    const {authenticated, subject} = await response.json();
+    return {status: response.status, authenticated, subject};
+  }, timeout);
+  check(observed.status === status, 'browser_session_status_unexpected_' + observed.status);
+  check(observed.authenticated === (status === 200) && (owner === undefined || observed.subject === owner),
+    'browser_session_identity_unexpected');
+}
+
+export async function accountSignIn(page, owner) {
+  await page.goto('/', {waitUntil: 'domcontentloaded', timeout});
+  await browserSession(page, 401);
+  const responseFor = (path, status) => page.waitForResponse(response => {
+    const request = response.request();
+    return request.isNavigationRequest() && request.method() === 'GET'
+      && new URL(response.url()).pathname === path && response.status() === status;
+  }, {timeout});
+  await Promise.all([
+    responseFor('/auth/login', 303),
+    responseFor('/fixture/authorize', 302),
+    responseFor('/auth/callback', 303),
+    page.getByRole('button', {name: 'Get Started', exact: true}).click({timeout}),
+  ]);
+  await account(page).waitFor({timeout});
+  await browserSession(page, 200, owner);
+}
+
+export async function accountSignOut(page, peerOrigin, publicHost) {
+  const context = page.context();
+  const cookie = (await context.cookies()).find(value => value.name === 'cma_session');
+  check(cookie?.httpOnly && cookie.secure, 'browser_sign_out_session_missing');
+  await account(page).click({timeout});
+  await Promise.all([
+    page.waitForRequest(request => new URL(request.url()).pathname === '/auth/logout'
+      && request.method() === 'GET', {timeout}),
+    page.getByRole('menuitem', {name: 'Sign out', exact: true}).click({timeout}),
+  ]);
+  await page.getByRole('button', {name: 'Get Started', exact: true}).waitFor({timeout});
+  await browserSession(page, 401);
+  check(!(await context.cookies()).some(value => value.name === 'cma_session'), 'browser_sign_out_cookie_retained');
+  const peer = new URL(peerOrigin);
+  check(peer.protocol === 'http:' && peer.hostname === '127.0.0.1' && peer.port
+    && peer.pathname === '/' && !peer.username && !peer.password && !peer.search && !peer.hash,
+  'browser_sign_out_peer_unbound');
+  const replay = await fetch(new URL('/auth/session', peer), {redirect: 'error', signal: AbortSignal.timeout(timeout),
+    headers: {Host: publicHost, Cookie: 'cma_session=' + cookie.value}});
+  check(replay.status === 401 && (await replay.json()).authenticated === false, 'browser_sign_out_peer_still_authenticated');
+}
+
 async function openAccount(page, reload = false) {
   if (reload) await page.reload({waitUntil: 'domcontentloaded', timeout});
   else await page.goto('/', {waitUntil: 'domcontentloaded', timeout});
