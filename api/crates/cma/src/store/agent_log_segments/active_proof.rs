@@ -153,6 +153,26 @@ pub(super) async fn read(
     read_database(&database, head, agent_revision, session, snapshot).await
 }
 
+/// Advance a current certificate in the transaction that claims unchanged log
+/// state. A missing or older certificate still takes the ordinary scan path.
+pub(in crate::store) async fn carry_claim(
+    store: &MongoSandboxStore,
+    head: &Head,
+    current: &layer2_core::sandbox::Agent,
+    claimed: &layer2_core::sandbox::Agent,
+    session: &mut ClientSession,
+) -> Result<(), TransactionLogError> {
+    if !store.active_log_proofs || current.conversation != claimed.conversation {
+        return Ok(());
+    }
+    if let Some(leaves) = read(store, head, current.revision, session, false).await? {
+        ActiveProof::new(head, claimed.revision, leaves)?
+            .persist(store, session)
+            .await?;
+    }
+    Ok(())
+}
+
 async fn read_database(
     database: &mongodb::Database,
     head: &Head,
@@ -229,3 +249,16 @@ impl MongoSandboxStore {
 
 mod prepare;
 pub(in crate::store) use prepare::prepare;
+
+#[cfg(test)]
+impl MongoSandboxStore {
+    pub(crate) async fn with_prepared_active_proof_for_test(
+        mut self,
+        id: &layer2_core::AgentId,
+    ) -> Self {
+        let db = self.client.database(&self.agents.namespace().db);
+        prepare(&self.client, &db, id.as_str()).await.unwrap();
+        self.active_log_proofs = true;
+        self
+    }
+}

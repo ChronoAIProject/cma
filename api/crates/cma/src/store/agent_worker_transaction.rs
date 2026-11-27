@@ -192,10 +192,15 @@ async fn apply_publication_observed(
                 prepared,
                 &mut scope,
             )
-            .await?,
+            .await
+            .map_err(|error| contention::phase(mutation, "segmented_adoption", error))?,
         )
     } else if format.is_some() {
-        Some(segmented::publish(store, &current_row, &current, mutation, &mut scope).await?)
+        Some(
+            segmented::publish(store, &current_row, &current, mutation, &mut scope)
+                .await
+                .map_err(|error| contention::phase(mutation, "segmented_publication", error))?,
+        )
     } else {
         None
     };
@@ -219,7 +224,8 @@ async fn apply_publication_observed(
         .map_err(|error| match error {
             crate::store::agent_ownership::FenceError::Domain(error) => ApplyError::Domain(error),
             crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
-        })?;
+        })
+        .map_err(|error| contention::phase(mutation, "manager_authority", error))?;
     // Decide eligibility in the publication's own snapshot. The same consumed
     // preparation revision is fenced below; no independent preflight can turn
     // a different snapshot into an unnecessary ordinary startup fallback.
@@ -375,7 +381,9 @@ async fn apply_publication_observed(
             )
             .session(&mut *session)
             .await
-            .map_err(ApplyError::Driver)?;
+            .map_err(|error| {
+                contention::phase(mutation, "retired_sandbox_fence", ApplyError::Driver(error))
+            })?;
         if written.matched_count != 1 {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
@@ -461,7 +469,9 @@ async fn apply_publication_observed(
     )
     .await?;
     if let Some(versioned) = mutation.worktree.as_ref() {
-        advance_worktree(store, &current_worktree, &versioned.worktree, session).await?;
+        advance_worktree(store, &current_worktree, &versioned.worktree, session)
+            .await
+            .map_err(|error| contention::phase(mutation, "worktree_write", error))?;
     }
     let event = match mutation.sandbox_event.as_ref() {
         Some(kind) => Some(
