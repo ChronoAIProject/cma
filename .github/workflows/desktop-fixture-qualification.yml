@@ -3,7 +3,10 @@ name: Desktop fixture qualification
 on:
   push:
     branches: [tl/runtime/1811-native-fixture-qualification]
-    paths: [.github/workflows/desktop-fixture-qualification.yml]
+    paths:
+      - .github/workflows/desktop-fixture-qualification.yml
+      - .github/scripts/desktop-lifecycle-probe.py
+      - .github/scripts/desktop-runtime-evidence.mjs
 
 permissions:
   contents: read
@@ -94,6 +97,12 @@ jobs:
         if: matrix.component == 'runtime'
         timeout-minutes: 10
         run: |
+          git fetch --no-tags --depth=1 origin "$GITHUB_SHA"
+          probe=.github/scripts/desktop-lifecycle-probe.py
+          harness=.github/scripts/desktop-runtime-evidence.mjs
+          trap 'git restore --source "$FIXTURE_SOURCE" -- "$probe" "$harness"' EXIT
+          git show "$GITHUB_SHA:$probe" > "$probe"
+          git show "$GITHUB_SHA:$harness" > "$harness"
           node .github/scripts/desktop-runtime-evidence.mjs "$FIXTURE_IMAGE" "$FIXTURE_SOURCE" \
             "$RUNNER_TEMP/desktop.json"
           jq -e '{revision,image,result,cleanup} | select(.result == "pass" and .cleanup)' "$RUNNER_TEMP/desktop.json"
