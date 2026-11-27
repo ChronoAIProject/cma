@@ -12,8 +12,23 @@ class CacheArchiveCases:
     def test_valid_bundle_round_trips(self):
         self.bundle()
         self.assertEqual(self.cache.validate_bundle(self.root, self.prefix)["prefix"], self.prefix)
-        self.cache.seal(self.root, self.prefix)
+        manifest = self.root / "manifest.json"
+        expected = manifest.read_bytes()
+        manifest.unlink()
+        with patch.object(self.cache, "digest", wraps=self.cache.digest) as digest:
+            self.cache.seal(self.root, self.prefix)
+        self.assertEqual([call.args[0].name for call in digest.call_args_list],
+                         ["registry.tar.gz", "target.tar.gz"])
+        self.assertEqual(manifest.read_bytes(), expected)
         self.cache.validate_bundle(self.root, self.prefix)
+
+    def test_fresh_export_with_invalid_members_does_not_publish_a_manifest(self):
+        self.bundle("../outside")
+        manifest = self.root / "manifest.json"
+        manifest.unlink()
+        with self.assertRaisesRegex(ValueError, "archive traversal"):
+            self.cache.seal(self.root, self.prefix)
+        self.assertFalse(manifest.exists())
 
     def test_corruption_and_incompatible_bundles_are_rejected(self):
         self.bundle()
