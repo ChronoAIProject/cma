@@ -1,16 +1,20 @@
 import contextlib
 import io
 import os
+import subprocess
 import sys
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 import yaml
 
 from actions_cache_run_history import ACTIVE_HORIZON, IncompleteHistory, cargo_reader_hold
 from actions_cache_sweep import Actions, main, sweep
+from actions_layer_admission import reservation_policy_revision
 from staging_cd_cache_retention_tests import DIGEST, GRAPH, Inventory, POLICY, ROOT, entry, seed
 
 
@@ -121,3 +125,46 @@ class ExpiredSeeds(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 main()
             client.assert_not_called()
+
+
+class LayerArchivePolicyTests(unittest.TestCase):
+    def test_refresh_preserves_exact_archive_policy_across_develop_advances(self):
+        with TemporaryDirectory() as directory:
+            repo = Path(directory)
+            run = subprocess.run
+
+            def git(*args):
+                return run(["git", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+
+            def commit(message):
+                git("add", ".")
+                git("-c", "user.name=Test Runner", "-c", "user.email=test@example.invalid",
+                    "-c", "commit.gpgsign=false", "commit", "-qm", message)
+                return git("rev-parse", "HEAD")
+
+            def local_git(command, **kwargs):
+                if command[3] == "fetch":
+                    command = [*command[:-2], directory, command[-1]]
+                return run(command, cwd=repo, **kwargs)
+
+            git("init", "-q", "-b", "develop")
+            (repo / ".github").mkdir()
+            policy = repo / ".github" / "policy.py"
+            policy.write_text("limit = 90\n")
+            initial = commit("Load archive policy")
+            with patch("actions_layer_admission.subprocess.run", side_effect=local_git):
+                self.assertEqual(reservation_policy_revision(initial), initial)
+                (repo / "app.py").write_text("print('example')\n")
+                newer = commit("Change application source")
+                self.assertEqual(reservation_policy_revision(initial), newer)
+                policy.write_text("limit = 91\n")
+                commit("Change archive policy")
+                with self.assertRaisesRegex(ValueError, "archive policy changed"):
+                    reservation_policy_revision(initial)
+                git("switch", "--detach", initial)
+                self.assertEqual(git("rev-parse", "HEAD"), initial)
+                (repo / "app.py").write_text("print('other')\n")
+                sibling = commit("Create a separate history")
+                git("branch", "-f", "develop", sibling)
+                with self.assertRaisesRegex(ValueError, "does not contain"):
+                    reservation_policy_revision(newer)

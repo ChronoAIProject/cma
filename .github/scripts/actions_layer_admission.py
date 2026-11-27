@@ -5,6 +5,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -120,6 +121,30 @@ def select_am_receipt(api, run):
     return artifact["id"]
 
 
+def reservation_policy_revision(loaded):
+    """Refresh archive reservation authority after detached candidate replay."""
+    require(isinstance(loaded, str) and re.fullmatch(r"[a-f0-9]{40}", loaded),
+            "Invalid loaded archive policy revision")
+
+    def git(*args, check=True):
+        return subprocess.run(
+            ["git", "-c", "credential.helper=", *args],
+            check=check, capture_output=True, text=True, timeout=20,
+            env={"PATH": os.environ["PATH"], "GIT_TERMINAL_PROMPT": "0"},
+        )
+
+    git("fetch", "--quiet", "--no-tags", f"https://github.com/{REPOSITORY}.git", DEVELOP)
+    current = git("rev-parse", "--verify", "FETCH_HEAD^{commit}").stdout.strip()
+    require(re.fullmatch(r"[a-f0-9]{40}", current), "Invalid current archive policy revision")
+    if current != loaded:
+        require(git("merge-base", "--is-ancestor", loaded, current, check=False).returncode == 0,
+                "Develop does not contain the loaded archive policy revision")
+        trees = git("rev-parse", f"{loaded}:.github", f"{current}:.github").stdout.splitlines()
+        require(len(trees) == 2 and re.fullmatch(r"[a-f0-9]{40}", trees[0]) and trees[0] == trees[1],
+                "Develop archive policy changed during candidate replay")
+    return current
+
+
 def reserve(api, ledger, key, archive, revision, *, replay_bytes=0):
     require(KEY.fullmatch(key), "Invalid archive key")
     info = archive.lstat()
@@ -227,7 +252,8 @@ def main(env, mode):
         require(value.get("kind") == "am-dependencies"
                 and env.get("LAYER_REUSE_ARCHIVE_DIGEST") == fingerprint,
                 "AM candidate must prove dependency reuse before reservation")
-    result = reserve(api, ledger, key, archive, env["GITHUB_SHA"], replay_bytes=replay.stat().st_size)
+    revision = reservation_policy_revision(env["GITHUB_SHA"])
+    result = reserve(api, ledger, key, archive, revision, replay_bytes=replay.stat().st_size)
     with Path(env["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"key={key}\nallowed={str(result['allowed']).lower()}\n")
     print(json.dumps(result), flush=True)
