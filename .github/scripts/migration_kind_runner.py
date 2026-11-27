@@ -28,6 +28,7 @@ from migration_boot_observation import observe_boot
 from migration_image_preflight import (
     ImagePreflight, RunnerError, checked_identity, checked_dependency, checked_identity_dependency,
 )
+from migration_release_probe import declared_artifacts, stage_schedule, policy_container, verify_pod_policy
 import migration_catalog as catalog
 def require_fixture_observation(path, stage, source, image):
     """Require a complete fixture receipt, rather than trusting exit status."""
@@ -201,17 +202,25 @@ class Campaign:
             ["--request-timeout=15s", "get", "--raw",
              f"/api/v1/namespaces/{NAMESPACE}/pods?labelSelector=app%3Dapi"], timeout=20))
 
-    def boot(self, image, source, stage, expected_config):
+    def boot(self, image, source, stage, expected_config, policy=None):
         baseline = self.pending_boot or {"pods": self.reader_pods(), "started_at": time.time()}
         self.pending_boot = None
-        self.kubectl(["-n", NAMESPACE, "set", "image", "deployment/api", f"api={image}"])
+        if policy is None:
+            self.kubectl(["-n", NAMESPACE, "set", "image", "deployment/api", f"api={image}"])
+        else:
+            patch = {"spec": {"template": {"spec": {"containers": [policy_container(image, policy)]}}}}
+            self.kubectl(["-n", NAMESPACE, "patch", "deployment/api", "--type=strategic",
+                          "--patch", json.dumps(patch)])
         self.kubectl(["-n", NAMESPACE, "rollout", "status", "deployment/api", "--timeout=180s"], timeout=190)
-        selected = select_ready_api_pod(self.reader_pods(), image, expected_config)
+        pods = self.reader_pods()
+        selected = select_ready_api_pod(pods, image, expected_config)
+        if policy is not None:
+            verify_pod_policy(pods, selected, policy)
         ready_at = time.time()
         observation = observe_boot(self.kubectl, NAMESPACE, baseline["pods"],
                                    selected, image, expected_config)
         self.active_reader = {"alias": image, "source": source, "config": expected_config,
-                              "pod": selected}
+                              "pod": selected, "writer_policy": policy}
         return {"stage": stage, "source": source, "image": image, "serving_pod": selected,
                 "started_at": baseline["started_at"], "ready_at": ready_at,
                 "startup_observation": observation}
@@ -222,7 +231,10 @@ class Campaign:
         active = self.active_reader
         if active is None or active["source"] != source:
             raise RunnerError("fixture has no matching booted reader")
-        selected = select_ready_api_pod(self.reader_pods(), active["alias"], active["config"])
+        pods = self.reader_pods()
+        selected = select_ready_api_pod(pods, active["alias"], active["config"])
+        if active.get("writer_policy") is not None:
+            verify_pod_policy(pods, selected, active["writer_policy"])
         if selected != active["pod"]:
             raise RunnerError("reader changed since boot")
         port = _port()
@@ -254,6 +266,7 @@ class Campaign:
             env = {**os.environ, "MATRIX_STAGE": stage, "MATRIX_API_URL": f"http://127.0.0.1:{port}",
                    "MATRIX_IMAGE": image, "MATRIX_SOURCE": source, "MATRIX_NAMESPACE": NAMESPACE,
                    "MATRIX_READER_POD_UID": selected["uid"],
+                   "MATRIX_WRITER_POLICY": active.get("writer_policy") or "unattributed",
                    "MATRIX_PLAN": str(self.plan_path), "MATRIX_PLAN_SHA256": self.plan_sha256,
                    "MATRIX_INVENTORY": str(inventory), "MATRIX_MONGO_URI": mongo_uri,
                    "MATRIX_MONGO_IMAGE": self.mongo_image,
@@ -267,7 +280,10 @@ class Campaign:
             receipt = self.output / "fixture-receipt.json"
             if result.returncode or not receipt.exists():
                 raise RunnerError(f"fixture command failed at {stage}")
-            after = select_ready_api_pod(self.reader_pods(), active["alias"], active["config"])
+            pods = self.reader_pods()
+            after = select_ready_api_pod(pods, active["alias"], active["config"])
+            if active.get("writer_policy") is not None:
+                verify_pod_policy(pods, after, active["writer_policy"])
             if after != selected:
                 raise RunnerError("reader changed during fixture")
             observation = require_fixture_observation(receipt, stage, source, image)
@@ -323,6 +339,9 @@ def run(args):
         raise RunnerError("matrix plan is missing or invalid") from error
     if plan.get("schema") != "cma-migration-matrix-plan-v1" or not plan.get("fixtures") or not plan.get("cells"):
         raise RunnerError("matrix plan is incomplete")
+    policy = getattr(args, "writer_policy", None)
+    artifacts = declared_artifacts(plan, old, new, policy,
+                                   lambda image, source: checked_identity(command, image, source))
     mongo = checked_dependency(command, args.mongo_image)
     identity = checked_identity_dependency(command, args.identity_image)
     campaign = Campaign(output, args.kind, args.timeout, plan_path,
@@ -353,24 +372,36 @@ def run(args):
     try:
         old_ref = campaign.alias_image(args.old_image, "old")
         new_ref = campaign.alias_image(args.new_image, "new")
+        aliases = {"historical": old_ref, "candidate": new_ref}
+        for reader in ("current", "recovery"):
+            artifact = artifacts[reader]
+            aliases[reader] = next((aliases[key] for key in aliases
+                                    if policy is None and artifacts[key] == artifact), None)
+            if aliases[reader] is None:
+                aliases[reader] = campaign.alias_image(artifact["image"], reader)
         mongo_ref = campaign.alias_image(args.mongo_image, "mongo")
         identity_ref = campaign.alias_image(args.identity_image, "identity")
         campaign.identity_image = identity_ref
-        campaign.images = [old_ref, new_ref, mongo_ref, identity_ref]
+        campaign.images = list(dict.fromkeys([*aliases.values(), mongo_ref, identity_ref]))
         objects = manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role,
                             args.runtime_image, identity_ref, identity_credentials)
         from migration_fixture_dependencies import configure, capture
         objects = configure(objects, args)
+        if policy is not None:
+            api = next(obj for obj in objects if obj["kind"] == "Deployment" and obj["metadata"]["name"] == "api")
+            container = next(row for row in api["spec"]["template"]["spec"]["containers"] if row["name"] == "api")
+            container.setdefault("env", []).extend(policy_container(old_ref, "disabled")["env"])
+            result["release_probe"] = {"writer_policy": policy, "artifacts": artifacts, "stage_controls": []}
         campaign.create(catalog.infrastructure(objects, NAMESPACE, secrets.token_urlsafe(24)))
         previous_catalog = None
-        stages = [("old-write", "historical-boot", old_ref, old),
-                  ("new-read-old-write", "current-boot", new_ref, new),
-                  ("new-write", None, new_ref, new),
-                  ("old-read-new-write", "rollback-boot", old_ref, old)]
-        for stage, boot, alias, artifact in stages:
+        for stage, boot, alias, artifact, stage_policy in stage_schedule(aliases, artifacts, policy):
             source, image = artifact["source"], artifact["image"]
             if boot:
-                result["boots"].append(campaign.boot(alias, source, boot, artifact["config"]))
+                control = {} if stage_policy is None else {"policy": stage_policy}
+                result["boots"].append(campaign.boot(alias, source, boot, artifact["config"], **control))
+            if policy is not None:
+                result["release_probe"]["stage_controls"].append(
+                    {"stage": stage, "source": source, "image": image, "writer_policy": stage_policy})
             result["fixtures"].append(campaign.fixture(args.fixture_command, stage, image, source, args.inventory))
             selected = campaign.active_reader["pod"]
             if select_ready_api_pod(campaign.reader_pods(), alias, artifact["config"]) != selected:
@@ -422,6 +453,8 @@ def main(argv=None):
     parser.add_argument("--old-image", required=True)
     parser.add_argument("--new-source", required=True)
     parser.add_argument("--new-image", required=True)
+    parser.add_argument("--writer-policy", choices=("disabled", "enabled"),
+                        help="execute declared release readers with the explicit candidate writer policy")
     parser.add_argument("--fixture-command")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--plan", type=Path)
