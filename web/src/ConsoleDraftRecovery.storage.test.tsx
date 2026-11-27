@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import './test/connectedAccounts';
 import { taskExperience } from './test/taskExperience';
@@ -75,7 +75,8 @@ it('reconciles an accepted draft and its ready attachment immediately after the 
     dataTransfer: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
   });
   await flush();
-  expect(screen.getByText('Ready', { exact: true })).toBeInTheDocument();
+  const attachments = screen.getByRole('list', { name: 'Attachments' });
+  expect(within(attachments).getByText('Ready', { exact: true })).toBeInTheDocument();
   expect(send()).toBeEnabled();
   f.fault.remove = true;
   fireEvent.click(send());

@@ -80,7 +80,8 @@ async function setup(paused = false) {
     dataTransfer: { files: [new File(['notes'], 'notes.txt', { type: 'text/plain' })] },
   });
   await flush();
-  expect(screen.getByText('Ready', { exact: true })).toBeInTheDocument();
+  const attachments = screen.getByRole('list', { name: 'Attachments' });
+  expect(within(attachments).getByText('Ready', { exact: true })).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
   return { h, upload, journal, view, show };
 }
