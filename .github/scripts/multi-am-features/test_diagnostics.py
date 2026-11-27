@@ -36,6 +36,31 @@ class DiagnosticTests(unittest.TestCase):
                          {'module': 'features/sharing.mjs', 'line': 1})
         self.assertIsNone(suite_error_frame(f'TypeError: {known}:3:1\n    at {unknown}:3:1', root))
 
+    def test_suite_frame_handles_node_async_system_errors_and_numbered_source_directory(self):
+        root = Path(__file__).resolve().parent
+        suite = (root / 'suite.mjs').as_uri()
+        binding = (root / 'sec01' / 'binding.mjs').as_uri()
+        system_error = (f'Error: ENOENT: no such file or directory, open fixture-private\n'
+                        f'    at async open (node:internal/fs/promises:637:25)\n'
+                        f'    at async {suite}:49:29 {{\n  errno: -2,\n}}\n')
+        self.assertEqual(suite_error_frame(system_error, root), {'module': 'suite.mjs', 'line': 49})
+        self.assertEqual(suite_error_frame(f'    at bind ({binding}:31:11)\n', root),
+                         {'module': 'sec01/binding.mjs', 'line': 31})
+
+    def test_suite_frame_skips_installed_dependencies_and_symlinks(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            (root / 'suite.mjs').touch()
+            dependency = root / 'node_modules' / 'ws' / 'wrapper.mjs'
+            dependency.parent.mkdir(parents=True)
+            dependency.touch()
+            (root / 'alias.mjs').symlink_to(dependency)
+            unavailable = (f'    at work ({dependency.as_uri()}:27:12)\n'
+                           f'    at work ({(root / "alias.mjs").as_uri()}:7:3)\n')
+            suite = f'    at work ({(root / "suite.mjs").as_uri()}:9:3)\n'
+            self.assertIsNone(suite_error_frame(unavailable, root))
+            self.assertEqual(suite_error_frame(unavailable + suite, root), {'module': 'suite.mjs', 'line': 9})
+
     def test_output_is_only_hashed_with_fixed_classification(self):
         private = b'private-token https://private.invalid?password=private-value\nno space left on device'
         result = command_outcome('image_api', 'docker', 1, 0.25, private)

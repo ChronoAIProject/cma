@@ -30,9 +30,12 @@ def suite_error_frame(output, suite_root):
     """Publish a source location from Node stderr without paths or exception text."""
     suite_root = suite_root.resolve()
     script_origin = re.escape(suite_root.as_uri()) + '/'
+    # Match the fixture's source directories. npm stores dependencies under
+    # node_modules, which can also contain .mjs files below the fixture root.
+    source_module = r'((?:(?:cma|features|owner|sec01)/)?[a-z][a-z0-9_-]*\.mjs)'
     location = re.compile(
-        r'^(?:[ \t]+at (?:[^\n]+? \()?)?' + script_origin
-        + r'((?:[a-z_]+/)*[a-z_]+\.mjs):([1-9][0-9]{0,4})(?::[1-9][0-9]{0,4})?\)?$',
+        r'^(?:[ \t]+at (?:async )?(?:[^\n]+? \()?)?' + script_origin + source_module
+        + r':([1-9][0-9]{0,4})(?::[1-9][0-9]{0,4})?\)?(?: \{)?$',
         re.MULTILINE)
     for match in location.finditer(output):
         module, line = match.groups()
