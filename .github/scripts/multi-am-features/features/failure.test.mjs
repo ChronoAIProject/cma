@@ -42,6 +42,18 @@ test('lifecycle polling publishes only recognized failure types and status', () 
   assert.deepEqual(lifecyclePollFailure(unknown, 'b'), {manager: 'b', kind: 'unknown'});
 });
 
+test('the two-Manager read summary identifies the transcript transport failure', () => {
+  const error = new TypeError('private request URL', {cause: {code: 'UND_ERR_SOCKET'}});
+  const result = journeyFailureSummary({
+    steps: [{name: 'prepared_create_on_b', verdict: 'FAIL', error: 'prepared_publication_both_managers_read_failed'}],
+    open_failure: {stage: 'agent_transcript', am: 'a', request_failure: lifecyclePollFailure(error, 'a'),
+      agent_sha256: 'a'.repeat(64), failure_class: 'private detail', native_response_path: '/private/response'},
+  });
+  assert.deepEqual(result.open_failure, {
+    stage: 'agent_transcript', manager: 'a', kind: 'transport_error', cause: 'UND_ERR_SOCKET',
+  });
+});
+
 test('lifecycle polling recovers one socket failure and requires the settled operation', async () => {
   const events = [new TypeError('fetch failed', {cause: {code: 'UND_ERR_SOCKET'}}), {status: 'running'},
     {status: 'succeeded'}];

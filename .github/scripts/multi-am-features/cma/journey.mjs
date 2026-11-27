@@ -159,31 +159,38 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     const routed = api.routingEnabled;
     api.routingEnabled = false; // These assertions prove both direct processes serve.
     try {
-    for (const am of ['a', 'b']) {
-      let last;
-      const observed = []; const started = performance.now();
-      try {
-        const d = await awaitInitialIdle(async () => {
-          last = await detail(am, record);
-          observed.push({at: new Date().toISOString(), body: last});
-          return last;
-        });
-        check(d.status === 'ready', 'open_not_ready');
-        (result.open_readiness ??= []).push({am, agent_sha256: hash(record.agentId), elapsed_ms: performance.now()-started,
-          observations: observed.map(x => ({at:x.at, status:x.body.status, first_message_state:x.body.first_message?.state ?? null,
-            first_message_purpose:x.body.first_message?.purpose ?? null})), eventual_idle_ready:true});
-      } catch (error) {
-        last = error.response?.body ?? last;
-        const failurePath = join(config.output_dir, 'open-failure-' + am + '-' + hash(record.agentId) + '.private.json');
-        await writeFile(failurePath, JSON.stringify({observed, error_response:error.response ?? null, error:safeError(error)}, null, 2)+'\n', {mode:0o600,flag:'wx'});
-        result.open_failure = {am, agent_sha256:hash(record.agentId), status:last?.status ?? null,
-          sandbox_status:last?.sandbox?.status ?? null, failure_class:last?.failure?.class ?? null, native_response_path:failurePath};
-        await save(); throw error;
+      for (const am of ['a', 'b']) {
+        let last;
+        let stage = 'agent_detail';
+        const observed = [];
+        const started = performance.now();
+        try {
+          const d = await awaitInitialIdle(async () => {
+            last = await detail(am, record);
+            observed.push({at: new Date().toISOString(), body: last});
+            return last;
+          });
+          check(d.status === 'ready', 'open_not_ready');
+          (result.open_readiness ??= []).push({am, agent_sha256: hash(record.agentId), elapsed_ms: performance.now()-started,
+            observations: observed.map(x => ({at:x.at, status:x.body.status, first_message_state:x.body.first_message?.state ?? null,
+              first_message_purpose:x.body.first_message?.purpose ?? null})), eventual_idle_ready:true});
+          stage = 'agent_transcript';
+          const transcript = await api.request(am, 'GET', `/api/v1/agents/${record.agentId}/transcript`);
+          check(transcript.body && typeof transcript.body === 'object', 'transcript_shape_invalid');
+        } catch (error) {
+          const requestFailure = lifecyclePollFailure(error, am);
+          const failurePath = join(config.output_dir, 'open-failure-' + am + '-' + hash(record.agentId) + '.private.json');
+          await writeFile(failurePath, JSON.stringify({stage, observed, error_response:error.response ?? null,
+            error:safeError(error), request_failure:requestFailure}, null, 2)+'\n', {mode:0o600,flag:'wx'});
+          last = stage === 'agent_detail' ? error.response?.body ?? last : last;
+          result.open_failure = {stage, request_failure:requestFailure, am, agent_sha256:hash(record.agentId),
+            status:last?.status ?? null, sandbox_status:last?.sandbox?.status ?? null,
+            failure_class:last?.failure?.class ?? null, native_response_path:failurePath};
+          await save();
+          throw error;
+        }
       }
-      const transcript = await api.request(am, 'GET', `/api/v1/agents/${record.agentId}/transcript`);
-      check(transcript.body && typeof transcript.body === 'object', 'transcript_shape_invalid');
-    }
-    return {both_am_details_and_transcripts: true, agent_sha256: hash(record.agentId)};
+      return {both_am_details_and_transcripts: true, agent_sha256: hash(record.agentId)};
     } finally { api.routingEnabled = routed; }
   }
   async function sendHeld(record, am, kind) {

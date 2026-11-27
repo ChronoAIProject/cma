@@ -67,6 +67,10 @@ export function journeyFailureSummary(journey) {
     first_failed_step_code: step ? fixedCode(step.error) : null,
     lifecycle_failure: journey?.create_failure?.observation ?? null,
     lifecycle_poll_failure: journey?.create_failure?.poll_failure,
+    ...(journey?.open_failure && {open_failure: {
+      stage: journey.open_failure.stage,
+      ...journey.open_failure.request_failure,
+    }}),
     failure_runtime_pod_count: Number.isSafeInteger(podCount) && podCount >= 0 ? podCount : null,
     journey_cleanup_failures: {
       public_retirement: cleanup.filter(value => value.public_cleanup === 'FAILED').length,
