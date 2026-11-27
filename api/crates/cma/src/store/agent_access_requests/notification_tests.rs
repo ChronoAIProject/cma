@@ -350,7 +350,7 @@ async fn mongo_notification_turn_reselection_fences_an_inflight_old_admission_sn
     // Even a delayed fresh transaction cannot admit the old observation.
     assert_eq!(
         store.reserve_command(request).await,
-        Err(CommandLedgerError::Conflict)
+        Err(CommandLedgerError::KnownAborted)
     );
     assert_eq!(
         store.agent_commands.count_documents(doc! {}).await.unwrap(),
