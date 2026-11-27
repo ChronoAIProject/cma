@@ -104,6 +104,9 @@ async fn save_with_format(
         return Err(SandboxStoreError::Conflict);
     }
     let mut fields = agent_replacement_fields(&agent)?;
+    if recovery_source.is_some() {
+        super::super::connection_recovery_activity::record_schedule(&agent, &mut fields)?;
+    }
     super::super::agent_log_integrity::carry_integrity_for_revision(
         &current_row,
         &current,

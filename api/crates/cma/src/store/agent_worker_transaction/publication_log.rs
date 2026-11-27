@@ -45,3 +45,28 @@ pub(super) async fn insert_logs(
     }
     Ok(())
 }
+
+pub(super) async fn write_recovery_activity(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    update: Document,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), ApplyError> {
+    let result = store
+        .agents
+        .update_one(
+            doc! {
+                "_id": agent.id.as_str(),
+                "revision": signed(agent.revision, "connection recovery revision")
+                    .map_err(SandboxStoreError::Corrupt).map_err(ApplyError::Domain)?,
+            },
+            update,
+        )
+        .session(session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    if result.matched_count != 1 {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    Ok(())
+}

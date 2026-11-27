@@ -11,6 +11,7 @@ use std::sync::Mutex;
 
 mod certification;
 mod integrity;
+mod reconnection;
 
 struct TestStore {
     store: MongoSandboxStore,

@@ -223,6 +223,7 @@ pub(super) async fn apply_with_sources(
                     failure_policy,
                     certified_legacy: certified.as_ref(),
                     legacy_formats_checked: bounded_legacy_log,
+                    use_recovery_activity: request.auto_pause_enabled && !platform_stop,
                 },
                 strict_sessions,
             )
