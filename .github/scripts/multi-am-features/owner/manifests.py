@@ -114,6 +114,7 @@ def managers(secret, ready):
         env['stringData']['CHRONO_MONGODB_URI'] += '&appName=' + PREPARED_MONGO_APP
     elif ready.get('fixture') == 'features':
         env['stringData']['CHRONO_MONGODB_URI'] += '&appName=' + FEATURES_MONGO_APP
+        env['stringData']['RUST_LOG'] += ',cma::agent_manager::rename_publication=debug'
     if desktop:
         env['stringData']['CHRONO_MACHINE_SANDBOX_IMAGE']=desktop
         env['stringData']['CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE']=desktop

@@ -27,7 +27,7 @@ import {triggerAlwaysOn} from './features/trigger_always_on.mjs';
 import {suggestionsCase} from './features/suggestions.mjs';
 import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
 import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_custody.mjs';
-import {competingRenames} from './features/rename_contention.mjs';
+import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
 import {accountAppearance, accountBuildVersion, accountDocumentation, accountTextSize} from './features/account_browser.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -251,6 +251,7 @@ try {
         await userCases({...caseContext, outsider});
         if (iteration === 1) {
           await caseContext.runCase('writer.competing_renames', () => competingRenames(caseContext));
+          await caseContext.runCase('writer.rename_publication_retry', () => renameAfterPublicationAbort(caseContext));
           await caseContext.runCase('writer.competing_system_prompts', () => competingSystemPrompts(caseContext));
           await caseContext.runCase('writer.shared_conversation_ingress', () => sharedIngressReceipt(caseContext));
           await caseContext.runCase('writer.suggestions_publish_once', () => suggestionsCase(caseContext, false));

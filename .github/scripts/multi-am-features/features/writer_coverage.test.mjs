@@ -20,7 +20,7 @@ test('all thirteen writer groups remain required independently of C275', async (
   assert.equal(new Set(groups.map(row => row.id)).size, 13);
   assert.equal(features.groups.at(-1).id, 'SW12');
   assert.deepEqual(prepared.groups.map(row => row.id), ['SW05', 'SW06', 'SW13']);
-  const executableGroups = ['SW09', 'SW12'];
+  const executableGroups = ['SW01', 'SW09', 'SW12'];
   for (const id of executableGroups) assert.equal(groups.find(row => row.id === id).verdict, 'NOT_RUN');
   assert.ok(groups.filter(row => !executableGroups.includes(row.id)).every(row => row.verdict === 'BLOCKED'));
   for (const fixture of ['features', 'prepared']) {

@@ -9,7 +9,9 @@ use layer2_core::sandbox::store::{
 use layer2_core::sandbox::{Agent, AgentLogEntry, PendingAgentApprovals};
 use layer2_core::seconds_from_rfc3339;
 use mongodb::bson::doc;
+use mongodb::error::{ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR};
 use mongodb::options::ReadConcern;
+use sha2::{Digest, Sha256};
 
 use super::agent_log::{scan_complete_log_with_session, scan_complete_log_with_snapshot_session};
 use super::agent_log_integrity::{
@@ -121,6 +123,25 @@ async fn commit_conversation_inner(
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
                 let _ = session.abort_guarded().await;
+                let write_conflict = match error.kind.as_ref() {
+                    ErrorKind::Command(error) => error.code == 112,
+                    ErrorKind::Write(WriteFailure::WriteError(error)) => error.code == 112,
+                    _ => false,
+                };
+                if write_conflict
+                    && error.contains_label(TRANSIENT_TRANSACTION_ERROR)
+                    && matches!(mutation.agent_logs.as_slice(),
+                        [layer2_core::sandbox::AgentLogKind::TitleSet { source, .. }]
+                        if source == "owner_override")
+                {
+                    tracing::debug!(
+                        target: "cma::agent_manager::rename_publication",
+                        parent: None,
+                        agent_sha256 = %format_args!("{:x}", Sha256::digest(mutation.agent.id.as_str().as_bytes())),
+                        failure = "known_aborted_cas",
+                        "Rename publication transaction aborted before retry"
+                    );
+                }
                 last_transient = Some(error.to_string());
                 continue;
             }

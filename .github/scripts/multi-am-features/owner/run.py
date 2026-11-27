@@ -26,7 +26,8 @@ import manifests
 import legacy_manifests as old
 from login import login
 from publication_evidence import (artifact_publication_abort, prepared_publication_abort, prepared_schema_barrier, prepared_schema_race,
-                                  prepared_schema_refusals, publication_evidence)
+                                  prepared_schema_refusals, publication_evidence,
+                                  rename_publication_abort, rename_publication_evidence)
 from readiness_scaling import drain_owner, observe_never_ready, observe_scale
 from retirement_purge import retirement_purge
 from runtime_loss import remove_runtime_pod
@@ -48,6 +49,8 @@ class Fixture:
     configurationDispatch = configuration_dispatch
     publicationEvidence = publication_evidence
     artifactPublicationAbort = artifact_publication_abort
+    renamePublicationAbort = rename_publication_abort
+    renamePublicationEvidence = rename_publication_evidence
     preparedPublicationAbort = prepared_publication_abort
     preparedSchemaBarrier = prepared_schema_barrier
     preparedSchemaRace = prepared_schema_race
@@ -407,7 +410,7 @@ class Fixture:
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
                              'organizationMembership','configurationLog','configurationDispatch','publicationEvidence',
                              'retirementPurge','removeRuntimePod','artifactPublicationAbort','preparedPublicationAbort','preparedSchemaBarrier',
-                             'preparedSchemaRace','preparedSchemaRefusals']
+                             'preparedSchemaRace','preparedSchemaRefusals','renamePublicationAbort','renamePublicationEvidence']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

@@ -14,7 +14,8 @@ export function createAdapter(config) {
     'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence','observeScale',
     'observeNeverReady','liveOwnerLease','lifecycleSnapshot','organizationMembership',
     'configurationLog','configurationDispatch','publicationEvidence','retirementPurge','removeRuntimePod',
-    'artifactPublicationAbort','preparedPublicationAbort','preparedSchemaBarrier','preparedSchemaRace','preparedSchemaRefusals']
+    'artifactPublicationAbort','preparedPublicationAbort','preparedSchemaBarrier','preparedSchemaRace','preparedSchemaRefusals',
+    'renamePublicationAbort','renamePublicationEvidence']
     .map(name=>[name,(body)=>call(name,body)]));
 }
 export default createAdapter;

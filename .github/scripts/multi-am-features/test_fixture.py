@@ -292,6 +292,32 @@ class OwnershipTests(unittest.TestCase):
             fixture.artifactPublicationAbort(True)
         self.assertEqual(fixture.mongo.call_count, 1)
 
+    def test_rename_abort_and_evidence_are_scoped_to_the_feature_fixture_and_agent(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = Mock(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        fixture.mongo = Mock(return_value={'count': 7})
+        self.assertEqual(fixture.renamePublicationAbort(True), {'count': 7})
+        script = fixture.mongo.call_args.args[0]
+        command, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
+        self.assertEqual(command['data'], {'failCommands': ['update'], 'namespace': 'cma_native_am.agents',
+            'appName': FEATURES_MONGO_APP, 'errorCode': 112, 'errorLabels': ['TransientTransactionError']})
+        digest = hashlib.sha256(b'fixture-agent').hexdigest()
+        tag = 'cma::agent_manager::rename_publication:'
+        line = f'{tag} Rename publication transaction aborted before retry agent_sha256={digest} failure="known_aborted_cas"'
+        fixture.client.k.side_effect = [
+            '\n'.join([line, line.replace(digest, 'f' * 64), line.replace(tag, 'unrelated:')]),
+            line.replace('known_aborted_cas', 'unknown_commit'),
+        ]
+        self.assertEqual(fixture.renamePublicationEvidence('fixture-agent'), {'a': 1, 'b': 0})
+        fixture.ready['fixture'] = 'prepared'
+        with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
+            fixture.renamePublicationAbort(True)
+        with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
+            fixture.renamePublicationEvidence('fixture-agent')
+
     def test_retirement_purge_writes_are_scoped_to_the_local_feature_fixture(self):
         run_id = 'cma-ci-' + 'a' * 12
         fixture = Fixture.__new__(Fixture)

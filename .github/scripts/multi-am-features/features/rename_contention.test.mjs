@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {competingRenames} from './rename_contention.mjs';
+import {competingRenames, renameAfterPublicationAbort} from './rename_contention.mjs';
 
 function fixture({first = 'a', publishLoser = false, staleReason = 'stale_revision'} = {}) {
   const original = {title: 'Original', revision: 4};
@@ -44,4 +44,59 @@ test('both direct and peer ingress can win under one exact revision', async () =
 test('an unchanged revision response or stray losing publication fails', async () => {
   await assert.rejects(competingRenames(fixture({staleReason: 'conflict'})), /rename_race_receipt_or_stale_reason_wrong/);
   await assert.rejects(competingRenames(fixture({publishLoser: true})), /rename_race_durable_effect_count_wrong/);
+});
+
+function abortFixture({abortOn = 'a', consumed = true, duplicate = false, rejected = false} = {}) {
+  let title = 'Original', revision = 4, armed = false;
+  const operations = [];
+  const api = {router: {dispatch: (_id, run) => run('b')},
+    async rawRequest(am, method, path, options) {
+      assert.equal(path, '/api/v1/agents/agent/preferences');
+      operations.push([am, method]);
+      if (method === 'PATCH') {
+        assert.equal(am, 'b');
+        assert.equal(armed, true);
+        assert.equal(options.body.expected_revision, revision);
+        if (rejected) throw Error('rename_fixture_request_failed');
+        title = options.body.title;
+        revision += 1;
+      }
+      return {status: 200, body: {title, revision}};
+    }};
+  const adapter = {
+    ownerOf: async () => ({am: 'a', epoch: 2, agent_id: 'agent', pod_uid: 'owner'}),
+    renamePublicationAbort: async ({arm}) => {
+      armed = arm;
+      return {count: arm || !consumed ? 7 : 8};
+    },
+    renamePublicationEvidence: async () => {
+      const evidence = {a: 0, b: 0};
+      if (revision > 4) evidence[abortOn] += 1;
+      return evidence;
+    },
+    titleEffects: async ({title: expected}) => {
+      assert.equal(expected, title);
+      return duplicate ? [12, 13] : [12];
+    },
+  };
+  return {api, adapter, record: {agentId: 'agent'}, operations, isArmed: () => armed};
+}
+
+test('peer Rename requires one aborted owner transaction and one visible publication', async () => {
+  const context = abortFixture();
+  await renameAfterPublicationAbort(context);
+  assert.deepEqual(context.operations, [['a', 'GET'], ['b', 'PATCH'], ['a', 'GET'], ['b', 'GET']]);
+  assert.equal(context.isArmed(), false);
+});
+
+test('Rename rejects unrelated aborts and duplicates and disarms after a failed request', async () => {
+  await assert.rejects(renameAfterPublicationAbort(abortFixture({abortOn: 'b'})),
+    /rename_publication_abort_not_attributed_to_owner/);
+  await assert.rejects(renameAfterPublicationAbort(abortFixture({consumed: false})),
+    /rename_publication_abort_not_consumed_once/);
+  await assert.rejects(renameAfterPublicationAbort(abortFixture({duplicate: true})),
+    /rename_abort_retry_publication_not_unique/);
+  const context = abortFixture({rejected: true});
+  await assert.rejects(renameAfterPublicationAbort(context), /rename_fixture_request_failed/);
+  assert.equal(context.isArmed(), false);
 });

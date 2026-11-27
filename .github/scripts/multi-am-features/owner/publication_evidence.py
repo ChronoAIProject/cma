@@ -32,6 +32,13 @@ def artifact_publication_abort(fixture, arm=None):
     return publication_abort(fixture, arm, 'insert', 'agent_artifacts', FEATURES_MONGO_APP)
 
 
+def rename_publication_abort(fixture, arm=None):
+    require_feature_fixture(fixture)
+    if type(arm) is not bool:
+        raise ValueError('rename_publication_abort_action_required')
+    return publication_abort(fixture, arm, 'update', 'agents', FEATURES_MONGO_APP)
+
+
 def publication_abort(fixture, arm, operation, collection, app):
     command = {'configureFailPoint': 'failCommand', 'mode': 'off'}
     if arm:
@@ -60,6 +67,25 @@ def agent_digest(agentId):
     if not isinstance(agentId, str) or not re.fullmatch(r'[-A-Za-z0-9_]{1,160}', agentId):
         raise ValueError('publication_evidence_lineage_required')
     return hashlib.sha256(agentId.encode()).hexdigest()
+
+
+def rename_publication_evidence(fixture, agentId=None):
+    require_feature_fixture(fixture)
+    digest = agent_digest(agentId)
+    counts = {}
+    for manager in ('a', 'b'):
+        raw = fixture.client.k(['logs', f'am-{manager}-0', '--since=2m',
+                                f'--limit-bytes={LOG_BOUND_BYTES}'], timeout=8)
+        if len(raw.encode()) >= LOG_BOUND_BYTES:
+            raise RuntimeError('rename_publication_evidence_log_bound')
+        counts[manager] = 0
+        for entry in raw.splitlines():
+            line = re.sub(r'\x1b\[[0-9;]*m', '', entry)
+            if 'cma::agent_manager::rename_publication:' in line:
+                fields = dict(FIELDS.findall(line))
+                if fields.get('agent_sha256') == digest and fields.get('failure') == 'known_aborted_cas':
+                    counts[manager] += 1
+    return counts
 
 
 def publication_evidence(fixture, agentId=None):
