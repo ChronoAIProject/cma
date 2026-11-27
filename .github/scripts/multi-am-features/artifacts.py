@@ -79,10 +79,16 @@ def import_tag(command, node, cluster, tag, config_id):
         raise ValueError('imported_manifest_missing')
     reference = tag.split(':')[0] + '@' + matches[0][2]
     command(prefix + ['images', 'tag', tag, reference])
-    observed = json.loads(command(['docker', 'exec', node, 'crictl', 'inspecti', reference]))['status']
+    observed = inspect_imported_image(command, node, reference)
     if observed.get('id') != config_id:
         raise ValueError('imported_config_mismatch')
     return reference
+
+
+def inspect_imported_image(command, node, reference):
+    # CRI learns about the new containerd image reference asynchronously.
+    result = command(['docker', 'exec', node, 'crictl', 'inspecti', reference], timeout=5, attempts=6)
+    return json.loads(result)['status']
 
 
 def load_pinned_dependency(command, node, cluster, component, pinned):

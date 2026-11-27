@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from diagnostics import command_outcome, initialization_timeout
 from infrastructure import Infrastructure
@@ -60,4 +61,21 @@ class DiagnosticTests(unittest.TestCase):
                 infra.command([sys.executable, '-c', 'import time;time.sleep(10)'], timeout=0.05)
             self.assertTrue(infra.failed_command['timed_out'])
             self.assertEqual(infra.failed_command['stage'], 'kind_cluster_create')
+            self.assertTrue(all(p.poll() is not None for p in infra.children))
+
+    def test_read_retry_retains_attempts_and_reports_only_terminal_failure(self):
+        with tempfile.TemporaryDirectory() as directory, patch('infrastructure.time.sleep'):
+            infra = Infrastructure(directory)
+            infra.stage = 'image_runtime_omarchy'
+            marker = Path(directory, 'read-attempt')
+            recovering = [sys.executable, '-c',
+                "from pathlib import Path; import sys; p = Path(sys.argv[1]); "
+                "found = p.exists(); p.touch(); sys.exit(0 if found else 3)", str(marker)]
+            self.assertEqual(infra.command(recovering, attempts=3), '')
+            self.assertEqual([row['returncode'] for row in infra.command_outcomes], [3, 0])
+            self.assertIsNone(infra.failed_command)
+            with self.assertRaisesRegex(RuntimeError, 'fixture_command_failed'):
+                infra.command([sys.executable, '-c', 'raise SystemExit(4)'], attempts=2)
+            self.assertEqual([row['returncode'] for row in infra.command_outcomes], [3, 0, 4, 4])
+            self.assertEqual(infra.failed_command['returncode'], 4)
             self.assertTrue(all(p.poll() is not None for p in infra.children))

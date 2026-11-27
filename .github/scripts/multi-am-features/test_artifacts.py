@@ -141,6 +141,18 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(self.load(command), reference)
         self.assertIn(['docker', 'exec', 'test-node', 'crictl', 'inspecti', reference], calls)
 
+    def test_immutable_reference_requires_the_expected_config_after_inspection(self):
+        _, loader, reference = self.loader(IMAGE)
+
+        def command(argv, **kwargs):
+            if argv[-2:] == ['inspecti', reference]:
+                self.assertEqual(kwargs, {'timeout': 5, 'attempts': 6})
+                return json.dumps({'status': {'id': 'sha256:' + 'f' * 64}})
+            return loader(argv, **kwargs)
+
+        with self.assertRaisesRegex(ValueError, 'imported_config_mismatch'):
+            self.load(command)
+
     def test_mismatched_loaded_runtime_contract_fails_before_kind_import(self):
         labels = {**IMAGE['Config']['Labels'], 'dev.chrono.cma.runtime-contract': '2'}
         calls, command, _ = self.loader({**IMAGE, 'Config': {'Labels': labels}})

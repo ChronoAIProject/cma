@@ -39,7 +39,16 @@ class Infrastructure:
         self.command_outcomes = []
         self.failed_command = None
 
-    def command(self, argv, timeout=60, data=None):
+    def command(self, argv, timeout=60, data=None, *, attempts=1):
+        for attempt in range(attempts):
+            try:
+                return self._command_once(argv, timeout, data, final_attempt=attempt + 1 == attempts)
+            except RuntimeError as error:
+                if str(error) != 'fixture_command_failed' or attempt + 1 == attempts:
+                    raise
+                time.sleep(min(1, max(0, self.deadline - time.monotonic())))
+
+    def _command_once(self, argv, timeout, data, *, final_attempt):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError('infrastructure_deadline')
@@ -61,8 +70,10 @@ class Infrastructure:
                 log.flush()
                 outcome = command_outcome(self.stage, Path(argv[0]).name,
                     process.returncode, time.monotonic() - started, path.read_bytes(), interrupted)
+                if argv[0:2] == ['docker', 'exec'] and argv[3:5] == ['crictl', 'inspecti']:
+                    outcome['operation'] = 'inspect_imported_image'
                 self.command_outcomes.append(outcome)
-                if (process.returncode or interrupted) and self.failed_command is None:
+                if (interrupted or (process.returncode and final_attempt)) and self.failed_command is None:
                     self.failed_command = outcome
             if process.returncode:
                 raise RuntimeError('fixture_command_failed')
