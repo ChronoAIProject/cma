@@ -80,6 +80,71 @@ async fn browser_observation_is_disabled_by_default_and_fences_the_runtime_boot(
 }
 
 #[tokio::test]
+async fn browser_observation_discards_a_mediator_with_closed_transport() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = FilesystemFixture(std::env::temp_dir().join(format!(
+        "cma-browser-exit-{}",
+        uuid::Uuid::new_v4().simple()
+    )));
+    let config = RuntimeConfig::for_test(fixture.0.clone());
+    let supervisor = Supervisor::new(config.clone(), SupervisorBoundary::default()).unwrap();
+    let router = crate::link::router(Arc::clone(&supervisor));
+    let installed = exchange(
+        &router,
+        serde_json::to_value(RequestFrame::Install(InstallRequest::new(
+            "browser-exit-install",
+            Vec::new(),
+        )))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(installed["t"], "install");
+    let credential = exchange(
+        &router,
+        serde_json::to_value(RequestFrame::Credential(CredentialFrame {
+            operation_id: "browser-exit-credential".into(),
+            value: RuntimeCredential::new("fixture-runtime-authority"),
+            custody_generation: Some(1),
+            github_route: None,
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(credential["t"], "credential");
+
+    let launcher = fixture.0.join("node");
+    std::fs::write(&launcher, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&launcher, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut process_config = config;
+    process_config
+        .process_env
+        .insert("PATH".into(), fixture.0.to_string_lossy().into_owned());
+    let agent = layer3_adapter::AgentSlot("agent-exit".into());
+    let browser_dir = FilesystemFixture(crate::browser::directory(
+        &process_config,
+        &supervisor.boot_id,
+        agent.as_str(),
+    ));
+    let browser =
+        crate::browser::Browser::start(&process_config, &supervisor.boot_id, agent.as_str())
+            .await
+            .unwrap();
+    supervisor.browsers.lock().await.insert(agent, browser);
+
+    let status = json!({"t":"browser", "sandbox_id":"sandbox-test", "runtime_generation":1,
+        "boot_id":supervisor.boot_id, "agent_id":"agent-exit", "operation":"status"});
+    assert_eq!(
+        exchange(&router, status.clone()).await["code"],
+        "browser_disconnected"
+    );
+    let observed = exchange(&router, status).await;
+    assert_eq!(observed["observation"]["state"], "not_enabled");
+    assert!(supervisor.browsers.lock().await.is_empty());
+    drop(browser_dir);
+}
+
+#[tokio::test]
 async fn filesystem_http_hides_configured_private_state_and_refuses_aliases_without_breaking_settings(
 ) {
     let fixture = FilesystemFixture(
