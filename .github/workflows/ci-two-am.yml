@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   startup-controls:
-    name: "Startup and runtime recovery source controls"
+    name: "Lifecycle publication source controls"
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -33,7 +33,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/rust-archive
-      - name: Verify prepared startup and runtime recovery contention
+      - name: Verify startup, recovery, checkpoint and purge publication
         timeout-minutes: 8
         run: bash .github/scripts/mongo-contract-tests.sh --prepared-startup
   features:
