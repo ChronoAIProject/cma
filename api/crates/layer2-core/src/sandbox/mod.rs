@@ -154,6 +154,8 @@ pub use home_restore::{
     SandboxHomeRestoreEvidenceKind, SandboxHomeRestoreReceipt, SandboxSupersededHome,
 };
 mod idle_evidence;
+#[cfg(test)]
+mod idle_evidence_tests;
 mod inactivity;
 pub use idle_evidence::{agentless_idle_refusal, agentless_idle_with_children};
 mod interruption;
