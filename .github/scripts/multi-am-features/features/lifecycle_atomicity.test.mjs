@@ -102,34 +102,44 @@ test('shared Sandbox cleanup deletes only the sibling and requires its exact Del
   try {
     await cleanupFixture({record, api, config: {output_dir}, result: {cleanup: []}});
     assert.equal(record.deleted, true);
-    assert.deepEqual(calls, [['GET', '/api/v1/agents/second'], ['GET', '/api/v1/agent-lifecycle/operation'],
+    assert.deepEqual(calls, [['GET', '/api/v1/agent-lifecycle/operation'], ['GET', '/api/v1/agents/second'],
       ['DELETE', '/api/v1/agents/second'], ['GET', '/api/v1/agents/second']]);
   } finally {
     await rm(output_dir, {recursive: true, force: true});
   }
 });
 
-test('a still-Starting Agent can be cleaned up after independent lifecycle readback', async () => {
+test('cleanup discovers the original home after creation times out with its Agent still Starting', async () => {
   const output_dir = await mkdtemp(join(tmpdir(), 'starting-agent-cleanup-'));
-  const record = {agentId: 'agent', name: 'probe', sandboxId: 'sandbox', operationId: 'operation',
-    am: 'a', sharedSandbox: true, key: 'cleanup-key'};
+  const record = {agentId: 'agent', name: 'probe', operationId: 'operation', am: 'a', key: 'cleanup-key'};
   let status = 'starting';
+  let retired = false;
   const mutations = [];
-  const api = {rawRequest: async (_, method, path) => {
+  const api = {request: async (_, method, path) => {
     if (path === '/api/v1/agent-lifecycle/operation') {
-      return {status: 200, body: {id: 'operation', agent_id: 'agent'}};
+      return {status: 200, body: {id: 'operation', agent_id: 'agent', phase: 'sandbox_ready'}};
+    }
+    if (method !== 'GET') mutations.push([method, path]);
+    if (path === '/api/v1/sandboxes/sandbox') {
+      if (method === 'DELETE') retired = true;
+      return {status: 200, body: {id: 'sandbox', owner: 'fixture-owner', name: 'probe sandbox operation',
+        status: retired ? 'retired' : 'provisioning'}};
+    }
+    if (path.startsWith('/api/v1/agents?')) {
+      return {status: 200, body: {items: [{id: 'agent', sandbox_id: 'sandbox', status}]}};
     }
     if (method === 'POST') {
       assert.equal(path, '/api/v1/agents/agent/stop');
       status = 'stopped';
     }
     if (method === 'DELETE') status = 'deleted';
-    if (method !== 'GET') mutations.push(method);
     return {status: 200, body: {id: 'agent', title: 'probe', sandbox: {id: 'sandbox'}, status}};
   }};
   try {
-    await cleanupFixture({record, api, config: {output_dir}, result: {cleanup: []}});
-    assert.deepEqual(mutations, ['POST', 'DELETE']);
+    await cleanupFixture({record, api, config: {output_dir, owner_id: 'fixture-owner'}, result: {cleanup: []}});
+    assert.deepEqual(mutations, [['POST', '/api/v1/agents/agent/stop'], ['DELETE', '/api/v1/agents/agent'],
+      ['DELETE', '/api/v1/sandboxes/sandbox']]);
+    assert.equal(record.sandboxId, 'sandbox');
     assert.equal(record.deleted, true);
   } finally {
     await rm(output_dir, {recursive: true, force: true});

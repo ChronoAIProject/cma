@@ -1,11 +1,11 @@
 import {writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {check, hash, lineage, other, poll, safeError} from './core.mjs';
+import {check, hash, id, lineage, other, poll, safeError} from './core.mjs';
 
 export async function cleanupFixture({record, config, api, killedAm, result}) {
   if (!record.agentId || record.deleted) return;
-  check(record.sandboxId && record.operationId, 'cleanup_create_lineage_incomplete');
+  check(record.operationId, 'cleanup_create_lineage_incomplete');
   const am = killedAm ? other(killedAm) : other(record.am);
   const receiptPath = join(config.output_dir, 'cleanup-' + hash(record.agentId) + '-' + randomUUID() + '.private.json');
   const journal = {am, agent_id:record.agentId, sandbox_id:record.sandboxId, started_at:new Date().toISOString(), mutations:[], last_reads:{}};
@@ -26,12 +26,17 @@ export async function cleanupFixture({record, config, api, killedAm, result}) {
   }
   async function cleanupDetail() {
     const response = await cleanupRequest(am, 'GET', `/api/v1/agents/${record.agentId}`);
-    check(lineage(record, response.body), 'agent_lineage_mismatch'); return response.body;
+    // A timed-out operation can assign the Agent before the journey reads its Sandbox.
+    const sandboxId = record.sandboxId ?? response.body?.sandbox?.id;
+    check(id(sandboxId) && lineage({...record, sandboxId}, response.body), 'agent_lineage_mismatch');
+    record.sandboxId = sandboxId;
+    journal.sandbox_id = sandboxId;
+    return response.body;
   }
   try {
-    const current = await cleanupDetail();
     const op = await cleanupRequest(am, 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
     check(op.body.id === record.operationId && op.body.agent_id === record.agentId, 'cleanup_lifecycle_mismatch');
+    const current = await cleanupDetail();
     if (!['stopped', 'deleted'].includes(current.status)) {
       await cleanupRequest(am, 'POST', `/api/v1/agents/${record.agentId}/stop`, {body: {}, key: record.key + '-stop', allowed: [200, 202, 204]});
       await poll(() => cleanupDetail(), value => value.status === 'stopped', {timeout: 180000, code: 'agent_stop_timeout'});
