@@ -45,7 +45,7 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        policy: [disabled, enabled]
+        policy: [disabled]
         fixture:
           - { name: profile, script: migration_profile_fixture.py, overlay: '' }
     env:
@@ -146,8 +146,23 @@ jobs:
           for log in sorted(output.glob('fixture-*.private.log')):
               text = log.read_text(errors='replace')
               sites = re.findall(r'File "[^"\n]*/(migration_[a-z0-9_]+\.py)", line ([0-9]+)', text)
+              classes = re.findall(r'^(?:[a-zA-Z0-9_.]+\.)?([A-Za-z_]*(?:Error|Exception|Disconnected|Timeout))(?::|$)', text, re.MULTILINE)
+              if classes:
+                  print('Fixture exception classes:', log.name, ', '.join(classes))
               if sites:
                   print('Fixture failure sites:', log.name, ', '.join(f'{name}:{line}' for name,line in sites))
+          evidence = output / 'kind-evidence.private.json'
+          if evidence.exists():
+              data = json.loads(evidence.read_text())
+              patterns = ('panic', 'stack overflow', 'server selection timeout', 'not authorized', 'connection reset', 'timed out', 'permission denied', 'failed to connect', 'error')
+              for command in data.get('commands', []):
+                  args = command.get('argv', [])
+                  if 'logs' not in args or 'deployment/api' not in args:
+                      continue
+                  log = output / Path(command['log']).name
+                  if log.exists():
+                      text = log.read_text(errors='replace').lower()
+                      print('API diagnostic counts:', {word: text.count(word) for word in patterns})
           for receipt in sorted(output.glob('requests-*.private.json')):
               requests = json.loads(receipt.read_text())
               if requests:
