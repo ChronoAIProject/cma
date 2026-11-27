@@ -176,7 +176,7 @@ async fn campaign(client: &Client, db: &mongodb::Database, trace: &measure::Trac
                         .agent_log_range(id, head, entry.seq, PAGE)
                         .await
                         .unwrap(),
-                    [entry.clone()]
+                    std::slice::from_ref(&entry)
                 );
                 latencies.push(interrupted.elapsed());
                 assert_eq!(
