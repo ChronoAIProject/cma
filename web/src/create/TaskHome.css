@@ -277,10 +277,6 @@
   background: var(--dsw-specific-task-button-fill);
   color: var(--dsw-specific-task-on-accent);
 }
-.task-home__send-labeled {
-  border-radius: var(--radius-lg);
-  min-height: 44px;
-}
 .task-home__send:hover:not(:disabled) {
   background: var(--dsw-specific-task-accent-hover);
 }

@@ -9,7 +9,6 @@ export function TaskComposer({
   errorId,
   disabled,
   template = false,
-  showSubmitLabel = false,
   invalid = false,
   onChange,
   onClearTemplate,
@@ -22,7 +21,6 @@ export function TaskComposer({
   readonly errorId: string;
   readonly disabled: boolean;
   readonly template?: boolean;
-  readonly showSubmitLabel?: boolean;
   readonly invalid?: boolean;
   readonly onChange: (text: string) => void;
   readonly onClearTemplate?: () => void;
@@ -80,15 +78,13 @@ export function TaskComposer({
           <Button
             type="submit"
             variant="primary"
-            placement={
-              showSubmitLabel ? 'task-home__send task-home__send-labeled' : 'task-home__send'
-            }
+            placement="task-home__send"
             aria-label="Start task"
             aria-keyshortcuts={template && canSubmit ? shortcut : undefined}
             icon={<IconArrowUpOutline16 />}
             disabled={!canSubmit}
           >
-            {template || showSubmitLabel ? 'Start task' : undefined}
+            {template ? 'Start task' : undefined}
           </Button>
         </div>
       </div>
