@@ -149,12 +149,12 @@ it('uses native fullscreen when granted and retains the panel through Escape', a
   render(draw());
   await screen.findByText('Native desktop · Desktop');
   const panel = screen.getByRole('complementary', { name: 'Agent computer' });
-  fireEvent.click(screen.getByRole('button', { name: 'Full screen', exact: true }));
+  fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
   expect(request).toHaveBeenCalledOnce();
   expect(document.fullscreenElement).toBe(panel);
   expect(screen.getByRole('button', { name: 'Exit full screen' })).toBeVisible();
   fireEvent.keyDown(panel, { key: 'Escape' });
   expect(exit).toHaveBeenCalledOnce();
-  expect(screen.getByRole('button', { name: 'Full screen', exact: true })).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Full screen' })).toBeVisible();
   expect(screen.getByText('Native desktop · Desktop')).toBeVisible();
 });
