@@ -140,6 +140,15 @@ async fn bucket_ranges_equal_raw_for_all_presets_edges_and_live_tails() {
             serde_json::to_value(expected).unwrap(),
             "{range:?}"
         );
+        let deadlines = std::mem::take(&mut *commands.bucket_find_deadlines_ms.lock().unwrap());
+        let expected_queries = if range.from == range.to {
+            0
+        } else if range.from.is_multiple_of(DAY) && range.to.is_multiple_of(DAY) {
+            1
+        } else {
+            2
+        };
+        assert_eq!(deadlines, vec![5_000; expected_queries], "{range:?}");
         if range.to <= end {
             assert_eq!(commands.event_reads.load(Ordering::SeqCst), 0);
         }
