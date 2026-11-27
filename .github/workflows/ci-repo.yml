@@ -34,6 +34,7 @@ jobs:
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_retry_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_artifact_download_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'runtime_image_*tests.py'
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/regional_recovery_tests.py
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/image-secret-gate-tests.py
           ruby .github/scripts/staging_cd_workflows_tests.rb
       -
