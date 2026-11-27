@@ -146,6 +146,9 @@ pub trait SandboxStore: Send + Sync {
 
     fn managed_runtime_target<'a>(&self, sandbox: &Sandbox, target: &'a str) -> Option<&'a str> {
         use crate::released_runtime::ReleasedLane;
+        if sandbox.requires_retained_runtime_transition() {
+            return None;
+        }
         let qualified = match sandbox.managed_runtime_lane() {
             Some(ReleasedLane::Machine) => {
                 self.machine_runtime_target_is_qualified(&sandbox.id, target)

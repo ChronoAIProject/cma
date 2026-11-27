@@ -229,7 +229,7 @@ fn validate_mutation(
     if current.work.live_skills != mutation.agent.work.live_skills {
         return Err(SandboxStoreError::Conflict);
     }
-    validate_position(current, current_worktree)?;
+    validate_position(current, current_worktree, retired_process_absent)?;
     validate_histories(current, &mutation.agent, &mutation.appended_at)?;
     let kind = classify_publication(current, &mutation.agent)?;
     validate_work_delta(

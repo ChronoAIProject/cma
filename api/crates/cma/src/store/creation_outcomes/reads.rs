@@ -41,9 +41,6 @@ impl CreationOutcomes {
         let Some(period) = identity.period().map_err(identity_error)? else {
             return self.legacy(snapshot, identity, query, session).await;
         };
-        if period.epoch != self.config.epoch {
-            return Ok(unknown(UnknownReason::CoverageUnavailable));
-        }
         let records = snapshot.collection(COLLECTION);
         if let Some(row) = Self::read_record(&records, identity, session).await? {
             if query.claim_id.is_some() {
@@ -76,13 +73,16 @@ impl CreationOutcomes {
                     code,
                     row.operation_id,
                 )),
-                Evidence::Pending => Self::pending(snapshot, &row, session).await,
+                Evidence::Pending if period.epoch == self.config.epoch => {
+                    Self::pending(snapshot, &row, session).await
+                }
+                Evidence::Pending => Ok(unknown(UnknownReason::CoverageUnavailable)),
             };
         }
         if query.claim_id.is_some() || query.operation_id.is_some() {
             return Ok(unknown(UnknownReason::NoDurableEvidence));
         }
-        if self.is_closed(&records, period.day, session).await?
+        if self.is_closed(&records, &period, session).await?
             && owner_day_covered(snapshot, identity.owner, period.day, session).await?
         {
             Ok(Outcome::never_received(&identity.digest(), &period))

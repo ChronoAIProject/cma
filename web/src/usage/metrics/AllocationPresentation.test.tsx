@@ -1,3 +1,4 @@
+import { useState, type ComponentProps } from 'react';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
@@ -5,8 +6,16 @@ import { type UsageMetricPage, type UsageMetricQuantity } from '@cma/client';
 import { AllocationChart, allocationComparisons } from './AllocationChart';
 import { AllocationHistory } from './AllocationHistory';
 import { humanDuration } from './humanDuration';
+import type { Metric } from './model';
 import { UsageIdentity } from './UsageIdentity';
 import { asOf, metricRow, metricsClient } from './testFixtures';
+
+function InteractiveAllocationChart(
+  props: Omit<ComponentProps<typeof AllocationChart>, 'metric' | 'onMetricChange'>,
+) {
+  const [metric, setMetric] = useState<Metric>('cpu');
+  return <AllocationChart {...props} metric={metric} onMetricChange={setMetric} />;
+}
 
 const chartProps = {
   api: metricsClient(true),
@@ -45,7 +54,7 @@ it.each([
   [1, '9007199254740993', '9,007,199,254,740,993 Sandboxes'],
 ] as const)('labels %s page rows using the total count %s', (shown, total, label) => {
   render(
-    <AllocationChart
+    <InteractiveAllocationChart
       {...chartProps}
       admin
       page={{ ...page, items: page.items.slice(0, shown), total_count: total }}
@@ -56,7 +65,7 @@ it.each([
 
 it('compares page allocation with distinct units, explicit scope and keyboard-accessible data', async () => {
   const actor = userEvent.setup();
-  render(<AllocationChart {...chartProps} page={page} admin />);
+  render(<InteractiveAllocationChart {...chartProps} page={page} admin />);
   expect(screen.getByRole('img')).toHaveAccessibleName('CPU allocated core-hours by sandbox');
   expect(screen.getByText(/2 of 200 Sandboxes on this page/)).toBeInTheDocument();
   const disclosure = screen.getByText('View allocation chart data');
@@ -88,7 +97,7 @@ it('keeps all page groups in the fallback and never turns an empty page into zer
       name: `Sandbox ${index}`,
     })),
   };
-  const view = render(<AllocationChart {...chartProps} page={many} admin={false} />);
+  const view = render(<InteractiveAllocationChart {...chartProps} page={many} admin={false} />);
   expect(screen.getByText(/Largest 8 shown/)).toBeInTheDocument();
   await actor.click(screen.getByText('View allocation chart data'));
   expect(
@@ -97,7 +106,9 @@ it('keeps all page groups in the fallback and never turns an empty page into zer
       { hidden: true },
     ),
   ).toHaveLength(11);
-  view.rerender(<AllocationChart {...chartProps} page={{ ...page, items: [] }} admin={false} />);
+  view.rerender(
+    <InteractiveAllocationChart {...chartProps} page={{ ...page, items: [] }} admin={false} />,
+  );
   expect(screen.queryByRole('img')).not.toBeInTheDocument();
   expect(screen.queryByText(/0 core-hours/)).not.toBeInTheDocument();
 });
