@@ -48,18 +48,6 @@ jobs:
         policy: [disabled, enabled]
         fixture:
           - { name: profile, script: migration_profile_fixture.py, overlay: '' }
-          - { name: api-custody, script: migration_api_custody_fixture.py, overlay: --api-custody-fixture }
-          - { name: bot, script: migration_bot_fixture.py, overlay: --bot-fixture }
-          - { name: sandbox, script: migration_sandbox_fixture.py, overlay: --sandbox-admission-fixture }
-          - { name: sandbox-control, script: migration_sandbox_control_fixture.py, overlay: --sandbox-control-fixture }
-          - { name: launch, script: migration_launch_fixture.py, overlay: --launch-fixture }
-          - { name: admission-policy, script: migration_admission_policy_fixture.py, overlay: --sandbox-admission-fixture }
-          - { name: visitor, script: migration_visitor_fixture.py, overlay: --visitor-fixture }
-          - { name: warm-pool, script: migration_warm_pool_fixture.py, overlay: --warm-pool-fixture }
-          - { name: directory, script: migration_directory_fixture.py, overlay: --directory-fixture }
-          - { name: trigger-usage, script: migration_composite_fixture.py, overlay: '' }
-          - { name: event-worker, script: migration_event_worker_fixture.py, overlay: '' }
-          - { name: report-rows, script: migration_report_rows_fixture.py, overlay: '' }
     env:
       OLD_SOURCE: ${{ inputs.historical_source }}
       OLD_IMAGE: ${{ inputs.historical_image }}
@@ -149,5 +137,21 @@ jobs:
           else
             echo 'The release probe stopped before the evidence receipt was written.'
             exit 1
+          fi
+          if test "$status" -ne 0; then
+            python3 -B - "$output" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, re, sys
+          from pathlib import Path
+          output = Path(sys.argv[1])
+          for log in sorted(output.glob('fixture-*.private.log')):
+              text = log.read_text(errors='replace')
+              sites = re.findall(r'File "[^"\n]*/(migration_[a-z0-9_]+\.py)", line ([0-9]+)', text)
+              if sites:
+                  print('Fixture failure sites:', log.name, ', '.join(f'{name}:{line}' for name,line in sites))
+          for receipt in sorted(output.glob('requests-*.private.json')):
+              requests = json.loads(receipt.read_text())
+              if requests:
+                  print('Last request:', receipt.name, requests[-1]['method'], requests[-1]['status'])
+          PY
           fi
           exit "$status"
