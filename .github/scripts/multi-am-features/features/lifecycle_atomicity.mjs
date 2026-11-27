@@ -1,3 +1,4 @@
+import {isDeepStrictEqual} from 'node:util';
 import {check, hash, id, other, poll} from '../cma/core.mjs';
 import {ownerlessRevival} from './ownerless_revival.mjs';
 
@@ -10,11 +11,42 @@ export async function retainedLifecycle({api, adapter, record, create, cleanup, 
   const read = () => adapter.lifecycleSnapshot({sandboxId: record.sandboxId,
     agentIds: [record.agentId, sibling.agentId]});
   const before = await read();
+  const priorRuntime = await adapter.runtimeFor({agentId: record.agentId});
   await step('ownerless_pause_revive_open', () => ownerlessRevival({api, adapter, record, ...journey,
-    pauseObservation: () => step('two_agent_pause_all_or_none', () => observeAtomicPause({read, before}))}));
+    pauseObservation: async () => {
+      await step('two_agent_pause_all_or_none', () => observeAtomicPause({read, before}));
+      await step('pause_preserves_retained_home_authority', async () => assertRetainedHome(before, await read(), priorRuntime));
+    }}));
+  await step('revival_reattaches_retained_home', async () => {
+    const runtime = await adapter.runtimeFor({agentId: record.agentId});
+    check(runtime.ready === true && runtime.home_identity === priorRuntime.home_identity
+      && runtime.pod_uid !== priorRuntime.pod_uid && id(runtime.pod_uid)
+      && Array.isArray(runtime.pvc_names) && isDeepStrictEqual([...runtime.pvc_names].sort(), [...priorRuntime.pvc_names].sort()),
+    'revival_retained_home_changed');
+    return {retained_home_sha256: hash(runtime.home_identity), volume_claims: runtime.pvc_names.length};
+  });
   await step('two_agent_revival_restores_both', () => verifySiblingRecovery({api, adapter, record,
     sibling, openBoth: journey.openBoth}));
   await cleanup(sibling);
+}
+
+export function assertRetainedHome(before, paused, priorRuntime) {
+  check(paused?.status === 'paused' && paused.runtime_detached === true && priorRuntime.ready === true
+    && id(priorRuntime.home_identity) && id(priorRuntime.pod_uid)
+    && Array.isArray(priorRuntime.pvc_names) && priorRuntime.pvc_names.length > 0
+    && Number.isSafeInteger(before.provision_generation) && before.provision_generation > 0
+    && paused.retained_home?.identity === priorRuntime.home_identity
+    && paused.retained_home.source_generation === before.provision_generation
+    && paused.checkpoint_epoch === before.checkpoint_epoch, 'pause_retained_home_unbound');
+  const prior = before.children;
+  const children = paused.children;
+  check(Array.isArray(prior) && prior.length === 2 && Array.isArray(children) && children.length === 2
+    && new Set(prior.map(child => child?.agent_id)).size === prior.length
+    && prior.every((child, index) => id(child?.agent_id) && id(child.conversation_id)
+      && children[index]?.agent_id === child.agent_id && children[index].status === 'paused'
+      && children[index].conversation_id === child.conversation_id), 'pause_retained_home_child_lineage_changed');
+  return {retained_home_sha256: hash(paused.retained_home.identity),
+    source_generation: paused.retained_home.source_generation, retained_conversations: children.length};
 }
 
 export async function observeAtomicPause({read, before, waitFor = poll}) {

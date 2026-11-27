@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
 import {cleanupFixture} from '../cma/cleanup.mjs';
-import {observeAtomicPause, retainedLifecycle, verifySiblingRecovery} from './lifecycle_atomicity.mjs';
+import {assertRetainedHome, observeAtomicPause, retainedLifecycle, verifySiblingRecovery} from './lifecycle_atomicity.mjs';
 
 const ready = {status: 'ready', revision: 5, last_seq: 4};
 const paused = {status: 'paused', revision: 6, last_seq: 5};
@@ -35,6 +35,25 @@ test('a mixed snapshot, parent-first publication, missing lineage and stale chil
     [snapshot('pausing', 10, [ready, null]), /pause_snapshot_lineage_changed/],
     [snapshot('paused', 11, [paused, {...paused, last_seq: ready.last_seq}]), /pause_atomic_publication_missing/],
   ]) await assert.rejects(sample([state]), expected);
+});
+
+test('a paused Sandbox preserves the runtime home, source generation and both exact conversations', () => {
+  const children = ['first', 'second'].map(agent_id => ({agent_id, conversation_id: 'conversation-' + agent_id}));
+  const prior = {...before, children, provision_generation: 8, checkpoint_epoch: 0};
+  const priorRuntime = {ready: true, home_identity: 'home', pod_uid: 'old-pod', pvc_names: ['claim']};
+  const retained = {identity: 'home', source_generation: 8};
+  const observed = {status: 'paused', runtime_detached: true, checkpoint_epoch: 0, retained_home: retained,
+    children: children.map(child => ({...child, status: 'paused'}))};
+  const result = assertRetainedHome(prior, observed, priorRuntime);
+  assert.equal(result.source_generation, 8);
+  assert.equal(result.retained_conversations, 2);
+  assert.match(result.retained_home_sha256, /^[a-f0-9]{64}$/);
+  for (const overrides of [{retained_home: {...retained, source_generation: 7}},
+    {retained_home: {...retained, identity: 'replacement'}}, {runtime_detached: false}, {checkpoint_epoch: 1}]) {
+    assert.throws(() => assertRetainedHome(prior, {...observed, ...overrides}, priorRuntime), /pause_retained_home_unbound/);
+  }
+  assert.throws(() => assertRetainedHome(prior, {...observed, children: observed.children.toReversed()}, priorRuntime),
+    /pause_retained_home_child_lineage_changed/);
 });
 
 test('missing Workspace identity cannot fall through to new Sandbox admission', async () => {

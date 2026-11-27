@@ -290,9 +290,11 @@
       "feature": "Local destructive/admin matrix",
       "requirement": "Exact capture/retention/title-finality guards remain enforced. Known contention re-evaluates safely and boundedly; terminal cleanup never deletes a live Agent or bypasses retained evidence. Local topology only.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The retention journey drives an eligible fixture to worker purge. Same-source controls exercise checkpoint and purge publication retries and unresolved title custody on Mongo. Exact-image checkpoint capture, the title-finality barrier and hosted execution remain pending.",
+      "remaining": "The image journey binds pause and revival to the exact retained home and drives an eligible fixture to worker purge. Same-source controls exercise checkpoint and purge publication retries and unresolved title custody on Mongo. Exact-image checkpoint capture, publication contention, the title-finality barrier and hosted execution remain pending.",
       "trigger": "Checkpoint publication, runtime maintenance, retirement and eligible purge with active/terminated Agent writers",
       "required_assertions": [
+        {"case": "pause_preserves_retained_home_authority", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "revival_reattaches_retained_home", "minimum_runs": 1, "phases": [], "routing": "journey"},
         {"case": "retirement_retains_terminal_evidence", "minimum_runs": 1, "phases": [], "routing": "journey"}
       ]
     },
