@@ -11,6 +11,8 @@ use layer2_core::{now_rfc3339, AgentId};
 use super::{LiveAgentRegistry, RegistryEntry};
 use layer2_core::sandbox::{AgentRuntimeError, AgentRuntimeTarget};
 
+mod missing;
+
 const RECOVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +27,8 @@ pub(crate) struct LiveAgentAttachmentIdentity {
 #[async_trait::async_trait]
 pub(crate) trait LiveAgentConnectionLossHandler: Send + Sync {
     async fn connection_lost(&self, attachment: LiveAgentAttachmentIdentity);
+
+    async fn missing_attachment(&self, _target: &AgentRuntimeTarget) {}
 
     async fn publication_lost(&self, attachment: LiveAgentAttachmentIdentity) {
         self.connection_lost(attachment).await;
@@ -61,6 +65,12 @@ impl LiveAgentConnectionLossHandler for DurableAgentConnectionLossHandler {
 
     async fn publication_lost(&self, attachment: LiveAgentAttachmentIdentity) {
         self.recover(attachment, true).await;
+    }
+
+    async fn missing_attachment(&self, target: &AgentRuntimeTarget) {
+        let result = self.schedule_missing(target).await;
+        tracing::info!(agent_id = %target.agent_id, outcome = ?result,
+            "Claimed command attachment recovery decision");
     }
 }
 

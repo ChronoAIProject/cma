@@ -145,6 +145,10 @@ impl AgentRuntimeRegistry for SdkRegistry {
         })
     }
 
+    async fn recover_missing_attachment(&self, target: &AgentRuntimeTarget) {
+        AgentRuntimeRegistry::recover_missing_attachment(self.live.as_ref(), target).await;
+    }
+
     async fn fence(
         &self,
         agent_id: &AgentId,

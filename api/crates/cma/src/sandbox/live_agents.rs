@@ -369,6 +369,10 @@ impl AgentRuntimeRegistry for LiveAgentRegistry {
         self.reconnect_target(target).await
     }
 
+    async fn recover_missing_attachment(&self, target: &AgentRuntimeTarget) {
+        self.recover_unresolved(target).await;
+    }
+
     async fn fence(
         &self,
         agent_id: &AgentId,

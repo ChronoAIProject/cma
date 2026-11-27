@@ -36,6 +36,10 @@ pub trait AgentRuntimeRegistry: Send + Sync {
         target: &AgentRuntimeTarget,
     ) -> Result<AgentRuntimeConnection, AgentRuntimeError>;
 
+    /// Request recovery before a claimed command binds any runtime input.
+    /// Implementations that own runtime attachments can schedule durable work.
+    async fn recover_missing_attachment(&self, _target: &AgentRuntimeTarget) {}
+
     /// Retire a failed input attachment and schedule durable reattachment.
     async fn request_reconnect(
         &self,

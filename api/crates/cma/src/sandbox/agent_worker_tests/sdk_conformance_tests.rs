@@ -28,6 +28,7 @@ mod bootstrap_tests;
 mod cancellation_tests;
 mod cross_interface_tests;
 mod mongo_tests;
+mod receiver_handoff_tests;
 mod runtime_tests;
 mod task_home_tests;
 mod terminal_failure_tests;
