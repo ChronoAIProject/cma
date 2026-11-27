@@ -94,6 +94,7 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
   check(aborts.every(count => count === 0 || count === 1) && aborts[0] + aborts[1] === 1,
     'runtime_loss_abort_count_unbound');
   const abortAm = managers[aborts.indexOf(1)];
+  check(abortAm === writerProof.ingress, 'runtime_loss_recovery_and_writer_share_manager');
   const recovered = await waitFor(snapshot, recoveredSnapshot, {timeout: 240000, code: 'runtime_loss_recovery_timeout'});
   const publication = await waitFor(observeRecovery, value => managers.some(am => value[am]?.recovery_scheduled > 0),
     {timeout: 10000, code: 'runtime_loss_successful_publication_unattributed'});

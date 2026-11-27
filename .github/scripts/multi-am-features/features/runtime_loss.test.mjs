@@ -138,6 +138,7 @@ test('runtime loss disarms the fault and rejects unbound or repeated aborts', as
   for (const [input, error] of [
     [{aborts: {a: 0, b: 0}}, /runtime_loss_abort_not_observed/],
     [{aborts: {a: 1, b: 1}}, /runtime_loss_abort_count_unbound/],
+    [{aborts: {a: 0, b: 1}}, /runtime_loss_recovery_and_writer_share_manager/],
     [{consumedAborts: 0}, /runtime_loss_abort_not_consumed_once/],
     [{transactionEntered: false}, /runtime_loss_transaction_not_observed/],
     [{missWindow: true}, /runtime_loss_writer_missed_transaction_window/],
