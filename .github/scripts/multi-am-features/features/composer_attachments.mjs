@@ -32,12 +32,17 @@ export async function composerAttachments({page, api, adapter, ingress, agentId,
       && (name === undefined || url.searchParams.get('name') === name);
   };
   const observe = request => { if (matches(request)) seen.push(request); };
-  const receipt = async (response, request, file) => {
+  const receipt = async (response, request, file, replay) => {
     const key = await request.headerValue('idempotency-key');
     check(request.postDataBuffer()?.equals(file.bytes) === true && /^[0-9a-f-]{36}$/.test(key),
       'browser_attachments_upload_intent_changed');
-    const {attachment_id: expected} = await adapter.attachmentIdentity({agentId, key});
     const body = await response.json();
+    if (replay) {
+      check(key === replay.key && response.status() === 201 && equal(body, replay.body),
+        'browser_attachments_retry_not_idempotent');
+      return replay;
+    }
+    const {attachment_id: expected} = await adapter.attachmentIdentity({agentId, key});
     check(/^att_[a-f0-9]{64}$/.test(expected) && response.status() === 201
       && body?.agent_id === agentId && body.id === expected
       && body.name === file.name && body.path === `/home/attachments/${agentId}/${expected}/${file.name}`
@@ -45,7 +50,7 @@ export async function composerAttachments({page, api, adapter, ingress, agentId,
       && body.size_bytes === file.bytes.length && body.media_type === file.media,
     'browser_attachments_receipt_changed');
     receipts.set(body.path, body);
-    return body;
+    return {key, body};
   };
   const transfer = (event, {name, media, bytes}, size) => draft.evaluate((element, input) => {
     const data = new DataTransfer();
@@ -56,13 +61,13 @@ export async function composerAttachments({page, api, adapter, ingress, agentId,
       ? new ClipboardEvent('paste', {...options, clipboardData: data})
       : new DragEvent('drop', {...options, dataTransfer: data}));
   }, {event, name, media, bytes: Array.from(bytes), size});
-  const awaitUpload = async (file, action) => {
+  const awaitUpload = async (file, action, replay) => {
     const [response] = await Promise.all([
       page.waitForResponse(reply => matches(reply.request(), file.name), {timeout}), action(),
     ]);
-    const value = await receipt(response, response.request(), file);
+    const {body} = await receipt(response, response.request(), file, replay);
     await row(file.name).getByRole('status').getByText('Ready', {exact: true}).waitFor({timeout});
-    return value;
+    return body;
   };
 
   const caseId = 'browser-attachments-' + randomUUID();
@@ -104,10 +109,8 @@ export async function composerAttachments({page, api, adapter, ingress, agentId,
     const retry = row(chooser.name).getByRole('button', {name: 'Retry', exact: true});
     await retry.waitFor({timeout});
     if (firstFailure) throw firstFailure;
-    const chosen = await awaitUpload(chooser, () => retry.click({timeout}));
-    check(equal(firstReceipt, chosen) && seen.length === 2
-      && await seen[0].headerValue('idempotency-key') === await seen[1].headerValue('idempotency-key'),
-    'browser_attachments_retry_not_idempotent');
+    const chosen = await awaitUpload(chooser, () => retry.click({timeout}), firstReceipt);
+    check(seen.length === 2, 'browser_attachments_retry_not_idempotent');
     const pastedReceipt = await awaitUpload(pasted, () => transfer('paste', pasted));
     await awaitUpload(dropped, () => transfer('drop', dropped));
     await row(dropped.name).getByRole('button', {name: 'Remove ' + dropped.name, exact: true}).click({timeout});
