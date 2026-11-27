@@ -143,14 +143,18 @@ def main():
             if env.get("GITHUB_STEP_SUMMARY"):
                 with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
                     stream.write(f"Publication-and-preparation seconds: {elapsed(publication_started):.2f}\n")
-        elif command in ("verify", "verify-web-at-deploy"):
+        elif command in ("verify", "verify-automatic-at-deploy"):
             started, mode = env.get("CD_STARTED_AT"), env.get("CD_DEPLOY_MODE")
             admitted = document(env["CD_RELEASE_SET"])
-            refresh_web = command == "verify-web-at-deploy"
-            if refresh_web:
+            refresh = command == "verify-automatic-at-deploy"
+            if refresh:
+                from staging_cd_routes import lane_components
                 require(target_name(env) == STAGING and env["GITHUB_EVENT_NAME"] == "push"
-                        and mode == "release" and set(admitted["receipts"]) == {"web"},
-                        "Fresh admission requires a protected staging Web release")
+                        and mode == "release", "Fresh admission requires a protected staging push")
+                allowed = lane_components(env.get("CD_PROMOTION_LANE"))
+                require(isinstance(admitted, dict) and isinstance(admitted.get("receipts"), dict)
+                        and bool(admitted["receipts"]) and admitted["receipts"].keys() <= allowed,
+                        "Fresh admission differs from its scheduled scope")
                 run_created(env, api.request)
                 elapsed(started)  # Validate the original timestamp, including future dates.
             else:
@@ -174,7 +178,7 @@ def main():
                                       "A newer final's run owns this deployment.\n")
                 return SKIPPED
             record_withheld(env, admitted["receipts"], value["receipts"])
-            if refresh_web:
+            if refresh:
                 started = timestamp()
             remaining(started, mode=mode, env=env)
         else:
