@@ -8,11 +8,16 @@ pub(super) async fn start(
     let mut session = store.client.start_session().await.map_err(unavailable)?;
     start_transaction(&mut session).await.map_err(unavailable)?;
     let outcome = async {
-        if sandbox.work.authority_protocol.is_none() { return Err(corrupt()); }
+        let protocol = sandbox.work.authority_protocol.ok_or_else(corrupt)?;
         let identity = crate::store::work_claim_authority::sandbox_claim(sandbox).map_err(|_| corrupt())?;
         let identity = crate::store::work_publication::sandbox(identity, sandbox.id.as_str()).map_err(|_| corrupt())?;
+        let envelope = crate::store::work_schema::sandbox_version(sandbox);
+        let protocol = mongodb::bson::serialize_to_bson(&protocol).map_err(|_| corrupt())?;
         let result = store.sandboxes.update_one(doc! {"$and":[identity,{
-            "document_schema_version":3_i64,
+            "$expr":{"$and":[
+                {"$eq":["$document_schema_version",envelope]},
+                {"$eq":["$record.work.authority_protocol",{"$literal":protocol}]},
+            ]},
             "record.credential":mongodb::bson::serialize_to_bson(&sandbox.credential).map_err(|_| corrupt())?,
             "$or":[{"credential_issuance_fence":{"$exists":false}},
                 {"credential_issuance_fence":{"$type":"long","$lt":i64::MAX}}],
