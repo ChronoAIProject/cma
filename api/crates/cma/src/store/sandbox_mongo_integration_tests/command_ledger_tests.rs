@@ -14,6 +14,7 @@ mod platform_commitment_tests;
 mod queued_cancellation_tests;
 mod queued_input_tests;
 mod refusal_compatibility_tests;
+mod reservation_outcomes;
 mod rest_receipt_recovery_tests;
 mod sandbox_controls_tests;
 mod startup_failure_tests;
@@ -30,7 +31,7 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{
     active_sandbox, insert_agent, ready_agent,
 };
 
-pub(super) fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
+pub(in crate::store) fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
         binding: None,
@@ -281,7 +282,7 @@ async fn stale_admission_rolls_back_every_fence_and_corrupt_indexed_receipts_fai
     stale.expected_agent_revision += 1;
     assert_eq!(
         store.reserve_command(stale).await.unwrap_err(),
-        CommandLedgerError::Conflict
+        CommandLedgerError::KnownAborted
     );
     assert_eq!(
         store

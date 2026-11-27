@@ -40,9 +40,15 @@ pub struct WarmPoolView {
     pub cpu_millis: u32,
     pub memory_mib: u32,
     pub target_replicas: u32,
+    /// Target read from the provider for the exact original pool binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_target_replicas: Option<u32>,
     pub ready_replicas: Option<u32>,
     pub observed: bool,
     pub status: String,
+    /// Status of a retiring pool's spare drain, either `pending` or `drained`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retirement_status: Option<String>,
     pub resource_name: Option<String>,
     pub error: Option<String>,
     /// The deployment-seeded shared desktop pool, resized against `machine_image`.

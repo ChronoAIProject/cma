@@ -184,7 +184,7 @@ async fn prepared_refresh_preserves_explicit_revision_and_refuses_stop_or_policy
             )),
             _ => assert!(matches!(
                 error,
-                CommandAdmissionError::Ledger(CommandLedgerError::Conflict)
+                CommandAdmissionError::Ledger(CommandLedgerError::KnownAborted)
             )),
         }
         assert_eq!(
@@ -237,7 +237,9 @@ async fn prepared_refresh_excludes_generic_agents_mismatched_lifecycle_and_contr
                     request,
                 )
                 .await,
-            Err(CommandAdmissionError::Ledger(CommandLedgerError::Conflict))
+            Err(CommandAdmissionError::Ledger(
+                CommandLedgerError::KnownAborted
+            ))
         ));
         assert_eq!(authority.calls.load(Ordering::SeqCst), 1);
         assert!(store

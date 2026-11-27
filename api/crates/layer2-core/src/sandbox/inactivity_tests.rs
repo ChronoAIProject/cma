@@ -282,3 +282,32 @@ fn only_ready_or_already_paused_live_agents_are_resumable_candidates() {
     let terminal_log = log("agt_terminal", 1, IDLE_AT);
     assert!(SandboxAgentActivity::from_live_agent(&terminal, Some(&terminal_log)).is_err());
 }
+
+#[test]
+fn malformed_runtime_and_foreign_agent_evidence_refuse_both_pause_paths() {
+    let activities = quiet_pair();
+    let valid = sandbox();
+    assert!(is_inactivity_pause_candidate(&valid, &activities, NOW, 900));
+    assert!(is_platform_stop_pause_candidate(&valid, &[], NOW));
+
+    for missing_id in [true, false] {
+        let mut invalid = valid.clone();
+        let runtime = invalid.runtime.as_mut().unwrap();
+        if missing_id {
+            runtime.runtime_id = " ".into();
+        } else {
+            runtime.runtime_version = " ".into();
+        }
+        assert!(!is_inactivity_pause_candidate(
+            &invalid,
+            &activities,
+            NOW,
+            900
+        ));
+        assert!(!is_platform_stop_pause_candidate(&invalid, &[], NOW));
+    }
+    let mut foreign = activities.clone();
+    foreign[1].sandbox_id = SandboxId("sbx_other".into());
+    assert!(!is_inactivity_pause_candidate(&valid, &foreign, NOW, 900));
+    assert!(!is_inactivity_pause_candidate(&valid, &activities, NOW, 0));
+}

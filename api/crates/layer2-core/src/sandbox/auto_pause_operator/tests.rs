@@ -66,6 +66,7 @@ struct Maintenance {
     discovery_fault: Mutex<Option<ReadFault>>,
     show_refusals: Mutex<bool>,
     invalid_discovery_page: Mutex<bool>,
+    supplied_page: Mutex<Option<Page<crate::SandboxId>>>,
 }
 #[async_trait::async_trait]
 impl SandboxMaintenanceStore for Maintenance {
@@ -80,6 +81,9 @@ impl SandboxMaintenanceStore for Maintenance {
                 return Err(SandboxStoreError::Unavailable("discovery offline".into()));
             }
             None => {}
+        }
+        if let Some(page) = self.supplied_page.lock().unwrap().clone() {
+            return Ok(page);
         }
         if *self.invalid_discovery_page.lock().unwrap() {
             return Ok(Page {
@@ -194,6 +198,7 @@ fn fixture() -> (
         discovery_fault: Mutex::default(),
         show_refusals: Mutex::default(),
         invalid_discovery_page: Mutex::new(false),
+        supplied_page: Mutex::default(),
     });
     let service = SandboxAutoPauseService::new(
         Arc::new(PlatformSettingsService::new(
@@ -531,4 +536,45 @@ async fn preview_reports_each_refusal_with_the_sandbox_it_evaluated() {
     );
     assert!(store.calls.lock().unwrap().is_empty());
     assert!(audit.records.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn malformed_page_cannot_schedule_or_audit_partial_work() {
+    let (service, store, _, audit, caller) = fixture();
+    for limit in [0, AUTO_PAUSE_MAX_BATCH + 1] {
+        assert!(matches!(
+            service
+                .batch(
+                    &caller,
+                    PageRequest {
+                        limit,
+                        cursor: None
+                    },
+                    true
+                )
+                .await,
+            Err(OperatorError::InvalidRequest(_))
+        ));
+    }
+
+    for (limit, cursor, ids) in [
+        (1, None, ["b", "c"]),
+        (2, None, ["b", "b"]),
+        (2, Some("b".into()), ["b", "c"]),
+        (2, None, ["c", "b"]),
+    ] {
+        *store.supplied_page.lock().unwrap() = Some(Page {
+            items: ids
+                .into_iter()
+                .map(|id| crate::SandboxId(id.into()))
+                .collect(),
+            next: None,
+        });
+        assert!(service
+            .batch(&caller, PageRequest { limit, cursor }, true)
+            .await
+            .is_err());
+        assert!(store.calls.lock().unwrap().is_empty());
+        assert!(audit.records.lock().unwrap().is_empty());
+    }
 }

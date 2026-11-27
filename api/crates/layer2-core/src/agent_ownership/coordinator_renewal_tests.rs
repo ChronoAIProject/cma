@@ -289,3 +289,58 @@ async fn concurrent_drain_never_returns_to_serving_after_a_renewal_failure() {
     fixture.assert_failed();
     assert!(fixture.manager.is_draining());
 }
+
+#[tokio::test(start_paused = true)]
+async fn renewal_reply_cannot_bring_back_retired_or_expired_authority() {
+    let fixture = Fixture::new(2).await;
+    let leases = fixture.leases().await;
+    let retired = &fixture.owners[0];
+    retired
+        .begin_retirement(super::super::RetirementIntent::Cooperative)
+        .unwrap();
+    let started = Instant::now();
+    assert_eq!(
+        fixture
+            .manager
+            .apply_renewal(retired, started, 0, &leases[0]),
+        Ok(())
+    );
+    assert!(!retired.is_current());
+    assert!(retired.retirement_pending());
+    assert!(matches!(
+        fixture.manager.apply_renewal(
+            &fixture.owners[1],
+            started - Duration::from_secs(30),
+            0,
+            &leases[1]
+        ),
+        Err(OwnershipError::Stale)
+    ));
+    assert!(fixture.manager.is_ready());
+}
+
+#[tokio::test(start_paused = true)]
+async fn unavailable_renewal_preserves_retiring_custody_and_refuses_after_membership_loss() {
+    let fixture = Fixture::new(2).await;
+    let retired = &fixture.owners[0];
+    retired
+        .begin_retirement(super::super::RetirementIntent::Cooperative)
+        .unwrap();
+    assert_eq!(
+        fixture
+            .manager
+            .contain_unavailable_renewal(retired, "fixture"),
+        Ok(())
+    );
+    assert!(retired.retirement_pending());
+    let still_live = &fixture.owners[1];
+    *fixture.manager.member_deadline.lock().unwrap() = Instant::now();
+    assert!(matches!(
+        fixture
+            .manager
+            .contain_unavailable_renewal(still_live, "fixture"),
+        Err(OwnershipError::Stale)
+    ));
+    assert!(!still_live.receiver_cancelled());
+    assert_eq!(fixture.manager.owned().await.len(), 2);
+}

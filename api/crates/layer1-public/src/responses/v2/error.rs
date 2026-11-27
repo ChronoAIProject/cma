@@ -131,7 +131,9 @@ pub(super) fn binding_admission(value: CommandAdmissionError) -> Response {
     // distinct and must not be reclassified as capacity.
     if matches!(
         value,
-        CommandAdmissionError::Ledger(CommandLedgerError::Conflict)
+        CommandAdmissionError::Ledger(
+            CommandLedgerError::Conflict | CommandLedgerError::KnownAborted
+        )
     ) {
         error(
             StatusCode::TOO_MANY_REQUESTS,
@@ -233,7 +235,9 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
             None,
         ),
         CommandAdmissionError::Ledger(
-            CommandLedgerError::Conflict | CommandLedgerError::StaleClaim,
+            CommandLedgerError::Conflict
+            | CommandLedgerError::KnownAborted
+            | CommandLedgerError::StaleClaim,
         ) => error(
             StatusCode::CONFLICT,
             "agent_command_admission_conflict",
