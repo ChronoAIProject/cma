@@ -237,7 +237,7 @@
 }
 
 .tree-row[data-layout='line'] .tree-row__name {
-  flex: 1 1 auto;
+  flex: 1 0 4ch;
   min-width: 0;
   line-height: 18px;
 }
@@ -245,6 +245,19 @@
 .tree-row[data-layout='line'] .tree-row__meta {
   flex: 0 1 auto;
   min-width: 0;
+}
+
+.tree-row[data-layout='line'] .tree-row__meta > *,
+.task-running__time {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-row[data-layout='line'] .tree-row__meta > :first-child {
+  flex-shrink: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .tree-row[data-layout='line'] .tree-row__menu {
@@ -423,6 +436,7 @@
   color: var(--dsw-alias-workspace-accent);
 }
 .task-running__dot {
+  flex: none;
   width: 8px;
   height: 8px;
   border-radius: 50%;
