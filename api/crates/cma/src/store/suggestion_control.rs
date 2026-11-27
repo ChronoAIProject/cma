@@ -253,6 +253,29 @@ impl SuggestionControl {
         ) {
             return;
         }
+        let Ok(mode_value) = serialize_to_bson(&mode) else {
+            return;
+        };
+        let mut acquisition = self.marker();
+        acquisition.extend(doc! {
+            "owner": claim.owner.as_str(), "mode":mode_value,
+            "armed_at_ms": {"$lt": claim.created_at_ms as i64},
+            "expires_at_ms": {"$gt":unix_millis() as i64},
+            "claim_started_at_ms": {"$exists":false},
+        });
+        // Establish which armed marker this attempt can acquire before issuing
+        // a write whose acknowledgement may be lost.
+        let candidate = self
+            .rows
+            .find_one(acquisition.clone())
+            .projection(doc! {"armed_at_ms":1});
+        let Ok(Ok(Some(candidate))) = tokio::time::timeout(IO_LIMIT, candidate.into_future()).await
+        else {
+            return;
+        };
+        let Ok(armed_at) = candidate.get_i64("armed_at_ms") else {
+            return;
+        };
         let now = unix_millis() as i64;
         // The expiry scanner can first see this row at the original deadline.
         // Bind before then, allowing the full I/O budget for the marker write.
@@ -266,13 +289,9 @@ impl SuggestionControl {
         if limit <= now {
             return;
         }
+        acquisition.insert("armed_at_ms", armed_at);
+        acquisition.insert("expires_at_ms", doc! {"$gt":now});
         let acquire = async {
-            let mut filter = self.marker();
-            filter.extend(doc! {
-                "owner": claim.owner.as_str(), "mode": serialize_to_bson(&mode).map_err(unavailable)?,
-                "armed_at_ms": {"$lt": claim.created_at_ms as i64},
-                "expires_at_ms": {"$gt":now}, "claim_started_at_ms": {"$exists":false},
-            });
             let mut held = doc! {
                 "claim_id": &claim.id, "claim_started_at_ms": started as i64, "claim_deadline_ms": deadline as i64,
                 "turn_sequence": claim.scope.turn_sequence as i64, "answer_sequence": claim.scope.answer_sequence as i64,
@@ -286,7 +305,7 @@ impl SuggestionControl {
             }
             let result = self
                 .rows
-                .update_one(filter, doc! {"$set":held})
+                .update_one(acquisition, doc! {"$set":held})
                 .await
                 .map_err(unavailable)?;
             Ok::<_, AgentReadError>(result.matched_count == 1)
