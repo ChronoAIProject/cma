@@ -19,7 +19,7 @@ from fixture_no_secrets import NoSecretClient, synthetic_configmaps
 import manifests
 import legacy_manifests
 from run import Fixture
-from publication_evidence import PREPARED_MONGO_APP
+from publication_evidence import FEATURES_MONGO_APP, PREPARED_MONGO_APP
 from readiness_scaling import observe_never_ready, observe_scale
 
 
@@ -270,6 +270,27 @@ class OwnershipTests(unittest.TestCase):
             fixture.preparedPublicationAbort(True)
         self.assertEqual(len(commands), 2)
 
+    def test_artifact_abort_targets_only_the_feature_fixture_insert(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        fixture.mongo = Mock(return_value={'count': 7})
+        self.assertEqual(fixture.artifactPublicationAbort(True), {'count': 7})
+        script = fixture.mongo.call_args.args[0]
+        command, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
+        self.assertEqual(command, {'configureFailPoint': 'failCommand', 'mode': {'times': 1}, 'data': {
+            'failCommands': ['insert'], 'namespace': 'cma_native_am.agent_artifacts', 'appName': FEATURES_MONGO_APP,
+            'errorCode': 112, 'errorLabels': ['TransientTransactionError'],
+        }})
+        with self.assertRaisesRegex(ValueError, 'artifact_publication_abort_action_required'):
+            fixture.artifactPublicationAbort(1)
+        fixture.ready['fixture'] = 'prepared'
+        with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
+            fixture.artifactPublicationAbort(True)
+        self.assertEqual(fixture.mongo.call_count, 1)
+
     def test_retirement_purge_writes_are_scoped_to_the_local_feature_fixture(self):
         run_id = 'cma-ci-' + 'a' * 12
         fixture = Fixture.__new__(Fixture)
@@ -375,6 +396,9 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(policy['mode'], 'accounts')
         self.assertEqual(policy['accounts'], ['native-am-fixture-owner'])
         self.assertIn('suggested_followup_admission', policy['capabilities'])
+        features = manifests.managers(legacy_manifests.credentials(), {**ready, 'fixture': 'features'})
+        features_environment = next(x['stringData'] for x in features if x['kind'] == 'Secret')
+        self.assertTrue(features_environment['CHRONO_MONGODB_URI'].endswith('&appName=' + FEATURES_MONGO_APP))
         prepared = synthetic_configmaps(manifests.managers(legacy_manifests.credentials(),
                                                             {**ready, 'fixture': 'prepared'}))
         prepared_environment = next(x['data'] for x in prepared if x['kind'] == 'ConfigMap')

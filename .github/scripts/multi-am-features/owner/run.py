@@ -25,7 +25,7 @@ from configuration_log import configuration_dispatch, configuration_log
 import manifests
 import legacy_manifests as old
 from login import login
-from publication_evidence import (prepared_publication_abort, prepared_schema_barrier, prepared_schema_race,
+from publication_evidence import (artifact_publication_abort, prepared_publication_abort, prepared_schema_barrier, prepared_schema_race,
                                   prepared_schema_refusals, publication_evidence)
 from readiness_scaling import drain_owner, observe_never_ready, observe_scale
 from retirement_purge import retirement_purge
@@ -47,6 +47,7 @@ class Fixture:
     configurationLog = configuration_log
     configurationDispatch = configuration_dispatch
     publicationEvidence = publication_evidence
+    artifactPublicationAbort = artifact_publication_abort
     preparedPublicationAbort = prepared_publication_abort
     preparedSchemaBarrier = prepared_schema_barrier
     preparedSchemaRace = prepared_schema_race
@@ -393,7 +394,7 @@ class Fixture:
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
                              'organizationMembership','configurationLog','configurationDispatch','publicationEvidence',
-                             'retirementPurge','removeRuntimePod','preparedPublicationAbort','preparedSchemaBarrier',
+                             'retirementPurge','removeRuntimePod','artifactPublicationAbort','preparedPublicationAbort','preparedSchemaBarrier',
                              'preparedSchemaRace','preparedSchemaRefusals']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200

@@ -14,6 +14,7 @@ LOG_BOUND_BYTES = 2 * 1024 * 1024
 LOG_TARGET = ' agent_scheduler_failure: '
 FIELDS = re.compile(r'(?<!\S)(phase|failure|next_step|agent_sha256|cause_class|origin|agent_hash)="?([a-z0-9_]+)"?(?=\s|$)')
 PREPARED_MONGO_APP = 'cma-two-am-prepared-fixture'
+FEATURES_MONGO_APP = 'cma-two-am-features-fixture'
 SCHEMA_RACE = Path(__file__).with_name('prepared_schema_race.js')
 
 
@@ -21,15 +22,26 @@ def prepared_publication_abort(fixture, arm=None):
     require_feature_fixture(fixture, kind='prepared')
     if type(arm) is not bool:
         raise ValueError('prepared_publication_abort_action_required')
+    return publication_abort(fixture, arm, 'update', 'worktrees', PREPARED_MONGO_APP)
+
+
+def artifact_publication_abort(fixture, arm=None):
+    require_feature_fixture(fixture)
+    if type(arm) is not bool:
+        raise ValueError('artifact_publication_abort_action_required')
+    return publication_abort(fixture, arm, 'insert', 'agent_artifacts', FEATURES_MONGO_APP)
+
+
+def publication_abort(fixture, arm, operation, collection, app):
     command = {'configureFailPoint': 'failCommand', 'mode': 'off'}
     if arm:
         command.update(mode={'times': 1}, data={
-            'failCommands': ['update'], 'namespace': 'cma_native_am.worktrees',
-            'appName': PREPARED_MONGO_APP, 'errorCode': 112,
+            'failCommands': [operation], 'namespace': 'cma_native_am.' + collection,
+            'appName': app, 'errorCode': 112,
             'errorLabels': ['TransientTransactionError'],
         })
     return fixture.mongo(f'const result = admin.runCommand({json.dumps(command)});'
-                         "if (result.ok !== 1 || result.count == null) throw Error('prepared_abort_not_configured');"
+                         "if (result.ok !== 1 || result.count == null) throw Error('publication_abort_not_configured');"
                          'print(JSON.stringify({count: Number(result.count)}));')
 
 

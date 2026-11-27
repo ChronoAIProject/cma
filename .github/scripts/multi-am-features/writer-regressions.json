@@ -255,7 +255,7 @@
       "feature": "Sharing/access/artifact metadata",
       "requirement": "No raw conflict for internal contention; fresh authorization and policy snapshot checked on retry, immutable receipt recovered on unknown outcome, denied/revoked caller never admitted. Some share redemption retry already exists; preserve it.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Hosted execution of competing artifact publications and share redemptions from the two ingresses, approval, denial and organization coverage. Deterministic storage contention, authorization changes at retry and commit-outcome recovery remain pending.",
+      "remaining": "The journey injects one scoped known abort during competing artifact publications and verifies the shared receipt. Hosted execution, deterministic authorization changes at retry and commit-outcome recovery remain pending.",
       "trigger": "Agent-target share create/revoke/redemption, access request transitions and artifact publication concurrent with owner revision change",
       "required_assertions": [
         {

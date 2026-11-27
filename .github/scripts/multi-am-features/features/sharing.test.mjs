@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import test from 'node:test';
 import {shareAgentArtifact} from './sharing.mjs';
 
-function scenario({duplicateRedemption = false, divergingArtifact = false} = {}) {
+function scenario({duplicateRedemption = false, divergingArtifact = false, aborts = 1} = {}) {
   const agentId = 'fixture-agent';
   const calls = [];
   const link = {id: 'fixture-link', agent_id: agentId, mode: 'view', revision: 2};
@@ -11,7 +11,12 @@ function scenario({duplicateRedemption = false, divergingArtifact = false} = {})
   const artifact = {id: 'fixture-artifact', agent_id: agentId, created_at: 'fixture-time'};
   let published;
   const firstAdmission = new Map();
-  const adapter = {ownerOf: async () => ({am: 'a', epoch: 2, agent_id: agentId, pod_uid: 'pod-a'})};
+  const actions = [];
+  const adapter = {ownerOf: async () => ({am: 'a', epoch: 2, agent_id: agentId, pod_uid: 'pod-a'}),
+    artifactPublicationAbort: async ({arm}) => {
+      actions.push(arm);
+      return {count: 8 + (arm ? 0 : aborts)};
+    }};
   const user = {request: async (am, method, route, options) => {
     calls.push([am, method, route]);
     if (method === 'POST' && route.endsWith('/artifacts')) {
@@ -56,15 +61,25 @@ function scenario({duplicateRedemption = false, divergingArtifact = false} = {})
   const failures = [];
   const run = () => shareAgentArtifact({adapter, user, outsider, record: {agentId},
     recordFailure: async (stage, error) => failures.push([stage, error.message])});
-  return {run, failures, calls, isRevoked: () => revoked};
+  return {run, failures, calls, actions, isRevoked: () => revoked};
 }
 
 test('both ingresses share one artifact receipt and redeem the same link only once', async () => {
-  const {run, failures, calls, isRevoked} = scenario();
+  const {run, failures, calls, actions, isRevoked} = scenario();
   await run();
   assert.deepEqual(calls.slice(0, 2).map(row => row[0]), ['b', 'a']);
+  assert.deepEqual(actions, [true, false]);
   assert.deepEqual(failures, []);
   assert(isRevoked());
+});
+
+test('a clean receipt still fails without one observed artifact transaction abort', async () => {
+  for (const aborts of [0, 2]) {
+    const {run, actions, calls} = scenario({aborts});
+    await assert.rejects(run, /artifact_publication_abort_not_consumed_once/);
+    assert.deepEqual(actions, [true, false]);
+    assert(calls.every(([, , route]) => route.endsWith('/artifacts')));
+  }
 });
 
 test('duplicate redemption fails the case and still revokes the owned fixture link', async () => {

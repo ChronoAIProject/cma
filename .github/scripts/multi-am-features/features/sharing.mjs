@@ -9,7 +9,7 @@ async function competingRequests(...requests) {
   return results.map(result => result.value.body);
 }
 
-export async function shareAgentArtifact({adapter, user, outsider, record, recordFailure}) {
+export async function shareAgentArtifact({adapter, user, outsider, record, recordFailure, recordState = async () => {}}) {
   const {agentId} = record;
   const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
   const ingress = other(owner.am);
@@ -21,11 +21,18 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
   const artifactInput = {name: `fixture-${randomUUID()}.txt`, media_type: 'text/plain',
     content_base64: data.toString('base64')};
   const artifactIntent = {body: artifactInput, key: randomUUID(), allowed: [201]};
-  // The two controlled requests bypass ordinary pacing so they can overlap.
-  const [artifact, contender] = await competingRequests(
-    user.rawRequest(ingress, 'POST', artifacts, artifactIntent),
-    user.rawRequest(owner.am, 'POST', artifacts, artifactIntent),
-  );
+  let published, armed, disarmed;
+  await withRestoration(async () => {
+    armed = await adapter.artifactPublicationAbort({arm: true});
+    // Bypass ordinary pacing so a peer request overlaps the transaction retry.
+    published = await competingRequests(user.rawRequest(ingress, 'POST', artifacts, artifactIntent),
+      user.rawRequest(owner.am, 'POST', artifacts, artifactIntent));
+  }, async () => {
+    disarmed = await adapter.artifactPublicationAbort({arm: false});
+  }, recordFailure);
+  check(Number.isSafeInteger(armed?.count) && disarmed?.count === armed.count + 1,
+    'artifact_publication_abort_not_consumed_once');
+  const [artifact, contender] = published;
   check(artifact.agent_id === agentId && typeof artifact.id === 'string' &&
     artifact.size_bytes === data.length && artifact.sha256 === createHash('sha256').update(data).digest('hex'),
   'artifact_admission_identity');
@@ -82,4 +89,5 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
   const matches = listing.items.filter(row => row.id === artifact.id || row.name === artifactInput.name);
   check(matches.length === 1 && matches[0].id === artifact.id && matches[0].sha256 === artifact.sha256,
     'artifact_effect_missing_or_duplicated');
+  await recordState('artifact_publication_retry', {known_aborts: 1, artifacts: matches.length});
 }
