@@ -75,6 +75,9 @@ impl Fixture {
         row.profile.content.nyxid_services = row.credential.reaches.clone();
         let mint_step = SandboxWorkState::new(SandboxWorkStep::MintInitialCredential, at(-1));
         if let Some(origin) = origin {
+            use crate::store::work_schema::floor;
+            use layer2_core::sandbox::SandboxRuntimeImageOrigin::ManagedMachine;
+
             row.origin = layer2_core::sandbox::SandboxOrigin::Lifecycle {
                 operation_id: "fixture-operation".into(),
             };
@@ -96,11 +99,24 @@ impl Fixture {
                 &admission.admission_fingerprint,
             )
             .unwrap();
+            let mut session = client.start_session().await.unwrap();
+            session.start_transaction().await.unwrap();
+            if origin == ManagedMachine {
+                floor::retain_managed_machine_origin(&store, &mut session)
+                    .await
+                    .unwrap();
+            } else {
+                floor::retain_runtime_image_origin(&store, &mut session)
+                    .await
+                    .unwrap();
+            }
             Kind::Sandbox
                 .rows(&store)
                 .insert_one(document)
+                .session(&mut session)
                 .await
                 .unwrap();
+            session.commit_transaction().await.unwrap();
         } else {
             row.status = SandboxStatus::Installing;
             row.work = mint_step;
