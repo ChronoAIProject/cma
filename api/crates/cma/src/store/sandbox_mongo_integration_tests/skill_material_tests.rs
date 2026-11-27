@@ -3,27 +3,7 @@ use layer2_core::profiles::{SkillRef, SkillSource};
 use layer2_core::sandbox::{AgentCleanupDebt, ResolvedAgentSkill};
 use layer2_core::SkillId;
 
-use super::super::agents::{agent_document, read_agent, read_agent_owned};
-
-#[test]
-fn owned_agent_decode_preserves_record_and_projection_validation() {
-    let agent = agent_for_worker("agt_owned_decode", NOW);
-    let document = agent_document(&agent).unwrap();
-    assert_eq!(read_agent_owned(document.clone()).unwrap(), agent);
-    for (field, replacement) in [
-        ("document_schema_version", Bson::Int64(99)),
-        ("record", Bson::Null),
-        ("owner", Bson::String("different-owner".into())),
-        ("last_seq", Bson::Int64(99)),
-    ] {
-        let mut invalid = document.clone();
-        invalid.insert(field, replacement);
-        assert_eq!(
-            read_agent(&invalid).unwrap_err().to_string(),
-            read_agent_owned(invalid).unwrap_err().to_string()
-        );
-    }
-}
+use super::super::agents::{agent_document, read_agent};
 
 fn selected_material() -> Vec<ResolvedAgentSkill> {
     vec![ResolvedAgentSkill {

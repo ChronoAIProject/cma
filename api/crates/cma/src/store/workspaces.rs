@@ -126,19 +126,6 @@ pub(super) fn workspace_document(workspace: &Workspace) -> Result<Document, Sand
 pub(super) fn read_workspace(document: &Document) -> Result<Workspace, SandboxStoreError> {
     let workspace: Workspace =
         super::work_schema::read(document).map_err(SandboxStoreError::Corrupt)?;
-    validate_workspace(document, workspace)
-}
-
-pub(super) fn read_workspace_owned(mut document: Document) -> Result<Workspace, SandboxStoreError> {
-    let workspace =
-        super::work_schema::read_owned(&mut document).map_err(SandboxStoreError::Corrupt)?;
-    validate_workspace(&document, workspace)
-}
-
-fn validate_workspace(
-    document: &Document,
-    workspace: Workspace,
-) -> Result<Workspace, SandboxStoreError> {
     let status = record_bson(&workspace.status).map_err(SandboxStoreError::Corrupt)?;
     let (origin_type, origin_index, origin_launch_id) = origin_fields(&workspace.origin);
     let revision =

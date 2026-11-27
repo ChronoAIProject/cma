@@ -67,23 +67,6 @@ pub(super) fn worktree_document(worktree: &Worktree) -> Result<Document, Sandbox
 
 pub(super) fn read_worktree(document: &Document) -> Result<Worktree, SandboxStoreError> {
     let worktree: Worktree = read_record(document).map_err(SandboxStoreError::Corrupt)?;
-    validate_worktree(document, worktree)
-}
-
-pub(super) fn read_worktree_owned(mut document: Document) -> Result<Worktree, SandboxStoreError> {
-    require_version(&document).map_err(SandboxStoreError::Corrupt)?;
-    let record = document.remove("record").ok_or_else(|| {
-        SandboxStoreError::Corrupt("stored document has no aggregate record".into())
-    })?;
-    let worktree = mongodb::bson::deserialize_from_bson(record)
-        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-    validate_worktree(&document, worktree)
-}
-
-fn validate_worktree(
-    document: &Document,
-    worktree: Worktree,
-) -> Result<Worktree, SandboxStoreError> {
     let status = record_bson(&worktree.status).map_err(SandboxStoreError::Corrupt)?;
     let revision =
         signed(worktree.revision, "worktree revision").map_err(SandboxStoreError::Corrupt)?;

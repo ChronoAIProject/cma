@@ -224,16 +224,6 @@ fn raw_sandbox_document(
 pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreError> {
     let sandbox: Sandbox =
         super::work_schema::read(document).map_err(SandboxStoreError::Corrupt)?;
-    validate_sandbox(document, sandbox)
-}
-
-pub(super) fn read_sandbox_owned(mut document: Document) -> Result<Sandbox, SandboxStoreError> {
-    let sandbox =
-        super::work_schema::read_owned(&mut document).map_err(SandboxStoreError::Corrupt)?;
-    validate_sandbox(&document, sandbox)
-}
-
-fn validate_sandbox(document: &Document, sandbox: Sandbox) -> Result<Sandbox, SandboxStoreError> {
     sandbox.validate().map_err(|error| {
         SandboxStoreError::Corrupt(format!("stored sandbox is invalid: {error}"))
     })?;
