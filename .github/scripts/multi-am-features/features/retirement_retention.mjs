@@ -87,10 +87,14 @@ export async function retirementRetention({adapter, user, outsider, record, clea
   const terminal = await snapshot();
   check(terminal?.revision === retained.revision && terminal.children?.[0]?.revision === retained.children[0].revision
     && terminal.children[0].last_seq === retained.children[0].last_seq, 'delete_replay_mutated_terminal_lineage');
+  const title = await adapter.titleIntent({agentId});
+  check(title?.accepted === true && title.request_sha256 === record.generatedTitleProof?.digest
+    && title.turn_sequence === record.generatedTitleProof?.turnSequence,
+  'retirement_title_custody_changed');
   const purged = await observeEligiblePurge({adapter, user, record, paths: [agentPath, sandboxPath], waitForPurge});
   return {agent_sha256: hash(agentId), sandbox_sha256: hash(sandboxId), terminal_event_count: 1,
     stop_ingress: ingress, stop_owner: owner.am, stop_owner_epoch: owner.epoch, stop_events: 1, delete_events: 1,
-    retained_history: true, observed_future_purge_deadline: true, ...purged};
+    retained_history: true, observed_future_purge_deadline: true, retained_title_custody: true, ...purged};
 }
 
 async function observeEligiblePurge({adapter, user, record, paths, waitForPurge}) {
@@ -98,12 +102,14 @@ async function observeEligiblePurge({adapter, user, record, paths, waitForPurge}
   check(id(operationId), 'retirement_purge_lifecycle_required');
   const target = {agentId, sandboxId, operationId};
   const armed = await adapter.retirementPurge({...target, arm: true});
-  check(armed?.armed === true && [1, 2].includes(armed.agents), 'retirement_purge_not_armed');
+  check(armed?.armed === true && [1, 2].includes(armed.agents)
+    && /^[a-f0-9]{64}$/.test(armed.creation_sha256 ?? ''), 'retirement_purge_not_armed');
   const fields = ['agent_events', 'sandbox_events', 'workspaces', 'worktrees'];
   let samples = 0;
   await waitForPurge(() => adapter.retirementPurge(target), sample => {
     check(typeof sample?.present === 'boolean' && sample.agents === (sample.present ? armed.agents : 0)
       && fields.every(key => sample[key] === sample.present), 'retirement_purge_partially_removed_lineage');
+    check(sample.creation_sha256 === armed.creation_sha256, 'retirement_purge_changed_creation_provenance');
     samples += 1;
     return !sample.present;
   }, {timeout: 90000, code: 'retirement_purge_did_not_finish'});
@@ -113,5 +119,6 @@ async function observeEligiblePurge({adapter, user, record, paths, waitForPurge}
       check(response.status === 404, 'retirement_purge_public_readback_present');
     }
   }
-  return {eligible_purge: true, purged_agents: armed.agents, purge_snapshot_samples: samples};
+  return {eligible_purge: true, purged_agents: armed.agents, purge_snapshot_samples: samples,
+    retained_creation_provenance: true};
 }

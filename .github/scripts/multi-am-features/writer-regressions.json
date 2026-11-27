@@ -202,7 +202,7 @@
       "feature": "Connection recovery, runtime-loss reconciliation and sandbox lifecycle",
       "requirement": "Background path re-reads/rebuilds plan after known CAS conflict within a finite budget, preserving exact parent/Agent/log/ownership fences and all-or-none transition. No endless identical scheduler error or partially advanced hierarchy.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The image journey requires the aborted recovery and competing metadata write to execute on distinct Manager processes and attributes the final recovery. A fixture control for selecting the recovering Manager and hosted execution remain pending.",
+      "remaining": "The fixture scopes native inventory to the peer during recovery and requires the same Sandbox transaction on both sides of the competing metadata write. Hosted execution is pending.",
       "trigger": "Two AM workers race an Agent log/metadata mutation with connection repair or atomic multi-Agent sandbox transition",
       "required_assertions": [
         {"case": "native_runtime_loss_preserves_agents", "minimum_runs": 1, "phases": [], "routing": "journey"},
@@ -300,7 +300,7 @@
       "feature": "Local destructive/admin matrix",
       "requirement": "Exact capture/retention/title-finality guards remain enforced. Known contention re-evaluates safely and boundedly; terminal cleanup never deletes a live Agent or bypasses retained evidence. Local topology only.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The image journey binds pause and revival to the exact retained home and drives an eligible fixture to worker purge. Same-source controls exercise checkpoint and purge publication retries and unresolved title custody on Mongo. Exact-image checkpoint capture, publication contention, the title-finality barrier and hosted execution remain pending.",
+      "remaining": "The fixture binds pause and revival to the retained home, checks accepted title custody through retirement, and requires permanent creation provenance after worker purge. Same-source controls exercise checkpoint and purge publication retries and unresolved title custody on Mongo. Exact-image checkpoint capture, publication contention, the unresolved title barrier and hosted execution remain pending.",
       "trigger": "Checkpoint publication, runtime maintenance, retirement and eligible purge with active/terminated Agent writers",
       "required_assertions": [
         {"case": "pause_preserves_retained_home_authority", "minimum_runs": 1, "phases": [], "routing": "journey"},

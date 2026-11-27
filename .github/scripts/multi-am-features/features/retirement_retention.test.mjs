@@ -4,8 +4,10 @@ import {retirementRetention} from './retirement_retention.mjs';
 
 function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateRetirement = false,
   duplicateStop = false, stopReplayWrites = false, duplicateDelete = false, deleteReplayWrites = false,
-  missingTerminalRow = false, staleManager = false} = {}) {
-  const record = {agentId: 'fixture-agent', sandboxId: 'fixture-sandbox', operationId: 'fixture-create'};
+  missingTerminalRow = false, staleManager = false, changedProvenance = false, missingTitle = false} = {}) {
+  const target = {agentId: 'fixture-agent', sandboxId: 'fixture-sandbox', operationId: 'fixture-create'};
+  const record = {...target, generatedTitleProof: {digest: 'd'.repeat(64), turnSequence: 5}};
+  const creationDigest = 'c'.repeat(64);
   const sandboxPath = `/api/v1/sandboxes/${record.sandboxId}`;
   const agentPath = `/api/v1/agents/${record.agentId}`;
   const deleteKey = 'fixture-delete-key';
@@ -20,18 +22,24 @@ function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateR
     return {status: 404};
   }};
   const adapter = {ownerOf: async ({agentId}) => ({agent_id: agentId, am: 'a', epoch: 7, pod_uid: 'owner-pod'}),
+    titleIntent: async ({agentId}) => {
+      assert.equal(agentId, target.agentId);
+      assert(retired && !armed);
+      return {accepted: !missingTitle, request_sha256: record.generatedTitleProof.digest, turn_sequence: 5};
+    },
     retirementPurge: async ({agentId, sandboxId, operationId, arm}) => {
-      assert.deepEqual({agentId, sandboxId, operationId}, record);
+      assert.deepEqual({agentId, sandboxId, operationId}, target);
       assert(retired);
       if (arm) {
         assert(!armed);
         armed = true;
-        return {armed: true, agents: 1};
+        return {armed: true, agents: 1, creation_sha256: creationDigest};
       }
       assert(armed);
       const present = ++readsAfterArm === 1;
       return {present, agents: present ? 1 : 0, agent_events: present && !missingTerminalRow,
-        sandbox_events: present, workspaces: present, worktrees: present};
+        sandbox_events: present, workspaces: present, worktrees: present,
+        creation_sha256: changedProvenance && !present ? 'e'.repeat(64) : creationDigest};
     },
     lifecycleSnapshot: async input => {
     assert.deepEqual(input, {sandboxId: record.sandboxId, agentIds: [record.agentId]});
@@ -117,6 +125,8 @@ test('both Managers refuse foreign cleanup and retain one exact terminal publica
   assert.equal(proof.delete_events, 1);
   assert.equal(proof.stop_ingress, 'b');
   assert.equal(proof.observed_future_purge_deadline, true);
+  assert.equal(proof.retained_title_custody, true);
+  assert.equal(proof.retained_creation_provenance, true);
   assert.equal(proof.eligible_purge, true);
   assert.equal(proof.purged_agents, 1);
   assert.equal(proof.purge_snapshot_samples, 2);
@@ -134,6 +144,8 @@ test('a foreign side effect, early purge deadline or duplicate retirement fails'
     [{deadlineFuture: false}, /retirement_retained_state_or_deadline_missing/],
     [{duplicateRetirement: true}, /retirement_history_missing_or_duplicated/],
     [{missingTerminalRow: true}, /retirement_purge_partially_removed_lineage/],
+    [{missingTitle: true}, /retirement_title_custody_changed/],
+    [{changedProvenance: true}, /retirement_purge_changed_creation_provenance/],
     [{staleManager: true}, /retirement_purge_public_readback_present/],
   ]) {
     const {context} = fixture(input);

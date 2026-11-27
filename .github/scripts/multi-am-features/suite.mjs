@@ -394,6 +394,7 @@ try {
   const recovery = result.journey?.steps.find(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS');
   const drain = result.journey?.steps.find(s => s.name === 'owner_drain_and_readiness' && s.verdict === 'PASS');
   const runtimeLoss = result.journey?.steps.find(s => s.name === 'native_runtime_loss_preserves_agents' && s.verdict === 'PASS');
+  const retirement = result.journey?.steps.find(s => s.name === 'retirement_retains_terminal_evidence' && s.verdict === 'PASS');
   const interrupts = ['plain_send_and_interrupt_non_owner', 'plain_send_and_interrupt_after_restart']
     .map(name => result.journey?.steps.find(step => step.name === name && step.verdict === 'PASS'))
     .filter(Boolean)
@@ -414,6 +415,9 @@ try {
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: Boolean(recovery), owner_restart_replay: recovery?.replay ?? null,
     non_owner_interrupts: interrupts,
+    retirement: retirement ? {retained_history: retirement.retained_history,
+      eligible_purge: retirement.eligible_purge, retained_title_custody: retirement.retained_title_custody,
+      retained_creation_provenance: retirement.retained_creation_provenance, purged_agents: retirement.purged_agents} : null,
     owner_drain: drain ? {readiness_dropped: drain.readiness_dropped, process_still_live: drain.process_still_live,
       peer_advanced: drain.peer_advanced, drain_ms: drain.drain_ms, takeover_ms: drain.takeover_ms,
       useful_reads_during_restart: drain.useful_reads_during_restart} : null,

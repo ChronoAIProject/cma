@@ -18,11 +18,17 @@
     const workspace = await tail('workspaces');
     const worktree = await tail('worktrees');
     const agentEvent = await snapshot.agent_log.findOne({agent_id: agentId}, {_id: 1});
+    const creation = await snapshot.agent_creation_provenance.findOne({_id: agentId,
+      'record.agent_id': agentId, 'record.sandbox_id': sandboxId, 'record.owner.kind': 'person',
+      'record.owner.subject': owner, 'record.provisioning_origin.type': 'lifecycle',
+      'record.provisioning_origin.operation_id': operationId});
+    if (!creation) throw new Error('retirement_creation_provenance_missing');
+    const creationDigest = require('crypto').createHash('sha256').update(EJSON.stringify(creation)).digest('hex');
     if (!arm) {
       const foreign = !sandbox && await snapshot.sandboxes.findOne({_id: sandboxId}, {_id: 1});
       print(JSON.stringify({present: Boolean(sandbox || foreign), agents: children.length,
         sandbox_events: Boolean(event), agent_events: Boolean(agentEvent),
-        workspaces: Boolean(workspace), worktrees: Boolean(worktree)}));
+        workspaces: Boolean(workspace), worktrees: Boolean(worktree), creation_sha256: creationDigest}));
       return;
     }
 
@@ -45,7 +51,7 @@
     {$set: {purge_after: elapsed, work_ready_at: elapsed, 'record.purge_after': elapsed, 'record.work.ready_at': elapsed}});
     if (update.modifiedCount !== 1) throw new Error('retirement_purge_schedule_not_advanced');
     await session.commitTransaction();
-    print(JSON.stringify({armed: true, agents: children.length}));
+    print(JSON.stringify({armed: true, agents: children.length, creation_sha256: creationDigest}));
   } finally {
     await session.endSession();
   }
