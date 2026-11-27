@@ -152,6 +152,7 @@ pub(super) fn lifecycle_config(
 ) -> crate::sandbox::SandboxLifecycleConfig {
     crate::sandbox::SandboxLifecycleConfig {
         renewable_work: config.agent_manager_replicas.is_some(),
+        workspace_prepare_observations: config.features.workspace_prepare_observations,
         ownership,
         runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
         native_retirement_finality_enabled: config.features.native_retirement_finality_enabled,

@@ -24,12 +24,14 @@ use self::support::{
 
 mod execution;
 mod failure_settlement;
+mod observations;
 mod prepare_recovery;
 mod prepared;
 mod profile;
 mod removal;
 mod setup;
 mod support;
+use self::observations::{INSPECTION_FAILURE, INVALID_RECEIPT};
 pub(crate) use profile::DurableProfileWorkspaceProvisioner;
 
 const WORK_BATCH_SIZE: u16 = 50;
@@ -144,16 +146,20 @@ impl WorkspaceWorker {
         }
         let (sandbox, runtime) = match self.runtime(&workspace).await {
             Ok(value) => value,
-            Err(failure) => return self.handle_failure(workspace, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(workspace, failure.observed(INSPECTION_FAILURE), now)
+                    .await;
+            }
         };
         let request = workspace.original_prepare_request()?;
         layer2_core::sandbox::store::WorkAuthority::current()?;
-        match self
+        let call = self
             .dependencies
             .adapter
-            .prepare_workspace(&runtime, &request)
-            .await
-        {
+            .prepare_workspace(&runtime, &request);
+        let (reply, observation) = self.observe_prepare_rpc(call).await;
+        match reply {
             Ok(receipt) if valid_prepare_receipt(&request, &receipt, &workspace.path) => {
                 let mut next = workspace;
                 if let WorkspaceSource::RepositorySnapshot { source_commit, .. }
@@ -167,18 +173,23 @@ impl WorkspaceWorker {
                     .is_err()
                 {
                     return self
-                        .handle_failure(next, WorkerFailure::invalid_receipt(), now)
+                        .handle_failure(next, WorkerFailure::invalid_prepare_receipt(), now)
                         .await;
                 }
                 self.advance(next, WorkspaceWorkStep::Setup, now).await
             }
             Ok(_) => {
-                self.handle_failure(workspace, WorkerFailure::invalid_receipt(), now)
+                self.handle_failure(workspace, WorkerFailure::invalid_prepare_receipt(), now)
                     .await
             }
             Err(error) => {
-                self.handle_prepare_failure(workspace, failure(error), now, &sandbox)
-                    .await
+                self.handle_prepare_failure(
+                    workspace,
+                    failure(error).observed_rpc(observation, observations::Stage::PrepareRpc),
+                    now,
+                    &sandbox,
+                )
+                .await
             }
         }
     }
