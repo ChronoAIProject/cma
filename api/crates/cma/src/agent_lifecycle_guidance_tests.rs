@@ -13,6 +13,7 @@ fn owner_edits_preserve_exact_managed_revision_and_owner_whitespace() {
         managed_v5(),
         managed_v6(),
         managed_v7(),
+        managed_v8(),
     ] {
         let owner = "  Keep citations.\n\nDo not change my formatting.\n";
         let original = compose_managed(Some(managed), owner);
@@ -64,6 +65,7 @@ fn owner_policy_uses_the_captured_revision_even_after_transport_refresh() {
         (managed_v5(), GITHUB_PERMISSION_V1),
         (managed_v6(), CLARIFICATION_V1),
         (managed_v7(), PERMISSION_REMEDIATION_V1),
+        (managed_v8(), FIRST_PERMISSION_REPORT_V1),
     ] {
         let owner = format!("{prefix}\n\n  exact owner text\n");
         agent.profile.content.system_prompt = compose_managed(Some(managed), &owner);
@@ -148,6 +150,50 @@ fn clarification_requires_a_question_even_when_part_of_the_task_can_proceed() {
 }
 
 #[test]
+fn permission_gap_progress_message_includes_the_remedy_or_waits() {
+    const V8: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V8_ENABLED";
+    let flags = |v8: Option<&str>| {
+        crate::config::FeatureFlags::from_lookup(&mut |key| {
+            Ok(match key {
+                "CHRONO_AGENT_SESSION_GUIDANCE_V7_ENABLED" => Some("true".to_owned()),
+                V8 => v8.map(str::to_owned),
+                _ => None,
+            })
+        })
+    };
+    assert_eq!(
+        configured_admission_instructions(&flags(None).unwrap()),
+        managed_v7()
+    );
+    assert_eq!(
+        configured_admission_instructions(&flags(Some("false")).unwrap()),
+        managed_v7()
+    );
+    assert!(flags(Some("TRUE")).unwrap_err().contains(V8));
+    let guidance = configured_admission_instructions(&flags(Some("true")).unwrap());
+    assert_eq!(guidance, managed_v8());
+    assert_eq!(
+        guidance.strip_prefix(FIRST_PERMISSION_REPORT_V1),
+        Some(format!("\n\n{}", managed_v7()).as_str())
+    );
+    for required in [
+        "The first public message that mentions a permission denial or missing capability",
+        "the complete owner action in that same message",
+        "progress updates, commentary before tool calls, and final replies",
+        "before making any further tool calls after reporting the gap",
+        "While you are still checking the cause or the remedy, use a neutral progress update",
+        "the smallest grant and its scope, what work you will resume",
+        "include the available fallback in that first report",
+    ] {
+        assert!(
+            FIRST_PERMISSION_REPORT_V1.contains(required),
+            "missing guidance: {required}"
+        );
+    }
+    assert!(guidance.len() <= 16 * 1024);
+}
+
+#[test]
 fn permission_remediation_gives_the_owner_an_exact_action_in_the_first_reply() {
     let guidance = managed_v7();
     assert_eq!(
@@ -208,6 +254,7 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
         managed_v5(),
         managed_v6(),
         managed_v7(),
+        managed_v8(),
     ] {
         for (sandbox, workspace) in [
             (None, None),
@@ -255,7 +302,8 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
                     managed_v4(),
                     managed_v5(),
                     managed_v6(),
-                    managed_v7()
+                    managed_v7(),
+                    managed_v8(),
                 ]
                 .contains(&instructions)
             );

@@ -1,6 +1,6 @@
 //! Internal Agent Manager ownership negotiation, independent of public APIs.
 use serde::{Deserialize, Serialize};
-use std::{future::Future, sync::Arc};
+use std::{future::Future, sync::Arc, time::SystemTime};
 
 #[path = "hosted/provider_ownership_failure.rs"]
 mod failure;
@@ -100,15 +100,59 @@ impl<T: TransportAuthority + ?Sized> Drop for RevokeOnDrop<'_, T> {
 
 tokio::task_local! {
     static AUTHORITY: Arc<dyn TransportAuthority>;
-    static INSPECTION_FAILURE: Box<dyn Fn(InspectionRefusal) + Send + Sync>;
+    static INSPECTION: Inspection;
+}
+
+struct Inspection {
+    observe: Box<dyn Fn(InspectionRefusal) + Send + Sync>,
+    staging_refusal: Option<StagingInspectionRefusal>,
+}
+
+/// A staging fixture may request a temporary refusal on its exact bound runtime.
+pub struct StagingInspectionRefusal {
+    runtime_id: String,
+    expires_at: SystemTime,
+}
+
+impl StagingInspectionRefusal {
+    pub fn new(runtime_id: String, expires_at: SystemTime) -> Self {
+        Self {
+            runtime_id,
+            expires_at,
+        }
+    }
+
+    fn applies(&self, runtime: &crate::RuntimeHandle, now: SystemTime) -> bool {
+        runtime.as_str() == self.runtime_id && now < self.expires_at
+    }
+}
+
+pub(crate) fn staging_inspection_refused(runtime: &crate::RuntimeHandle) -> bool {
+    INSPECTION
+        .try_with(|scope| {
+            scope
+                .staging_refusal
+                .as_ref()
+                .is_some_and(|control| control.applies(runtime, SystemTime::now()))
+        })
+        .unwrap_or(false)
 }
 
 /// Retain the receiver failure from this read even when it cancels the caller.
 pub async fn observe_inspection_failure<F: Future>(
     observed: impl Fn(InspectionRefusal) + Send + Sync + 'static,
+    staging_refusal: Option<StagingInspectionRefusal>,
     read: F,
 ) -> F::Output {
-    INSPECTION_FAILURE.scope(Box::new(observed), read).await
+    INSPECTION
+        .scope(
+            Inspection {
+                observe: Box::new(observed),
+                staging_refusal,
+            },
+            read,
+        )
+        .await
 }
 
 /// Evidence from this exact receiver exchange, retained before scope cancellation.
@@ -124,8 +168,8 @@ pub(crate) fn record_inspection_refusal(
     failure: OwnershipFailure,
 ) {
     if failure.reason != OwnershipFailureReason::AuthorityLost {
-        let _ = INSPECTION_FAILURE.try_with(|observed| {
-            observed(InspectionRefusal {
+        let _ = INSPECTION.try_with(|scope| {
+            (scope.observe)(InspectionRefusal {
                 owner,
                 receiver,
                 failure,

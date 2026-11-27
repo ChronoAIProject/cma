@@ -365,12 +365,14 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/prepare-skill-docs.
         /home/cma/.codex/skills \
         /var/lib/cma-runtime /var/lib/cma-transfer; \
     mkdir /tmp/baseline-skills; \
-    curl -fsSL -o /tmp/nyxid-source.tar.gz \
+    curl -fsSL --connect-timeout 15 --max-time 120 --retry 3 --retry-max-time 180 \
+        -o /tmp/nyxid-source.tar.gz \
         "https://github.com/ChronoAIProject/NyxID/archive/${NYXID_SKILL_COMMIT}.tar.gz"; \
     echo "${NYXID_SKILL_ARCHIVE_SHA256}  /tmp/nyxid-source.tar.gz" | sha256sum -c -; \
     tar xzf /tmp/nyxid-source.tar.gz -C /tmp/baseline-skills --strip-components=2 \
         "NyxID-${NYXID_SKILL_COMMIT}/skills/nyxid"; \
-    curl -fsSL -o /tmp/ornn-source.tar.gz \
+    curl -fsSL --connect-timeout 15 --max-time 120 --retry 3 --retry-max-time 180 \
+        -o /tmp/ornn-source.tar.gz \
         "https://github.com/ChronoAIProject/Ornn/archive/${ORNN_SKILL_COMMIT}.tar.gz"; \
     echo "${ORNN_SKILL_ARCHIVE_SHA256}  /tmp/ornn-source.tar.gz" | sha256sum -c -; \
     tar xzf /tmp/ornn-source.tar.gz -C /tmp/baseline-skills --strip-components=2 \

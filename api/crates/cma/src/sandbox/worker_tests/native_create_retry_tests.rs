@@ -176,7 +176,7 @@ async fn native_create_retry_budget_survives_worker_replacement_without_resettin
     let created = h.create().await;
     let pools = pools(&h, &[]);
     pools.pending_claim.store(true, Ordering::SeqCst);
-    let mut now = start_time(&created);
+    let mut now = start_time(&created) + Duration::from_millis(500);
     let mut original = None;
     for attempt in 0..7 {
         assert!(cold_worker(&h, pools.clone(), true)
@@ -191,12 +191,18 @@ async fn native_create_retry_budget_survives_worker_replacement_without_resettin
         } else {
             original = Some(stored.lifecycle.home.clone());
         }
-        assert_eq!(
-            stored.work.ready_at,
-            rfc3339_at(now + Duration::from_secs(if attempt < 5 { 6 } else { 30 }))
-        );
-        now = SystemTime::UNIX_EPOCH
-            + Duration::from_secs(seconds_from_rfc3339(&stored.work.ready_at).unwrap());
+        // The first five retries start at the rounded completion of the
+        // readiness observation. Later retries use the ordinary backoff.
+        let observed_at = stamp_time(&stored.updated_at);
+        let delay = if attempt < 5 {
+            assert!(observed_at >= now + Duration::from_secs(5));
+            Duration::from_secs(1)
+        } else {
+            assert!(observed_at >= now);
+            Duration::from_secs(30)
+        };
+        assert_eq!(stored.work.ready_at, rfc3339_at(observed_at + delay));
+        now = stamp_time(&stored.work.ready_at);
     }
     assert_eq!(call_count(&pools, "claim"), 1);
     assert_eq!(call_count(&pools, "adopt"), 0);

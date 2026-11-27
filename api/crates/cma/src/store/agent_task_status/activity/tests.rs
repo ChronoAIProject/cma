@@ -4,11 +4,15 @@ use crate::store::{
 };
 use layer2_core::{
     resource_access::ResourceAccessStore,
-    sandbox::{Agent, AgentLogEntry, AgentLogKind, AgentWorkStep, HierarchyReadService},
+    sandbox::{
+        Agent, AgentLogEntry, AgentLogKind, AgentStatus, AgentWorkStep, HierarchyReadService,
+    },
     Authorization, Caller, Capability, SubjectId,
 };
 use mongodb::{bson::doc, Client};
 use std::sync::Arc;
+
+use super::super::{batch::pipeline, read_workspace};
 
 const YESTERDAY: &str = "2026-11-19T17:00:00Z";
 const TODAY: &str = "2026-11-20T09:00:00Z";
@@ -137,6 +141,18 @@ async fn task_activity_hierarchy_ignores_maintenance_and_tracks_later_turns() {
     assert_eq!(agent.revision, revision + 32);
     turn(&store, &mut agent, TODAY).await;
     assert_eq!(summary(&store, &agent).await["task_activity_at"], TODAY);
+    agent.status = AgentStatus::Paused;
+    store
+        .agents
+        .replace_one(
+            doc! {"_id": agent.id.as_str()},
+            agent_document(&agent).unwrap(),
+        )
+        .await
+        .unwrap();
+    let paused = summary(&store, &agent).await;
+    assert_eq!(paused["task_activity_at"], TODAY);
+    assert_eq!(paused["task_status"], "paused");
     let before = store
         .agents
         .find_one(doc! {"_id": agent.id.as_str()})
@@ -193,13 +209,27 @@ async fn task_activity_batches_project_headers_and_use_existing_index_with_head_
     let client = Client::with_options(options).unwrap();
     let name = format!("cma_activity_batch_{}", uuid::Uuid::new_v4().simple());
     let (store, target) = fixture(&client, &name).await;
-    let original = store
+    let mut original = store
         .resource_access_snapshot(&target)
         .await
         .unwrap()
         .lineage
         .agent
         .unwrap();
+    turn(&store, &mut original, YESTERDAY).await;
+    trace.lock().unwrap().clear();
+    let row = summary(&store, &original).await;
+    assert_eq!(row["task_activity_at"], YESTERDAY);
+    assert_eq!(row["task_status"], "completed");
+    let workspace_aggregates = trace
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(operation, command)| {
+            operation == "aggregate" && matches!(command.get_str("aggregate"), Ok("agents"))
+        })
+        .count();
+    assert_eq!(workspace_aggregates, 1);
     let mut agents = Vec::new();
     for index in 0..101 {
         let mut agent = original.clone();
@@ -259,25 +289,29 @@ async fn task_activity_batches_project_headers_and_use_existing_index_with_head_
         .await
         .unwrap();
     trace.lock().unwrap().clear();
-    let actual = super::read_many(&store, &agents, &mut session)
-        .await
-        .unwrap();
+    let actual = read_workspace(&store, &agents, &mut session).await.unwrap();
     assert_eq!(actual.len(), 101);
-    assert!(actual.values().all(|at| at == YESTERDAY));
+    assert!(actual
+        .values()
+        .all(|row| row.activity_at.as_deref() == Some(YESTERDAY)));
     let commands = trace.lock().unwrap().clone();
     assert_eq!(commands.len(), 2);
     for (name, command) in &commands {
         assert_eq!(name, "aggregate");
         assert_eq!(command.get_i32("maxTimeMS").unwrap(), 10_000);
         let pipeline = command.get_array("pipeline").unwrap();
-        for lookup in &pipeline[2..] {
-            let stages = lookup
-                .as_document()
-                .unwrap()
-                .get_document("$lookup")
-                .unwrap()
-                .get_array("pipeline")
-                .unwrap();
+        let activity_lookups = pipeline
+            .iter()
+            .filter_map(|stage| stage.as_document()?.get_document("$lookup").ok())
+            .filter(|lookup| {
+                lookup
+                    .get_str("as")
+                    .is_ok_and(|name| name.starts_with("activity"))
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(activity_lookups.len(), 3);
+        for lookup in activity_lookups {
+            let stages = lookup.get_array("pipeline").unwrap();
             assert_eq!(
                 stages[2].as_document().unwrap().get_i32("$limit").unwrap(),
                 1
@@ -304,24 +338,28 @@ async fn task_activity_batches_project_headers_and_use_existing_index_with_head_
         .await
         .unwrap();
     assert_eq!(
-        super::read_many(&store, &agents[..1], &mut session)
+        read_workspace(&store, &agents[..1], &mut session)
             .await
-            .unwrap()[&changed.id],
-        YESTERDAY
+            .unwrap()[&changed.id]
+            .activity_at
+            .as_deref(),
+        Some(YESTERDAY)
     );
     session.abort_transaction().await.unwrap();
     crate::store::sandbox_mongo::start_transaction(&mut session)
         .await
         .unwrap();
     assert_eq!(
-        super::read_many(&store, std::slice::from_ref(&changed), &mut session)
+        read_workspace(&store, std::slice::from_ref(&changed), &mut session)
             .await
-            .unwrap()[&changed.id],
-        TODAY
+            .unwrap()[&changed.id]
+            .activity_at
+            .as_deref(),
+        Some(TODAY)
     );
     session.abort_transaction().await.unwrap();
     let explain = client.database(&name).run_command(doc! {
-        "explain": {"aggregate": "agents", "pipeline": super::pipeline(&agents[1..2]), "cursor": {}},
+        "explain": {"aggregate": "agents", "pipeline": pipeline(&[&agents[1]], true), "cursor": {}},
         "verbosity": "executionStats",
     }).await.unwrap();
     let lookups: Vec<_> = explain
@@ -329,7 +367,13 @@ async fn task_activity_batches_project_headers_and_use_existing_index_with_head_
         .unwrap()
         .iter()
         .filter_map(|value| value.as_document())
-        .filter(|stage| stage.contains_key("$lookup"))
+        .filter(|stage| {
+            stage.get_document("$lookup").is_ok_and(|lookup| {
+                lookup
+                    .get_str("as")
+                    .is_ok_and(|name| name.starts_with("activity"))
+            })
+        })
         .collect();
     assert_eq!(lookups.len(), 3, "{explain:?}");
     for lookup in lookups {

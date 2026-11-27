@@ -69,7 +69,7 @@ async fn open_policies(
         socket,
         "agent-1",
         "/workspace".into(),
-        (configured, None, combined),
+        (configured, None, (combined, None)),
         None,
         None,
         sender,

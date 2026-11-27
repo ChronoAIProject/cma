@@ -253,7 +253,7 @@ jobs:
           retention-days: 90
       - name: Seal accepted layer archive
         id: seal-layer-archive
-        if: success() && !inputs.protected_web && vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && steps.publication.outputs.disposition == ''
+        if: success() && !inputs.protected_web && inputs.component != 'am' && vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && steps.publication.outputs.disposition == ''
         continue-on-error: true
         timeout-minutes: 5
         run: |
