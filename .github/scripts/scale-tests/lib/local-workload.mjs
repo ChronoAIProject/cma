@@ -11,10 +11,10 @@ const turnTimeoutMs = 120_000;
 const readTimeoutMs = 15_000;
 const turnInput = 'Reply with the single word OK. Do not call tools.';
 
-async function submitTurn(client, attempt, key, signal, now, observeCompletion) {
+async function submitTurn(client, attempt, key, input, signal, now, observeCompletion) {
   const response = await client.request(`/api/v2/agents/${client.fixture.agent}/responses`, {
     method: 'POST',
-    body: { input: turnInput, stream: true },
+    body: { input, stream: true },
     key, stream: true, signal,
   });
   attempt.http = response.status;
@@ -92,9 +92,10 @@ export async function runLocalWorkload(config, { time = clock, capture, onRunnin
     check(Number.isSafeInteger(durationMs) && durationMs >= minute && durationMs <= 30 * minute
       && durationMs % minute === 0, 'local_workload_duration_invalid', true);
     check(config.localCohort?.owners?.length === connectedWorkload.users, 'local_workload_100_owners_required', true);
+    const correlateReceiver = config.localWorkload.receiverCorrelation === true;
     report.durationMs = durationMs;
     report.planHash = hash(JSON.stringify({ ...connectedWorkload, durationMs, turnInput,
-      read: 'agent_detail', turn: 'responses_v2' }));
+      read: 'agent_detail', turn: 'responses_v2', ...(correlateReceiver && { receiverCorrelation: true }) }));
 
     await withLocalCohort(config, async ({ clients, signal, sourceSha, fixtureHash }) => {
       Object.assign(report, { sourceSha, fixtureHash, workloadHash: config.workloadHash, openStreams: clients.length });
@@ -133,7 +134,10 @@ export async function runLocalWorkload(config, { time = clock, capture, onRunnin
           const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(turnTimeoutMs)]);
           const key = `scale-${hash(`${report.runHash}:${attempt.ordinal}`)}`;
           attempt.keyHash = hash(key);
-          await submitTurn(client, attempt, key, requestSignal, now, async (sequence, signal) => {
+          const marker = correlateReceiver ? `CMA_SCALE_TRACE_${attempt.keyHash}` : null;
+          if (marker) attempt.correlationHash = hash(marker);
+          const input = marker ? `${turnInput}\n${marker}` : turnInput;
+          await submitTurn(client, attempt, key, input, requestSignal, now, async (sequence, signal) => {
             const identity = `${attempt.owner}:${sequence}`;
             while (!terminals.has(identity)) await sleep(20, undefined, { signal });
             check(terminals.get(identity) === 'turn_completed', 'local_workload_agent_turn_failed');

@@ -173,7 +173,7 @@ function acceleratedClock() {
 
 test('runs the 100-owner workload at the measured rates with traceable command receipts', async (t) => {
   const { config, env, seen } = await fixture(t, 100);
-  config.localWorkload = { durationMs: 60_000 };
+  config.localWorkload = { durationMs: 60_000, receiverCorrelation: true };
   const report = await runLocalWorkload(config, { env, command: cluster, time: acceleratedClock() });
   assert.equal(report.status, 'PASS', report.code);
   assert.equal(report.openStreams, 100);
@@ -183,6 +183,10 @@ test('runs the 100-owner workload at the measured rates with traceable command r
   assert.equal(report.samples.length, 620);
   const turns = report.attempts.filter(({ kind }) => kind === 'turn');
   assert.equal(new Set(turns.map(({ commandHash }) => commandHash)).size, 20);
+  assert.equal(new Set(turns.map(({ correlationHash, keyHash }) => {
+    assert.equal(correlationHash, hash(`CMA_SCALE_TRACE_${keyHash}`));
+    return correlationHash;
+  })).size, 20);
   assert.ok(turns.every(({ commandHash, keyHash, status }) => commandHash.length === 64
     && keyHash.length === 64 && status === 'PASS'));
   assert.doesNotMatch(JSON.stringify(report), /synthetic-local-owner|agt_example|cmd_example|resp_example/);
@@ -234,7 +238,6 @@ test('the scale CLI records the blocked workload and protects the evidence direc
   await assert.rejects(launch(), { code: 2 });
   assert.equal(await readFile(file, 'utf8'), retained);
 });
-
 
 async function boundHooks(t, config, implementation, { captureCount = config.localWorkload ? 20 : 1,
   authorityProcess = hash('process'), terminalSequence = 5, durableObservedSequence = terminalSequence ?? 6,
@@ -375,7 +378,6 @@ test('replica loss requires actual process death before recovery can be scored',
   assert.equal(result.code, 'abrupt_process_death_unproven');
   assert.deepEqual(custody, ['begin', 'close-fault', 'close-capture', 'close-hooks']);
 });
-
 
 for (const scenario of [
   { title: 'binds stream recovery to the original command', mode: 'am_stream' },

@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { check, hash, safeFailure } from './lib/checks.mjs';
 import { prepareEvidenceDirectory } from './lib/evidence-directory.mjs';
 import { validateConfig } from './lib/safety.mjs';
-import { collectLocalFixtureObservation, qualifyProcessDeath, qualifyReceiverOutcomes } from './lib/local-fixture-observations.mjs';
+import { checkLocalFixtureObservationTarget, collectLocalFixtureObservation, qualifyProcessDeath, qualifyReceiverOutcomes } from './lib/local-fixture-observations.mjs';
 
 async function readPinned(path, expected) {
   const canonical = await realpath(path);
@@ -28,9 +28,7 @@ try {
   const directory = await prepareEvidenceDirectory(repository, dirname(resolve(output)));
   let result;
   if (phase === 'qualify') {
-    check(before.runHash === config.localObservation?.runHash
-      && before.namespaceHash === config.localObservation?.cluster?.namespaceHash,
-    'local_observer_run_identity_changed', true);
+    checkLocalFixtureObservationTarget(config, kind, before);
     const binding = await readPinned(bindingPath, bindingHash);
     result = kind === 'receiver' ? qualifyReceiverOutcomes(before, binding) : qualifyProcessDeath(before, binding);
   } else {

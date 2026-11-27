@@ -68,10 +68,7 @@ function checkRuntimeIdentity(status, binding, namespace) {
     && status.podNamespace === namespace && status.name === binding.container, 'local_observer_runtime_identity_changed', true);
 }
 
-async function observeProcess(config, cluster, target, observation, phase, before, command) {
-  check(isHash(target.nodeContainerHash) && enginePattern.test(target.engineContext), 'local_observer_node_binding_missing', true);
-  const scope = { runHash: observation.runHash, namespaceHash: observation.cluster.namespaceHash,
-    podUidHash: target.podUidHash, container: target.container, nodeContainerHash: target.nodeContainerHash };
+async function observeProcess(config, cluster, target, scope, phase, before, command) {
   let binding;
   if (phase === 'running') {
     const pod = selectPod(await cluster.read('pods'), target);
@@ -113,26 +110,30 @@ function receiverRows(logs) {
   return logs.split('\n').filter(Boolean).map((line, index) => {
     const value = parseExactTimestamps(line, ['observed_ns']);
     check(isIP(value.source_ip) > 0 && isHash(value.response_hash) && isHash(value.input_hash) && isHash(value.thread_hash)
-      && typeof value.workload === 'boolean' && ['flushed', 'disconnected'].includes(value.outcome),
+      && typeof value.workload === 'boolean' && ['flushed', 'disconnected'].includes(value.outcome)
+      && (!Object.hasOwn(value, 'correlation_hash') || (value.workload && isHash(value.correlation_hash))),
     'local_observer_receiver_row_invalid', true);
     return {
       ordinal: index + 1, rowHash: hash(line), observedAtNs: exactNanoseconds(value.observed_ns).toString(),
       sourceIpHash: hash(value.source_ip), upstreamResponseHash: value.response_hash,
       inputHash: value.input_hash, threadHash: value.thread_hash, workload: value.workload, outcome: value.outcome,
+      ...(value.correlation_hash && { correlationHash: value.correlation_hash }),
     };
   });
 }
 
-async function observeReceiver(cluster, target, observation, phase, before) {
-  check(isHash(target.sourceHash), 'local_observer_receiver_source_missing', true);
+async function observeReceiver(cluster, target, scope, phase, before) {
   const pod = selectPod(await cluster.read('pods'), target);
   const runtimeId = exactContainer(pod, target);
+  const incarnationHash = hash(runtimeId);
+  if (phase === 'finish') {
+    check(before?.incarnationHash === incarnationHash, 'local_observer_receiver_incarnation_changed', true);
+  }
   const bytes = await cluster.invoke(['logs', 'pod/' + target.pod, '--container', target.container]);
   const after = selectPod(await cluster.read('pods'), target);
   check(exactContainer(after, target) === runtimeId, 'local_observer_receiver_restarted', true);
   const rows = receiverRows(bytes);
-  const identity = { schema: 'cma-receiver-ledger-observation-v1', runHash: observation.runHash,
-    namespaceHash: observation.cluster.namespaceHash, podUidHash: target.podUidHash, sourceHash: target.sourceHash };
+  const identity = { schema: 'cma-receiver-ledger-observation-v1', ...scope, incarnationHash };
   if (phase === 'start') return { ...identity, phase, count: rows.length, prefixHash: hash(JSON.stringify(rows)) };
   check(Object.entries(identity).every(([key, value]) => before?.[key] === value)
     && before.phase === 'start' && Number.isSafeInteger(before.count) && before.count >= 0
@@ -141,20 +142,42 @@ async function observeReceiver(cluster, target, observation, phase, before) {
   return { ...identity, phase, baselineHash: hash(JSON.stringify(before)), rows: rows.slice(before.count) };
 }
 
-export async function collectLocalFixtureObservation(config, kind, phase, { before, command = executeWithInput } = {}) {
+function observationTarget(config, kind) {
   validateConfig(config);
+  check(['receiver', 'process'].includes(kind), 'local_observer_mode_invalid', true);
   const observation = config.localObservation;
   check(observation?.cluster && isHash(observation.cluster.namespaceHash) && isHash(observation.runHash),
     'local_observer_scope_missing', true);
+  const target = observation[kind];
+  check(target && typeof target.pod === 'string' && typeof target.container === 'string'
+    && namePattern.test(target.pod) && namePattern.test(target.container) && isHash(target.podUidHash),
+  'local_observer_target_binding_missing', true);
+  const common = { runHash: observation.runHash, namespaceHash: observation.cluster.namespaceHash,
+    pod: target.pod, podUidHash: target.podUidHash, container: target.container };
+  if (kind === 'receiver') {
+    check(isHash(target.sourceHash), 'local_observer_receiver_source_missing', true);
+    return { target, clusterBinding: observation.cluster, scope: { ...common, sourceHash: target.sourceHash } };
+  }
+  check(isHash(target.nodeContainerHash) && typeof target.engineContext === 'string' && enginePattern.test(target.engineContext),
+    'local_observer_node_binding_missing', true);
+  return { target, clusterBinding: observation.cluster,
+    scope: { ...common, nodeContainerHash: target.nodeContainerHash, engineContext: target.engineContext } };
+}
+
+export function checkLocalFixtureObservationTarget(config, kind, observation) {
+  const { scope } = observationTarget(config, kind);
+  check(Object.entries(scope).every(([key, value]) => observation?.[key] === value),
+    'local_observer_target_identity_changed', true);
+}
+
+export async function collectLocalFixtureObservation(config, kind, phase, { before, command = executeWithInput } = {}) {
+  const { target, clusterBinding, scope } = observationTarget(config, kind);
   check((kind === 'receiver' && ['start', 'finish'].includes(phase)) || (kind === 'process' && ['running', 'exited'].includes(phase)),
     'local_observer_mode_invalid', true);
-  const target = observation[kind];
-  check(target && namePattern.test(target.pod) && namePattern.test(target.container) && isHash(target.podUidHash),
-    'local_observer_target_binding_missing', true);
-  const cluster = new LocalCluster({ ...observation.cluster, context: config.context, namespace: config.namespace }, command);
+  const cluster = new LocalCluster({ ...clusterBinding, context: config.context, namespace: config.namespace }, command);
   return kind === 'receiver'
-    ? observeReceiver(cluster, target, observation, phase, before)
-    : observeProcess(config, cluster, target, observation, phase, before, command);
+    ? observeReceiver(cluster, target, scope, phase, before)
+    : observeProcess(config, cluster, target, scope, phase, before, command);
 }
 
 function orderedBinding(observation, binding, schema) {
@@ -165,7 +188,8 @@ function orderedBinding(observation, binding, schema) {
 
 export function qualifyReceiverOutcomes(observation, binding) {
   check(observation?.schema === 'cma-receiver-ledger-observation-v1' && observation.phase === 'finish'
-    && isHash(observation.sourceHash) && Array.isArray(observation.rows), 'local_observer_receiver_delta_missing', true);
+    && isHash(observation.sourceHash) && isHash(observation.incarnationHash) && Array.isArray(observation.rows),
+  'local_observer_receiver_delta_missing', true);
   orderedBinding(observation, binding, 'cma-receiver-command-binding-v1');
   check(binding.sourceHash !== observation.sourceHash && Array.isArray(binding.records),
     'local_observer_receiver_independent_source_required', true);
@@ -182,7 +206,9 @@ export function qualifyReceiverOutcomes(observation, binding) {
   check(workloadRows.length > 0, 'local_observer_receiver_workload_missing', true);
   const records = workloadRows.map((row) => {
     const link = links.get(row.rowHash);
-    check(link && link.upstreamResponseHash === row.upstreamResponseHash, 'local_observer_receiver_command_binding_missing', true);
+    check(link && link.upstreamResponseHash === row.upstreamResponseHash
+      && (!row.correlationHash || row.correlationHash === link.correlationHash),
+    'local_observer_receiver_command_binding_missing', true);
     links.delete(row.rowHash);
     return { commandHash: link.commandHash, ownerHash: link.ownerHash, runtimeGeneration: link.runtimeGeneration,
       authorityEpoch: link.authorityEpoch, observedSequence: link.observedSequence, terminal: row.outcome === 'flushed' };
