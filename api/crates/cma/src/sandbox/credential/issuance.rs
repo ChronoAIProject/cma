@@ -236,8 +236,9 @@ impl ManagedSandboxCredentials {
         }
         // An uncertain intent acknowledgement intentionally never reaches this
         // consuming call. Losing availability here preserves no-resend custody.
-        let minted = prepared.dispatch().await.map_err(|_| {
+        let minted = prepared.dispatch().await.map_err(|failure| {
             tracing::warn!(sandbox_id = %sandbox.id, generation,
+                phase = failure.phase, http_status = failure.http_status,
                 "credential dispatch outcome is uncertain; automatic mint retry refused");
             CredentialError::Uncertain
         })?;

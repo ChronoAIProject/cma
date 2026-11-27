@@ -269,10 +269,14 @@ class ReleaseValidationTests(unittest.TestCase):
 
     def test_collection_and_id_bounds_match_the_matrix(self):
         self.inventory, self.artifacts, self.expectations = release_inputs(
-            tuple(f'collection_{n}' for n in range(170)))
-        self.assertEqual(len(self.build()['fixtures']), 510)
-        self.inventory['collections'].append({'name': 'one_too_many'})
-        self.assert_refused()
+            tuple(f'collection_{n}' for n in range(341)))
+        plan = self.build()
+        self.assertEqual(len(plan['fixtures']), 1023)
+        self.assertEqual(len(plan['cells']), 4092)
+        self.inventory, self.artifacts, self.expectations = release_inputs(
+            tuple(f'collection_{n}' for n in range(342)))
+        with self.assertRaisesRegex(ValueError, 'cell limit'):
+            self.build()
         for rows in (None, {}, [], [None], [{'name': []}], [{'name': ''}],
                      [{'name': 'a'}] * 2, [{'name': 'a_b'}, {'name': 'a-b'}],
                      [{'name': 'a' * 81}], [{'name': 'a' * 77}]):

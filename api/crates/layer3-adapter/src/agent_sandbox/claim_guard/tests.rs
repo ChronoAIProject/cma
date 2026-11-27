@@ -1,6 +1,9 @@
 use super::*;
 use serde_json::json;
-use std::{collections::VecDeque, sync::Mutex};
+use std::{
+    collections::VecDeque,
+    sync::{Arc, Mutex},
+};
 
 fn observed(uid: &str, restarts: i32, ready: bool, crash: bool) -> Sample {
     let (member, pod) = resources(uid, restarts, ready, crash);
@@ -85,6 +88,67 @@ fn stale_unschedulable_condition_does_not_override_current_pod_state() {
     pod.metadata.deletion_timestamp =
         Some(serde_json::from_value(json!("2026-11-26T12:00:00Z")).unwrap());
     assert!(sample(&member, &pod).is_ok());
+}
+
+#[test]
+fn scheduler_diagnostics_report_only_unique_classes_for_the_pending_pod() {
+    struct LogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let (member, mut pod) = resources("fixture-pod-uid", 0, false, false);
+    pod.spec = Some(serde_json::from_value(json!({"containers": []})).unwrap());
+    pod.status.as_mut().unwrap().phase = Some("Pending".into());
+    let output = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let sink = output.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(move || LogWriter(sink.clone()))
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        let _span = tracing::warn_span!("claim", owner = "fixture-owner").entered();
+        for message in [
+            r#"0/6 nodes are available: 2 Insufficient cpu, 2 Insufficient memory, 1 persistentvolumeclaim "fixture-volume" not found, 1 node(s) had untolerated taint {fixture-key: fixture-value}, 1 node(s) didn't match Pod's node affinity/selector. preemption: 1 exceeded quota: fixture-preemption."#,
+            "exceeded quota: fixture-quota, requested: requests.cpu=1",
+            "node fixture-node reported an unrecognized condition",
+        ] {
+            pod.status.as_mut().unwrap().conditions = Some(
+                serde_json::from_value(json!([{
+                    "type": "PodScheduled", "status": "False", "reason": "Unschedulable",
+                    "message": message
+                }]))
+                .unwrap(),
+            );
+            assert!(matches!(
+                sample(&member, &pod),
+                Err(AdapterError::NativeClaimNotReady(
+                    NativeClaimGuardReason::Unschedulable
+                ))
+            ));
+        }
+    });
+    let bytes = output.lock().unwrap();
+    let log = std::str::from_utf8(&bytes).unwrap();
+    for class in ["cpu", "memory", "placement", "volume", "quota"] {
+        assert_eq!(
+            log.matches(&format!("scheduler_class=\"{class}\"")).count(),
+            1,
+            "{log}"
+        );
+    }
+    assert!(!log.contains("fixture-"), "{log}");
+    assert!(!log.contains("requested:"), "{log}");
+    assert_eq!(log.lines().count(), 5, "{log}");
 }
 
 #[tokio::test(start_paused = true)]

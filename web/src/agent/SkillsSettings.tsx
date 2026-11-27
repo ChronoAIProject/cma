@@ -5,6 +5,7 @@ import { useCmaClient, useProfileViewsClient } from '../api/context';
 import type { AgentSkillsView } from '../api/client';
 import { AgentSkillsError } from '../api/rest/agentSkills';
 import { catalogFailure } from '../profiles/catalogFailure';
+import { SkillCatalogAuthorization } from './SkillCatalogAuthorization';
 import { useSkillCatalog } from './useSkillCatalog';
 import { isSkillVersion } from '../profiles/validation';
 import { Button } from '../ui/Button';
@@ -28,6 +29,7 @@ export function SkillsSettings(props: SkillsSettingsProps) {
 
 function SkillsSettingsForm({
   agentId,
+  viewerId,
   active,
   busy,
   catalogOpen = false,
@@ -267,6 +269,9 @@ function SkillsSettingsForm({
                 >
                   {catalogState.cursor === undefined ? 'Retry Ornn catalog' : 'Retry skill page'}
                 </Button>
+              ) : null}
+              {catalogError.kind === 'service_authorization' && viewerId ? (
+                <SkillCatalogAuthorization agentId={agentId} owner={viewerId} />
               ) : null}
               {onClose ? <Button onClick={onClose}>Cancel</Button> : null}
             </div>

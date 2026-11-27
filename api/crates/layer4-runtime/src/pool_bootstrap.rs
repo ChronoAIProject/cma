@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::runtime_bootstrap::{
-    valid_pod_uid, RuntimeBootstrapReceipt, RuntimeBootstrapRequest, MAX_RUNTIME_BOOTSTRAP_BYTES,
-    RUNTIME_BOOTSTRAP_SOCKET,
+    valid_pod_uid, RuntimeBootstrapReceipt, RuntimeBootstrapRequest, StagingStartupFailure,
+    MAX_RUNTIME_BOOTSTRAP_BYTES, RUNTIME_BOOTSTRAP_SOCKET,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -24,6 +24,7 @@ const MAX_CONNECTIONS: usize = 8;
 pub(crate) struct AssignedRuntime {
     pub config: RuntimeConfig,
     pub auth: Arc<ControlAuth>,
+    pub startup_failure: Option<(StagingStartupFailure, oneshot::Receiver<()>)>,
 }
 
 pub(crate) struct AssignmentServer {
@@ -51,6 +52,7 @@ enum Reply {
 struct Admission {
     receipt: Option<RuntimeBootstrapReceipt>,
     sender: Option<oneshot::Sender<AssignedRuntime>>,
+    startup_confirmation: Option<oneshot::Sender<()>>,
 }
 
 impl AssignmentServer {
@@ -84,6 +86,7 @@ impl AssignmentServer {
         let admission = Arc::new(Mutex::new(Admission {
             receipt: None,
             sender: Some(sender),
+            startup_confirmation: None,
         }));
         let socket_path = path.clone();
         let task = tokio::spawn(async move {
@@ -150,12 +153,17 @@ async fn serve(
                 .map_err(|_| "invalid runtime assignment".into())
         });
     let receipt = match request {
-        Ok(request) if request.pod_uid == pod_uid => accept(request, admission, base, socket).await,
+        Ok(request) if request.pod_uid == pod_uid => {
+            let confirm = request.staging_startup_confirmed;
+            accept(request, &admission, base, socket)
+                .await
+                .map(|receipt| (receipt, confirm))
+        }
         _ => Err("runtime assignment identity mismatch".into()),
     };
-    let reply = match receipt {
-        Ok(receipt) => Reply::Accepted { receipt },
-        Err(_) => Reply::Rejected,
+    let (reply, confirm) = match receipt {
+        Ok((receipt, confirm)) => (Reply::Accepted { receipt }, confirm),
+        Err(_) => (Reply::Rejected, false),
     };
     let bytes =
         serde_json::to_vec(&reply).map_err(|_| "cannot encode runtime assignment receipt")?;
@@ -166,18 +174,34 @@ async fn serve(
     stream
         .shutdown()
         .await
-        .map_err(|_| "cannot finish runtime assignment".into())
+        .map_err(|_| "cannot finish runtime assignment")?;
+    if confirm {
+        if let Some(sender) = admission.lock().await.startup_confirmation.take() {
+            let _ = sender.send(());
+        }
+    }
+    Ok(())
 }
 
 async fn accept(
     mut request: RuntimeBootstrapRequest,
-    admission: Arc<Mutex<Admission>>,
+    admission: &Mutex<Admission>,
     base: &BTreeMap<String, String>,
     socket: &Path,
 ) -> Result<RuntimeBootstrapReceipt, String> {
     let receipt =
         RuntimeBootstrapReceipt::for_request(&request).map_err(|_| "invalid runtime assignment")?;
     let mut state = admission.lock().await;
+    if request.staging_startup_confirmed {
+        request.staging_startup_confirmed = false;
+        let original = RuntimeBootstrapReceipt::for_request(&request)
+            .map_err(|_| "invalid runtime startup confirmation")?;
+        return if state.receipt.as_ref() == Some(&original) {
+            Ok(receipt)
+        } else {
+            Err("runtime startup confirmation differs from its assignment".into())
+        };
+    }
     if let Some(current) = &state.receipt {
         return if current == &receipt {
             Ok(receipt)
@@ -198,11 +222,20 @@ async fn accept(
     if socket.starts_with(&config.home) {
         return Err("runtime assignment socket must be outside the tenant home".into());
     }
+    let startup_failure = request.staging_startup_failure.map(|fault| {
+        let (confirm, wait) = oneshot::channel();
+        state.startup_confirmation = Some(confirm);
+        (fault, wait)
+    });
     state
         .sender
         .take()
         .ok_or("runtime assignment receiver is unavailable")?
-        .send(AssignedRuntime { config, auth })
+        .send(AssignedRuntime {
+            config,
+            auth,
+            startup_failure,
+        })
         .map_err(|_| "runtime assignment receiver is unavailable")?;
     state.receipt = Some(receipt.clone());
     Ok(receipt)
@@ -307,3 +340,28 @@ async fn read_bounded(reader: impl AsyncRead + Unpin, limit: usize) -> Result<Ve
 #[cfg(test)]
 #[path = "pool_bootstrap_tests.rs"]
 mod tests;
+
+pub(crate) async fn apply_staging_startup_failure(
+    fault: StagingStartupFailure,
+    confirmed: oneshot::Receiver<()>,
+) -> Result<(), String> {
+    use layer3_adapter::runtime_bootstrap::NATIVE_ASSIGNMENT_DEADLINE;
+    if !fault.armed_at(std::time::SystemTime::now())
+        || !matches!(
+            tokio::time::timeout(
+                NATIVE_ASSIGNMENT_DEADLINE + Duration::from_secs(10),
+                confirmed
+            )
+            .await,
+            Ok(Ok(()))
+        )
+    {
+        return Ok(());
+    }
+    // Give the confirmation relay time to finish before terminating the process.
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    if fault.armed_at(std::time::SystemTime::now()) {
+        return Err("staging qualification: runtime startup interrupted after assignment".into());
+    }
+    Ok(())
+}
