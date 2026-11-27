@@ -416,7 +416,11 @@ try {
                   agentId: context.record.agentId, ...transcriptWitness, recordFailure: (stage, error) =>
                     retainFailure(config.matrix_output, stage, error, {case: 'user.agent_rename', phase, iteration})}));
                 await browserCase(am, iteration, 'user.browser_file_roundtrip', () => browserFileRoundtrip({page,
-                  api: user, ingress: am, agentId: context.record.agentId, recordFailure: (stage, error) =>
+                  api: user, outsider, ingress: am, agentId: context.record.agentId,
+                  seedOversizeFile: directory => context.adapter.seedOversizeFile({
+                    directory, agentId: context.record.agentId, sandboxId: context.record.sandboxId,
+                    operationId: context.record.operationId,
+                  }), recordFailure: (stage, error) =>
                     retainFailure(config.matrix_output, stage, error, {case: 'user.browser_file_roundtrip', phase, iteration})}));
               });
             }

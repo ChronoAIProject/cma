@@ -22,6 +22,7 @@ import urllib.request
 
 from common import Client, utc, write
 from configuration_log import configuration_dispatch, configuration_log
+from file_fixture import seed_oversize_file
 import manifests
 import legacy_manifests as old
 from identity import ADMIN
@@ -68,6 +69,7 @@ class Fixture:
     retirementPurge = retirement_purge
     removeRuntimePod = remove_runtime_pod
     runtimeInventoryAuthority = runtime_inventory_authority
+    seedOversizeFile = seed_oversize_file
     drainOwner = drain_owner
     titleEffects = title_effects
     titleIntent = title_intent
@@ -444,7 +446,7 @@ class Fixture:
                              'retirementPurge','removeRuntimePod','artifactPublicationAbort','artifactPublicationRace','preparedSchemaBarrier',
                              'preparedSchemaRace','preparedSchemaRefusals','writerPublicationAbort','writerPublicationEvidence',
                              'runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
-                             'shareRedemptionPublicationAbort','accessProposalAbort']
+                             'shareRedemptionPublicationAbort','accessProposalAbort','seedOversizeFile']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

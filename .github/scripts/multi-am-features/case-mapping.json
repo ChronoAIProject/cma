@@ -464,12 +464,11 @@
   },
   "cma-user.files.download": {
     "cases": [
-      "user.files_roundtrip",
       "user.browser_file_roundtrip"
     ],
-    "blocked": "Download bytes, missing-file and denied-access assertions are wired. The two-Manager fixture still needs a Runtime file beyond 32 MiB.",
-    "minimum_runs": 3,
-    "routing": "non_owner",
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
     "phases": [
       "before_restart",
       "after_restart"

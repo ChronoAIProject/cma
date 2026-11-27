@@ -16,7 +16,7 @@ export function createAdapter(config) {
     'configurationLog','configurationDispatch','publicationEvidence','retirementPurge','removeRuntimePod',
     'artifactPublicationAbort','artifactPublicationRace','preparedSchemaBarrier','preparedSchemaRace','preparedSchemaRefusals',
     'writerPublicationAbort','writerPublicationEvidence','runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
-    'shareRedemptionPublicationAbort','accessProposalAbort']
+    'shareRedemptionPublicationAbort','accessProposalAbort','seedOversizeFile']
     .map(name=>[name,(body)=>call(name,body)]));
 }
 export default createAdapter;

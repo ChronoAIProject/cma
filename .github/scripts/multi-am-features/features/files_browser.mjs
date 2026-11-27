@@ -4,8 +4,9 @@ import {check, hash, id, other, poll} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 
 const timeout = 15000;
+const oversizeBytes = 32 * 1024 * 1024 + 1;
 
-export async function browserFileRoundtrip({page, api, ingress, agentId, recordFailure}) {
+export async function browserFileRoundtrip({page, api, outsider, ingress, agentId, seedOversizeFile, recordFailure}) {
   check(id(agentId), 'browser_files_agent_required');
   const path = `/api/v1/agents/${agentId}/files`;
   const directory = 'ci-browser-' + randomUUID();
@@ -98,7 +99,9 @@ export async function browserFileRoundtrip({page, api, ingress, agentId, recordF
       {direct: true});
     check(removed.body?.path === hiddenPath && removed.body.deleted === true,
       'browser_files_download_fixture_delete_unconfirmed');
-    await checkFileDownload({page, dialog, path, file: hiddenPath});
+    await checkFileDownload({page, dialog, path, file: hiddenPath, refusal: {
+      status: 404, code: 'file_not_found', detail: 'File or directory does not exist.',
+    }});
     await showHidden.uncheck({timeout});
     await button(hiddenName).waitFor({state: 'hidden', timeout});
     const currentDirectory = dialog.getByLabel('Current directory', {exact: true});
@@ -180,7 +183,32 @@ export async function browserFileRoundtrip({page, api, ingress, agentId, recordF
     await poll(() => preview.inputValue({timeout}), value => value === current,
       {timeout, interval: 100, code: 'browser_files_confirm_reload_used_stale_bytes'});
     await checkFileDownload({page, dialog, path, file, expected: Buffer.from(current)});
+    for (const am of [ingress, peer]) {
+      await outsider.rawRequest(am, 'GET', `${path}/download?path=${encodeURIComponent(file)}`,
+        {allowed: [403, 404], discardSuccessfulReply: true});
+    }
+
+    const oversize = directory + '/oversize.txt';
+    check((await seedOversizeFile(directory)).size_bytes === oversizeBytes, 'browser_files_download_oversize_seed_unbound');
+    const {body: oversizeListing} = await api.request(peer, 'GET', `${path}/tree?path=${encodeURIComponent(directory)}`,
+      {direct: true});
+    check(oversizeListing?.path === directory && oversizeListing.entries?.some(entry =>
+      entry.path === oversize && entry.kind === 'file' && entry.size_bytes === oversizeBytes),
+    'browser_files_download_oversize_missing_on_peer');
+    await button('Refresh files').click({timeout});
+    await button('oversize.txt').click({timeout});
+    await dialog.getByText('Preview unavailable. Download this file to view its contents.', {exact: true}).waitFor({timeout});
+    await checkFileDownload({page, dialog, path, file: oversize, refusal: {
+      status: 413, code: 'file_too_large', detail: 'File exceeds the selected size limit.',
+    }});
+    await button(filename).click({timeout});
+    await preview.waitFor({timeout});
     await deleteFiles({page, dialog, api, ingress, path, directory, file, recordFailure});
+    for (const am of [ingress, peer]) {
+      const {body} = await api.rawRequest(am, 'GET', `${path}/download?path=${encodeURIComponent(oversize)}`,
+        {allowed: [404], discardSuccessfulReply: true});
+      check(body?.code === 'file_not_found', 'browser_files_download_oversize_cleanup_unconfirmed');
+    }
     folderDeleted = true;
   }, async () => {
     if (!folderSubmitted || folderDeleted) return;
@@ -188,7 +216,7 @@ export async function browserFileRoundtrip({page, api, ingress, agentId, recordF
   }, recordFailure);
 }
 
-async function checkFileDownload({page, dialog, path, file, expected}) {
+async function checkFileDownload({page, dialog, path, file, expected, refusal}) {
   const button = dialog.getByRole('button', {name: 'Download file', exact: true});
   const responseForFile = () => page.waitForResponse(response => {
     const url = new URL(response.url());
@@ -214,10 +242,10 @@ async function checkFileDownload({page, dialog, path, file, expected}) {
   page.on('download', capture);
   try {
     const [response] = await Promise.all([responseForFile(), button.click({timeout})]);
-    check(response.status() === 404 && (await response.json()).code === 'file_not_found',
-      'browser_files_download_missing_untyped');
-    await dialog.getByRole('alert').getByText('File or directory does not exist.', {exact: true}).waitFor({timeout});
-    check(unexpected.length === 0, 'browser_files_missing_download_produced_file');
+    check(response.status() === refusal.status && (await response.json()).code === refusal.code,
+      'browser_files_download_refusal_untyped');
+    await dialog.getByRole('alert').getByText(refusal.detail, {exact: true}).waitFor({timeout});
+    check(unexpected.length === 0, 'browser_files_refused_download_produced_file');
   } finally {
     page.off('download', capture);
     await Promise.all(unexpected.map(download => download.delete()));

@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 import tempfile
@@ -18,6 +19,7 @@ from run_ci import run as run_ci
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'owner'))
 from common import CommandFailure
+from file_fixture import OVERSIZE_BYTES, SPARSE_FILE
 from fixture_no_secrets import NoSecretClient, synthetic_configmaps
 import manifests
 import legacy_manifests
@@ -587,6 +589,65 @@ class OwnershipTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'runtime_loss_agent_not_owned_ready'):
             fixture.removeRuntimePod('agent', 'fixture', 'foreign-op', pod_uid)
         self.assertEqual(len(mutations), 1)
+
+    def test_oversize_file_is_bound_to_the_disposable_agent_runtime(self):
+        run_id = 'cma-ci-' + 'a' * 12
+        pod_uid = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        directory = 'ci-browser-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+        image = 'localhost/base@sha256:' + 'a' * 64
+        fixture = Fixture.__new__(Fixture)
+        fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'http://127.0.0.1:12345', 'runtime_images': {'base': image}}
+        fixture.mongo = Mock(side_effect=lambda query: '"record.origin.operation_id": "fixture-op"' in query)
+        runtime = {'agent_id': 'fixture-agent', 'sandbox_id': 'fixture-sandbox', 'pod_uid': pod_uid,
+                   'pod_name': 'fixture-runtime', 'ready': True, 'provider_status': 'ready', 'image': image,
+                   'container_statuses': [{'name': 'runtime', 'ready': True}]}
+        fixture.runtimeFor = Mock(return_value=runtime)
+        fixture.client = Mock(namespace='cma-native-am')
+        fixture.client.kjson.side_effect = [
+            {'size_bytes': OVERSIZE_BYTES}, {'metadata': {'uid': pod_uid}},
+            {'size_bytes': OVERSIZE_BYTES}, {'metadata': {'uid': 'replacement'}},
+        ]
+        scope = ('fixture-agent', 'fixture-sandbox', 'fixture-op', directory)
+        self.assertEqual(fixture.seedOversizeFile(*scope), {'size_bytes': OVERSIZE_BYTES})
+        fixture.client.kjson.assert_any_call(
+            ['exec', 'fixture-runtime', '-c', 'runtime', '--', '/usr/bin/python3', '-B', '-c',
+             SPARSE_FILE, directory, str(OVERSIZE_BYTES)], timeout=8)
+        with self.assertRaisesRegex(RuntimeError, 'oversize_download_runtime_changed'):
+            fixture.seedOversizeFile(*scope)
+        with self.assertRaisesRegex(ValueError, 'oversize_download_lineage_required'):
+            fixture.seedOversizeFile(*scope[:3], '../' + directory)
+        with self.assertRaisesRegex(RuntimeError, 'oversize_download_agent_not_owned_ready'):
+            fixture.seedOversizeFile(*scope[:2], 'other-operation', directory)
+        runtime['ready'] = False
+        with self.assertRaisesRegex(RuntimeError, 'oversize_download_runtime_unbound'):
+            fixture.seedOversizeFile(*scope)
+        self.assertEqual(fixture.client.kjson.call_count, 4)
+
+    def test_sparse_download_seed_cannot_follow_symlinks_or_overwrite_existing_files(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            directory = root / 'fixture'
+            directory.mkdir()
+            program = SPARSE_FILE.replace("os.open('/home',", f"os.open({str(root)!r},")
+            def seed(name):
+                return subprocess.run([sys.executable, '-B', '-c', program, name, str(OVERSIZE_BYTES)],
+                                      text=True, capture_output=True, timeout=5)
+
+            (root / 'alias').symlink_to(directory, target_is_directory=True)
+            target = directory / 'oversize.txt'
+            outside = root / 'outside.txt'
+            outside.write_text('untouched')
+            self.assertNotEqual(seed('alias').returncode, 0)
+            target.symlink_to(outside)
+            self.assertNotEqual(seed('fixture').returncode, 0)
+            self.assertEqual(outside.read_text(), 'untouched')
+            target.unlink()
+            result = seed('fixture')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {'size_bytes': OVERSIZE_BYTES})
+            self.assertEqual(target.stat().st_size, OVERSIZE_BYTES)
+            self.assertNotEqual(seed('fixture').returncode, 0)
 
     def test_cleanup_refuses_unrelated_cluster_before_calling_docker(self):
         with tempfile.TemporaryDirectory() as directory:
