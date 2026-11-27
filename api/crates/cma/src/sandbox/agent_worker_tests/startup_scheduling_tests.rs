@@ -1,4 +1,5 @@
 use super::*;
+use layer2_core::sandbox::store::SandboxStoreError;
 
 #[tokio::test]
 async fn worker_dispatch_fits_the_default_tokio_stack() {
