@@ -98,3 +98,12 @@ impl Drop for ReconnectOnDrop {
         }
     }
 }
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn reconnect_guard_for_test(
+    runtimes: std::sync::Arc<dyn AgentRuntimeRegistry>,
+    target: AgentRuntimeTarget,
+) -> impl Send {
+    ReconnectOnDrop::new(runtimes, target)
+}

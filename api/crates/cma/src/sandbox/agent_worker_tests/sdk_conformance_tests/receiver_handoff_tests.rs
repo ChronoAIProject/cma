@@ -148,6 +148,12 @@ async fn exercise<S: FixtureStore>(
         conversation_id: agent.conversation.conversation_id.clone().unwrap(),
         runtime_generation: agent.conversation.runtime_generation.unwrap(),
     };
+    let old_guard = first_owner
+        .run(async {
+            layer2_core::sandbox::reconnect_guard_for_test(harness.registry.clone(), target.clone())
+        })
+        .await
+        .unwrap();
     old.begin_drain().await;
     old.handoff(first_owner, async {
         harness.registry.detach_owner(&first_owner.token);
@@ -331,16 +337,40 @@ async fn exercise<S: FixtureStore>(
         1
     );
 
-    // The settings/managed-context drop handlers run on a spawned task. The
-    // exact published attachment supplies the owner even without a task local.
-    let registry = harness.registry.clone();
-    tokio::spawn(async move {
-        AgentRuntimeRegistry::request_reconnect(registry.as_ref(), &target).await
+    // An unscoped call and a stale guard have no authority over the replacement.
+    assert_eq!(
+        AgentRuntimeRegistry::request_reconnect(harness.registry.as_ref(), &target).await,
+        Err(AgentRuntimeError::StaleGeneration)
+    );
+    drop(old_guard);
+    tokio::task::yield_now().await;
+    assert_eq!(harness.stored(&agent.id).await, ready);
+    assert!(
+        AgentRuntimeRegistry::resolve(harness.registry.as_ref(), &target)
+            .await
+            .is_ok()
+    );
+
+    // This is the guard used by cancelled settings and managed context writes.
+    // Dropping it outside the scope must re-enter its captured authority.
+    let guard = current_owner
+        .run(async {
+            layer2_core::sandbox::reconnect_guard_for_test(harness.registry.clone(), target.clone())
+        })
+        .await
+        .unwrap();
+    drop(guard);
+    let scheduled = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let agent = harness.stored(&agent.id).await;
+            if agent.work.step == AgentWorkStep::PublishConnection {
+                break agent;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     })
     .await
-    .unwrap()
     .unwrap();
-    let scheduled = harness.stored(&agent.id).await;
     assert_eq!(scheduled.work.step, AgentWorkStep::PublishConnection);
     assert_eq!(scheduled.revision, ready.revision + 1);
     assert_eq!(scheduled.conversation, ready.conversation);

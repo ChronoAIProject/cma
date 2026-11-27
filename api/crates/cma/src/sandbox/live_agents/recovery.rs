@@ -185,13 +185,11 @@ impl LiveAgentRegistry {
                 nonce: entry.nonce,
             };
             let owner = entry.manager_authority.clone();
-            if let Some(caller) = layer2_core::agent_ownership::execution_authority() {
-                if owner
-                    .as_ref()
-                    .is_none_or(|owner| owner.token != caller.token)
-                {
-                    return Err(AgentRuntimeError::StaleGeneration);
-                }
+            if owner.as_ref().is_some_and(|owner| {
+                layer2_core::agent_ownership::execution_authority()
+                    .is_none_or(|caller| owner.token != caller.token || !caller.is_current())
+            }) {
+                return Err(AgentRuntimeError::StaleGeneration);
             }
             (identity, owner)
         };
