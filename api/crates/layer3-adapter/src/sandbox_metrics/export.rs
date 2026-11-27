@@ -44,8 +44,23 @@ struct DecodedSeries {
 }
 
 pub fn decode_export(body: &[u8], selection: &Selection) -> Result<Vec<PhysicalSeries>> {
+    let export = decode_reporting_export(body, selection)?;
+    if !export.ambiguous_names.is_empty() {
+        return Err(invalid());
+    }
+    Ok(export.series)
+}
+
+pub(super) fn decode_reporting_export(
+    body: &[u8],
+    selection: &Selection,
+) -> Result<ReportingExport> {
     let mut named = BTreeMap::new();
+    let mut ambiguous_names = BTreeSet::new();
     for series in decode_series(body, selection, |left, right| left == right)? {
+        if ambiguous_names.contains(&series.name) {
+            continue;
+        }
         let chart = PhysicalSeries {
             metric: selection.metric,
             name: series.name,
@@ -59,11 +74,20 @@ pub fn decode_export(body: &[u8], selection: &Selection) -> Result<Vec<PhysicalS
                 })
                 .collect(),
         };
-        if named.insert(chart.name.clone(), chart).is_some() {
-            return Err(invalid());
+        let name = chart.name.clone();
+        match named.entry(name) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(chart);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                ambiguous_names.insert(entry.remove_entry().0);
+            }
         }
     }
-    Ok(named.into_values().collect())
+    Ok(ReportingExport {
+        series: named.into_values().collect(),
+        ambiguous_names,
+    })
 }
 
 pub fn decode_raw_export(body: &[u8], selection: &Selection) -> Result<Vec<RawPhysicalSeries>> {
@@ -236,6 +260,45 @@ mod tests {
         row["values"][1] = serde_json::Value::Null;
         row["timestamps"][1] = 999.into();
         assert!(decode_export(row.to_string().as_bytes(), &selection()).is_err());
+    }
+
+    #[test]
+    fn reporting_export_withholds_only_names_with_multiple_label_sets() {
+        let mut selected = selection();
+        selected.names.push("healthy-claim".into());
+        let row = |name, node, timestamp| {
+            serde_json::json!({
+                "metric": {
+                    "__name__": selected.metric.name(), "cluster": selected.cluster,
+                    "namespace": selected.namespace, "pod": name, "node": node,
+                    "job": "kubelet", "metrics_path": "/metrics/resource", "container": "runtime",
+                },
+                "timestamps": [timestamp], "values": [3],
+            })
+        };
+        let old = row("cold-claim", "old-node", 1200);
+        let current = row("cold-claim", "new-node", 2200);
+        let third = row("cold-claim", "third-node", 3200);
+        let healthy = row("healthy-claim", "fixture-node", 4200);
+        let input = format!("{old}\n{current}\n{third}\n{healthy}");
+        let result = decode_reporting_export(input.as_bytes(), &selected).unwrap();
+        assert_eq!(
+            result.ambiguous_names,
+            BTreeSet::from(["cold-claim".into()])
+        );
+        assert_eq!(result.series.len(), 1);
+        assert_eq!(result.series[0].name, "healthy-claim");
+        assert!(decode_export(input.as_bytes(), &selected).is_err());
+        assert_eq!(
+            decode_raw_export(input.as_bytes(), &selected)
+                .unwrap()
+                .len(),
+            4
+        );
+
+        let out_of_scope = row("unselected-claim", "fixture-node", 5200);
+        let invalid_input = format!("{input}\n{out_of_scope}");
+        assert!(decode_reporting_export(invalid_input.as_bytes(), &selected).is_err());
     }
 
     #[test]

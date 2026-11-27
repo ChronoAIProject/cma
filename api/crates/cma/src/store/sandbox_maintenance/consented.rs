@@ -210,6 +210,8 @@ async fn apply(
             sandbox: current.clone(),
             event: None,
             outcome,
+            refusal: None,
+            next_legacy_proof: None,
         },
         access,
     };
@@ -421,6 +423,8 @@ async fn apply(
             sandbox,
             event: Some(event),
             outcome: SandboxMaintenanceOutcome::Scheduled,
+            refusal: None,
+            next_legacy_proof: None,
         },
         access: record,
     })

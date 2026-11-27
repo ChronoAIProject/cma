@@ -16,6 +16,7 @@ IMAGE = r"ghcr\.io/chronoaiproject/cma-web@sha256:[0-9a-f]{64}"
 HASH = r"[0-9a-f]{64}"
 ASSET = r"/assets/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,239}"
 INPUT_FIELDS = {"image", "source_sha", "version", "completed_rollouts"}
+DEFAULT_RETENTION_ROLLOUTS = 6
 
 
 def immutable_image(image):
@@ -172,9 +173,43 @@ def bootstrap_inputs(bootstrap, evidence, incumbent, finalized):
     return [dict(row, completed_rollouts=0) for row in bootstrap["retained"]]
 
 
-def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstrap_evidence=None, retain_rollouts=None):
+def production_inputs(finalized, serving_images, retain_rollouts):
+    """Preserve the immutable catalog of each approved production exposure."""
+    require(isinstance(serving_images, list) and serving_images
+            and all(immutable_image(image) for image in serving_images)
+            and serving_images == sorted(set(serving_images)),
+            "Production Web continuity images are invalid")
+    protected = {}
+    for image in serving_images:
+        matches_serving = [
+            receipt for receipt in finalized
+            if image == receipt["repository"] + "@" + receipt["digest"]
+            or image == receipt.get("asset_continuity", {}).get("prepare_image")
+        ]
+        require(len(matches_serving) == 1, "Production Web image has no unique finalized lineage")
+        [receipt] = matches_serving
+        proof = receipt.get("asset_proof")
+        inputs = proof["inputs"] if proof else [{
+            "image": image, "source_sha": receipt["source"], "version": receipt["identity"]["version"],
+        }]
+        for row in inputs:
+            row = dict(row, completed_rollouts=retain_rollouts + 1)
+            prior = protected.get(row["image"])
+            if prior is None:
+                protected[row["image"]] = row
+            else:
+                require(all(prior[key] == row[key] for key in ("source_sha", "version"))
+                        and ("catalog_sha256" not in prior or "catalog_sha256" not in row
+                             or prior["catalog_sha256"] == row["catalog_sha256"]),
+                        "Production Web catalog lineage conflicts")
+                protected[row["image"]] = prior | row
+    return protected
+
+
+def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstrap_evidence=None,
+                    retain_rollouts=DEFAULT_RETENTION_ROLLOUTS, production_images=None):
     """Bind a scoped controller preimage to the lineage of its finalized serving image."""
-    require(retain_rollouts is None or type(retain_rollouts) is int and retain_rollouts > 0,
+    require(type(retain_rollouts) is int and retain_rollouts > 0,
             "Web asset retention needs a positive rollout count")
     require(isinstance(preimage, dict) and set(preimage) == {"schema", "observed_at", "incumbent", "asset_manifest_sha256"}
             and preimage["schema"] == PREIMAGE_SCHEMA and preimage["observed_at"] == started_at,
@@ -201,6 +236,8 @@ def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstra
                 "Serving Web manifest differs from its finalized lineage")
         matches_serving.append((receipt.get("asset_proof"), promote == incumbent["image"]))
     require(len(matches_serving) == 1, "Serving Web image has no unique finalized lineage")
+    protected = (production_inputs(finalized, production_images, retain_rollouts)
+                 if production_images is not None else {})
     [(proof, promoted)] = matches_serving
     if proof is not None:
         inputs = [dict(row) for row in proof["inputs"]]
@@ -210,9 +247,23 @@ def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstra
             for row in inputs:
                 row["completed_rollouts"] = (0 if row["image"] == incumbent["base_image"]
                                              else row["completed_rollouts"] + 1)
-            if retain_rollouts is not None:
-                inputs = [row for row in inputs if row["completed_rollouts"] <= retain_rollouts]
-        return {"incumbent": dict(incumbent), "preimage_sha256": sha256(preimage), "inputs": inputs}
-    inputs = bootstrap_inputs(bootstrap, bootstrap_evidence, incumbent, finalized)
-    return {"incumbent": dict(incumbent), "inputs": inputs,
-            "preimage_sha256": sha256({"controller": preimage, "bootstrap": bootstrap})}
+            if protected:
+                inputs = [row for row in inputs if row["completed_rollouts"] <= retain_rollouts
+                          or row["image"] in protected]
+        if not protected:
+            return {"incumbent": dict(incumbent), "preimage_sha256": sha256(preimage), "inputs": inputs}
+        observation = preimage
+    else:
+        inputs = bootstrap_inputs(bootstrap, bootstrap_evidence, incumbent, finalized)
+        observation = {"controller": preimage, "bootstrap": bootstrap}
+    retained = {row["image"]: row for row in inputs}
+    for image, row in protected.items():
+        known = retained.get(image, {})
+        require(all(known.get(key, row[key]) == row[key] for key in ("source_sha", "version"))
+                and ("catalog_sha256" not in known or "catalog_sha256" not in row
+                     or known["catalog_sha256"] == row["catalog_sha256"]),
+                "Production and staging Web catalog lineage conflicts")
+        retained[image] = row | known
+    preimage_hash = sha256({"staging": observation, "production_images": production_images}) if protected else sha256(observation)
+    return {"incumbent": dict(incumbent), "preimage_sha256": preimage_hash,
+            "inputs": [retained[image] for image in sorted(retained)]}

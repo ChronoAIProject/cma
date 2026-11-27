@@ -1,6 +1,6 @@
 use super::platform_stop_integration_tests::workspace;
 use super::*;
-use layer2_core::sandbox::store::SandboxSessionStore;
+use layer2_core::sandbox::{store::SandboxSessionStore, InactivityPauseRefusal as Refusal};
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -69,6 +69,7 @@ async fn agentless_inactivity_requires_complete_old_child_and_session_evidence()
         "recent_runtime",
         "recent_activity",
         "bad_activity",
+        "terminal_command",
     ] {
         let (client, name, store) = database().await;
         let mut sandbox = active_sandbox("sbx_agentless");
@@ -103,19 +104,51 @@ async fn agentless_inactivity_requires_complete_old_child_and_session_evidence()
                 .await
                 .unwrap();
         }
-        let expected = if ["empty", "idle_workspace"].contains(&case) {
+        if case == "terminal_command" {
+            let mut terminal = ready_agent(&sandbox, "agt_terminal_command");
+            terminal
+                .transition(
+                    AgentStatus::Stopped,
+                    IDLE_AT.into(),
+                    Some(layer2_core::sandbox::AgentStopReason::Owner),
+                )
+                .unwrap();
+            store
+                .agents
+                .insert_one(agent_document(&terminal).unwrap())
+                .await
+                .unwrap();
+            store
+                .agent_commands
+                .insert_one(doc! {
+                    "_id": "command_fixture",
+                    "agent_id": terminal.id.as_str(),
+                    "status": "queued",
+                })
+                .await
+                .unwrap();
+        }
+        let refusal = match case {
+            "empty" | "idle_workspace" => None,
+            "recent_workspace" => Some(Refusal::RecentWorkspaceActivity),
+            "workspace_work" => Some(Refusal::PendingWorkspaceWork),
+            "desktop" => Some(Refusal::OpenSession),
+            "recent_runtime" => Some(Refusal::RecentRuntimeActivity),
+            "recent_activity" => Some(Refusal::RecentSandboxActivity),
+            "terminal_command" => Some(Refusal::PendingCommand),
+            _ => Some(Refusal::InvalidActivityTime),
+        };
+        let expected = if refusal.is_none() {
             SandboxMaintenanceOutcome::Scheduled
         } else {
             SandboxMaintenanceOutcome::NotEligible
         };
-        assert_eq!(
-            store
-                .preview_inactivity_pause(pause(&sandbox.id))
-                .await
-                .unwrap(),
-            expected,
-            "{case}"
-        );
+        let preview = store
+            .preview_inactivity_pause_with_reason(pause(&sandbox.id))
+            .await
+            .unwrap();
+        assert_eq!(preview.outcome, expected, "{case}");
+        assert_eq!(preview.refusal, refusal, "{case}");
         assert_eq!(
             store.get_sandbox(&sandbox.id).await.unwrap(),
             Some(sandbox.clone())

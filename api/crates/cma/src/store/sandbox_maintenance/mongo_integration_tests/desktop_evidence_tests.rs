@@ -123,12 +123,20 @@ async fn strict_desktop_evidence_distinguishes_expiry_from_missing_proof() {
         } else {
             SandboxMaintenanceOutcome::NotEligible
         };
+        let preview = store
+            .preview_inactivity_pause_with_reason(request.clone())
+            .await
+            .unwrap();
+        assert_eq!(preview.outcome, wanted, "{case}");
         assert_eq!(
-            store
-                .preview_inactivity_pause(request.clone())
-                .await
-                .unwrap(),
-            wanted,
+            preview.refusal,
+            if eligible {
+                None
+            } else if case == "legacy_future" {
+                Some(layer2_core::sandbox::InactivityPauseRefusal::OpenSession)
+            } else {
+                Some(layer2_core::sandbox::InactivityPauseRefusal::SessionEvidenceUnclear)
+            },
             "{case}"
         );
         assert_eq!(

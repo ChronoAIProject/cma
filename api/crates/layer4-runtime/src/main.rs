@@ -243,7 +243,7 @@ async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String>
     if qualification {
         publication_qualification::arm();
     }
-    let (config, control_auth, _assignment_server) = if waiting {
+    let (mut config, control_auth, _assignment_server) = if waiting {
         let (assigned, server) = pool_bootstrap::wait_for_assignment().await?;
         if let Some((fault, confirmed)) = assigned.startup_failure {
             pool_bootstrap::apply_staging_startup_failure(&server, fault, confirmed).await?;
@@ -253,6 +253,7 @@ async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String>
         let auth = control_auth::ControlAuth::from_environment()?;
         (config::RuntimeConfig::from_environment()?, auth, None)
     };
+    config.configure_stale_turn_seal(control_auth.is_some());
     let bind = config.bind;
     let writer_boundary = writer_fence::SupervisorBoundary::install()?;
     let supervisor = supervisor::Supervisor::start(config, writer_boundary)
@@ -266,7 +267,11 @@ async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String>
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|error| format!("bind runtime supervisor at {bind}: {error}"))?;
-    tracing::info!(%bind, "runtime supervisor listening");
+    tracing::info!(
+        %bind,
+        stale_turn_seal_enabled = supervisor.stale_turn_seal_enabled(),
+        "runtime supervisor listening"
+    );
     let mut router = link::router(supervisor.clone());
     if let Some(auth) = control_auth {
         router = router.layer(axum::middleware::from_fn_with_state(

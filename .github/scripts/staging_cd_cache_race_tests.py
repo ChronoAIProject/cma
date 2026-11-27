@@ -113,6 +113,7 @@ class ExpiredSeeds(unittest.TestCase):
         job = yaml.safe_load((ROOT / ".github/workflows/cache-retention.yml").read_text())["jobs"]["recover"]
         self.assertEqual(job["permissions"], {"actions": "write"})
         self.assertIn("github.event_name == 'workflow_run'", job["if"])
+        self.assertIn("vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true'", job["if"])
         self.assertIn("--apply-recovery", job["steps"][-1]["run"])
         with patch.object(sys, "argv", ["report", "--apply-recovery"]), \
                 patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch"}, clear=True), \

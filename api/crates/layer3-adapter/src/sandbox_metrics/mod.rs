@@ -3,7 +3,7 @@ mod export;
 mod transport;
 pub use export::{decode_export, decode_raw_export, selector};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 pub use transport::{MetricsClient, MetricsTransport};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -61,6 +61,11 @@ pub struct PhysicalSeries {
     pub name: String,
     pub labels: BTreeMap<String, String>,
     pub samples: Vec<Sample>,
+}
+
+pub struct ReportingExport {
+    pub series: Vec<PhysicalSeries>,
+    pub ambiguous_names: BTreeSet<String>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

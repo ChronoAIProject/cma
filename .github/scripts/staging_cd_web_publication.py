@@ -34,7 +34,7 @@ def protected_pair(archive, digest, identity, scope, directory, source, auth, ru
                                     "version": incumbent["version"]})
     require((live_base["source_sha"], live_base["version"]) == (incumbent["source_sha"], incumbent["version"]),
             "Web retention incumbent base differs from the controller")
-    old = archive_base(live_base, directory, auth, runner)
+    old = archive_base(dict(live_base, completed_rollouts=0), directory, auth, runner)
     retained = [archive_base(row, directory, auth, runner) for row in inputs.values()]
     candidate = WebArchive(archive, digest, identity["source"], identity["version"])
     pair = assemble(old, candidate, retained, directory, max_files=max_files, max_bytes=max_bytes)

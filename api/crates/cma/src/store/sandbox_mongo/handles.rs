@@ -62,6 +62,7 @@ impl MongoSandboxStore {
             strict_inactivity_session_evidence: false,
             workspaces: majority_collection(&database, WORKSPACES),
             bounded_inactivity_legacy_log: false,
+            inactivity_log_preparation: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),

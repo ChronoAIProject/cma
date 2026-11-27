@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tempfile
 
-from image_inputs import NAMES, changed_input_maps, image_inputs, recipes, validate_recipe_sources
+from image_inputs import NAMES, changed_input_maps, historical_recipe_model, image_inputs, recipes, validate_recipe_sources
 from git_comparison import check_sha, comparison_details, git
 from policy import TRACKS, Workspace, select
 from publication_inputs import RECIPE
@@ -69,16 +69,16 @@ def workspace(root):
     return Workspace(json.loads(run.stdout), root)
 
 
-def summarize(root, fallback):
+def summarize(root, fallback, *, historical=False):
     graph = workspace(root)
-    return summarize_graph(root, graph, fallback)
+    return summarize_graph(root, graph, fallback, historical=historical)
 
 
-def summarize_graph(root, graph, fallback):
+def summarize_graph(root, graph, fallback, *, historical=False):
     manifest = recipes(root, fallback)
-    validate_recipe_sources(root, manifest)
+    validate_recipe_sources(root, historical_recipe_model(root, manifest) if historical else manifest)
     try:
-        inputs = image_inputs(root, graph, manifest)
+        inputs = image_inputs(root, graph, manifest, historical=historical)
     except SelectionIntegrityError:
         raise
     except (ValueError, KeyError, OSError):
@@ -134,7 +134,7 @@ def determine(root, event, event_name, *, release=False):
     if not reason:
         try:
             with snapshot(root, base) as old:
-                previous = summarize(old, fallback)
+                previous = summarize(old, fallback, historical=True)
         except (ValueError, KeyError, OSError, subprocess.SubprocessError):
             # A develop-to-main release compares against the previous release,
             # which can predate the current ownership policy and recipes. That
