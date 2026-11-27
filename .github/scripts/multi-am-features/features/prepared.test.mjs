@@ -116,7 +116,14 @@ test('cold comparison and two ingress checks join the exact prepared reservation
 test('prepared publication proves a consumed and attributed abort and always removes the failpoint', async () => {
   await assert.rejects(preparedJourney(fixture({injected: 0})), /prepared_publication_abort_not_consumed_once/);
   await assert.rejects(preparedJourney(fixture({observed: 0})), /prepared_publication_abort_not_attributed/);
-  await assert.rejects(preparedJourney(fixture({abortManager: 'a'})), /prepared_publication_abort_not_attributed/);
+  const wrongManager = fixture({abortManager: 'a'});
+  const diagnostics = [];
+  await assert.rejects(preparedJourney({...wrongManager, recordAbortEvidence: row => diagnostics.push(row)}),
+    /prepared_publication_abort_not_attributed/);
+  assert.deepEqual(diagnostics, [{ingress: 'b', owner: 'b', owner_epoch: 1,
+    owner_instance_sha256: hash('fixture-manager'), agent_sha256: hash('fixture-agent'),
+    lifecycle_operation_sha256: hash('fixture-operation'), armed_count: 0, disarmed_count: 1,
+    publication_diagnostics: {a: {known_aborted_cas: {publish_connection: 1}}, b: {}}}]);
   const failed = fixture({failCreation: true});
   await assert.rejects(preparedJourney(failed), /fixture_admission_failed/);
   assert.equal(failed.actions.at(-1), 'disarm-publication-abort');

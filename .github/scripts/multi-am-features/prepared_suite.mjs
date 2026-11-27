@@ -23,7 +23,8 @@ async function servingManagers(adapter) {
   return topology.ams;
 }
 
-export async function preparedJourney({adapter, create, openBoth, cleanup, step, browser, recordFailure}) {
+export async function preparedJourney({adapter, create, openBoth, cleanup, step, browser, recordFailure,
+  recordAbortEvidence = () => {}}) {
   const evidenceFor = record => adapter.preparedEvidence({
     agentId: record.agentId, sandboxId: record.sandboxId, operationId: record.operationId,
   });
@@ -56,8 +57,6 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         }, async () => {
           disarmed = await adapter.preparedPublicationAbort({arm: false});
         }, recordFailure);
-        check(Number.isSafeInteger(armed?.count) && disarmed?.count === armed.count + 1,
-          'prepared_publication_abort_not_consumed_once');
       } else {
         record = await createAndOpen();
       }
@@ -111,6 +110,13 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       const publicationDiagnostics = await adapter.publicationEvidence({agentId: record.agentId});
       if (ingress === 'b') {
         const aborts = am => publicationDiagnostics[am]?.known_aborted_cas?.publish_connection ?? 0;
+        const count = sample => Number.isSafeInteger(sample?.count) && sample.count >= 0 ? sample.count : null;
+        recordAbortEvidence({ingress, owner: owner.am, owner_epoch: owner.epoch,
+          owner_instance_sha256: hash(owner.instance_id), agent_sha256: hash(record.agentId),
+          lifecycle_operation_sha256: hash(record.operationId), armed_count: count(armed), disarmed_count: count(disarmed),
+          publication_diagnostics: publicationDiagnostics});
+        check(count(armed) !== null && count(disarmed) === count(armed) + 1,
+          'prepared_publication_abort_not_consumed_once');
         check(aborts(owner.am) === 1 && aborts(owner.am === 'a' ? 'b' : 'a') === 0,
           'prepared_publication_abort_not_attributed');
       }
@@ -134,14 +140,17 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
 if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
   const config = await readConfig(process.stdin);
   const registry = JSON.parse(await readFile(new URL('./writer-regressions.json', import.meta.url)));
+  let abortEvidence = null;
   const journey = await runJourney(config, {preparedHook: async context => {
     let browser;
     await withRestoration(async () => {
       await context.step('prepared_browser_available', async () => {
         browser = await openPreparedBrowser(config);
       });
-      await preparedJourney({...context, browser, recordFailure: (stage, error) =>
-        retainFailure(config.output_dir, stage, error, {case: 'prepared_publication_abort'})});
+      await preparedJourney({...context, browser,
+        recordAbortEvidence: evidence => { abortEvidence = evidence; },
+        recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
+          {case: 'prepared_publication_abort'})});
       await context.step('prepared_worktree_schema_refusal', () => preparedSchemaRefusal({...context,
         recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
           {case: 'prepared_worktree_schema_refusal'})}));
@@ -162,6 +171,7 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
     journey_verdict: journeyVerdict,
     ...journeyFailureSummary(journey),
     writer_coverage: coverage,
+    prepared_publication_abort: abortEvidence,
     steps: journey.steps.map(({name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
