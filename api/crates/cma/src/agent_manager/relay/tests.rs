@@ -2,6 +2,7 @@ use super::*;
 mod acceptance;
 mod cluster_fixture;
 mod environment;
+mod live_reattach_tests;
 mod transport_auth;
 use axum::{
     http::{HeaderMap, Method, StatusCode, Uri},
@@ -286,7 +287,7 @@ async fn peer_live_stream_survives_its_opening_deadline_and_stops_on_owner_relea
             .await
             .unwrap()
             .unwrap(),
-        Err(())
+        live::LiveExit::AuthorityUnavailable
     );
 }
 

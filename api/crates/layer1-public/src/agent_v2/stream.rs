@@ -12,14 +12,18 @@ use axum::{
     },
 };
 use layer2_core::{
+    agent_ownership::OwnershipToken,
     sandbox::{
         agent_io::{AgentEventKind, AgentMessageRole},
         AgentEventStreamAuthorization, AgentEventStreamHeader, AgentHeadSubscription,
-        AgentLiveDelivery, AgentLiveSubscription,
+        AgentLiveDelivery, AgentLiveInterruption, AgentLiveSubscription,
     },
     AgentId,
 };
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
+#[cfg(test)]
+#[path = "stream_reattach_tests.rs"]
+mod reattach_tests;
 #[cfg(test)]
 #[path = "telemetry_tests.rs"]
 mod telemetry_tests;
@@ -81,7 +85,15 @@ async fn open(
         None
     };
     let fallback_due = tokio::time::Instant::now() + state.fallback_poll;
+    let initial_owner = watching
+        .as_ref()
+        .and_then(AgentLiveSubscription::attached_owner);
     let header = state.reads.event_stream_header(&authorization).await?;
+    let drained_attachment = initial_owner.and_then(|owner| {
+        let lane = watching.as_ref()?;
+        (lane.is_empty() && lane.attached_owner().as_ref() == Some(&owner))
+            .then(|| (owner, header.clone()))
+    });
     let identity = cursor::incarnation(&header);
     let after = after
         .as_deref()
@@ -105,6 +117,8 @@ async fn open(
         pending: VecDeque::new(),
         deferred_live: VecDeque::new(),
         watching,
+        interruption: None,
+        drained_attachment,
         heads,
         fallback_due,
         needs_catchup: false,
@@ -144,12 +158,14 @@ pub(super) struct Following {
     pub pending: VecDeque<Frame>,
     pub(super) deferred_live: VecDeque<Frame>,
     pub watching: Option<AgentLiveSubscription>,
+    pub(super) interruption: Option<AgentLiveInterruption>,
+    pub(super) drained_attachment: Option<(OwnershipToken, AgentEventStreamHeader)>,
     pub held: Option<AgentLiveDelivery>,
     pub committed_message: u64,
     pub(super) initial_gap: bool,
     pub(super) discarded_fragments: u64,
     pub(super) live_batch_needs_validation: bool,
-    ended: bool,
+    pub(super) ended: bool,
     pub(super) heads: Option<AgentHeadSubscription>,
     pub(super) fallback_due: tokio::time::Instant,
     pub(super) needs_catchup: bool,
@@ -222,12 +238,13 @@ impl Following {
                 self.queue_gap(None, "reconnected");
             }
             self.revalidate_deferred_live();
-            if self.discarded_fragments > 0 {
+            let recorded_loss = self.discarded_fragments > 0;
+            if recorded_loss {
                 let frames = std::mem::take(&mut self.discarded_fragments);
                 self.queue_gap(Some(frames), "lagged");
             }
             if self.deferred_live.is_empty() {
-                self.queue_live();
+                self.queue_live(recorded_loss);
             } else {
                 self.pending.append(&mut self.deferred_live);
                 self.live_batch_needs_validation =
@@ -306,6 +323,11 @@ impl Following {
         let deferred = std::mem::take(&mut self.deferred_live);
         for frame in deferred {
             if let Some(fragment) = &frame.fragment {
+                if !fragment.is_current() {
+                    self.deferred_live
+                        .push_back(self.gap_frame(Some(1), "lagged"));
+                    continue;
+                }
                 if fragment.agent_id == self.header.id
                     && Some(fragment.turn_sequence) == self.header.active_turn
                     && Some(fragment.runtime_generation) != self.header.runtime_generation
@@ -342,6 +364,11 @@ fn response(open: Following) -> Response {
                     continue;
                 }
                 if let Some(fragment) = &frame.fragment {
+                    // Release validation can await IO while the old owner retires.
+                    if !fragment.is_current() {
+                        open.pending.push_front(open.gap_frame(Some(1), "lagged"));
+                        continue;
+                    }
                     stream_telemetry::agent_live_delivered(fragment.published_at());
                 }
                 return Some((Ok::<_, Infallible>(frame.event), open));
@@ -349,7 +376,9 @@ fn response(open: Following) -> Response {
             if open.ended {
                 return None;
             }
-            let result = if open.state.event_wake
+            let result = if let Some(interruption) = open.interruption.take() {
+                Box::pin(open.reattach(interruption)).await
+            } else if open.state.event_wake
                 && open.follow
                 && open.after == open.header.head
                 && !open.needs_catchup

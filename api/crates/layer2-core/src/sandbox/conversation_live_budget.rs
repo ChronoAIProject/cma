@@ -9,7 +9,10 @@ use layer3_adapter::ingress_budget::{
 use tokio::sync::Semaphore;
 
 use super::live::AgentLiveFragment;
-use crate::AgentId;
+use crate::{
+    agent_ownership::{Authority, OwnershipToken},
+    AgentId,
+};
 
 const PROCESS_BYTES: usize = 32 * 1024 * 1024;
 
@@ -45,6 +48,7 @@ impl LiveBudget {
         Some(AgentLiveDelivery(
             Delivery::Budgeted(fragment),
             tokio::time::Instant::now(),
+            None,
         ))
     }
 
@@ -84,7 +88,7 @@ enum Delivery {
 /// Immutable source data. Enabled deliveries share both storage and reservation
 /// across subscribers and deferred frames, until the final clone is dropped.
 #[derive(Clone)]
-pub struct AgentLiveDelivery(Delivery, tokio::time::Instant);
+pub struct AgentLiveDelivery(Delivery, tokio::time::Instant, Option<Arc<Authority>>);
 
 impl Deref for AgentLiveDelivery {
     type Target = AgentLiveFragment;
@@ -99,7 +103,11 @@ impl Deref for AgentLiveDelivery {
 
 impl From<AgentLiveFragment> for AgentLiveDelivery {
     fn from(fragment: AgentLiveFragment) -> Self {
-        Self(Delivery::Legacy(fragment), tokio::time::Instant::now())
+        Self(
+            Delivery::Legacy(fragment),
+            tokio::time::Instant::now(),
+            None,
+        )
     }
 }
 
@@ -117,6 +125,23 @@ impl std::fmt::Debug for AgentLiveDelivery {
 }
 
 impl AgentLiveDelivery {
+    pub(super) fn with_authority(mut self, authority: Option<Arc<Authority>>) -> Self {
+        self.2 = authority;
+        self
+    }
+
+    pub fn is_current(&self) -> bool {
+        self.2
+            .as_ref()
+            .is_none_or(|authority| authority.is_current())
+    }
+
+    pub fn is_current_for(&self, owner: &OwnershipToken) -> bool {
+        self.2
+            .as_ref()
+            .is_none_or(|authority| &authority.token == owner && authority.is_current())
+    }
+
     /// Local monotonic publication time; never part of the wire contract.
     pub fn published_at(&self) -> tokio::time::Instant {
         self.1
@@ -127,7 +152,13 @@ impl AgentLiveDelivery {
         let Delivery::Legacy(previous) = &mut self.0 else {
             return false;
         };
-        if !matches!(next.0, Delivery::Legacy(_))
+        let same_authority = match (&self.2, &next.2) {
+            (Some(previous), Some(next)) => Arc::ptr_eq(previous, next),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same_authority
+            || !matches!(next.0, Delivery::Legacy(_))
             || previous.agent_id != next.agent_id
             || previous.message_id != next.message_id
             || previous.kind != next.kind
