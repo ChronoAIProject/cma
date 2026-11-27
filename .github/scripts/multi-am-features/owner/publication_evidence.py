@@ -254,13 +254,13 @@ def prepared_schema_refusals(fixture, agentId=None, barrier='worktree_schema'):
 
 
 def prepared_schema_barrier(fixture, arm=None, parentEnvelope=False, parentPause=False, ownerFence=False,
-                            commitAcknowledgement=False):
+                            commitAcknowledgement=False, reservationConflict=False):
     require_feature_fixture(fixture, kind='prepared')
-    variants = parentEnvelope, parentPause, ownerFence, commitAcknowledgement
+    variants = parentEnvelope, parentPause, ownerFence, commitAcknowledgement, reservationConflict
     if any(type(value) is not bool for value in (arm, *variants)) or sum(variants) > 1:
         raise ValueError('prepared_schema_race_action_required')
-    if commitAcknowledgement:
-        return prepared_acknowledgement_barrier(fixture, arm)
+    if commitAcknowledgement or reservationConflict:
+        return prepared_worktree_hold(fixture, arm)
     command = {'configureFailPoint': 'failCommand', 'mode': 'off'}
     if arm:
         collection = 'sandboxes' if parentEnvelope else 'cma_agent_manager_owners' if ownerFence else 'worktrees'
@@ -280,7 +280,7 @@ def prepared_schema_barrier(fixture, arm=None, parentEnvelope=False, parentPause
     return fixture.mongo(script + 'print(JSON.stringify({configured: true}));')
 
 
-def prepared_acknowledgement_barrier(fixture, arm):
+def prepared_worktree_hold(fixture, arm):
     hold = {'configureFailPoint': 'hangDuringBatchUpdate', 'mode': 'off'}
     if arm:
         hold.update(mode='alwaysOn', data={'nss': 'cma_native_am.worktrees', 'shouldCheckForInterrupt': True})

@@ -66,11 +66,12 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         const race = action => adapter.preparedSchemaRace({
           action, operationId: admission.operationId, reservations: ready, barrier,
         });
+        const barrierOptions = ownerFence ? {ownerFence: true} : {reservationConflict: true};
         const disarm = () => preparedOperation('prepared_publication_barrier_release_failed',
-          () => adapter.preparedSchemaBarrier({arm: false}));
+          () => adapter.preparedSchemaBarrier({arm: false, ...barrierOptions}));
         await withRestoration(async () => {
           await preparedOperation('prepared_publication_barrier_arm_failed',
-            () => adapter.preparedSchemaBarrier(ownerFence ? {arm: true, ownerFence} : {arm: true}));
+            () => adapter.preparedSchemaBarrier({arm: true, ...barrierOptions}));
           record = await preparedOperation('prepared_publication_create_failed', () => createAndOpen(admitted => {
             admission = admitted;
             pending = withRestoration(async () => {

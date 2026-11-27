@@ -194,7 +194,8 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b', 'ca
       diagnostics[abortManager].known_aborted_cas = {publish_connection: observed};
       return diagnostics;
     },
-    preparedSchemaBarrier: async ({arm, ownerFence}) => {
+    preparedSchemaBarrier: async ({arm, ownerFence, reservationConflict}) => {
+      assert.equal(Boolean(ownerFence) !== Boolean(reservationConflict), true);
       actions.push(arm ? (ownerFence ? 'arm-owner-fence-hold' : 'arm-worktree-hold') : 'disarm-worktree-hold');
     },
     preparedSchemaRace: async ({action, operationId, reservations, barrier}) => {

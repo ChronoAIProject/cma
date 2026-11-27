@@ -59,6 +59,9 @@
   }
 
   async function currentUpdate(rows) {
+    if (scope.barrier === 'publication_conflict') {
+      return heldReadyWorktreeFence(rows.tree._id);
+    }
     const collection = ownerFence ? 'cma_agent_manager_owners' : 'worktrees';
     const active = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
       appName: scope.app, active: true, 'command.update': collection, 'command.autocommit': false,
@@ -234,6 +237,9 @@
               || after?.transaction !== bound.transaction) {
             throw Error('prepared_publication_conflict_transaction_changed');
           }
+          if (!ownerFence && (await admin.runCommand({
+            configureFailPoint: 'hangDuringBatchUpdate', mode: 'off',
+          })).ok !== 1) throw Error('prepared_conflict_worktree_release');
           const workLeaseSha256 = require('crypto').createHash('sha256')
             .update(`${workFence}:${lease.holder}`).digest('hex');
           return {...before, ownerInstance: owner.instance_id, ownerEpoch, leaseDeadlineMs, workLeaseSha256,
@@ -370,23 +376,24 @@
     return require('crypto').createHash('sha256').update(session.id.toString() + ':' + number.toString()).digest('hex');
   }
 
+  async function heldReadyWorktreeFence(worktreeId) {
+    const operations = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
+      appName: scope.app, active: true, failpointMsg: 'hangDuringBatchUpdate',
+      ns: d.getName() + '.worktrees', 'command.q._id': worktreeId,
+      'transaction.parameters.autocommit': false,
+    }}]).toArray();
+    const matches = operations.filter(operation => operation.lsid?.id && operation.transaction?.parameters
+      && Number(operation.command.u?.$inc?.agent_prepared_open_ready_fence) === 1);
+    if (matches.length > 1) throw Error('prepared_multiple_held_worktree_fences');
+    const [entry] = matches;
+    return entry && {opid: entry.opid, session: entry.lsid.id.toString(),
+      transaction: transactionDigest(entry.lsid, entry.transaction.parameters.txnNumber)};
+  }
+
   async function armCommitAcknowledgement() {
     const rows = await lineage(d);
     if (!rows) return null;
-    const sample = async () => {
-      const operations = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
-        appName: scope.app, active: true, failpointMsg: 'hangDuringBatchUpdate',
-        ns: d.getName() + '.worktrees', 'command.q._id': rows.tree._id,
-        'transaction.parameters.autocommit': false,
-      }}]).toArray();
-      const matches = operations.filter(operation => operation.lsid?.id && operation.transaction?.parameters
-        && Number(operation.command.u?.$inc?.agent_prepared_open_ready_fence) === 1);
-      if (matches.length > 1) throw Error('prepared_ack_multiple_publications');
-      const [entry] = matches;
-      return entry && {opid: entry.opid,
-        transaction: transactionDigest(entry.lsid, entry.transaction.parameters.txnNumber)};
-    };
-    const held = await sample();
+    const held = await heldReadyWorktreeFence(rows.tree._id);
     if (!held) return null;
     const before = proof(rows);
     if (!pending(before)) throw Error('prepared_ack_startup_precondition');
@@ -399,7 +406,7 @@
     }});
     const baseline = Number(armed.count);
     if (armed.ok !== 1 || !Number.isSafeInteger(baseline) || baseline < 0) throw Error('prepared_ack_failpoint_on');
-    const stillHeld = await sample();
+    const stillHeld = await heldReadyWorktreeFence(rows.tree._id);
     if (stillHeld?.opid !== held.opid || stillHeld.transaction !== held.transaction) {
       throw Error('prepared_ack_held_transaction_changed');
     }
