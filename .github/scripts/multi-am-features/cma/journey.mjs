@@ -109,9 +109,13 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     try {
       ready = await poll(async () => {
         const {body} = await api.request(other(am), 'GET', `/api/v1/agents/${record.agentId}`);
-        readinessObservations.push({at:new Date().toISOString(), body});
+        const observedAt = Date.now();
+        readinessObservations.push({at:new Date(observedAt).toISOString(), body});
         check(body?.id === record.agentId, 'created_agent_mismatch');
         if (id(body.sandbox?.id)) record.sandboxId = body.sandbox.id;
+        if (body.status === 'ready' && body.sandbox?.status === 'active') {
+          record.readyObservedAt = observedAt;
+        }
         check(!['failed', 'deleted'].includes(body.status), 'created_agent_failed'); return body;
       }, value => value.status === 'ready' && value.sandbox?.status === 'active', {timeout: 180000, code: 'agent_ready_timeout'});
     } catch (error) {

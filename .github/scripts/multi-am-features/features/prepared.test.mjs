@@ -21,7 +21,7 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
     assert.equal(desktop, false);
     const sandboxId = overrides?.profile ? 'cold-' + am : 'candidate-' + (repeatReservation ? 'a' : am);
     const record = {agentId: 'fixture-agent', sandboxId, operationId: 'fixture-operation', am, admissionRequest,
-      createToReadyMs, runtime: {pod_uid: 'fixture-runtime-pod-' + sandboxId}};
+      createToReadyMs, readyObservedAt: Date.now(), runtime: {pod_uid: 'fixture-runtime-pod-' + sandboxId}};
     records.push(record);
     actions.push('create-' + am + '-' + sandboxId);
     onAdmission?.(record);
@@ -119,7 +119,7 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.deepEqual(context.results[1].publication_diagnostics.b, {known_aborted_cas: {publish_connection: 1}});
   assert.equal(context.results[1].observed_known_abort, false);
   assert.equal(context.results[3].observed_known_abort, true);
-  assert.equal(context.results[3].original_work_lease_still_live_at_ready, true);
+  assert.equal(context.results[3].ready_before_collision_lease_deadline, true);
   assert.equal(context.results[3].runtime_receipt_format, 'indexed');
   assert.equal(context.results[3].runtime_receipt_count, 3);
   assert.equal(context.results[3].create_to_ready_ms, 5000);
@@ -137,14 +137,14 @@ test('prepared publication binds the collision to admission and retains the owne
   assert.deepEqual(diagnostics, [{ingress: 'b', owner: 'b', owner_epoch: 1,
     owner_instance_sha256: hash('fixture-manager'), agent_sha256: hash('fixture-agent'),
     lifecycle_operation_sha256: hash('fixture-operation'), exact_reservation_conflict: true,
-    collision_owner_epoch: 1, original_work_lease_still_live_at_ready: true,
+    collision_owner_epoch: 1, ready_before_collision_lease_deadline: true,
     publication_diagnostics: {a: {known_aborted_cas: {publish_connection: 1}}, b: {}}}]);
   const failed = fixture({failCreation: true});
   await assert.rejects(preparedJourney(failed), /fixture_admission_failed/);
   assert.deepEqual(failed.actions.slice(-2), ['disarm-worktree-hold', 'restore-reservation-marker']);
 });
 
-test('prepared publication only qualifies the original owner and unexpired work lease', async () => {
+test('prepared Ready requires the collision owner and precedes its observed work lease deadline', async () => {
   await assert.rejects(preparedJourney(fixture({collisionOwner: 'fixture-other-member'})),
     /prepared_publication_owner_changed_since_collision/);
   await assert.rejects(preparedJourney(fixture({collisionEpoch: 2})),
