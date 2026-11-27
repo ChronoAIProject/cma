@@ -111,7 +111,7 @@ function expectedAuthority(timeline, record, admittedAt) {
   return expected;
 }
 
-export async function readLocalOutcomeOracle({ runHash, captures }, { readCommand, workload } = {}) {
+export async function readLocalOutcomeOracle({ runHash, captures }, { readCommand, workload, faultWitness } = {}) {
   check(isHash(runHash), 'oracle_run_binding_missing', true);
   check(captures && new Set(roles.map((role) => captures[role]?.path)).size === roles.length,
     'oracle_capture_source_reused', true);
@@ -132,6 +132,8 @@ export async function readLocalOutcomeOracle({ runHash, captures }, { readComman
       && [...accepted.keys()].every((commandHash) => workload.receipts.has(commandHash)),
     'oracle_workload_admissions_mismatch');
   }
+  if (faultWitness) check(faultWitness.runHash === runHash && accepted.has(faultWitness.commandHash),
+    'oracle_fault_command_mismatch');
   const ownershipByCommand = commandRecords(ownership.records, accepted);
   const recorded = commandRecords(durable.records, accepted);
   const effects = commandRecords(receiver.records, accepted);
@@ -142,6 +144,11 @@ export async function readLocalOutcomeOracle({ runHash, captures }, { readComman
     const timeline = authorityTimeline(ownershipByCommand.get(commandHash) ?? []);
     check(authority(admission) === authority(expectedAuthority(timeline, admission, admittedAt)),
       'oracle_admission_authority_mismatch');
+    if (faultWitness?.commandHash === commandHash) {
+      const atFault = expectedAuthority(timeline, faultWitness, admittedAt);
+      check(authority(faultWitness) === authority(atFault) && isHash(atFault.processHash)
+        && atFault.processHash === faultWitness.processHash, 'oracle_fault_authority_mismatch');
+    }
     const executions = recorded.get(commandHash) ?? [];
     const observed = effects.get(commandHash) ?? [];
     const expectations = [...executions, ...observed].map((row) => ({
@@ -163,14 +170,14 @@ export async function readLocalOutcomeOracle({ runHash, captures }, { readComman
     }
   }
   const result = { independent: true, complete: true, acceptedHashes: [...accepted.keys()], commands,
-    evidenceHash: hash(JSON.stringify([runHash, ...roles.map((role) => captures[role].sha256), ...(workload ? [workload.sha256] : [])])) };
+    evidenceHash: hash(JSON.stringify([runHash, ...roles.map((role) => captures[role].sha256), ...(workload ? [workload.sha256] : []), ...(faultWitness ? [faultWitness] : [])])) };
   reconcile(result);
   return result;
 }
 
 // Read-only driver for a real, isolated local fixture. The independent receiver
 // and durable captures must have been recorded before the oracle is invoked.
-export async function verifyLocalOutcomes(config, { fetchImpl, command, expectedWorkload, readCommand } = {}) {
+export async function verifyLocalOutcomes(config, { fetchImpl, command, expectedWorkload, readCommand, faultWitness } = {}) {
   validateConfig(config);
   check(config.outcome?.origin === config.endpoints.am && config.outcome.cluster,
     'oracle_local_fixture_missing', true);
@@ -182,7 +189,7 @@ export async function verifyLocalOutcomes(config, { fetchImpl, command, expected
   });
   const workload = expectedWorkload ?? (config.outcome.workloadReport ? await readConnectedWorkload(config) : undefined);
   return readLocalOutcomeOracle(config.outcome, {
-    workload,
+    workload, faultWitness,
     readCommand: readCommand ?? (async (id) => (await http.command(id)).value),
   });
 }

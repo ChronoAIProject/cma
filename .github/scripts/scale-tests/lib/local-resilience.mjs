@@ -11,7 +11,16 @@ import { suddenLoss } from '../scenarios/correctness.mjs';
 
 export const localHpaSelection = 'local-hpa';
 export const localLossSelection = 'local-replica-loss';
-const roles = ['am', 'eg'];
+const services = { am: 'cma-agent-manager', eg: 'cma-event-gateway' };
+const roles = Object.keys(services);
+const hpaResources = ['deployment', 'hpa', 'pdb'];
+
+function bindHpaResources(hpa) {
+  const uids = roles.flatMap((role) => hpaResources.map((kind) => hpa?.[role]?.[kind]));
+  check(uids.every(isHash), 'local_hpa_resource_binding_missing', true);
+  check(new Set(uids).size === uids.length, 'local_hpa_resource_binding_reused', true);
+  return structuredClone(hpa);
+}
 
 function withHookDeadline(signal, timeoutMs, code, operation) {
   return withinDeadline((deadline) => {
@@ -31,9 +40,14 @@ function observedResource(list, uidHash, kind) {
 async function hpaSnapshot(cluster, bindings) {
   const [deployments, hpas, budgets] = await Promise.all(
     ['deployments', 'horizontalpodautoscalers', 'poddisruptionbudgets'].map((resource) => cluster.read(resource)));
+  const byRole = Object.fromEntries(roles.map((role) =>
+    [role, observedResource(deployments, bindings[role].deployment, 'deployment')]));
   return Object.fromEntries(roles.map((role) => {
     const binding = bindings[role];
-    const deployment = observedResource(deployments, binding.deployment, 'deployment');
+    const deployment = byRole[role];
+    const labels = deployment.spec?.template?.metadata?.labels;
+    check(labels?.['app.kubernetes.io/name'] === services[role],
+      'local_hpa_deployment_role_mismatch', true);
     const hpa = observedResource(hpas, binding.hpa, 'autoscaler');
     const pdb = observedResource(budgets, binding.pdb, 'pdb');
     const conditions = hpa.status?.conditions ?? [];
@@ -46,7 +60,9 @@ async function hpaSnapshot(cluster, bindings) {
       && Number.isSafeInteger(hpa.status.desiredReplicas), 'local_hpa_replica_count_missing', true);
     const matchLabels = pdb.spec?.selector?.matchLabels;
     check(matchLabels && Object.keys(matchLabels).length > 0 && !pdb.spec.selector.matchExpressions?.length
-      && Object.entries(matchLabels).every(([key, value]) => deployment.spec.template?.metadata?.labels?.[key] === value),
+      && Object.entries(matchLabels).every(([key, value]) => labels[key] === value)
+      && roles.filter((other) => other !== role).every((other) =>
+        Object.entries(matchLabels).some(([key, value]) => byRole[other].spec?.template?.metadata?.labels?.[key] !== value)),
     'local_hpa_pdb_target_mismatch', true);
     return [role, {
       ready: deployment.status.readyReplicas ?? 0,
@@ -63,54 +79,57 @@ async function hpaSnapshot(cluster, bindings) {
   }));
 }
 
-async function observeHpa(config, cluster, hooks, workload, time) {
-  const { signal, done, status } = workload;
+async function observeHpa(config, cluster, targets, hooks, workload, time) {
+  const { signal, status } = workload;
   const peak = config.scalingPeak ?? 4;
-  const targets = config.localResilience.hpa;
   const observed = [];
-  const finished = new AbortController();
-  void done.then(() => finished.abort(), () => finished.abort());
   const read = async () => {
     signal.throwIfAborted();
-    check(!finished.signal.aborted, 'local_hpa_workload_ended_early');
+    check(status().scheduling, 'local_hpa_workload_ended_early');
     const row = await hpaSnapshot(cluster, targets);
     signal.throwIfAborted();
-    check(!finished.signal.aborted, 'local_hpa_workload_ended_early');
     const workloadStatus = status();
+    check(workloadStatus.scheduling, 'local_hpa_workload_ended_early');
     check(workloadStatus.openStreams === 100 && workloadStatus.failedRequests === 0
       && workloadStatus.droppedRequests === 0, 'local_hpa_workload_degraded');
     check(roles.every((role) => row[role].ready <= peak && row[role].desired <= peak), 'local_hpa_peak_exceeded');
     const first = observed[0];
     check(!first || roles.every((role) => first[role].templateHash === row[role].templateHash),
       'local_hpa_rollout_observed');
-    observed.push(row);
-    return row;
+    const observation = { ...row, workload: workloadStatus };
+    observed.push(observation);
+    return observation;
   };
   const bothAt = (row, count) => roles.every((role) => row[role].settled && row[role].ready === count && row[role].desired === count);
-  const wait = (count) => withinDeadline((deadline) =>
+  const wait = (count, prior) => withinDeadline((deadline) =>
     waitFor(async () => {
       deadline.throwIfAborted();
       return read();
-    }, (row) => bothAt(row, count), { timeoutMs: config.scaleTimeoutMs, intervalMs: 1000, time }),
+    }, (row) => bothAt(row, count)
+      && row.workload.scheduledReads > prior.scheduledReads
+      && row.workload.scheduledTurns > prior.scheduledTurns, { timeoutMs: config.scaleTimeoutMs, intervalMs: 1000, time }),
   config.scaleTimeoutMs, 'local_hpa_transition_timeout');
   const initial = await read();
   check(bothAt(initial, 2), 'local_hpa_initial_replicas_not_two', true);
   let stress;
   try {
+    const beforeStress = status();
+    check(beforeStress.scheduling, 'local_hpa_workload_ended_early');
     stress = await withHookDeadline(signal, config.recoveryMs, 'local_hpa_stress_start_timeout',
       (signal) => hooks.startStress({ targetReplicas: peak, signal }));
     check(stress !== undefined && stress !== null, 'local_hpa_stress_receipt_missing', true);
-    const up = await wait(peak);
+    const up = await wait(peak, beforeStress);
     check(roles.every((role) => Number.isFinite(Date.parse(up[role].lastScaleTime))
       && Date.parse(up[role].lastScaleTime) > (Date.parse(initial[role].lastScaleTime) || 0)),
     'local_hpa_scale_up_not_observed');
+    const beforeDownscale = status();
     await withHookDeadline(undefined, config.recoveryMs, 'local_hpa_stress_stop_timeout',
       (signal) => hooks.stopStress(stress, { signal }));
     stress = undefined;
-    const down = await wait(2);
+    const down = await wait(2, beforeDownscale);
     check(roles.every((role) => Date.parse(down[role].lastScaleTime) > Date.parse(up[role].lastScaleTime)),
       'local_hpa_scale_down_not_observed');
-    return { initial, up, down, observations: observed.length, evidenceHash: hash(JSON.stringify(observed)) };
+    return { initial, up, down, observations: observed.length, samples: observed, evidenceHash: hash(JSON.stringify(observed)) };
   } finally {
     if (stress !== undefined && stress !== null) {
       await withHookDeadline(undefined, config.recoveryMs, 'local_hpa_stress_stop_timeout',
@@ -119,13 +138,14 @@ async function observeHpa(config, cluster, hooks, workload, time) {
   }
 }
 
-async function captureOracle(config, clusterBinding, captures, acceptedHashes, runHash, dependencies) {
-  const result = await verifyLocalOutcomes({
+async function captureOracle(config, clusterBinding, captures, expectedWorkload, runHash, dependencies) {
+  return verifyLocalOutcomes({
     ...config, outcome: { runHash, captures, origin: config.endpoints.am, cluster: clusterBinding },
-  }, { ...dependencies, expectedWorkload: {
-    receipts: new Set(acceptedHashes), sha256: hash(JSON.stringify([...acceptedHashes].sort())),
-  } });
-  return result;
+  }, { ...dependencies, expectedWorkload });
+}
+
+function expectedReceipts(acceptedHashes) {
+  return { receipts: new Set(acceptedHashes), sha256: hash(JSON.stringify([...acceptedHashes].sort())) };
 }
 
 function captureWorkload(config, clusterBinding, hooks, dependencies) {
@@ -134,10 +154,11 @@ function captureWorkload(config, clusterBinding, hooks, dependencies) {
       (signal) => hooks.beginCapture(identity, { signal })),
     async finish(identity, acceptedHashes, options) {
       const { signal, readCommand } = options;
+      const expected = expectedReceipts(acceptedHashes);
       const captures = await withHookDeadline(signal, config.scaleTimeoutMs, 'local_capture_finish_timeout',
-        (signal) => hooks.finishCapture(identity, { signal, acceptedHashes }));
+        (signal) => hooks.finishCapture(identity, { signal }));
       signal.throwIfAborted();
-      return reconcile(await captureOracle(config, clusterBinding, captures, acceptedHashes, identity.runHash,
+      return reconcile(await captureOracle(config, clusterBinding, captures, expected, identity.runHash,
         { ...dependencies, readCommand }));
     },
   };
@@ -146,23 +167,40 @@ function captureWorkload(config, clusterBinding, hooks, dependencies) {
 async function runLoss(config, clusterBinding, hooks, mode, dependencies) {
   const { time = clock, signal } = dependencies;
   const runHash = hash(randomUUID());
-  const identity = { runHash, fixtureHash: config.fixtureHash, sourceHash: config.sourceHash };
+  const identity = Object.freeze({ runHash, fixtureHash: config.fixtureHash, sourceHash: config.sourceHash });
+  let faultWitness;
   try {
     await withHookDeadline(signal, config.recoveryMs, 'local_capture_start_timeout',
       (signal) => hooks.beginCapture(identity, { signal }));
-    return await suddenLoss({
+    const result = await suddenLoss({
       beginInFlight: () => withHookDeadline(signal, config.scaleTimeoutMs, 'local_loss_admission_timeout',
-        (signal) => hooks.beginInFlight(mode, { signal, runHash })),
+        async (signal) => Object.freeze({ ...await hooks.beginInFlight(mode, { signal, runHash }) })),
       async killOwner(work, options) {
         const faultSignal = signal ? AbortSignal.any([signal, options.signal]) : options.signal;
         faultSignal.throwIfAborted();
-        const receipt = await hooks.injectLoss(work, { ...options, signal: faultSignal });
-        check(receipt?.ownerHash === work.ownerHash && isHash(receipt.evidenceHash),
+        const receipt = await hooks.injectLoss(work, { ...options, runHash, signal: faultSignal });
+        const injectionEvidenceHash = receipt?.evidenceHash;
+        check(receipt?.runHash === runHash && receipt.commandHash === work.commandHash
+          && receipt.ownerHash === work.ownerHash && isHash(injectionEvidenceHash),
           'local_loss_injection_receipt_mismatch');
         faultSignal.throwIfAborted();
-        const death = await hooks.observeDeath(work, { ...options, signal: faultSignal });
-        check(death?.evidenceHash !== receipt.evidenceHash, 'local_loss_observation_reuses_injection');
-        return death;
+        const death = await hooks.observeDeath(work, { ...options, runHash, signal: faultSignal });
+        check(death?.evidenceHash !== injectionEvidenceHash, 'local_loss_observation_reuses_injection');
+        check(death?.processDeathObserved === true && death.abrupt === true && isHash(death.evidenceHash),
+          'abrupt_process_death_unproven', true);
+        check(death.runHash === runHash && death.commandHash === work.commandHash
+          && death.ownerHash === work.ownerHash && isHash(death.authorityOwnerHash)
+          && Number.isSafeInteger(death.runtimeGeneration) && death.runtimeGeneration > 0
+          && Number.isSafeInteger(death.authorityEpoch) && death.authorityEpoch > 0
+          && Number.isSafeInteger(death.faultSequence) && death.faultSequence >= 0,
+        'local_loss_death_binding_missing', true);
+        faultWitness = {
+          runHash, commandHash: work.commandHash, processHash: work.ownerHash,
+          ownerHash: death.authorityOwnerHash, runtimeGeneration: death.runtimeGeneration,
+          authorityEpoch: death.authorityEpoch, observedSequence: death.faultSequence,
+          injectionEvidenceHash, deathEvidenceHash: death.evidenceHash,
+        };
+        return { ownerHash: work.ownerHash, abrupt: true, processDeathObserved: true, evidenceHash: death.evidenceHash };
       },
       observeRecovery: (work, options) => hooks.observeRecovery(work, {
         ...options, signal: signal ? AbortSignal.any([signal, options.signal]) : options.signal,
@@ -172,13 +210,14 @@ async function runLoss(config, clusterBinding, hooks, mode, dependencies) {
       cleanup: (work) => withHookDeadline(undefined, config.recoveryMs, 'local_loss_cleanup_timeout',
         (signal) => hooks.cleanupFault(work, { signal })),
       async reconcile(work) {
-        const acceptedHashes = [work.commandHash];
+        const expected = expectedReceipts([work.commandHash]);
         const captures = await withHookDeadline(signal, config.scaleTimeoutMs, 'local_capture_finish_timeout',
-          (signal) => hooks.finishCapture(identity, { acceptedHashes, signal }));
+          (signal) => hooks.finishCapture(identity, { signal }));
         signal?.throwIfAborted();
-        return captureOracle(config, clusterBinding, captures, acceptedHashes, runHash, dependencies);
+        return captureOracle(config, clusterBinding, captures, expected, runHash, { ...dependencies, faultWitness });
       },
     }, mode, config, time);
+    return { ...result, faultWitness };
   } finally {
     await withHookDeadline(undefined, config.recoveryMs, 'local_capture_cleanup_timeout',
       (signal) => hooks.closeCapture(identity, { signal }));
@@ -198,9 +237,10 @@ export async function runLocalResilience(config, selection, dependencies = {}) {
       dependencies.command);
     await cluster.verify();
     dependencies.signal?.throwIfAborted();
+    const targets = selection === localHpaSelection ? bindHpaResources(resilience.hpa) : undefined;
     const module = await pinnedModule(pathToFileURL(resilience.hookModule), resilience.hookSha256, dependencies.importer);
     check(typeof module.createLocalHooks === 'function', 'local_resilience_hooks_missing', true);
-    hooks = await module.createLocalHooks(config, { fetch: guardedFetch(dependencies.fetchImpl) });
+    hooks = await module.createLocalHooks(structuredClone(config), { fetch: guardedFetch(dependencies.fetchImpl) });
     const common = ['preflight', 'beginCapture', 'finishCapture', 'closeCapture', 'close'];
     const hpa = selection === localHpaSelection;
     const loss = selection === localLossSelection;
@@ -215,8 +255,6 @@ export async function runLocalResilience(config, selection, dependencies = {}) {
     check(preflight?.ready === true && preflight.namespaceHash === clusterBinding.namespaceHash
       && preflight.sourceHash === config.sourceHash && isHash(preflight.evidenceHash), 'local_resilience_hook_preflight_failed', true);
     if (!loss) {
-      if (hpa) check(roles.every((role) => ['deployment', 'hpa', 'pdb'].every((key) => isHash(resilience.hpa?.[role]?.[key]))),
-        'local_hpa_resource_binding_missing', true);
       let scale;
       let captureIdentity;
       const capture = captureWorkload(config, clusterBinding, hooks, dependencies);
@@ -227,7 +265,7 @@ export async function runLocalResilience(config, selection, dependencies = {}) {
             captureIdentity = identity;
             return capture.begin(identity, options);
           } },
-          onRunning: hpa ? async (state) => { scale = await observeHpa(config, cluster, hooks, state, dependencies.time ?? clock); }
+          onRunning: hpa ? async (state) => { scale = await observeHpa(config, cluster, targets, hooks, state, dependencies.time ?? clock); }
             : undefined,
         });
         return hpa ? { status: workload.status, code: workload.code, workload, scale } : workload;

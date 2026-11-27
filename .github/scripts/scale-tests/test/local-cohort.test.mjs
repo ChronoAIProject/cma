@@ -236,7 +236,8 @@ test('the scale CLI records the blocked workload and protects the evidence direc
 });
 
 
-async function boundHooks(t, config, implementation) {
+async function boundHooks(t, config, implementation, { captureCount = config.localWorkload ? 20 : 1,
+  authorityProcess = hash('process') } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'local-resilience-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'hooks.mjs');
@@ -250,20 +251,21 @@ async function boundHooks(t, config, implementation) {
       return { ready: true, namespaceHash, sourceHash: config.sourceHash, evidenceHash: hash('fixture') };
     },
     async beginCapture({ runHash }) { captureRun = runHash; custody.push('begin'); },
-    async finishCapture({ runHash }, { acceptedHashes }) {
+    async finishCapture({ runHash }, options) {
+      assert.equal(Object.hasOwn(options, 'acceptedHashes'), false);
       assert.equal(runHash, captureRun);
       custody.push('finish');
       const captures = {};
       const rows = {
         admissions: { accepted: true, observedSequence: 2 },
-        authority: { fromSequence: 1, throughSequence: 6 },
+        authority: { fromSequence: 1, throughSequence: 6, processHash: authorityProcess },
         durable: { observedSequence: 3, terminal: true },
         receiver: { observedSequence: 4, terminal: true },
       };
       for (const [role, fields] of Object.entries(rows)) {
-        const ids = Array.from({ length: 100 }, (_, n) => `cmd_example_${n}`);
-        const records = acceptedHashes.map((commandHash) => ({
-          commandHash, commandId: ids.find((id) => hash(id) === commandHash), ownerHash: hash('owner'),
+        const ids = Array.from({ length: captureCount }, (_, n) => `cmd_example_${n}`);
+        const records = ids.map((commandId) => ({
+          commandHash: hash(commandId), commandId, ownerHash: hash('owner'),
           runtimeGeneration: 1, authorityEpoch: 1, ...fields,
         }));
         const path = join(directory, role + '.json');
@@ -281,7 +283,7 @@ async function boundHooks(t, config, implementation) {
   return { custody, importer: async () => ({ createLocalHooks: async () => hooks }) };
 }
 
-function clusterResources(config, phase) {
+function clusterResources(config, phase, { wrongRole = false } = {}) {
   const resource = (role, kind) => `${role}-${kind}`;
   config.localResilience.hpa = Object.fromEntries(['am', 'eg'].map((role) =>
     [role, Object.fromEntries(['deployment', 'hpa', 'pdb'].map((kind) => [kind, hash(resource(role, kind))]))]));
@@ -295,7 +297,9 @@ function clusterResources(config, phase) {
       ...content(role),
     })) }) });
     if (args.includes('deployments')) return build('deployment', (role) => ({
-      spec: { replicas: count, template: { metadata: { labels: { role } } } },
+      spec: { replicas: count, template: { metadata: { labels: {
+        role, 'app.kubernetes.io/name': role === 'eg' && !wrongRole ? 'cma-event-gateway' : 'cma-agent-manager',
+      } } } },
       status: { observedGeneration: 1, replicas: count, updatedReplicas: count, readyReplicas: count },
     }));
     if (args.includes('horizontalpodautoscalers')) return build('hpa', (role) => ({
@@ -311,19 +315,31 @@ function clusterResources(config, phase) {
   };
 }
 
+async function waitForOffers(seen, previous) {
+  for (let tries = 0; tries < 100 && seen.write <= previous; tries++) await sleep(5);
+  assert.ok(seen.write > previous);
+}
+
 test('HPA orchestration holds the cohort through both controller changes and reconciles independent captures', async (t) => {
   const { config, env, seen } = await fixture(t, 100);
   config.localWorkload = { durationMs: 60_000 };
   let phase = 'initial';
   const { custody, importer } = await boundHooks(t, config, {
-    async startStress() { phase = 'up'; return 'synthetic-stress'; },
-    async stopStress(receipt) { assert.equal(receipt, 'synthetic-stress'); phase = 'down'; },
+    async startStress() { const before = seen.write; await waitForOffers(seen, before); phase = 'up'; return 'synthetic-stress'; },
+    async stopStress(receipt) {
+      assert.equal(receipt, 'synthetic-stress');
+      const before = seen.write;
+      await waitForOffers(seen, before);
+      phase = 'down';
+    },
   });
   const command = clusterResources(config, () => phase);
   const result = await runLocalResilience(config, localHpaSelection, { env, command, importer, time: acceleratedClock() });
   assert.equal(result.status, 'PASS', result.code);
   assert.equal(result.scale.up.am.ready, 4);
   assert.equal(result.scale.down.eg.ready, 2);
+  assert.ok(result.scale.up.workload.scheduledTurns > result.scale.initial.workload.scheduledTurns);
+  assert.ok(result.scale.down.workload.scheduledReads > result.scale.up.workload.scheduledReads);
   assert.equal(result.workload.reconciliation.commands, 20);
   assert.equal(seen.openAtFinalBuild, 100);
   assert.deepEqual(custody, ['begin', 'finish', 'close-capture', 'close-hooks']);
@@ -335,7 +351,7 @@ test('replica loss requires actual process death before recovery can be scored',
   const { custody, importer } = await boundHooks(t, config, {
     async beginInFlight() { return { accepted: true, inFlight: true, leaseJustRenewed: true, ownerHash,
       commandHash: hash('cmd_example_0'), evidenceHash: hash('admission') }; },
-    async injectLoss() { return { ownerHash, evidenceHash: hash('api') }; },
+    async injectLoss(work, { runHash }) { return { runHash, commandHash: work.commandHash, ownerHash, evidenceHash: hash('api') }; },
     async observeDeath() { return { ownerHash, abrupt: true, processDeathObserved: false, evidenceHash: hash('runtime') }; },
     async observeRecovery() { assert.fail('recovery cannot be scored before independent process death'); },
     async confirmStream() {},
@@ -348,28 +364,97 @@ test('replica loss requires actual process death before recovery can be scored',
 });
 
 
-test('replica-loss orchestration binds death, recovery, and independent effects to the admitted turn', async (t) => {
-  const config = configFor('http://127.0.0.1:31991', 2);
-  const ownerHash = hash('process');
-  const commandId = 'cmd_example_0';
-  const { custody, importer } = await boundHooks(t, config, {
-    async beginInFlight() { return { accepted: true, inFlight: true, leaseJustRenewed: true, ownerHash,
-      commandHash: hash(commandId), evidenceHash: hash('admission') }; },
-    async injectLoss() { return { ownerHash, evidenceHash: hash('api') }; },
-    async observeDeath() { return { ownerHash, abrupt: true, processDeathObserved: true, evidenceHash: hash('runtime') }; },
-    async observeRecovery() { return { accounted: true, clientRecovered: true, sustainedSuccess: true }; },
-    async confirmStream() { return { liveEvent: true, durableContinuity: true }; },
-    async cleanupFault() { custody.push('close-fault'); },
+for (const mismatchedProcess of [false, true]) {
+  test(mismatchedProcess ? 'replica-loss refuses death of a process outside the command authority interval'
+    : 'replica-loss binds death, recovery, and independent effects to the admitted turn', async (t) => {
+    const config = configFor('http://127.0.0.1:31991', 2);
+    const ownerHash = hash('process');
+    const commandId = 'cmd_example_0';
+    const { custody, importer } = await boundHooks(t, config, {
+      async beginInFlight() { return { accepted: true, inFlight: true, leaseJustRenewed: true, ownerHash,
+        commandHash: hash(commandId), evidenceHash: hash('admission') }; },
+      async injectLoss(work, { runHash }) { return { runHash, commandHash: work.commandHash, ownerHash, evidenceHash: hash('api') }; },
+      async observeDeath(work, { runHash }) { return { runHash, commandHash: work.commandHash, ownerHash,
+        authorityOwnerHash: hash('owner'), runtimeGeneration: 1, authorityEpoch: 1, faultSequence: 3,
+        abrupt: true, processDeathObserved: true, evidenceHash: hash('runtime') }; },
+      async observeRecovery() { return { accounted: true, clientRecovered: true, sustainedSuccess: true }; },
+      async confirmStream() { return { liveEvent: true, durableContinuity: true }; },
+      async cleanupFault() { custody.push('close-fault'); },
+    }, { authorityProcess: mismatchedProcess ? hash('other-process') : ownerHash });
+    config.localResilience.lossMode = 'am_stream';
+    const fetchImpl = async (url, options) => {
+      assert.equal(url, `${config.endpoints.am}/api/v2/commands/${commandId}`);
+      assert.equal(options.method, 'GET');
+      return new Response(JSON.stringify({ receipt: { command_id: commandId }, status: 'completed' }));
+    };
+    const result = await runLocalResilience(config, localLossSelection, { command: cluster, importer, fetchImpl });
+    if (mismatchedProcess) {
+      assert.equal(result.status, 'FAIL');
+      assert.equal(result.code, 'oracle_fault_authority_mismatch');
+    } else {
+      assert.equal(result.status, 'PASS', result.code);
+      assert.equal(result.fault.commands, 1);
+      assert.equal(result.fault.observations, 1);
+      assert.equal(result.fault.faultWitness.commandHash, hash(commandId));
+      assert.equal(result.fault.faultWitness.injectionEvidenceHash, hash('api'));
+      assert.equal(result.fault.faultWitness.deathEvidenceHash, hash('runtime'));
+    }
+    assert.deepEqual(custody, ['begin', 'finish', 'close-fault', 'close-capture', 'close-hooks']);
   });
-  config.localResilience.lossMode = 'am_stream';
+}
+
+test('the collector cannot narrow the 20-command client receipt set', async (t) => {
+  const { config, env } = await fixture(t, 100);
+  config.localWorkload = { durationMs: 60_000 };
+  const { importer } = await boundHooks(t, config, {}, { captureCount: 19 });
+  const result = await runLocalResilience(config, 'connected-workload', { command: cluster, importer, env, time: acceleratedClock() });
+  assert.equal(result.code, 'oracle_workload_admissions_mismatch');
+  assert.equal(result.attempts.filter(({ kind }) => kind === 'turn').length, 20);
+});
+
+test('HPA refuses reused resources before opening the workload', async (t) => {
+  const config = configFor('http://127.0.0.1:31991', 100);
+  const { importer } = await boundHooks(t, config, {});
+  clusterResources(config, () => 'initial');
+  config.localResilience.hpa.eg = { ...config.localResilience.hpa.am };
+  const result = await runLocalResilience(config, localHpaSelection, { command: cluster, importer });
+  assert.equal(result.code, 'local_hpa_resource_binding_reused');
+});
+
+test('HPA rejects a distinct deployment advertising the wrong service role', async (t) => {
+  const { config, env } = await fixture(t, 100);
+  config.localWorkload = { durationMs: 60_000 };
+  const { importer } = await boundHooks(t, config, { startStress() {}, stopStress() {} });
+  const command = clusterResources(config, () => 'initial', { wrongRole: true });
+  const result = await runLocalResilience(config, localHpaSelection, { command, importer, env, time: acceleratedClock() });
+  assert.equal(result.code, 'local_hpa_deployment_role_mismatch');
+});
+
+test('HPA refuses a controller change after dispatch ends while a request is draining', async (t) => {
+  const { config, env, seen } = await fixture(t, 100);
+  config.localWorkload = { durationMs: 60_000 };
+  const time = acceleratedClock();
+  let phase = 'initial';
+  const hold = Promise.withResolvers();
+  let holding = false;
+  const { importer } = await boundHooks(t, config, {
+    async startStress({ signal }) {
+      while (time.now() < 60_000) await sleep(2, undefined, { signal });
+      assert.equal(holding, true);
+      phase = 'up';
+      return 'synthetic-stress';
+    },
+    async stopStress() { hold.resolve(); },
+  });
+  const command = clusterResources(config, () => phase);
   const fetchImpl = async (url, options) => {
-    assert.equal(url, `${config.endpoints.am}/api/v2/commands/${commandId}`);
-    assert.equal(options.method, 'GET');
-    return new Response(JSON.stringify({ receipt: { command_id: commandId }, status: 'completed' }));
+    if (new URL(url).pathname === '/api/v1/agents/agt_example_99' && time.now() >= 59_900) {
+      holding = true;
+      await hold.promise;
+    }
+    return fetch(url, options);
   };
-  const result = await runLocalResilience(config, localLossSelection, { command: cluster, importer, fetchImpl });
-  assert.equal(result.status, 'PASS', result.code);
-  assert.equal(result.fault.commands, 1);
-  assert.equal(result.fault.observations, 1);
-  assert.deepEqual(custody, ['begin', 'finish', 'close-fault', 'close-capture', 'close-hooks']);
+  const result = await runLocalResilience(config, localHpaSelection, { env, command, importer, time, fetchImpl });
+  assert.equal(result.code, 'local_hpa_workload_ended_early');
+  assert.equal(seen.write, 20);
 });

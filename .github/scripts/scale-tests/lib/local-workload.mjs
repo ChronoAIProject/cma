@@ -98,7 +98,7 @@ export async function runLocalWorkload(config, { time = clock, capture, onRunnin
 
     await withLocalCohort(config, async ({ clients, signal, sourceSha, fixtureHash }) => {
       Object.assign(report, { sourceSha, fixtureHash, workloadHash: config.workloadHash, openStreams: clients.length });
-      const identity = { runHash: report.runHash, sourceSha, fixtureHash, workloadHash: config.workloadHash };
+      const identity = Object.freeze({ runHash: report.runHash, sourceSha, fixtureHash, workloadHash: config.workloadHash });
       await capture?.begin(identity, { signal });
       report.startedAt = new Date().toISOString();
       const started = time.now();
@@ -143,8 +143,10 @@ export async function runLocalWorkload(config, { time = clock, capture, onRunnin
       try {
         await onRunning?.({
           signal,
-          done: run.done,
           status: () => ({
+            scheduling: run.isScheduling(),
+            scheduledReads: readOrdinal,
+            scheduledTurns: turnOrdinal,
             openStreams: signal.aborted ? 0 : clients.length,
             failedRequests: report.samples.filter((sample) => !sample.ok && sample.code !== 'generator_overloaded').length,
             droppedRequests: report.samples.filter((sample) => sample.code === 'generator_overloaded').length,

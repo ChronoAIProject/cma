@@ -10,6 +10,7 @@ export function startLoad({ read, turn, durationMs, maxInFlight = 100, time = cl
   const pending = new Set();
   const samples = [];
   const started = time.now();
+  const deadline = started + durationMs;
   let stopped = false;
   const record = (sample) => {
     samples.push(sample);
@@ -33,19 +34,20 @@ export function startLoad({ read, turn, durationMs, maxInFlight = 100, time = cl
   };
   const controller = new AbortController();
   const workSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+  const isScheduling = () => !stopped && !workSignal.aborted && time.now() < deadline;
   const done = (async () => {
     let nextRead = started; let nextTurn = started;
-    while (!stopped && !workSignal.aborted && time.now() - started < durationMs) {
+    while (isScheduling()) {
       const now = time.now();
       // Scheduled-start latency includes generator queueing (no coordinated omission).
-      while (nextRead <= now && nextRead < started + durationMs) {
+      while (nextRead <= now && nextRead < deadline) {
         dispatch('read', read, nextRead); nextRead += 1000 / readsPerSecond;
       }
-      while (nextTurn <= now && nextTurn < started + durationMs) {
+      while (nextTurn <= now && nextTurn < deadline) {
         dispatch('turn', turn, nextTurn); nextTurn += 60000 / turnsPerMinute;
       }
       try {
-        await time.sleep(Math.max(1, Math.min(nextRead, nextTurn, started + durationMs) - time.now()),
+        await time.sleep(Math.max(1, Math.min(nextRead, nextTurn, deadline) - time.now()),
           undefined, { signal: workSignal });
       } catch (error) {
         if (!workSignal.aborted) throw error;
@@ -54,6 +56,6 @@ export function startLoad({ read, turn, durationMs, maxInFlight = 100, time = cl
     await Promise.all(pending);
     return samples;
   })();
-  return { done, stop: async () => { stopped = true; return done; },
+  return { done, isScheduling, stop: async () => { stopped = true; return done; },
     abort: () => { stopped = true; controller.abort(); } };
 }
