@@ -165,7 +165,7 @@ jobs:
             ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
             ${{ matrix.component == 'api' && steps.api-cargo-cache-inject.outputs.namespace != '' && format('BUILDKIT_CACHE_MOUNT_NS={0}', steps.api-cargo-cache-inject.outputs.namespace) || '' }}
           cache-from: |
-            type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}
+            ${{ vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true' && format('type=gha,version=2,scope={0}', matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component) || '' }}
             ${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}
       -
         name: "Load native image for scanning"
@@ -187,7 +187,7 @@ jobs:
             ${{ matrix.component == 'runtime' && 'SOURCE_DATE_EPOCH=0' || '' }}
             ${{ matrix.component == 'api' && steps.api-cargo-cache-inject.outputs.namespace != '' && format('BUILDKIT_CACHE_MOUNT_NS={0}', steps.api-cargo-cache-inject.outputs.namespace) || '' }}
           cache-from: |
-            type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}
+            ${{ vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true' && format('type=gha,version=2,scope={0}', matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component) || '' }}
             ${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}
       -
         name: "Extract API Cargo cache before pruning"
