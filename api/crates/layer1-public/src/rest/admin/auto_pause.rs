@@ -17,7 +17,8 @@ use crate::AuthenticatedCaller;
 pub(crate) struct AutoPausePreviewView {
     /// Eligible Sandboxes in this bounded page; follow next for further pages.
     pub candidates: u64,
-    /// Fixed refusal codes for Sandboxes evaluated on this page.
+    /// Fixed refusal codes, present when a Sandbox was refused on this page.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub refusals: Vec<AutoPauseSandboxRefusalView>,
     pub failed: u64,
     pub next: Option<String>,
@@ -133,4 +134,31 @@ pub(crate) async fn pause_idle_now(
         enabled: batch.enabled,
         policy_revision: batch.policy_revision,
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use layer2_core::sandbox::InactivityPauseRefusal;
+
+    #[test]
+    fn preview_includes_the_sandbox_and_code_when_refused() {
+        let view = AutoPausePreviewView {
+            candidates: 0,
+            refusals: vec![AutoPauseSandboxRefusalView {
+                sandbox_id: "sbx_fixture".into(),
+                reason: InactivityPauseRefusal::RecentAgentActivity,
+            }],
+            failed: 0,
+            next: None,
+            enabled: true,
+            policy_revision: 1,
+        };
+        assert_eq!(
+            serde_json::to_value(view).unwrap()["refusals"],
+            serde_json::json!([
+                {"sandbox_id": "sbx_fixture", "reason": "recent_agent_activity"}
+            ])
+        );
+    }
 }
