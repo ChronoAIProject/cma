@@ -19,6 +19,7 @@ MAX_METADATA = 4 * 1024**2
 CHUNK = 1024**2
 METADATA = {"index.json", "oci-layout"}
 BLOB = re.compile(r"blobs/sha256/[a-f0-9]{64}")
+INGEST_LOCK = re.compile(r"ingest-locks/[a-f0-9]{64}")
 DIGEST = re.compile(r"sha256:[a-f0-9]{64}")
 
 
@@ -105,19 +106,22 @@ def check_graph(root, files):
 def inventory(root):
     require(root.is_dir() and not root.is_symlink(), "cache root is unavailable")
     files = {}
-    total = 0
+    total = members = 0
     for directory, dirs, names in os.walk(root, followlinks=False):
         for name in dirs:
             path = Path(directory) / name
-            require(not path.is_symlink() and path.relative_to(root).as_posix() in {"blobs", "blobs/sha256", "ingest"},
+            require(not path.is_symlink() and path.relative_to(root).as_posix() in
+                    {"blobs", "blobs/sha256", "ingest", "ingest-locks"},
                     "unexpected cache directory")
         for name in names:
             path = Path(directory) / name
             relative = path.relative_to(root).as_posix()
             info = path.lstat()
-            # Buildx leaves its local exporter lock behind. No lock state
-            # travels with the archive, and a restore opens its own lock.
-            if relative == "cache.lock":
+            members += 1
+            require(members <= MAX_MEMBERS, "cache exceeds size or member bound")
+            # BuildKit 0.35 retains an empty per-reference ingest flock in
+            # addition to the exporter lock. Restore opens its own locks.
+            if relative == "cache.lock" or INGEST_LOCK.fullmatch(relative):
                 require(stat.S_ISREG(info.st_mode) and info.st_nlink == 1 and info.st_size == 0,
                         "unexpected cache lock")
                 continue

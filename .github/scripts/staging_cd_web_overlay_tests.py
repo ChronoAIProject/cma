@@ -21,7 +21,7 @@ from staging_cd_web_overlay import (
 )
 
 
-def fixture_archive(directory, source, version, *, stylesheet=b"unchanged", extra=None):
+def fixture_archive(directory, source, version, *, stylesheet=b"unchanged", extra=None, history=None):
     key = source[0]
     assets = {"index-" + key + ".js": ("release-" + key).encode(), "common.css": stylesheet}
     html = ('<script type="module" src="/assets/index-' + key + '.js"></script>').encode()
@@ -43,6 +43,8 @@ def fixture_archive(directory, source, version, *, stylesheet=b"unchanged", extr
             "org.opencontainers.image.revision": source, "org.opencontainers.image.version": version,
         }},
     }
+    if history is not None:
+        config["history"] = history
     config_payload = encoded(config)
     manifest_payload = encoded({
         "schemaVersion": 2, "mediaType": OCI_MANIFEST, "config": descriptor(config_payload, OCI_CONFIG),
@@ -94,6 +96,7 @@ class WebOverlayTests(unittest.TestCase):
             self.assertEqual(config["config"]["Labels"].pop(MANIFEST_LABEL), proof)
             self.assertEqual(config["rootfs"]["diff_ids"][:-1], raw["rootfs"]["diff_ids"])
             self.assertEqual(config["config"], raw["config"])
+            self.assertNotIn("history", config)
             self.assertNotIn(HTML, entries)
             marker = entries.pop(FALLBACK + "cma-asset-manifest-" + proof + ".json")
             self.assertEqual(hashed(marker), proof)
@@ -111,6 +114,34 @@ class WebOverlayTests(unittest.TestCase):
             self.assertEqual(first[key]["digest"], second[key]["digest"])
             self.assertEqual(first[key]["archive"].read_bytes(), second[key]["archive"].read_bytes())
             self.assertNotEqual(first[key]["archive"], second[key]["archive"])
+
+    def test_oci_blob_directories_are_explicit_before_their_members(self):
+        result = assemble(self.incumbent, self.candidate, [], self.root, max_files=16, max_bytes=512)
+        for role in ("prepare", "promote"):
+            with self.subTest(role=role), tarfile.open(result[role]["archive"]) as archive:
+                members = archive.getmembers()
+                blobs = [entry for entry in members if entry.name.startswith("blobs/sha256/")]
+                self.assertTrue(blobs)
+                for name in ("blobs", "blobs/sha256"):
+                    directory = archive.getmember(name)
+                    self.assertTrue(directory.isdir())
+                    self.assertEqual(directory.mode, 0o755)
+                    self.assertLess(members.index(directory), members.index(blobs[0]))
+                self.assertLess(members.index(archive.getmember("blobs")),
+                                members.index(archive.getmember("blobs/sha256")))
+
+    def test_overlay_records_its_layer_in_existing_oci_history(self):
+        history = [{"created_by": "COPY Web files"}, {"created_by": "LABEL version", "empty_layer": True}]
+        incumbent, _, _ = fixture_archive(self.root, "d" * 40, "0.22.11", history=history)
+        candidate, _, _ = fixture_archive(self.root, "e" * 40, "0.22.12", history=history)
+        result = assemble(incumbent, candidate, [], self.root, max_files=16, max_bytes=512)
+        for role in ("prepare", "promote"):
+            with self.subTest(role=role):
+                _, config, _ = unpack_overlay(result[role]["archive"])
+                self.assertEqual(config["history"][:-1], history)
+                nonempty = [entry for entry in config["history"] if not entry.get("empty_layer", False)]
+                self.assertEqual(len(nonempty), len(config["rootfs"]["diff_ids"]))
+                self.assertFalse(config["history"][-1].get("empty_layer", False))
 
     def test_conflicting_immutable_path_refuses_pair_before_packaging(self):
         corrupt, _, _ = fixture_archive(self.root, "d" * 40, "0.22.11", stylesheet=b"different")

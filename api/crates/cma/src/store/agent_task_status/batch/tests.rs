@@ -151,9 +151,12 @@ async fn task_status_batch_matches_sequential_evidence_and_bounds_round_trips() 
     start_transaction(&mut session).await.unwrap();
     trace.lock().unwrap().clear();
     let started = std::time::Instant::now();
-    let actual = read_many_with_turns(&store, &agents, &mut session)
+    let actual: HashMap<_, _> = read_batch(&store, &agents, &mut session, false)
         .await
-        .unwrap();
+        .unwrap()
+        .into_iter()
+        .map(|(id, evidence)| (id, evidence.observation))
+        .collect();
     let after_ms = started.elapsed().as_secs_f64() * 1000.0;
     let after = trace.lock().unwrap().clone();
     assert_eq!(actual, expected);
@@ -268,5 +271,101 @@ async fn task_status_batch_retains_corruption_large_record_and_snapshot_contract
     );
     assert!(trace.lock().unwrap().is_empty());
     session.abort_transaction().await.unwrap();
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn workspace_paused_activity_does_not_scan_status_history() {
+    let (client, name, _) = observed().await;
+    let (store, target) = fixture(&client, &name).await;
+    let mut agent = store
+        .resource_access_snapshot(&target)
+        .await
+        .unwrap()
+        .lineage
+        .agent
+        .unwrap();
+    agent.status = AgentStatus::Paused;
+    for new_turns in [100, 900] {
+        let mut entries = Vec::new();
+        for _ in 0..new_turns {
+            let start = agent.conversation.last_seq + 1;
+            entries.extend([
+                (
+                    start,
+                    AgentLogKind::TurnStarted {
+                        turn_sequence: start,
+                        model: None,
+                        origin_key: None,
+                    },
+                ),
+                (
+                    start + 1,
+                    AgentLogKind::TurnCompleted {
+                        turn_sequence: start,
+                    },
+                ),
+            ]);
+            agent.conversation.last_seq += 2;
+        }
+        let logs = entries.into_iter().map(|(seq, kind)| {
+            log_document(&AgentLogEntry {
+                agent_id: agent.id.clone(),
+                seq,
+                appended_at: agent.created_at.clone(),
+                kind,
+            })
+            .unwrap()
+        });
+        store.agent_log.insert_many(logs).await.unwrap();
+        store
+            .agents
+            .replace_one(
+                doc! {"_id": agent.id.as_str()},
+                agent_document(&agent).unwrap(),
+            )
+            .await
+            .unwrap();
+        let workspace = store
+            .read_workspace_hierarchy(&agent.workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(workspace.task_statuses[&agent.id], AgentTaskStatus::Paused);
+        assert_eq!(workspace.task_activity_at[&agent.id], agent.created_at);
+
+        let explain = client.database(&name).run_command(doc! {
+            "explain": {"aggregate": "agents", "pipeline": pipeline(&[&agent], true), "cursor": {}},
+            "verbosity": "executionStats",
+        }).await.unwrap();
+        let mut status_lookups = 0;
+        for stage in explain
+            .get_array("stages")
+            .unwrap()
+            .iter()
+            .filter_map(Bson::as_document)
+        {
+            let Ok(lookup) = stage.get_document("$lookup") else {
+                continue;
+            };
+            let alias = lookup.get_str("as").unwrap();
+            if matches!(alias, "latest" | "gap" | "pending") {
+                status_lookups += 1;
+                for counter in ["totalDocsExamined", "totalKeysExamined"] {
+                    let count = stage
+                        .get(counter)
+                        .and_then(|value| value.as_i64().or_else(|| value.as_i32().map(i64::from)))
+                        .unwrap();
+                    assert!(
+                        count <= 1,
+                        "{alias} {counter}={count} at head {}",
+                        agent.conversation.last_seq
+                    );
+                }
+            }
+        }
+        assert_eq!(status_lookups, 3, "{explain:?}");
+    }
     client.database(&name).drop().await.unwrap();
 }

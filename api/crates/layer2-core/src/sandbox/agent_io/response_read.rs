@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use crate::ids::AgentResponseId;
 use crate::resource_access::{ResourceAccessError, ResourceCapability, ResourceTarget};
-use crate::sandbox::AgentEventStreamAuthorization;
+use crate::sandbox::{AgentEventStreamAuthorization, AgentEventStreamHeader, AgentReadError};
 
 use super::*;
 
@@ -13,6 +13,14 @@ pub struct AgentResponseReading {
     pub deferred_failure_detail: Option<String>,
     pub command: CommandStatusView,
     pub metadata: BTreeMap<String, String>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ObservedResponseReadError {
+    #[error(transparent)]
+    Command(#[from] CommandAdmissionError),
+    #[error(transparent)]
+    Header(#[from] AgentReadError),
 }
 
 impl AgentCommandService {
@@ -36,18 +44,20 @@ impl AgentCommandService {
         Self::reading(authorization, id, &record)
     }
     /// Fresh cohorts can share source records while each subscriber retains its
-    /// own current release fence and redaction.
+    /// own current release fence and redaction. The same fresh snapshot that
+    /// fences the command lookup supplies the current history header.
     pub async fn response_for_observed_stream(
         &self,
         reads: &crate::sandbox::AgentReadService,
         authorization: &AgentEventStreamAuthorization,
         id: &AgentResponseId,
-    ) -> Result<AgentResponseReading, CommandAdmissionError> {
-        let record = reads
-            .observed_command(authorization, id)
-            .await
-            .map_err(|_| CommandLedgerError::Unavailable)?;
-        Self::reading(authorization, id, &record)
+    ) -> Result<(AgentResponseReading, AgentEventStreamHeader), ObservedResponseReadError> {
+        let record = reads.observed_command_unreleased(authorization, id).await;
+        // Fence both the command result and its errors before exposing them.
+        let header = reads.current_event_stream_header(authorization).await?;
+        let record =
+            record.map_err(|_| CommandAdmissionError::Ledger(CommandLedgerError::Unavailable))?;
+        Ok((Self::reading(authorization, id, &record)?, header))
     }
     fn reading(
         authorization: &AgentEventStreamAuthorization,

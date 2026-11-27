@@ -337,12 +337,15 @@ pub(super) fn handshake_pressure_before_preparation() {
         "/fixture".into(),
         crate::hosted::acp::tests::settings(None, false),
         &updates,
+        None,
     ));
     assert!(matches!(warm, Err(crate::AdapterError::AtCapacity(_))));
     drop(warm);
     let settings = crate::hosted::acp::tests::settings(None, false);
     let cwd = format!("/{}", "x".repeat(4095));
-    let pending = fixture.bridge.handshake(None, cwd, settings, &updates);
+    let pending = fixture
+        .bridge
+        .handshake(None, cwd, settings, &updates, None);
     eprintln!("handshake_future_stack_bytes={}", size_of_val(&pending));
     // block_on boxes large futures; measure JSON preparation separately from
     // that fixed executor allocation by passing a stack-pinned reference.
