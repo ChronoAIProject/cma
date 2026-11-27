@@ -3,7 +3,7 @@ import test from 'node:test';
 import {NonOwnerRouter} from '../routing.mjs';
 import {provenanceKnownAbort, provenanceUnknownCommit} from './provenance_progress.mjs';
 
-function fixture({changedTransaction = false, abortCount = 1} = {}) {
+function fixture({changedTransaction = false, abortCount = 1, unboundSample, entered} = {}) {
   const record = {agentId: 'agent', sandboxId: 'sandbox', operationId: 'operation'};
   const owner = {am: 'a', agent_id: record.agentId, epoch: 4, instance_id: 'owner', pod_uid: 'owner-pod'};
   const original = {agent_id: record.agentId, creation_origin: 'manual', created_at: '2026-01-01T00:00:00Z'};
@@ -28,9 +28,11 @@ function fixture({changedTransaction = false, abortCount = 1} = {}) {
         return {armed: true, count: 20, agent_revision: revision};
       }
       if (action === 'sample') {
+        if (unboundSample) return unboundSample;
         const replaced = ++calls === 2 && changedTransaction;
         return {transaction_sha256: (replaced ? 'b' : 'a').repeat(64), commit_transaction_sha256: 'd'.repeat(64)};
       }
+      if (action === 'abort_fault') return {entered};
       if (action === 'observe') {
         assert.ok(active && prompt);
         return {recorded: true, sweep_finished: true, agent_revision: revision};
@@ -85,6 +87,23 @@ test('provenance abort refuses ambiguous failpoint accounting after restoration'
   const state = fixture({abortCount: 2});
   await assert.rejects(provenanceKnownAbort(state), /provenance_progress_abort_not_consumed_once/);
   assert.deepEqual(state.read(), {active: false, prompt: null});
+});
+
+test('provenance abort classifies missed holds and restores without a peer write', async t => {
+  let now = 0;
+  t.mock.method(performance, 'now', () => now += 21_000);
+  for (const [readSeen, entered, error] of [
+    [true, true, /provenance_progress_read_without_claim/],
+    [false, true, /provenance_progress_fault_entered_without_held_read/],
+    [false, false, /provenance_progress_fault_not_entered/],
+  ]) {
+    const state = fixture({unboundSample: {matching_read_seen: readSeen}, entered});
+    await assert.rejects(provenanceKnownAbort(state), error);
+    const statusCheck = readSeen ? [] : ['abort_fault'];
+    assert.deepEqual(state.actions, ['arm', 'sample', ...statusCheck, 'restore']);
+    assert.deepEqual(state.writes, []);
+    assert.deepEqual(state.read(), {active: false, prompt: null});
+  }
 });
 
 function uncertainFixture({reusedSweep = false, lost = 5, confirmed = false} = {}) {

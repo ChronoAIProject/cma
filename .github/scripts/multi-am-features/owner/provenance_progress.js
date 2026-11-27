@@ -39,14 +39,23 @@
       && row.attr?.appName === app).map(row => row.attr);
   }
 
+  async function claimedTransaction(command) {
+    // The global log is shared by both Managers and can evict a successful
+    // claim while the aggregate is still waiting. Read the filtered profiler.
+    const matches = await d.getCollection('system.profile').find({
+      appName: app, 'command.findAndModify': progress.getName(),
+      'command.lsid': command.lsid, 'command.txnNumber': command.txnNumber,
+      nMatched: 1, nModified: 1,
+    }, {command: 1}).limit(2).toArray();
+    const [row] = matches;
+    return matches.length === 1 && claim(row.command) ? row.command : null;
+  }
+
   if (action === 'sample' || action === 'verify') {
-    const rows = await logs();
-    const claimed = rows.filter(row => claim(row.command) && row.nMatched === 1 && row.nModified === 1);
-    const matchingClaims = command => claimed.filter(row => transaction(row.command) === transaction(command));
     if (action === 'verify') {
-      const aborted = rows.filter(row => row.errCode === 112 && targetRead(row.command)
-        && sha(transaction(row.command)) === scope.transaction && matchingClaims(row.command).length === 1);
-      print(JSON.stringify({aborted: aborted.length === 1}));
+      const aborted = (await logs()).filter(row => row.errCode === 112 && targetRead(row.command)
+        && sha(transaction(row.command)) === scope.transaction);
+      print(JSON.stringify({aborted: aborted.length === 1 && Boolean(await claimedTransaction(aborted[0].command))}));
       return;
     }
     const operations = await admin.aggregate([
@@ -55,13 +64,19 @@
         'command.aggregate': 'agents', 'command.autocommit': false}},
       {$limit: 16},
     ]).toArray();
-    const targets = operations.filter(({command}) => targetRead(command) && matchingClaims(command).length === 1);
+    const targets = [];
+    const matchingReads = operations.filter(({command}) => targetRead(command));
+    for (const operation of matchingReads) {
+      const claimed = await claimedTransaction(operation.command);
+      if (claimed) targets.push({operation, claimRevision: Number(claimed.query.revision)});
+    }
     if (targets.length > 1) throw Error('provenance_progress_multiple_held_reads');
-    const held = targets[0];
+    const held = targets[0]?.operation;
     const identity = held ? transaction(held.command) : null;
     print(JSON.stringify({transaction_sha256: held ? sha(String(held.opid) + ':' + identity) : null,
       commit_transaction_sha256: identity ? sha(identity) : null,
-      ...(unknown && held ? {claim_revision: Number(matchingClaims(held.command)[0].command.query.revision)} : {})}));
+      ...(!unknown ? {matching_read_seen: matchingReads.length > 0} : {}),
+      ...(unknown && held ? {claim_revision: targets[0].claimRevision} : {})}));
     return;
   }
 

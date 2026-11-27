@@ -26,8 +26,7 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
   await withRestoration(async () => {
     armed = await control('arm');
     check(armed?.armed === true && Number.isSafeInteger(armed.count), 'provenance_progress_not_armed');
-    const held = await poll(() => control('sample'), value => /^[a-f0-9]{64}$/.test(value?.transaction_sha256 ?? ''),
-      {timeout: 20000, interval: 150, code: 'provenance_progress_read_not_held'});
+    const held = await waitForAbortRead(control);
     digest = held.transaction_sha256;
     check(/^[a-f0-9]{64}$/.test(held.commit_transaction_sha256 ?? ''), 'provenance_progress_claim_not_bound');
     const {body: updated} = await api.router.dispatch(agentId, am => {
@@ -73,6 +72,26 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
   }
   return {agent_sha256: hash(agentId), ingress, owner: owner.am, owner_epoch: owner.epoch,
     overlapping_transaction_sha256: digest, known_aborts: 1, recorded: 1, original_creation_restored: true};
+}
+
+async function waitForAbortRead(control) {
+  const timeoutCode = 'provenance_progress_read_not_held';
+  let readSeen = false;
+  try {
+    return await poll(async () => {
+      const sample = await control('sample');
+      readSeen ||= sample?.matching_read_seen === true;
+      return sample;
+    }, value => /^[a-f0-9]{64}$/.test(value?.transaction_sha256 ?? ''),
+    {timeout: 20000, interval: 150, code: timeoutCode});
+  } catch (error) {
+    if (error.message !== timeoutCode) throw error;
+    if (readSeen) throw new Error('provenance_progress_read_without_claim', {cause: error});
+    const fault = await control('abort_fault').catch(() => null);
+    if (fault?.entered === true) throw new Error('provenance_progress_fault_entered_without_held_read', {cause: error});
+    if (fault?.entered === false) throw new Error('provenance_progress_fault_not_entered', {cause: error});
+    throw error;
+  }
 }
 
 export async function provenanceUnknownCommit({adapter, api, record, recordFailure}) {

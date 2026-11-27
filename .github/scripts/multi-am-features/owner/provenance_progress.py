@@ -118,6 +118,8 @@ def provenance_backfill(fixture, *, action, agentId, sandboxId, operationId, unk
         profile_progress(fixture, True)
         armed = (run_script(fixture, scope, COMMIT_SCRIPT) if unknown else
                  timed_publication_abort(fixture, 'arm', None, 'agents', operation='aggregate'))
+        if not unknown:
+            state['abort_baseline'] = armed['count']
         changed = run_script(fixture, {**scope, 'original': original})
         state['previous_receipt'] = changed.pop('previous_receipt', None)
         return {**changed, **armed}
@@ -125,6 +127,8 @@ def provenance_backfill(fixture, *, action, agentId, sandboxId, operationId, unk
         return {'restored': False}
     if state is None or state['target'] != target:
         raise RuntimeError('provenance_progress_scope_changed')
+    if action == 'abort_fault' and not unknown:
+        return timed_publication_abort(fixture, 'wait', state['abort_baseline'], 'agents', operation='aggregate')
     if action in ('sample', 'observe', 'verify'):
         observed = run_script(fixture, {**scope, 'transaction': transaction,
                                         'previous_receipt': state['previous_receipt']})
