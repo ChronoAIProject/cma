@@ -1,12 +1,14 @@
 import { SidebarContext } from '../shell/sidebarContext';
 import { useContext, useState, type ReactNode, type Ref } from 'react';
 import type { AgentStatus } from '../api/types';
-import { statusLabel } from '../vocabulary/status';
-import { activityWords, type ActivityStatus } from './activityStatus';
+import { AgentMascot } from '../brand/AgentMascot';
+import { agentVisual } from '../brand/agentVisual';
+import type { SandboxStatusObservation } from '../sandbox/presentation';
+import type { ActivityStatus } from './activityStatus';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import type { TaskAcceptance } from '@cma/client';
-import { acceptanceForTurn, taskAcceptanceLabel, taskAcceptanceReason } from './taskAcceptance';
+import { acceptanceForTurn, taskAcceptanceStatus } from './taskAcceptance';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import type { Crumb } from '../ui/PageHeader';
 import {
@@ -26,6 +28,8 @@ export const AGENT_DETAILS = 'agent-details';
 export function AgentHeader({
   title,
   status,
+  parentSandbox,
+  readOnly = false,
   activityStatus,
   turnId,
   taskAcceptance,
@@ -46,6 +50,8 @@ export function AgentHeader({
 }: {
   readonly title: string;
   readonly status: AgentStatus;
+  readonly parentSandbox?: SandboxStatusObservation;
+  readonly readOnly?: boolean;
   readonly activityStatus?: ActivityStatus;
   readonly turnId?: string;
   readonly taskAcceptance?: TaskAcceptance;
@@ -70,8 +76,15 @@ export function AgentHeader({
   readonly onReviewEnvironment?: () => void;
 }) {
   const acceptance = status === 'ready' ? acceptanceForTurn(taskAcceptance, turnId) : undefined;
-  const acceptanceLabel = taskAcceptanceLabel(acceptance);
-  const acceptanceReason = taskAcceptanceReason(acceptance);
+  const visual = agentVisual({
+    status: detailsUnavailable ? undefined : status,
+    sandbox: parentSandbox,
+    task:
+      taskAcceptanceStatus(acceptance) ??
+      (activityStatus === 'completed' ? undefined : activityStatus),
+    acceptance,
+    turnId,
+  });
   const [open, setMenuOpen] = useState(false);
   const setOpen = (value: boolean) => {
     setMenuOpen(value);
@@ -141,20 +154,19 @@ export function AgentHeader({
           <button
             type="button"
             className="agent-toolbar__title"
-            title={`${title} · ${activityStatus === undefined ? statusLabel(status) : activityWords[activityStatus]}`}
+            title={title}
             aria-label={detailsOpen ? 'Hide Agent details' : 'Show Agent details'}
             disabled={detailsUnavailable}
             onClick={() => onDetailsOpenChange(!detailsOpen)}
           >
-            <span title={title}>{title}</span>
+            <span>{title}</span>
             <IconChevronDownOutline14 />
           </button>
         </h1>
-        {acceptanceLabel ? (
-          <span title={acceptanceReason}>
-            <Badge tone={acceptanceReason ? 'warning' : 'neutral'}>{acceptanceLabel}</Badge>
-          </span>
-        ) : null}
+      </div>
+      <div className="agent-toolbar__status" title={visual.detail}>
+        <AgentMascot visual={visual} size={32} />
+        {readOnly ? <Badge tone="neutral">Read only</Badge> : null}
       </div>
       <div className="agent-toolbar__actions">
         {onShare ? (

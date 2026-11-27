@@ -1,5 +1,5 @@
 import '../test/connectedAccounts';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { useAgentController } from './controller';
 import { AgentSurface } from './AgentSurface';
@@ -57,12 +57,7 @@ it('retains the v2 view on Stop, folds terminal events, and displays a rejected 
   const beforeSnapshots = h.snapshot.mock.calls.length;
   const beforeTranscripts = vi.mocked(h.client.readAgentTranscript).mock.calls.length;
   await act(async () => screen.getByRole('button', { name: 'Stop current Agent' }).click());
-  await waitFor(() =>
-    expect(screen.getByRole('button', { name: 'Show Agent details' })).toHaveAttribute(
-      'title',
-      'Agent one · Stopped',
-    ),
-  );
+  expect(await within(screen.getByRole('banner')).findByText('Agent stopped')).toBeVisible();
   await act(async () => h.durable(1, { type: 'stopped', reason: 'Owner requested stop' }));
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBe(title);
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);

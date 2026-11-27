@@ -13,6 +13,7 @@ import { LocalStartup, localTime } from './agent-startup-fixtures';
 
 // Public HTTP fixtures exercise the full browser UI, not a running Sandbox/backend.
 const longName = 'research-findings-with-a-deliberately-long-filename-for-truncation.md';
+const longAgentTitle = 'ReviewTheCompleteResearchEvidenceBeforePublishingTheFinalReport';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 
 function hold() {
@@ -99,6 +100,62 @@ async function details(page: Page) {
   await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
 }
 
+async function narrowHeader(page: Page, title: string, owner: boolean) {
+  const header = page.locator('.agent-toolbar');
+  const heading = header.getByRole('heading', { name: title, exact: true });
+  const details = header.getByRole('button', { name: 'Show Agent details' });
+  const more = header.getByRole('button', { name: 'More Agent actions' });
+  const actions = [details, header.getByRole('button', { name: 'Show Agent computer' }), more];
+  const share = header.getByRole('button', { name: 'Share', exact: true });
+  if (owner) actions.splice(1, 0, share);
+  else await expect(share).toHaveCount(0);
+  const widths = [479, 480, 481, 500, 520, 390, 320].map((width) => ({
+    width,
+    conversationWidth: width,
+  }));
+  if (owner) widths.unshift({ width: 784, conversationWidth: 520 });
+  for (const { width, conversationWidth } of widths) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect
+      .poll(() => header.evaluate((element) => element.clientWidth))
+      .toBe(conversationWidth);
+    if (width !== conversationWidth)
+      await expect(page.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
+    await expect(header).toBeInViewport({ ratio: 1 });
+    const titleText = heading.locator('button > span');
+    await expect(titleText).toHaveCSS('height', '40px');
+    expect(
+      (await titleText.boundingBox())!.width,
+      `title text in the ${conversationWidth}px conversation`,
+    ).toBeGreaterThanOrEqual(96);
+    const poster = header.locator('.agent-mascot__poster');
+    await expect(poster).toHaveCSS('width', '32px');
+    await expect(poster).toHaveCSS('height', '32px');
+    await expect.poll(() => poster.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(32);
+    await expect(header.locator('.agent-mascot__sprite')).toHaveCount(0);
+    for (const action of actions) {
+      await expect(action).toBeInViewport({ ratio: 1 });
+      const box = (await action.boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      expect((await poster.boundingBox())!.y).toBeGreaterThanOrEqual(box.y + box.height);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+  }
+  await details.focus();
+  for (const action of actions.slice(1)) {
+    await page.keyboard.press('Tab');
+    await expect(action).toBeFocused();
+  }
+  await page.keyboard.press('Enter');
+  const menu = page.getByRole('menu', { name: 'More Agent actions' });
+  await expect(menu).toBeVisible();
+  if (!owner) await expect(menu.getByRole('menuitem', { name: /^Rename/ })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(more).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
 async function screenshots(page: Page, dialog: Locator, name: string, info: TestInfo) {
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => {
@@ -161,6 +218,8 @@ test('LOCAL owner files and independent share links fit desktop and narrow scree
   baseURL,
 }, info) => {
   const boundary = new LocalStartup();
+  const ownerTitle = `${longAgentTitle} — results, decisions and follow-up from the review`;
+  boundary.agent = { ...boundary.agent, owner_title: ownerTitle };
   await boundary.route(page, baseURL!);
   const filesystem = await files(page);
   let links: AgentShareLink[] = [];
@@ -199,6 +258,7 @@ test('LOCAL owner files and independent share links fit desktop and narrow scree
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
+  await narrowHeader(page, ownerTitle, true);
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await composer.fill('Preserve my unsent message while browsing files.');
   await details(page);
@@ -271,7 +331,7 @@ test('LOCAL share URL redemption opens an attributed reader with read-only files
   const shared = {
     access: 'shared',
     id: 'agt_contract',
-    title: 'Shared research session',
+    title: longAgentTitle,
     status: 'ready',
     created_at: localTime,
     updated_at: localTime,
@@ -337,6 +397,10 @@ test('LOCAL share URL redemption opens an attributed reader with read-only files
   await expect(page.getByRole('heading', { name: shared.title })).toBeVisible();
   await expect(page.getByRole('note')).toContainText('Shared by Alex Chen');
   await expect(page.getByRole('note')).toContainText('View-only access');
+  const status = page.locator('.agent-toolbar__status');
+  await expect(status.getByText('Read only', { exact: true })).toBeVisible();
+  await expect(status.getByText('Ready', { exact: true })).toBeVisible();
+  await narrowHeader(page, shared.title, false);
   expect(new URL(page.url()).hash).toBe('');
   expect(redemption.length).toBeGreaterThan(0);
   expect(redemption.every((body) => JSON.stringify(body) === JSON.stringify({ token }))).toBe(true);

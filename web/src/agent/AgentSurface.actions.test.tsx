@@ -1,5 +1,5 @@
 import '../test/connectedAccounts';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT } from '../test/agent';
@@ -25,6 +25,54 @@ const ALL_ACTIONS = {
   deleteAgent: true,
   exportHistory: true,
 };
+
+it.each([
+  [true, false, 'Pausing'],
+  [false, false, 'Ready'],
+  [true, true, 'Ready'],
+] as const)(
+  'uses only a fresh, matching parent operation in the heading',
+  (matches, stale, label) => {
+    const sandbox = sandboxFixture();
+    render(
+      <AgentSurface
+        agentId={AGENT_DETAIL.id}
+        viewerId="owner"
+        controller={controller(
+          {
+            status: 'ready',
+            detail: AGENT_DETAIL,
+            workspace: workspaceFixture(),
+            conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+          },
+          undefined,
+          {
+            progressObservation: {
+              sandbox: {
+                ...sandbox,
+                id: matches ? AGENT_DETAIL.sandbox.id : 'sbx_other',
+                owner: 'owner',
+                lifecycle: {
+                  ...sandbox.lifecycle!,
+                  operation: {
+                    purpose: 'pause',
+                    phase: 'checkpoint',
+                    startedAt: sandbox.createdAt,
+                  },
+                },
+              },
+              stale,
+            },
+          },
+        )}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(within(screen.getByRole('banner')).getByText(label, { exact: true })).toBeVisible();
+  },
+);
 
 it.each([false, true])(
   'offers owner restart only when the server advertises it (%s)',
