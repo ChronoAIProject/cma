@@ -276,10 +276,7 @@ it('holds approvals while saving and distinguishes pending admission from an act
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   rerender(draw({ pending: 'send', inputAvailability: { allowed: true } }));
   expect(screen.queryByText('Starting.', { exact: true })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Show Agent details' })).toHaveAttribute(
-    'title',
-    'Agent one · Working',
-  );
+  expect(within(screen.getByRole('banner')).getByText('Working', { exact: true })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   expect(draft).toHaveValue('Keep my draft');
   rerender(draw({ pending: 'send', inputAvailability }, 'run-active'));

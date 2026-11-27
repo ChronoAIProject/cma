@@ -46,9 +46,9 @@ it('keeps header and selected sidebar status together across stream and navigati
     </CmaClientProvider>,
   );
   await act(() => vi.advanceTimersByTimeAsync(0));
-  const header = () => document.querySelector('.agent-toolbar__title');
+  const header = () => document.querySelector('.agent-toolbar__status');
   const row = () => document.querySelector('.tree-row[data-node-id="agent:agt_1"]');
-  expect(header()).toHaveAttribute('title', expect.stringContaining('· Ready'));
+  expect(header()).toHaveTextContent('Ready');
   expect(row()).toHaveTextContent('Status unavailable');
   expect(update).toBeDefined();
   await act(async () =>
@@ -60,7 +60,7 @@ it('keeps header and selected sidebar status together across stream and navigati
       delta: [{ op: 'replace', path: '/status', value: 'working' }],
     }),
   );
-  expect(header()).toHaveAttribute('title', expect.stringContaining('· Working'));
+  expect(header()).toHaveTextContent('Working');
   expect(row()).toHaveTextContent('Working');
   workspace = {
     ...workspace,
@@ -71,7 +71,7 @@ it('keeps header and selected sidebar status together across stream and navigati
     })),
   };
   await act(() => vi.advanceTimersByTimeAsync(15000));
-  expect(header()).toHaveAttribute('title', expect.stringContaining('· Stopped'));
+  expect(header()).toHaveTextContent('Agent stopped');
   expect(row()).toHaveTextContent('Stopped');
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
 });

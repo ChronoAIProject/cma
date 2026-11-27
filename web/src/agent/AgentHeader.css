@@ -7,6 +7,7 @@
 .agent-toolbar {
   grid-row: 1;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
@@ -23,7 +24,23 @@
   min-width: 0;
 }
 .agent-toolbar__identity {
-  flex: 1;
+  flex: 1 1 min(12rem, 100%);
+}
+.agent-toolbar__status {
+  display: flex;
+  flex: 0 0 12rem;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  min-width: 0;
+  max-inline-size: 40%;
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+}
+.agent-toolbar__status > :first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .agent-toolbar__actions {
   flex: none;
@@ -55,7 +72,7 @@
   box-shadow: var(--focus-ring);
 }
 .agent-toolbar__heading {
-  min-width: var(--dsw-alias-workspace-title-min);
+  min-width: 0;
   margin: 0;
   font-size: 14px;
   line-height: 20px;
@@ -77,13 +94,16 @@
   color: var(--dsw-alias-label-primary);
   font: inherit;
   font-weight: 600;
+  text-align: start;
   cursor: pointer;
   transition: background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
-.agent-toolbar__title span {
+.agent-toolbar__title > span {
+  display: -webkit-box;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 .agent-toolbar__title svg {
   flex: none;
@@ -133,14 +153,21 @@
   min-height: 160px;
   resize: vertical;
 }
-@container agent-conversation (max-width: 30rem) {
+@container agent-conversation (max-width: 40rem) {
   .agent-toolbar {
     padding-inline: 8px;
     gap: 4px;
-    flex-wrap: wrap;
   }
+  .agent-toolbar__identity > button,
+  .agent-toolbar__actions button,
   .agent-toolbar__title {
     min-height: 44px;
+    min-width: 44px;
+  }
+  .agent-toolbar__status {
+    order: 1;
+    flex-basis: 100%;
+    max-inline-size: none;
   }
   .agent-toolbar__progress {
     order: 1;

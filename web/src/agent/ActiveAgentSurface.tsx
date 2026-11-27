@@ -234,6 +234,7 @@ export function ActiveAgentSurface({
     agentId,
     readOnly || verified === undefined ? undefined : lifecycleClient,
   );
+  const commandPending = actionsBusy || controller.pending !== undefined;
   return (
     <ComputerContext value={computerObservation}>
       <section className="agent-surface">
@@ -242,14 +243,10 @@ export function ActiveAgentSurface({
           onViewDeletionStatus={onViewDeletionStatus}
           onTitleUpdated={controller.applyAgentTitle}
           detail={detail}
+          parentSandbox={observed?.stale === false ? currentSandbox : undefined}
           readOnly={readOnly}
-          actionsBusy={actionsBusy || controller.pending !== undefined || !controlReady}
-          busy={
-            status !== 'ready' ||
-            actionsBusy ||
-            controller.pending !== undefined ||
-            state.historyLoading === true
-          }
+          actionsBusy={commandPending || !controlReady}
+          busy={status !== 'ready' || commandPending || state.historyLoading === true}
           filesOpen={filesOpen}
           onFilesOpenChange={accessUncertain ? undefined : onFilesOpenChange}
           title={title}
