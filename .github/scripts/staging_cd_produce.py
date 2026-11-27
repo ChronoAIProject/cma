@@ -21,6 +21,7 @@ from staging_cd_release_archive import ARCHIVE, MANIFEST, path_for, seal
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_reservations import Reservations, ReservationSuperseded
 from staging_cd_resolve import output as step_output
+from staging_cd_targets import RUNTIME_TARGETS
 from staging_cd_test_failures import public_summary
 from staging_cd_timing import Timings
 
@@ -84,7 +85,10 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
         with timings.stage("source"):
             snapshot(root, reservation["source"], source)
         archive = None
-        if not native and reservation["component"] in COMPONENTS:
+        runtime_layer_writer = (reservation["component"] in RUNTIME_TARGETS
+                                and env.get("CD_LAYER_ARCHIVE_CACHE") == "enabled"
+                                and env.get("CD_LAYER_CACHE_WRITER_FLOOR") == "verified")
+        if not native and reservation["component"] in COMPONENTS and not runtime_layer_writer:
             release, _, _ = identity(reservation, source)
             diagnostics.mark("reuse")
             with timings.stage("reuse"):

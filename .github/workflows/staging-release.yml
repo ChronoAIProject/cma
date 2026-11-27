@@ -36,9 +36,12 @@ permissions:
 jobs:
   native:
     name: Native release image
+    # Runtime cache admission needs the pending layers and replay record on the publishing runner.
     if: >-
       vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true' && !inputs.protected_web &&
-      (inputs.component == 'am' || inputs.component == 'runtime' || inputs.component == 'runtime-omarchy')
+      (inputs.component == 'am' ||
+      ((inputs.component == 'runtime' || inputs.component == 'runtime-omarchy') &&
+      !(vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true')))
     uses: ./.github/workflows/staging-native-image.yml
     permissions:
       contents: read

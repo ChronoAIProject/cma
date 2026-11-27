@@ -207,6 +207,34 @@ class ArchiveHandoffTests(unittest.TestCase):
             build.assert_called_once()
             reuse.assert_not_called()
 
+    def test_runtime_with_bounded_writer_builds_on_the_publishing_runner(self):
+        for component in ("runtime", "runtime-omarchy"):
+            release = fixture_identity(component=component)
+            reservation = {key: value for key, value in release.items() if key != "build"}
+            reservation["schema"] = "cma-version-reservation-v1"
+            task = {"mode": "publish", "reservation": reservation, "component": component}
+
+            def build_image(_root, _reservation, directory, **_options):
+                archive = directory / ARCHIVE
+                archive.write_bytes(b"synthetic runtime archive")
+                return archive, release
+
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as temporary, \
+                    contextlib.ExitStack() as stack:
+                root = Path(temporary)
+                env = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": release["source"],
+                       "GITHUB_RUN_ID": str(release["run_id"]), "GITHUB_RUN_ATTEMPT": str(release["run_attempt"]),
+                       "CD_COMPONENT": component, "CD_TASKS": json.dumps([task]), "RUNNER_TEMP": str(root),
+                       "CD_LAYER_ARCHIVE_CACHE": "enabled", "CD_LAYER_CACHE_WRITER_FLOOR": "verified"}
+                for name in ("event_identity", "GitHub", "snapshot", "Reservations"):
+                    stack.enter_context(patch.object(staging_cd_produce, name))
+                reuse = stack.enter_context(patch.object(staging_cd_produce, "try_reuse"))
+                build = stack.enter_context(patch.object(staging_cd_produce, "build", side_effect=build_image))
+                self.assertEqual(staging_cd_produce.produce(env, root, Mock(), {}), "prepared")
+                self.assertIsNotNone(load(path_for(root / "cma-prepared-release", reservation), release))
+                build.assert_called_once()
+                reuse.assert_not_called()
+
     def test_handoff_refuses_a_different_reservation_or_build(self):
         identity = fixture_identity(component="runtime")
         with tempfile.TemporaryDirectory() as temporary:

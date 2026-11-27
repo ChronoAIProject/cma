@@ -181,6 +181,22 @@ class StagingWorkflowTest < Minitest::Test
     release = workflow('staging-release').fetch('jobs')
     producer = release.fetch('native')
     assert_equal './.github/workflows/staging-native-image.yml', producer.fetch('uses')
+    condition = producer.fetch('if')
+    output, status = Open3.capture2e('node', '-e', <<~JS)
+      for (const component of ['am', 'runtime', 'runtime-omarchy', 'web', 'eg']) {
+        for (const bounded of ['true', 'false']) {
+          for (const writer of ['true', 'false']) {
+            const vars = { CMA_STAGING_RELEASE_ARCHIVE_HANDOFF: 'true',
+              CMA_BOUNDED_LAYER_CACHE: bounded, CMA_LAYER_CACHE_WRITER_FLOOR: writer };
+            const inputs = { component, protected_web: false };
+            const runtime = component.startsWith('runtime');
+            const expected = component === 'am' || (runtime && (bounded === 'false' || writer === 'false'));
+            if (Boolean(#{condition}) !== expected) throw new Error([component, bounded, writer]);
+          }
+        }
+      }
+    JS
+    assert status.success?, output
     assert_equal({ 'contents' => 'read', 'actions' => 'read' }, producer.fetch('permissions'))
     publish = release.fetch('publish')
     assert_equal 'native', publish.fetch('needs')
