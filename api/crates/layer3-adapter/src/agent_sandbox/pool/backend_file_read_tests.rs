@@ -121,10 +121,21 @@ async fn checked_file_read_reuses_home_proof_and_refuses_changed_live_template()
     );
     fixture.effects.calls.lock().unwrap().clear();
 
-    assert!(fixture.read().await.unwrap().is_some());
+    let phases = Arc::new(Mutex::new(Vec::new()));
+    let recorded = phases.clone();
+    let result = crate::file_read_diagnostics::scope(
+        move |stage, _, _| recorded.lock().unwrap().push(stage),
+        fixture.read(),
+    )
+    .await;
+    assert!(result.unwrap().is_some());
     let reads = fixture.effects.calls.lock().unwrap().clone();
     assert!(reads.contains(&format!("GET {template}")));
-    assert!(!reads.contains(&format!("GET {VOLUME}")));
+    assert!(reads.contains(&format!("GET {VOLUME}")));
+    assert!(phases
+        .lock()
+        .unwrap()
+        .contains(&crate::file_read_diagnostics::Stage::ReadBindingReused));
 
     fixture
         .bound
@@ -140,6 +151,31 @@ async fn checked_file_read_reuses_home_proof_and_refuses_changed_live_template()
         Err(AdapterError::Rejected(_))
     ));
     assert_eq!(fixture.transport.0.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn checked_file_read_refuses_live_claim_and_pvc_changes_on_the_same_boot() {
+    for change_claim in [true, false] {
+        let fixture = FileFixture::start().await;
+        assert!(fixture.read().await.unwrap().is_some());
+        {
+            let mut state = fixture.bound.fixture.state.lock().unwrap();
+            if change_claim {
+                let path = format!("{}/sandboxclaims/{}", prefix(), fixture.bound.claim.name);
+                let claim = state.rows.get_mut(&path).unwrap();
+                claim["status"]["sandbox"]["name"] = json!("other-member");
+                claim["metadata"]["resourceVersion"] = json!("changed-version");
+            } else {
+                state.rows.get_mut(VOLUME).unwrap()["metadata"]["deletionTimestamp"] =
+                    json!("2026-01-01T00:00:00Z");
+            }
+        }
+        assert!(matches!(
+            fixture.read().await,
+            Err(AdapterError::Rejected(_))
+        ));
+        assert_eq!(fixture.transport.0.load(Ordering::SeqCst), 1);
+    }
 }
 
 #[tokio::test]

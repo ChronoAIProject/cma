@@ -1,6 +1,7 @@
 //! Bound file reads to a verified native assignment while the Runtime checks its live home.
 use super::*;
-use crate::file_read_diagnostics::{measure, Stage as ReadStage};
+use crate::agent_sandbox::{NativeHomeRevision, NativeRuntimeProof};
+use crate::file_read_diagnostics::{measure, measure_by_result, Stage as ReadStage};
 use tokio::time::{Duration, Instant};
 
 const BINDING_VALIDITY: Duration = Duration::from_millis(crate::owner_protocol::RECEIVER_LEASE_MS);
@@ -18,16 +19,22 @@ fn dispatch_deadline(expires: Instant, now: Instant) -> Result<Instant> {
 
 #[derive(Default)]
 pub(super) struct FileReadBinding {
-    verified: Option<(String, Instant)>,
+    verified: Option<VerifiedBinding>,
     legacy_boot: Option<String>,
 }
 
+#[derive(Clone)]
+struct VerifiedBinding {
+    boot: String,
+    expires: Instant,
+    home_revision: Option<NativeHomeRevision>,
+}
+
 impl FileReadBinding {
-    fn valid_until(&self, boot: &str, now: Instant) -> Option<Instant> {
-        self.verified
-            .as_ref()
-            .filter(|(verified_boot, _)| verified_boot == boot)
-            .and_then(|(_, expires)| dispatch_deadline(*expires, now).ok())
+    fn current(&self, boot: &str, now: Instant) -> Option<&VerifiedBinding> {
+        self.verified.as_ref().filter(|binding| {
+            binding.boot == boot && dispatch_deadline(binding.expires, now).is_ok()
+        })
     }
 }
 
@@ -70,44 +77,54 @@ impl AgentSandboxBackend {
         {
             return Err(binding_changed());
         }
-        let expires = {
+        let started = Instant::now();
+        let prior = {
+            let proof = assigned.file_read.lock().await;
+            if proof.legacy_boot.as_ref() == Some(&request.boot_id) {
+                return Ok(None);
+            }
+            proof.current(&request.boot_id, started).cloned()
+        };
+        let (current, policy) = tokio::join!(
+            self.observe_read_binding(
+                handle,
+                home,
+                &assigned,
+                prior
+                    .as_ref()
+                    .and_then(|binding| binding.home_revision.as_ref()),
+            ),
+            measure(
+                ReadStage::ReadPolicy,
+                self.client.verify_native_runtime_policy(handle, home),
+            ),
+        );
+        let current = current?;
+        self.client
+            .complete_native_runtime_policy(home, current.member(), policy)?;
+        // Reuse preserves the original expiry. Fresh validation starts the
+        // clock before observing the first provider resource.
+        let expires = if let Some(prior) = prior.filter(|_| current.home_reused()) {
+            dispatch_deadline(prior.expires, Instant::now())?
+        } else {
+            let expires = dispatch_deadline(started + BINDING_VALIDITY, Instant::now())?;
             let mut proof = assigned.file_read.lock().await;
             if proof.legacy_boot.as_ref() == Some(&request.boot_id) {
                 return Ok(None);
             }
-            let started = Instant::now();
-            let policy = || {
-                measure(
-                    ReadStage::ReadPolicy,
-                    self.client.verify_native_runtime_policy(handle, home),
-                )
-            };
-            if let Some(expires) = proof.valid_until(&request.boot_id, started) {
-                drop(proof);
-                // The template can change without changing the Pod, home or boot.
-                // An upgraded retained member may use its own live policy proof.
-                if let Err(error) = policy().await {
-                    let current = self.observe_read_binding(handle, home, &assigned).await?;
-                    self.client.complete_native_runtime_policy(
-                        home,
-                        current.member(),
-                        Err(error),
-                    )?;
-                }
-                expires
-            } else {
-                proof.verified = None;
-                let (current, policy) =
-                    tokio::join!(self.observe_read_binding(handle, home, &assigned), policy());
-                let current = current?;
-                self.client
-                    .complete_native_runtime_policy(home, current.member(), policy)?;
-                // Age includes observation time. A slow authority check cannot
-                // extend the lifetime of the resources it read first.
-                let expires = dispatch_deadline(started + BINDING_VALIDITY, Instant::now())?;
-                proof.verified = Some((request.boot_id.clone(), expires));
-                expires
+            // A late observation cannot replace a newer validated proof.
+            if proof
+                .verified
+                .as_ref()
+                .is_none_or(|binding| binding.expires <= expires)
+            {
+                proof.verified = Some(VerifiedBinding {
+                    boot: request.boot_id.clone(),
+                    expires,
+                    home_revision: current.home_revision().cloned(),
+                });
             }
+            expires
         };
         if !self.assignment_is_current(handle, &assigned) {
             return Err(binding_changed());
@@ -177,17 +194,28 @@ impl AgentSandboxBackend {
         handle: &RuntimeHandle,
         home: &HomeVolumeAttachment,
         assigned: &binding::Assignment,
-    ) -> Result<crate::agent_sandbox::NativeRuntimeProof> {
-        measure(ReadStage::ReadBinding, async {
-            let current = self
-                .client
-                .native_runtime_proof(handle, &assigned.request, home)
-                .await?;
-            if current.pod() != &assigned.pod || !current.matches(&assigned.request, home)? {
-                return Err(binding_changed());
-            }
-            Ok(current)
-        })
+        prior: Option<&NativeHomeRevision>,
+    ) -> Result<NativeRuntimeProof> {
+        measure_by_result(
+            ReadStage::ReadBinding,
+            async {
+                let current = self
+                    .client
+                    .native_runtime_proof_with_revision(handle, &assigned.request, home, prior)
+                    .await?;
+                if current.pod() != &assigned.pod || !current.matches(&assigned.request, home)? {
+                    return Err(binding_changed());
+                }
+                Ok(current)
+            },
+            |current| {
+                if current.home_reused() {
+                    ReadStage::ReadBindingReused
+                } else {
+                    ReadStage::ReadBinding
+                }
+            },
+        )
         .await
     }
 }
@@ -205,11 +233,15 @@ mod tests {
         let now = Instant::now();
         let expires = now + BINDING_VALIDITY;
         let proof = FileReadBinding {
-            verified: Some(("boot".into(), expires)),
+            verified: Some(VerifiedBinding {
+                boot: "boot".into(),
+                expires,
+                home_revision: None,
+            }),
             legacy_boot: None,
         };
-        assert_eq!(proof.valid_until("boot", now), Some(expires));
-        assert_eq!(proof.valid_until("replacement", now), None);
-        assert_eq!(proof.valid_until("boot", expires - DISPATCH_MARGIN), None);
+        assert_eq!(proof.current("boot", now).unwrap().expires, expires);
+        assert!(proof.current("replacement", now).is_none());
+        assert!(proof.current("boot", expires - DISPATCH_MARGIN).is_none());
     }
 }
