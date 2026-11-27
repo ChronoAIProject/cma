@@ -92,14 +92,28 @@ fn stale_unschedulable_condition_does_not_override_current_pod_state() {
 
 #[test]
 fn scheduler_diagnostics_report_only_unique_classes_for_the_pending_pod() {
+    struct LogWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for LogWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     let (member, mut pod) = resources("fixture-pod-uid", 0, false, false);
     pod.spec = Some(serde_json::from_value(json!({"containers": []})).unwrap());
     pod.status.as_mut().unwrap().phase = Some("Pending".into());
     let output = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let sink = output.clone();
     let subscriber = tracing_subscriber::fmt()
         .without_time()
         .with_ansi(false)
-        .with_writer(output.clone())
+        .with_writer(move || LogWriter(sink.clone()))
         .finish();
     tracing::subscriber::with_default(subscriber, || {
         let _span = tracing::warn_span!("claim", owner = "fixture-owner").entered();
