@@ -128,8 +128,9 @@ class ShardTests(unittest.TestCase):
             ("--first-response", PARTITIONS["FIRST_RESPONSE_TEST"]),
             ("--history", "store::usage_reports::tests::history_batch::seven_day_history_generates_and_reuses_complete_421_member_report"),
             ("--ranked-projection", PARTITIONS["RANKED_PROJECTION_TEST"]),
+            ("--tc070-control", PARTITIONS["TC070_CONTROL_TEST"]),
         ))
-        self.assertEqual(len(PARTITIONS["ISOLATED_TESTS"]), 9)
+        self.assertEqual(len(PARTITIONS["ISOLATED_TESTS"]), 10)
         script = (ROOT / "mongo-contract-tests.sh").read_text()
         self.assertIn("--test-threads 1 --no-fail-fast", script)
         self.assertEqual(script.count("readiness_deadline=$((SECONDS + 60))"), 2)

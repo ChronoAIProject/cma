@@ -37,6 +37,7 @@ readonly observation_budget_test='store::sandbox_mongo_integration_tests::resour
 readonly first_response_test='store::usage_reports::tests::submission::default_day_report_serves_four_hundred_sandboxes_without_polling'
 readonly history_test='store::usage_reports::tests::history_batch::seven_day_history_generates_and_reuses_complete_421_member_report'
 readonly ranked_projection_test='store::usage_reports::tests::projection_scale::aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources'
+readonly tc070_control_test='store::sandbox_mongo_integration_tests::command_ledger_tests::targeted_control_tests::capacity_control_qualification::tc070_admitted_controls_remain_bounded_at_retained_home_capacity'
 selection='all'
 suite_filter=$(python3 "$script_directory/mongo-contract-registry.py" --filter)
 readonly suite_filter
@@ -66,6 +67,7 @@ nextest_contracts() {
     scan-cooperation) selection_filter="package(=cma) and test(=$scan_cooperation_test)" ;;
     history) selection_filter="package(=cma) and test(=$history_test)" ;;
     ranked-projection) selection_filter="package(=cma) and test(=$ranked_projection_test)" ;;
+    tc070-control) selection_filter="package(=cma) and test(=$tc070_control_test)" ;;
     first-response) selection_filter="package(=cma) and test(=$first_response_test)" ;;
     bson-ceiling) selection_filter="package(=cma) and test(=$bson_ceiling_test)" ;;
     agent-list-contracts) selection_filter='package(=cma) and test(::resource_access_tests::personal_inventory::contracts::)' ;;
@@ -76,7 +78,7 @@ nextest_contracts() {
     request-limits) selection_filter='package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::anonymous_mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))' ;;
     cpu-profile) selection_filter="package(=cma) and test(::cpu_profile::)" ;;
     observation-budget) selection_filter="package(=cma) and test(=$observation_budget_test)" ;;
-    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test) or test(=$first_response_test) or test(=$history_test) or test(=$ranked_projection_test)) & not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=$observation_budget_test))" ;;
+    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test) or test(=$first_response_test) or test(=$history_test) or test(=$ranked_projection_test) or test(=$tc070_control_test)) & not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=$observation_budget_test))" ;;
   esac
   # The two-Manager job repeats these tests without removing them from the ordinary corpus.
   if [[ "$selection" == prepared-startup ]]; then
@@ -122,6 +124,8 @@ elif [[ $# == 1 && "$1" == '--scan-cooperation' ]]; then
   selection='scan-cooperation'
 elif [[ $# == 1 && "$1" == '--ranked-projection' ]]; then
   selection='ranked-projection'
+elif [[ $# == 1 && "$1" == '--tc070-control' ]]; then
+  selection='tc070-control'
 elif [[ $# == 1 && "$1" == '--history' ]]; then
   selection='history'
 elif [[ $# == 1 && "$1" == '--first-response' ]]; then
@@ -180,6 +184,14 @@ else
   readonly wired_tiger_cache='0.25'
 fi
 
+# TC-070 opens and drops hundreds of indexed databases. Give this isolated
+# fixture enough memory to finish while ordinary fixtures keep their 2 GiB cap.
+if [[ "$selection" == 'tc070-control' ]]; then
+  readonly mongo_memory='4g'
+else
+  readonly mongo_memory='2g'
+fi
+
 # Refuse an existing name before establishing a cleanup scope or creating data.
 existing_volume=$(docker volume ls --quiet --filter "name=^${contract_volume}$")
 [[ -z "$existing_volume" ]] || exit 1
@@ -220,7 +232,7 @@ volume_owner=$(docker volume inspect --format '{{index .Labels "dev.chrono.cma.m
 [[ "$volume_owner" == "$contract_name" ]] || exit 1
 bash "$repo_root/.github/scripts/pull-pinned-image.sh" "$mongo_image"
 docker run --detach --name "$contract_name" --label "$contract_label" \
-  --publish 127.0.0.1::27017 --memory 2g --memory-swap 2g --cpus "$mongo_cpus" --pids-limit 256 \
+  --publish 127.0.0.1::27017 --memory "$mongo_memory" --memory-swap "$mongo_memory" --cpus "$mongo_cpus" --pids-limit 256 \
   --ulimit nofile=64000:64000 \
   --mount "type=volume,source=${contract_volume},target=/data/db" \
   --tmpfs /data/configdb:rw,size=16777216 \
