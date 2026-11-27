@@ -44,6 +44,9 @@ pub(super) fn authorize_public<'a>(
         context,
         credential,
         browser_proof,
+        peer_browser: request
+            .extensions()
+            .get::<crate::auth::relay::PeerBrowserReceipt>(),
         capture_write_target,
     });
     async move {
@@ -63,6 +66,7 @@ pub(super) struct PublicRequest<'a> {
     pub context: &'a CallerContext,
     pub credential: Option<&'a str>,
     pub browser_proof: Option<&'a crate::auth::relay::BrowserRelayProof>,
+    pub peer_browser: Option<&'a crate::auth::relay::PeerBrowserReceipt>,
     pub capture_write_target: bool,
 }
 
@@ -72,6 +76,15 @@ pub(super) trait PublicAuthorization: Send + Sync {
         &self,
         request: PublicRequest<'_>,
     ) -> Result<Option<FileWriteTarget>, PublicRefusal>;
+
+    async fn project_browser(
+        &self,
+        _proof: &crate::auth::relay::BrowserRelayProof,
+        _method: &Method,
+        _uri: &Uri,
+    ) -> Result<crate::auth::relay::PeerBrowserClaim, StatusCode> {
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    }
 }
 
 #[derive(Debug)]
@@ -123,10 +136,13 @@ impl PublicAuthorization for PublicAccess {
             context,
             credential,
             browser_proof,
+            peer_browser,
             capture_write_target,
         } = request;
         let operation = operation(method, uri)?;
-        if browser_proof.is_some_and(|proof| !proof.matches(method, uri)) {
+        if browser_proof.is_some_and(|proof| !proof.matches(method, uri))
+            || peer_browser.is_some_and(|proof| !proof.matches(method, uri))
+        {
             return Err(StatusCode::UNAUTHORIZED.into());
         }
         let caller = crate::auth::relay::RelayCaller::verify(
@@ -135,6 +151,7 @@ impl PublicAuthorization for PublicAccess {
             context,
             credential,
             browser_proof,
+            peer_browser,
         )
         .await?;
         let mut write_target = None;
@@ -232,6 +249,15 @@ impl PublicAuthorization for PublicAccess {
         }
         caller.current().await.map_err(PublicRefusal::from)?;
         Ok(write_target)
+    }
+
+    async fn project_browser(
+        &self,
+        proof: &crate::auth::relay::BrowserRelayProof,
+        method: &Method,
+        uri: &Uri,
+    ) -> Result<crate::auth::relay::PeerBrowserClaim, StatusCode> {
+        proof.peer_claim(&self.auth, method, uri).await
     }
 }
 

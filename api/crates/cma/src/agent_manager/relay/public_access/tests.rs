@@ -120,6 +120,7 @@ async fn authorize(
             context,
             credential: None,
             browser_proof: None,
+            peer_browser: None,
             capture_write_target: false,
         })
         .await

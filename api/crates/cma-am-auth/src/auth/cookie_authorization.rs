@@ -24,13 +24,14 @@ pub(super) struct BrowserVerification {
     pub(super) evidence: Arc<identity::VerifiedSubject>,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct VerificationKey {
     subject: SubjectId,
     incarnation: String,
     pub generation: u64,
-    access: SecretDigest,
-    expires_at: SystemTime,
+    access: [u8; 32],
+    pub(super) expires_at: SystemTime,
 }
 
 impl VerificationKey {
@@ -39,7 +40,8 @@ impl VerificationKey {
             subject: state.subject.clone(),
             incarnation: state.incarnation.clone(),
             generation: state.token_generation,
-            access: SecretDigest::identify("cookie-verification", tokens.access_token.expose()),
+            access: *SecretDigest::identify("cookie-verification", tokens.access_token.expose())
+                .as_bytes(),
             expires_at: tokens.expires_at,
         }
     }
