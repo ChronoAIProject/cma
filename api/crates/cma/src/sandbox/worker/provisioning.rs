@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
@@ -6,6 +7,7 @@ use layer2_core::sandbox::{
     RuntimeBinding, Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep,
 };
 use layer3_adapter::RuntimeProvisionRequest;
+use tracing::Instrument;
 
 use super::support::{
     adapter_failure, credential_failure, credential_rotation_at, credential_valid_for_delivery,
@@ -15,8 +17,18 @@ use super::SandboxWorker;
 use crate::sandbox::runtime_mapping::sandbox_spec;
 
 impl SandboxWorker {
-    #[tracing::instrument(skip_all, fields(sandbox_id = %sandbox.id))]
-    pub(super) async fn provision(
+    pub(super) fn provision(
+        &self,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> impl Future<Output = Result<(), SandboxStoreError>> + Send + '_ {
+        let span = tracing::info_span!("provision", sandbox_id = %sandbox.id);
+        // Enter the span only after the provision future is on the heap. The
+        // unboxed tracing wrapper leaves a second large frame above retries.
+        Box::pin(self.provision_runtime(sandbox, now)).instrument(span)
+    }
+
+    async fn provision_runtime(
         &self,
         mut sandbox: Sandbox,
         now: SystemTime,

@@ -289,28 +289,54 @@ impl AgentWorker {
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
-        let claimed = agent.clone();
-        let result = if matches!(
+        if matches!(
             agent.work.step,
             AgentWorkStep::RemoveHome
                 | AgentWorkStep::RemoveWorktree
                 | AgentWorkStep::EnsureProcessClosed
         ) {
+            return self.execute_with_retired_cleanup(agent, now, started).await;
+        }
+        let claimed = agent.clone();
+        let result = self.execute_step(agent, now).await;
+        self.finish_execution(&claimed, result, now, started).await
+    }
+
+    // Keep the cleanup path's parent records and publication futures out of
+    // the common poll frame, including when the selected step is startup.
+    fn execute_with_retired_cleanup(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+        started: tokio::time::Instant,
+    ) -> impl Future<Output = Result<(), SandboxStoreError>> + Send + '_ {
+        Box::pin(async move {
+            let claimed = agent.clone();
             let preflight = self.prepare_retired_cleanup(&agent).await;
             let at = now + started.elapsed();
-            match preflight {
+            let result = match preflight {
                 Ok(Some(parents)) => self.complete_retired_cleanup(&agent, parents, at).await,
                 Ok(None) => self.execute_step(agent, at).await,
                 Err(error) => return self.finish_cleanup_preflight(&agent, error, at).await,
-            }
-        } else {
-            self.execute_step(agent, now).await
-        };
-        let result = self
-            .finish_capacity_attempt(&claimed, result, now + started.elapsed())
-            .await;
-        self.finish_cleanup_attempt(&claimed, result, now + started.elapsed())
-            .await
+            };
+            self.finish_execution(&claimed, result, now, started).await
+        })
+    }
+
+    fn finish_execution<'a>(
+        &'a self,
+        claimed: &'a Agent,
+        result: Result<(), SandboxStoreError>,
+        now: SystemTime,
+        started: tokio::time::Instant,
+    ) -> impl Future<Output = Result<(), SandboxStoreError>> + Send + 'a {
+        Box::pin(async move {
+            let result = self
+                .finish_capacity_attempt(claimed, result, now + started.elapsed())
+                .await;
+            self.finish_cleanup_attempt(claimed, result, now + started.elapsed())
+                .await
+        })
     }
 
     #[cfg(test)]

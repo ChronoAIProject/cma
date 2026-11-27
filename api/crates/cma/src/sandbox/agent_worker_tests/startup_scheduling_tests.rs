@@ -1,6 +1,14 @@
 use super::*;
 
 #[tokio::test]
+async fn startup_execution_keeps_retirement_work_out_of_the_worker_future() {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let agent = harness.admit("startup-stack-budget", Vec::new()).await;
+    let execution = harness.worker.execute_claimed_for_test(agent, harness.now);
+    assert!(std::mem::size_of_val(&execution) < 64 * 1024);
+}
+
+#[tokio::test]
 async fn fresh_agent_startup_drains_to_ready_with_each_effect_receipted_once() {
     let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     let admitted = harness.admit("fresh-scheduled", vec![]).await;
