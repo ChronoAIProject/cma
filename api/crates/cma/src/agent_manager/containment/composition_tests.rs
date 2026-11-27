@@ -24,21 +24,13 @@ async fn all_flag_combinations_dispatch_only_the_selected_housekeeping_consumer(
                 .unwrap();
             let receiver =
                 ClassifiedReceiver::install(&old, Some(ReceiverSettlementFailure::Unavailable));
-            let first = manager.maintain_receivers(vec![old.clone()]).await;
+            manager.maintain_receivers(vec![old.clone()]).await.unwrap();
             if combined {
-                first.unwrap();
                 manager.maintain_receivers(vec![]).await.unwrap();
-            } else if receiver_only {
-                first.unwrap();
-            } else {
-                assert!(matches!(first, Err(OwnershipError::Unavailable(_))));
             }
             assert!(!old.is_current());
             assert!(healthy.is_current() && manager.coordinator.is_ready());
-            assert_eq!(
-                manager.contained.pending(),
-                usize::from(!combined && receiver_only)
-            );
+            assert_eq!(manager.contained.pending(), usize::from(!combined));
             assert_eq!(
                 receiver.typed_calls.load(Ordering::Acquire),
                 usize::from(combined)
@@ -64,22 +56,98 @@ async fn all_flag_combinations_dispatch_only_the_selected_housekeeping_consumer(
                     .unwrap());
             }
             *receiver.failure.lock().unwrap() = None;
-            if combined || receiver_only {
-                manager.maintain_receivers(vec![]).await.unwrap();
-                assert!(manager
-                    .coordinator
-                    .store
-                    .owner(&id)
-                    .await
-                    .unwrap()
-                    .is_none());
-                assert_eq!(manager.contained.pending(), 0);
-            }
+            manager.maintain_receivers(vec![]).await.unwrap();
+            assert!(manager
+                .coordinator
+                .store
+                .owner(&id)
+                .await
+                .unwrap()
+                .is_none());
+            assert_eq!(manager.contained.pending(), 0);
             assert_eq!(healthy.run(async { 42 }).await.unwrap(), 42);
             manager.drain().await.unwrap();
             client.database(&name).drop().await.unwrap();
         }
     }
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
+async fn legacy_supervisor_survives_unavailable_receiver_and_retries_fenced_owner() {
+    let (client, name, manager, healthy_id) = configured(false, false).await;
+    manager.activate().await.unwrap();
+    let supervisor = manager.supervisor.lock().await.as_ref().unwrap().id();
+    let healthy = manager
+        .coordinator
+        .acquire(&healthy_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let inactive = AgentId("retired-agent".into());
+    let old = manager
+        .coordinator
+        .acquire(&inactive)
+        .await
+        .unwrap()
+        .unwrap();
+    let receiver = ClassifiedReceiver::install(&old, Some(ReceiverSettlementFailure::Unavailable));
+    manager
+        .retired_since
+        .lock()
+        .unwrap()
+        .insert(inactive.clone(), Instant::now() - Duration::from_secs(61));
+
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while manager.contained.pending() == 0 {
+            assert!(manager.is_ready());
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(receiver.legacy_calls.load(Ordering::Acquire) > 0);
+    assert_eq!(receiver.typed_calls.load(Ordering::Acquire), 0);
+    assert!(!old.is_current());
+    assert_eq!(
+        manager
+            .coordinator
+            .store
+            .owner(&inactive)
+            .await
+            .unwrap()
+            .unwrap()
+            .token,
+        old.token
+    );
+    assert!(healthy.is_current() && manager.is_ready());
+    assert!(!*manager.coordinator.failure_signal().borrow());
+    *receiver.failure.lock().unwrap() = None;
+
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while manager.contained.pending() != 0 {
+            assert!(manager.is_ready());
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(receiver.legacy_calls.load(Ordering::Acquire) >= 2);
+    assert!(manager
+        .coordinator
+        .store
+        .owner(&inactive)
+        .await
+        .unwrap()
+        .is_none());
+    let task = manager.supervisor.lock().await;
+    let running = task.as_ref().unwrap();
+    assert_eq!(running.id(), supervisor);
+    assert!(!running.is_finished());
+    drop(task);
+    assert_eq!(healthy.run(async { 42 }).await.unwrap(), 42);
+    manager.drain().await.unwrap();
+    client.database(&name).drop().await.unwrap();
 }
 
 #[tokio::test]

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { createContext, useEffect, useMemo, useState } from 'react';
 import type { TaskAcceptance } from '@cma/client';
 import type { AgentStatus } from '../api/types';
 import { agentVisual } from '../brand/agentVisual';
@@ -13,6 +13,9 @@ export interface TurnPresentation {
   readonly authEpoch: number;
   readonly sandbox?: SandboxStatusObservation;
 }
+
+export const TurnMascotContext = createContext(false);
+export type TurnVisual = ReturnType<typeof useTurnVisual>;
 
 export function useTurnVisual(
   presentation: TurnPresentation | undefined,

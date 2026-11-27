@@ -23,7 +23,7 @@ VERIFICATION_REASONS = frozenset({
     "rollout-timeout", "rollout-failed", "image-digest", "ownership", "recovery-ownership",
     "recovery-revision", "phase-budget", "image-identity", "served-identity", "status-shape",
     "pod-evidence", "cohort", "serving", "acceptance", "startup-observation", "startup-schema",
-    "namespace-fence", "interrupted", "result", "unreported",
+    "namespace-fence", "dependency-changed", "dependency-unverified", "interrupted", "result", "unreported",
     # The controller names every other failure with its coarse refusal cause.
     *(REASONS - {"preflight"}),
 })

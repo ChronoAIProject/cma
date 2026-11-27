@@ -10,8 +10,14 @@ impl CreationOutcomes {
         identity: &Identity<'_>,
         query: &LookupRequest,
     ) -> Result<Outcome, StatusCode> {
+        let (snapshot, mut session) = self.read_snapshot().await?;
+        self.resolve_snapshot(&snapshot, identity, query, &mut session)
+            .await
+    }
+
+    pub(super) async fn read_snapshot(&self) -> Result<(Database, ClientSession), StatusCode> {
         let client = self.database.client();
-        let mut session = client
+        let session = client
             .start_session()
             .snapshot(true)
             .await
@@ -27,8 +33,7 @@ impl CreationOutcomes {
                 ))
                 .build(),
         );
-        self.resolve_snapshot(&snapshot, identity, query, &mut session)
-            .await
+        Ok((snapshot, session))
     }
 
     async fn resolve_snapshot(

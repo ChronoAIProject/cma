@@ -7,6 +7,9 @@ use mongodb::{
 
 use super::*;
 
+#[path = "mongo_pre_validation_tests.rs"]
+mod mongo_pre_validation_tests;
+
 #[tokio::test]
 #[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
 async fn invalid_covered_lifecycle_submission_settles_before_the_sweeper() {

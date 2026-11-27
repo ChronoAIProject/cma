@@ -300,6 +300,8 @@ pub enum AgentLifecycleProvisioningError {
     },
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("retained home capacity is temporarily unavailable")]
+    HomeCapacity,
     #[error("desktop is unavailable: {0}")]
     DesktopUnsupported(String),
     #[error("the Agent Manager lifecycle implementation is unavailable")]
@@ -333,6 +335,7 @@ impl IntoResponse for AgentLifecycleProvisioningError {
     fn into_response(self) -> Response {
         let (status, slug, code, detail) = match &self {
             Self::AdmissionPaused => return super::admission_problem::paused(),
+            Self::HomeCapacity => return super::admission_problem::home_capacity(),
             Self::Template(error) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "task-template-invalid",

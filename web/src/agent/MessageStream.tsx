@@ -24,7 +24,7 @@ import { messageStreamKey } from './streamTimeline';
 import { acceptanceForTurn } from './taskAcceptance';
 import { currentExternalApproval } from './externalApproval';
 import { TurnRetryAction } from './TurnRetryAction';
-import type { TurnPresentation } from './turnVisual';
+import { TurnMascotContext, useTurnVisual, type TurnPresentation } from './turnVisual';
 
 interface MessageStreamProps {
   readonly retained?: boolean;
@@ -91,6 +91,12 @@ export function MessageStream({
         ? { turnClient, turnAgent, turnViewer, turnAccess, epoch }
         : undefined,
     [turnClient, turnAgent, turnViewer, turnAccess, epoch],
+  );
+  const turnVisual = useTurnVisual(
+    historyOnly ? undefined : turnPresentation,
+    turnAuthority,
+    conversation,
+    taskAcceptance,
   );
   const {
     agentId: deliveryAgent,
@@ -251,13 +257,7 @@ export function MessageStream({
           ))}
         </div>
         {historyOnly ? null : (
-          <ActiveThinking
-            conversation={conversation}
-            stopping={stopping}
-            presentation={turnPresentation}
-            authority={turnAuthority}
-            taskAcceptance={taskAcceptance}
-          />
+          <ActiveThinking conversation={conversation} stopping={stopping} brand={turnVisual} />
         )}
         {optimisticMessages?.map((message, index) => (
           <article
@@ -301,7 +301,7 @@ export function MessageStream({
             </Button>
           </div>
         ) : null}
-        {children}
+        <TurnMascotContext value={turnVisual !== undefined}>{children}</TurnMascotContext>
         {feedback?.error ? (
           <div className="message-footer__error" role="status">
             <span>{feedback.error}</span>
