@@ -1,6 +1,4 @@
 //! Credential delivery only after the caller durably adopts a native pool member.
-use std::time::Duration;
-
 use kube::{api::AttachParams, ResourceExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
@@ -10,7 +8,7 @@ use crate::{
     Result, RuntimeHandle,
 };
 
-pub(super) const ASSIGN_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) use crate::runtime_bootstrap::NATIVE_ASSIGNMENT_DEADLINE as ASSIGN_TIMEOUT;
 const RECEIPT_LIMIT: usize = 1024;
 const STDERR_LIMIT: usize = 4096;
 
@@ -40,6 +38,30 @@ impl AgentSandboxClient {
         })
         .await
         .map_err(|_| unavailable("runtime assignment timed out"))?
+    }
+
+    pub(crate) async fn confirm_staging_startup_failure(
+        &self,
+        runtime: &RuntimeHandle,
+        expected: &PodBinding,
+        mut bootstrap: RuntimeBootstrapRequest,
+        receipt: &RuntimeBootstrapReceipt,
+    ) -> Result<()> {
+        receipt.validate_for(&bootstrap)?;
+        self.validate_assignment(runtime, expected, &bootstrap)?;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            if self.pod_binding(runtime).await? != *expected {
+                return Err(rejected(
+                    "runtime incarnation changed before staging confirmation",
+                ));
+            }
+            bootstrap.staging_startup_confirmed = true;
+            self.deliver_assignment(&expected.pod_name, &bootstrap)
+                .await?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| unavailable("staging startup confirmation timed out"))?
     }
 
     pub(super) fn validate_assignment(

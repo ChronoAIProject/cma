@@ -59,6 +59,8 @@ pub enum AuthoringSourceError {
     InvalidResponse(String),
     #[error("authoring query is invalid: {0}")]
     InvalidQuery(String),
+    #[error("skill catalog access requires service authorization")]
+    SkillsAuthorizationRequired,
     #[error("repository is absent or inaccessible")]
     RepositoryNotFound,
     #[error("repository reference is absent")]
@@ -105,6 +107,8 @@ pub enum ProfileAuthoringError {
     ServicesUnavailable,
     #[error("profile skill catalog is unavailable")]
     SkillsUnavailable,
+    #[error("skill catalog access requires service authorization")]
+    SkillsAuthorizationRequired,
     #[error("repository verification is unavailable")]
     RepositoryUnavailable,
 }
@@ -181,6 +185,9 @@ impl ProfileAuthoringService {
             .await
             .map_err(|error| match error {
                 AuthoringSourceError::InvalidQuery(_) => ProfileAuthoringError::InvalidQuery,
+                AuthoringSourceError::SkillsAuthorizationRequired => {
+                    ProfileAuthoringError::SkillsAuthorizationRequired
+                }
                 _ => ProfileAuthoringError::SkillsUnavailable,
             })?;
         if !validation::skills(&page, &query) {

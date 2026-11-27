@@ -410,6 +410,31 @@
       "captures": {}
     },
     {
+      "id": "authoring-skills-authorization-required",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_skills_authorization",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/skill-catalog-authorization-required",
+          "title": "skill catalog authorization required",
+          "status": 403,
+          "detail": "The current credential requires service authorization to read the skill catalog.",
+          "code": "skill_catalog_authorization_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "authoring-skills-malformed_data",
       "operation": "GET /api/v1/profile-authoring/skills",
       "scenario": "authoring_malformed_data",

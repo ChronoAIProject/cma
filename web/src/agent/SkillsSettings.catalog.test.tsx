@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
 import type { AgentSkillsView } from '../api/client';
+import * as serviceAuthorization from '../auth/serviceAuthorization';
 import { agentClient } from '../test/agent';
 import { referenceClient } from '../test/references';
 import { SkillsSettings } from './SkillsSettings';
@@ -97,6 +98,55 @@ it('keeps repeated failures distinct from empty success and restores search and 
   expect(await screen.findByRole('button', { name: 'Install TypeScript' })).toBeEnabled();
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   expect(f.install).not.toHaveBeenCalled();
+});
+
+it('requests Ornn consent for the selected Agent and loads the catalog on return', async () => {
+  const f = fixture();
+  f.search.mockRejectedValue(
+    new ApiError(403, privateBody, 'skill_catalog_authorization_required'),
+  );
+  const consentUrl = 'https://provider.example/consent';
+  const start = vi
+    .spyOn(serviceAuthorization, 'startServiceAuthorization')
+    .mockRejectedValueOnce(new Error('synthetic failure'))
+    .mockResolvedValueOnce(consentUrl);
+  const navigate = vi
+    .spyOn(serviceAuthorization, 'navigateToServiceAuthorization')
+    .mockImplementation(() => undefined);
+  const view = render(f.view());
+  await open();
+  const authorize = await screen.findByRole('button', { name: 'Authorize Ornn access' });
+  expect(screen.getByRole('textbox', { name: 'Search available Ornn skills' })).toBeDisabled();
+  expect(screen.queryByRole('button', { name: 'Retry Ornn catalog' })).toBeNull();
+  expect(start).not.toHaveBeenCalled();
+  await userEvent.click(authorize);
+  await screen.findByText(/Ornn authorization could not start/);
+  expect(screen.getByRole('link', { name: 'sign in again' })).toHaveAttribute(
+    'href',
+    expect.stringContaining('return_to=%2Fagents%2Fagent-one'),
+  );
+  await userEvent.click(authorize);
+  expect(start).toHaveBeenLastCalledWith(
+    { type: 'agent', id: 'agent-one' },
+    'owner-one',
+    '/agents/agent-one',
+    expect.any(AbortSignal),
+    'skill_catalog',
+  );
+  expect(navigate).toHaveBeenCalledOnce();
+  expect(navigate).toHaveBeenCalledWith(window, consentUrl);
+  expect(f.install).not.toHaveBeenCalled();
+
+  view.unmount();
+  f.search.mockResolvedValue(page);
+  render(f.view());
+  await open();
+  const search = screen.getByRole('textbox', { name: 'Search available Ornn skills' });
+  expect(await screen.findByRole('button', { name: 'Install TypeScript' })).toBeEnabled();
+  expect(search).toBeEnabled();
+  await userEvent.type(search, 'typescript');
+  await waitFor(() => expect(f.search).toHaveBeenLastCalledWith('typescript', expect.anything()));
+  expect(screen.queryByRole('alert')).toBeNull();
 });
 
 it('keeps installed read failures independent from a successful catalog', async () => {

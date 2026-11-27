@@ -92,7 +92,7 @@ async fn cancelled_sweep_wait_retains_child_after_durable_barrier() {
     .await
     .unwrap();
     // Polling starts the owned child. Dropping this scheduling wait leaves it alive.
-    let mut wait = Box::pin(sweep.next());
+    let mut wait = Box::pin(reconciled(&mut sweep));
     assert!(futures_util::poll!(wait.as_mut()).is_pending());
     drop(wait);
     tokio::time::timeout(Duration::from_secs(1), async {
@@ -112,11 +112,24 @@ async fn cancelled_sweep_wait_retains_child_after_durable_barrier() {
     })
     .await
     .unwrap();
-    for _ in 0..3 {
-        assert!(tokio::time::timeout(Duration::from_millis(5), sweep.next())
-            .await
-            .is_err());
-    }
+    // The pending operation remains discoverable while its owned child is held at stop.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            match sweep.next().await {
+                SweepEvent::Discovered {
+                    count: 1,
+                    end_of_scan: true,
+                } => break,
+                SweepEvent::Waiting => continue,
+                _ => panic!("expected to rediscover the held operation before reconciliation"),
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let mut wait = Box::pin(reconciled(&mut sweep));
+    assert!(futures_util::poll!(wait.as_mut()).is_pending());
+    drop(wait);
     assert_eq!(
         *directory.endpoint(1).calls.lock().unwrap(),
         ["query", "barrier"]

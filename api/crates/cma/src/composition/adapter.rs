@@ -157,7 +157,8 @@ pub(super) async fn production_adapter(
             &connection.authority,
             runtime_capacity.clone(),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+        .with_staging_startup_failure(config.staging_startup_failure.clone());
         client
             .inventory()
             .await

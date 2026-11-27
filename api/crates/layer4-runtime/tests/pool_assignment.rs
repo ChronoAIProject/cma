@@ -98,6 +98,8 @@ impl Fixture {
     fn request(&self) -> RuntimeBootstrapRequest {
         RuntimeBootstrapRequest {
             version: RUNTIME_BOOTSTRAP_VERSION,
+            staging_startup_failure: None,
+            staging_startup_confirmed: false,
             pod_uid: "original-pod".into(),
             environment: BTreeMap::from([
                 ("CHRONO_SANDBOX_ID".into(), "sbx_cli".into()),
@@ -318,4 +320,104 @@ async fn assignment_cli_gates_network_authenticates_and_rebinds_retained_home_af
     );
     resumed.kill().await.unwrap();
     assert_private(&resumed.wait_with_output().await.unwrap(), &request);
+}
+
+fn faulty_request(fixture: &Fixture, incarnation: &str) -> RuntimeBootstrapRequest {
+    use layer3_adapter::runtime_bootstrap::StagingStartupFailure;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let mut request = fixture.request();
+    let sandbox_id = "sbx_00000000000000000000000000000001";
+    request
+        .environment
+        .insert("CHRONO_SANDBOX_ID".into(), sandbox_id.into());
+    let now = SystemTime::now();
+    let expiry = now.duration_since(UNIX_EPOCH).unwrap().as_secs() + 300;
+    request.staging_startup_failure = Some(
+        StagingStartupFailure::from_setting(
+            Some("staging"),
+            &format!("{sandbox_id}:{expiry}"),
+            now,
+        )
+        .unwrap()
+        .bind_incarnation(incarnation)
+        .unwrap(),
+    );
+    request
+}
+
+#[tokio::test]
+async fn staging_startup_failure_requires_exact_confirmation_and_clears_on_the_same_home() {
+    let fixture = Fixture::new();
+    let mut request = faulty_request(&fixture, "original-incarnation");
+    let runtime = fixture.waiting("original-pod").await;
+    let mut confirm = request.clone();
+    confirm.staging_startup_confirmed = true;
+    fixture.assign(&confirm, false).await;
+
+    let mut wrong = request.clone();
+    wrong
+        .environment
+        .insert("CHRONO_SANDBOX_ID".into(), "sbx_untargeted".into());
+    fixture.assign(&wrong, false).await;
+    fixture.assign(&request, true).await;
+    assert!(tokio::net::TcpStream::connect(fixture.address)
+        .await
+        .is_err());
+
+    let mut obsolete = faulty_request(&fixture, "obsolete-incarnation");
+    obsolete.staging_startup_confirmed = true;
+    fixture.assign(&obsolete, false).await;
+    fixture.assign(&confirm, true).await;
+    let output = tokio::time::timeout(Duration::from_secs(10), runtime.wait_with_output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert_private(&output, &request);
+    let logs = [output.stdout, output.stderr].concat();
+    assert!(String::from_utf8_lossy(&logs).contains("runtime startup interrupted after assignment"));
+    assert!(!fixture.root.join("state").exists());
+
+    request.staging_startup_failure = None;
+    let mut recovered = fixture.waiting("original-pod").await;
+    fixture.assign(&request, true).await;
+    assert!(!fixture.status(&request).await.installation_ready);
+    recovered.kill().await.unwrap();
+}
+
+#[tokio::test]
+async fn staging_startup_failure_without_manager_confirmation_serves_normally() {
+    use layer3_adapter::runtime_bootstrap::NATIVE_ASSIGNMENT_DEADLINE;
+
+    let fixture = Fixture::new();
+    let request = faulty_request(&fixture, "unconfirmed-incarnation");
+    let mut runtime = fixture.waiting("original-pod").await;
+    fixture.assign(&request, true).await;
+    // Simulate an accepted request whose receipt or post-delivery proof the
+    // manager could not use. There is no confirmation for this incarnation.
+    tokio::time::timeout(
+        NATIVE_ASSIGNMENT_DEADLINE + Duration::from_secs(20),
+        async {
+            while tokio::net::TcpStream::connect(fixture.address)
+                .await
+                .is_err()
+            {
+                assert!(
+                    runtime.try_wait().unwrap().is_none(),
+                    "unconfirmed runtime exited"
+                );
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!fixture.status(&request).await.installation_ready);
+    runtime.kill().await.unwrap();
+    let output = runtime.wait_with_output().await.unwrap();
+    let logs = [output.stdout, output.stderr].concat();
+    assert!(
+        !String::from_utf8_lossy(&logs).contains("runtime startup interrupted after assignment")
+    );
 }

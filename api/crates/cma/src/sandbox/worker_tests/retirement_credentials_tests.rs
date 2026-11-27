@@ -209,6 +209,40 @@ async fn permanent_revocation_outage_finishes_retry_budget_and_retains_custody()
 }
 
 #[tokio::test]
+async fn exhausted_retirement_records_unresolved_issuance_and_retains_the_slot() {
+    use layer2_core::sandbox::work_retry::WORK_RETRY_BUDGET;
+
+    let h = Harness::new(Vec::new(), 0, Duration::ZERO).await;
+    let created = h.create().await;
+    let mut now = start_time(&created);
+    let active = h.drive_active(&created.id, now).await;
+    *h.credentials.settlement_failure.lock().unwrap() = Some(CredentialError::Uncertain);
+    h.service
+        .delete(&caller("owner", [Capability::DeleteOwnSandbox]), &active.id)
+        .await
+        .unwrap();
+    h.run(&active.id, now).await;
+    for _ in 0..=WORK_RETRY_BUDGET {
+        h.run(&active.id, now).await;
+        let stored = h.stored(&active.id).await;
+        if !stored.retirement_retry_exhausted() {
+            now = stamp_time(&stored.work.ready_at);
+        }
+    }
+    let stored = h.stored(&active.id).await;
+    assert!(stored.retirement_retry_exhausted());
+    assert!(!stored.retirement_released_owner_slot());
+    let events = h.store.sandbox_events(&active.id, 0, 100).await.unwrap();
+    assert!(matches!(
+        &events.last().unwrap().kind,
+        SandboxEventKind::WorkStepFailed {
+            step: SandboxWorkStep::RevokeRetirementCredentials,
+            failure,
+        } if failure.class == "credential_issuance_unresolved"
+    ));
+}
+
+#[tokio::test]
 async fn missing_provider_authority_cannot_authorize_cleanup_from_empty_parent_metadata() {
     let h = Harness::new(Vec::new(), 0, Duration::ZERO).await;
     let created = h.create().await;

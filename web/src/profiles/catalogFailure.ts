@@ -8,7 +8,13 @@ import {
 
 export interface CatalogFailure {
   readonly kind:
-    'sign_in' | 'forbidden' | 'rate_limited' | 'unavailable' | 'invalid_response' | 'invalid_query';
+    | 'sign_in'
+    | 'forbidden'
+    | 'service_authorization'
+    | 'rate_limited'
+    | 'unavailable'
+    | 'invalid_response'
+    | 'invalid_query';
   readonly message: string;
   readonly retry: boolean;
   readonly retryAfterMs?: number;
@@ -20,6 +26,7 @@ export interface CatalogFailure {
 const codes = new Set([
   'not_authenticated',
   'forbidden',
+  'skill_catalog_authorization_required',
   'rate_limited',
   'profile_skills_unavailable',
   'profile_services_unavailable',
@@ -58,6 +65,13 @@ export function catalogFailure(cause: unknown): CatalogFailure {
       retry: false,
     };
   if (cause instanceof ApiError) {
+    if (cause.status === 403 && cause.code === 'skill_catalog_authorization_required')
+      return {
+        ...diagnostics,
+        kind: 'service_authorization',
+        message: 'Authorize Ornn access and sign in again to load the skills catalog.',
+        retry: false,
+      };
     if (cause.status === 403)
       return {
         ...diagnostics,
