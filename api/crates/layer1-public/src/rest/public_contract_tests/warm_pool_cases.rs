@@ -18,9 +18,11 @@ fn view() -> WarmPoolView {
         cpu_millis: 1000,
         memory_mib: 1024,
         target_replicas: 2,
+        provider_target_replicas: None,
         ready_replicas: None,
         observed: false,
         status: "pending".into(),
+        retirement_status: None,
         resource_name: None,
         error: None,
         machine: false,
@@ -47,8 +49,18 @@ impl Pools {
 #[async_trait]
 impl WarmPoolAdministration for Pools {
     async fn list(&self, _: &Caller) -> Result<WarmPoolList, WarmPoolError> {
+        let retiring_desktop = WarmPoolView {
+            id: "wp_contract_retiring_desktop".into(),
+            config_sha256: "f".repeat(64),
+            resource_name: Some("pool-contract-retiring-desktop".into()),
+            cpu_millis: 2000,
+            target_replicas: 0,
+            provider_target_replicas: Some(2),
+            retirement_status: Some("pending".into()),
+            ..desktop_view()
+        };
         self.result(WarmPoolList {
-            items: vec![view(), desktop_view()],
+            items: vec![view(), desktop_view(), retiring_desktop],
             default_image: view().image,
             default_cpu_millis: 1000,
             default_memory_mib: 1024,
