@@ -2,14 +2,14 @@ name: Supervised Debian Desktop qualification
 
 on:
   push:
-    branches: [tl/runtime/1811-native-scan-evidence]
+    branches: [tl/runtime/1811-debian-scan-4238]
     paths: [.github/workflows/desktop-fixture-qualification.yml]
 
 permissions:
   contents: read
 
 env:
-  FIXTURE_SOURCE: 6555d074c0ab547393ed7d80b27a2aa9262d3bd7
+  FIXTURE_SOURCE: 5aaabf686965a2f49331191a2b9584393a9b729b
 
 jobs:
   desktop:
