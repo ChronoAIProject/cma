@@ -1,5 +1,5 @@
 import {randomUUID} from 'node:crypto';
-import {check, hash, id, other} from '../cma/core.mjs';
+import {check, hash, id, other, poll} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 
 const timeout = 15000;
@@ -73,6 +73,54 @@ export async function browserFileCreation({page, api, ingress, agentId, recordFa
     check(await preview.inputValue() === replacement, 'browser_files_refresh_did_not_load_peer_content');
     const retained = (await read(peer)).body;
     check(retained.path === file && retained.sha256 === hash(replacement), 'browser_files_conflict_replaced_peer_content');
+
+    const save = async (text, previous, status) => {
+      await preview.fill(text, {timeout});
+      const [response] = await Promise.all([
+        page.waitForResponse(reply => new URL(reply.url()).pathname === path
+          && reply.request().method() === 'POST' && reply.request().postDataJSON()?.path === file, {timeout}),
+        button('Save').click({timeout}),
+      ]);
+      const intent = response.request().postDataJSON();
+      check(response.status() === status && intent.expected_sha256 === previous
+        && intent.content_base64 === Buffer.from(text).toString('base64'), 'browser_files_save_intent_changed');
+      return response.json();
+    };
+    const confirmBytes = async text => {
+      for (const am of [ingress, peer]) {
+        const {body} = await read(am);
+        check(body.path === file && body.sha256 === hash(text)
+          && body.content_base64 === Buffer.from(text).toString('base64'), 'browser_files_saved_bytes_changed');
+      }
+    };
+    const savedText = 'Saved from the browser.\n';
+    const saved = await save(savedText, retained.sha256, 200);
+    check(saved.path === file && saved.sha256 === hash(savedText), 'browser_files_save_receipt_changed');
+    await dialog.getByText('File saved.', {exact: true}).waitFor({timeout});
+    await confirmBytes(savedText);
+    await button('Refresh files').click({timeout});
+    await button(filename).click({timeout});
+    await poll(() => preview.inputValue({timeout}), value => value === savedText,
+      {timeout, interval: 100, code: 'browser_files_reopened_saved_bytes_changed'});
+
+    const current = 'Peer saved a newer revision.\n';
+    await api.request(peer, 'POST', path, {direct: true, body: {path: file, expected_sha256: saved.sha256,
+      content_base64: Buffer.from(current).toString('base64')}});
+    const staleText = 'A stale edit must remain a draft.\n';
+    const refused = await save(staleText, saved.sha256, 409);
+    check(refused.code === 'file_conflict', 'browser_files_stale_save_refusal_untyped');
+    await dialog.getByRole('alert').getByText('The file changed; refresh before saving.', {exact: true}).waitFor({timeout});
+    await confirmBytes(current);
+    check(await preview.inputValue() === staleText, 'browser_files_conflict_lost_draft');
+
+    await button('Reload file').click({timeout});
+    const prompt = dialog.getByRole('alert').filter({hasText: 'Discard the unsaved changes to this file?'});
+    await prompt.getByRole('button', {name: 'Cancel', exact: true}).click({timeout});
+    check(await preview.inputValue() === staleText, 'browser_files_cancel_discard_lost_draft');
+    await button('Reload file').click({timeout});
+    await prompt.getByRole('button', {name: 'Confirm', exact: true}).click({timeout});
+    await poll(() => preview.inputValue({timeout}), value => value === current,
+      {timeout, interval: 100, code: 'browser_files_confirm_reload_used_stale_bytes'});
   }, async () => {
     if (!folderSubmitted) return;
     await removeFixtureDirectory({api, path, ingress, directory, acknowledged: folderAcknowledged});
