@@ -39,28 +39,11 @@ impl LiveBudget {
         source: &AgentLiveFragment,
         chunk: &str,
     ) -> Option<AgentLiveDelivery> {
-        let Some(aggregate) = &self.1 else {
-            return self.retain_local(copy_fragment(source, chunk));
-        };
-        let bytes = coordinated_bytes(source, chunk)?;
-        let permit = IngressReservation::try_acquire(&self.0, Some(aggregate), bytes)?;
+        let bytes = budgeted_bytes(source, chunk)?;
+        let permit = IngressReservation::try_acquire(&self.0, self.1.as_ref(), bytes)?;
         let fragment = permit.initialize_shared(|| copy_fragment(source, chunk));
         Some(AgentLiveDelivery(
-            Delivery::Coordinated(fragment),
-            tokio::time::Instant::now(),
-        ))
-    }
-
-    fn retain_local(&self, fragment: AgentLiveFragment) -> Option<AgentLiveDelivery> {
-        // The temporary producer fragment already exists. Reserve before moving
-        // it into retained shared storage, using its actual owned capacities.
-        let bytes = retained_bytes(&fragment)?;
-        let permit = IngressReservation::try_acquire(&self.0, None, bytes as usize)?;
-        Some(AgentLiveDelivery(
-            Delivery::Reserved(Arc::new(Reserved {
-                fragment,
-                _permit: permit,
-            })),
+            Delivery::Budgeted(fragment),
             tokio::time::Instant::now(),
         ))
     }
@@ -83,7 +66,7 @@ fn copy_fragment(source: &AgentLiveFragment, chunk: &str) -> AgentLiveFragment {
     }
 }
 
-fn coordinated_bytes(source: &AgentLiveFragment, chunk: &str) -> Option<usize> {
+fn budgeted_bytes(source: &AgentLiveFragment, chunk: &str) -> Option<usize> {
     let bytes = component_shared_owner_bytes::<AgentLiveFragment>()
         .ok()?
         .checked_add(source.agent_id.0.len())?
@@ -92,27 +75,10 @@ fn coordinated_bytes(source: &AgentLiveFragment, chunk: &str) -> Option<usize> {
     Some(u32::try_from(bytes).ok()? as usize)
 }
 
-fn retained_bytes(fragment: &AgentLiveFragment) -> Option<u32> {
-    // Include the owned value, permit, and the two Arc reference counts. The
-    // allocator's bookkeeping/rounding and channel slots are not heap bytes here.
-    let bytes = std::mem::size_of::<Reserved>()
-        .checked_add(2 * std::mem::size_of::<usize>())?
-        .checked_add(fragment.agent_id.0.capacity())?
-        .checked_add(fragment.message_id.capacity())?
-        .checked_add(fragment.delta.capacity())?;
-    bytes.try_into().ok()
-}
-
-struct Reserved {
-    fragment: AgentLiveFragment,
-    _permit: IngressReservation,
-}
-
 #[derive(Clone)]
 enum Delivery {
     Legacy(AgentLiveFragment),
-    Reserved(Arc<Reserved>),
-    Coordinated(SharedComponentOwned<AgentLiveFragment>),
+    Budgeted(SharedComponentOwned<AgentLiveFragment>),
 }
 
 /// Immutable source data. Enabled deliveries share both storage and reservation
@@ -126,8 +92,7 @@ impl Deref for AgentLiveDelivery {
     fn deref(&self) -> &Self::Target {
         match &self.0 {
             Delivery::Legacy(fragment) => fragment,
-            Delivery::Reserved(fragment) => &fragment.fragment,
-            Delivery::Coordinated(fragment) => fragment,
+            Delivery::Budgeted(fragment) => fragment,
         }
     }
 }
