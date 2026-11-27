@@ -42,6 +42,7 @@ pub struct AgentEnvironment {
     pub policy_revision: u64,
     pub runtime_incarnation: Option<String>,
     pub revalidate_at: Option<String>,
+    pub access_revalidate_at: Option<String>,
     pub files: EnvironmentFeature,
     pub operation_output: EnvironmentFeature,
     pub browser: EnvironmentFeature,
