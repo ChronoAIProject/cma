@@ -3,28 +3,55 @@ import { isAbsolute } from 'node:path';
 import { check, hash, isHash, reconcile } from './checks.mjs';
 import { LocalHttp } from './http.mjs';
 import { LocalCluster } from './kubernetes.mjs';
+import { connectedWorkloadScenario, connectedWorkloadSelection } from './report.mjs';
 import { validateConfig } from './safety.mjs';
 
 const MAX_ARTIFACT_BYTES = 16 * 1024 * 1024;
 const roles = ['admissions', 'authority', 'durable', 'receiver'];
 
-async function readCapture(binding, role, runHash) {
+async function readPinnedJson(binding, kind) {
   check(isAbsolute(binding?.path ?? '') && isHash(binding?.sha256),
-    'oracle_capture_binding_missing', true);
+    `oracle_${kind}_binding_missing`, true);
   const path = await realpath(binding.path);
   const info = await stat(path);
   check(path === binding.path && info.isFile() && (info.mode & 0o077) === 0
     && info.size > 0 && info.size <= MAX_ARTIFACT_BYTES,
-  'oracle_capture_scope_invalid', true);
+  `oracle_${kind}_scope_invalid`, true);
   const bytes = await readFile(path);
   check(bytes.length <= MAX_ARTIFACT_BYTES && hash(bytes) === binding.sha256,
-    'oracle_capture_changed', true);
-  const capture = JSON.parse(bytes.toString('utf8'));
+    `oracle_${kind}_changed`, true);
+  return JSON.parse(bytes.toString('utf8'));
+}
+
+async function readCapture(binding, role, runHash) {
+  const capture = await readPinnedJson(binding, 'capture');
   check(capture.schema === 'cma-local-outcome-capture-v1' && capture.role === role
     && capture.runHash === runHash && capture.complete === true
     && isHash(capture.sourceHash) && Array.isArray(capture.records),
   'oracle_capture_incomplete', true);
   return capture;
+}
+
+async function readConnectedWorkload(config) {
+  const binding = config.outcome.workloadReport;
+  const report = await readPinnedJson(binding, 'workload');
+  const row = report?.scenarios?.[0];
+  const evidence = row?.evidence;
+  check(report?.schema === 'cma-scale-results-v1' && report.environment === 'local'
+    && report.selection === connectedWorkloadSelection
+    && Array.isArray(report.scenarios) && report.scenarios.length === 1
+    && row?.scenario === connectedWorkloadScenario && row.status === 'PASS'
+    && evidence?.schema === 'cma-local-workload-v1' && evidence.status === 'PASS'
+    && row.evidence_hash === hash(JSON.stringify(evidence)) && evidence.runHash === config.outcome.runHash
+    && evidence.fixtureHash === config.fixtureHash && evidence.workloadHash === config.workloadHash
+    && typeof evidence.sourceSha === 'string' && hash(evidence.sourceSha) === config.sourceHash
+    && Array.isArray(evidence.attempts), 'oracle_workload_report_mismatch', true);
+  const turns = evidence.attempts.filter((event) => event.kind === 'turn');
+  check(turns.length > 0 && turns.every(({ status, commandHash }) => status === 'PASS' && isHash(commandHash)),
+    'oracle_workload_turn_missing', true);
+  const receipts = new Set(turns.map(({ commandHash }) => commandHash));
+  check(turns.length === receipts.size, 'oracle_workload_duplicate_command');
+  return { receipts, sha256: binding.sha256 };
 }
 
 function commandRecords(records, accepted) {
@@ -84,7 +111,7 @@ function expectedAuthority(timeline, record, admittedAt) {
   return expected;
 }
 
-export async function readLocalOutcomeOracle({ runHash, captures }, { readCommand } = {}) {
+export async function readLocalOutcomeOracle({ runHash, captures }, { readCommand, workload } = {}) {
   check(isHash(runHash), 'oracle_run_binding_missing', true);
   check(captures && new Set(roles.map((role) => captures[role]?.path)).size === roles.length,
     'oracle_capture_source_reused', true);
@@ -100,6 +127,11 @@ export async function readLocalOutcomeOracle({ runHash, captures }, { readComman
     accepted.set(row.commandHash, row);
   }
   check(accepted.size > 0, 'oracle_admission_missing', true);
+  if (workload) {
+    check(workload.receipts.size === accepted.size
+      && [...accepted.keys()].every((commandHash) => workload.receipts.has(commandHash)),
+    'oracle_workload_admissions_mismatch');
+  }
   const ownershipByCommand = commandRecords(ownership.records, accepted);
   const recorded = commandRecords(durable.records, accepted);
   const effects = commandRecords(receiver.records, accepted);
@@ -131,7 +163,7 @@ export async function readLocalOutcomeOracle({ runHash, captures }, { readComman
     }
   }
   const result = { independent: true, complete: true, acceptedHashes: [...accepted.keys()], commands,
-    evidenceHash: hash(JSON.stringify([runHash, ...roles.map((role) => captures[role].sha256)])) };
+    evidenceHash: hash(JSON.stringify([runHash, ...roles.map((role) => captures[role].sha256), ...(workload ? [workload.sha256] : [])])) };
   reconcile(result);
   return result;
 }
@@ -148,7 +180,9 @@ export async function verifyLocalOutcomes(config, { fetchImpl, command } = {}) {
   const http = new LocalHttp(config.outcome.origin, {
     bearer: process.env.CMA_LOCAL_ORACLE_BEARER, fetchImpl,
   });
+  const workload = config.outcome.workloadReport ? await readConnectedWorkload(config) : undefined;
   return readLocalOutcomeOracle(config.outcome, {
+    workload,
     readCommand: async (id) => (await http.command(id)).value,
   });
 }

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { hash } from '../lib/checks.mjs';
 import { readLocalOutcomeOracle, verifyLocalOutcomes } from '../lib/local-outcome-oracle.mjs';
 import { config } from './fixtures.mjs';
@@ -134,4 +134,40 @@ test('local readback verifies the isolated namespace and uses only the pinned lo
   assert.ok(calls.every((args) => args.includes('kind-cma-scale') && args.includes('cma-scale')));
   await assert.rejects(verifyLocalOutcomes({ ...driverConfig, environment: 'production' },
     { command, fetchImpl }), /local_config_required/);
+});
+
+
+test('the pinned connected workload and independent admissions must name the same commands', async (t) => {
+  const input = await fixture(t);
+  const sourceSha = 'a'.repeat(40);
+  const origin = config.endpoints.am;
+  const path = join(dirname(input.captures.admissions.path), 'workload.json');
+  const driverConfig = { ...config, sourceHash: hash(sourceSha),
+    outcome: { ...input, origin, cluster: { kubeconfig: '/tmp/synthetic-kubeconfig', namespaceHash: hash('local') } } };
+  const command = async (_file, args) => ({
+    stdout: args.includes('--minify') ? 'https://127.0.0.1:6443'
+      : JSON.stringify({ metadata: { name: 'cma-scale', uid: 'local' } }),
+  });
+  const fetchImpl = async () => new Response(JSON.stringify({
+    receipt: { command_id: commandId }, status: 'completed',
+  }));
+  const writeReport = async (commands) => {
+    const evidence = { schema: 'cma-local-workload-v1', status: 'PASS', runHash, sourceSha,
+      fixtureHash: config.fixtureHash, workloadHash: config.workloadHash,
+      attempts: commands.map((commandHash) => ({ kind: 'turn', status: 'PASS', commandHash })) };
+    const bytes = JSON.stringify({ schema: 'cma-scale-results-v1', environment: 'local', selection: 'connected-workload',
+      scenarios: [{ scenario: 'connected_workload', status: 'PASS', evidence, evidence_hash: hash(JSON.stringify(evidence)) }] });
+    await writeFile(path, bytes, { mode: 0o600 });
+    driverConfig.outcome.workloadReport = { path, sha256: hash(bytes) };
+  };
+  await writeReport([commandHash]);
+  const result = await verifyLocalOutcomes(driverConfig, { command, fetchImpl });
+  assert.deepEqual(result.acceptedHashes, [commandHash]);
+  await writeReport([commandHash, hash('omitted-independent-admission')]);
+  await assert.rejects(verifyLocalOutcomes(driverConfig, { command, fetchImpl }), /oracle_workload_admissions_mismatch/);
+  await writeReport([commandHash, commandHash]);
+  await assert.rejects(verifyLocalOutcomes(driverConfig, { command, fetchImpl }), /oracle_workload_duplicate_command/);
+  await writeReport([commandHash]);
+  await writeFile(path, '{}');
+  await assert.rejects(verifyLocalOutcomes(driverConfig, { command, fetchImpl }), /oracle_workload_changed/);
 });
