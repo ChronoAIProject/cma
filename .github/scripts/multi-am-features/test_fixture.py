@@ -322,7 +322,7 @@ class OwnershipTests(unittest.TestCase):
             fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'publication_conflict')
         fixture.mongo.assert_called_once()
 
-    def test_prepared_reservation_collision_holds_worktree_fences_until_explicit_release(self):
+    def test_prepared_reservation_collision_bounds_worktree_reads_without_holding_writes(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12
         fixture.client = SimpleNamespace(namespace='cma-native-am')
@@ -330,9 +330,12 @@ class OwnershipTests(unittest.TestCase):
                          'server': 'https://127.0.0.1:12345'}
         fixture.mongo = Mock()
         fixture.preparedSchemaBarrier(True, reservationConflict=True)
-        self.assertIn('"configureFailPoint": "hangDuringBatchUpdate"', fixture.mongo.call_args.args[0])
-        self.assertIn('"mode": "alwaysOn"', fixture.mongo.call_args.args[0])
-        self.assertIn('"nss": "cma_native_am.worktrees"', fixture.mongo.call_args.args[0])
+        hold = fixture.mongo.call_args.args[0]
+        self.assertIn('"configureFailPoint": "failCommand"', hold)
+        self.assertIn('"namespace": "cma_native_am.worktrees"', hold)
+        self.assertIn('"failCommands": ["find"]', hold)
+        self.assertIn('"blockTimeMS": 12000', hold)
+        self.assertIn('"agents"', hold)
         fixture.preparedSchemaBarrier(False, reservationConflict=True)
         self.assertIn('"mode": "off"', fixture.mongo.call_args.args[0])
         with self.assertRaisesRegex(ValueError, 'prepared_schema_race_action_required'):

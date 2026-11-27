@@ -59,9 +59,7 @@
   }
 
   async function currentUpdate(rows) {
-    if (scope.barrier === 'publication_conflict') {
-      return heldReadyWorktreeFence(rows.tree._id);
-    }
+    if (scope.barrier === 'publication_conflict') return heldPreparedWorktreeRead(rows);
     const collection = ownerFence ? 'cma_agent_manager_owners' : 'worktrees';
     const active = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
       appName: scope.app, active: true, 'command.update': collection, 'command.autocommit': false,
@@ -87,9 +85,7 @@
     return observed;
   }
 
-  async function samplePausePublication() {
-    const rows = await lineage(d);
-    if (!rows) return null;
+  async function heldPreparedWorktreeRead(rows) {
     // The prepared transaction reads the exact Agent and claimed reservation
     // before reading its Worktree and taking any parent write locks.
     const active = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
@@ -106,13 +102,18 @@
           {'command.find': 'native_prepared_sandboxes', 'command.filter._id': rows.reservation._id}],
       }, {command: 1}).limit(8).toArray();
       if (new Set(reads.map(row => row.command.find)).size === 2) {
-        matches.push(require('crypto').createHash('sha256')
-          .update(JSON.stringify([opid, command.lsid, command.txnNumber.toString()])).digest('hex'));
+        matches.push({opid, session: command.lsid.id.toString(), transaction: command.txnNumber.toString()});
       }
     }
-    if (matches.length > 1) throw Error('prepared_parent_pause_multiple_transactions');
-    return matches.length === 1 ? {...proof(rows), sandboxStatus: rows.sandbox.status,
-      transactionSha256: matches[0]} : null;
+    if (matches.length > 1) throw Error('prepared_multiple_held_worktree_reads');
+    return matches[0] ?? null;
+  }
+
+  async function samplePausePublication() {
+    const rows = await lineage(d);
+    const held = rows && await heldPreparedWorktreeRead(rows);
+    return held ? {...proof(rows), sandboxStatus: rows.sandbox.status,
+      transactionSha256: require('crypto').createHash('sha256').update(JSON.stringify(held)).digest('hex')} : null;
   }
 
   // A held read provides time to install the envelopes. It might be
@@ -237,9 +238,6 @@
               || after?.transaction !== bound.transaction) {
             throw Error('prepared_publication_conflict_transaction_changed');
           }
-          if (!ownerFence && (await admin.runCommand({
-            configureFailPoint: 'hangDuringBatchUpdate', mode: 'off',
-          })).ok !== 1) throw Error('prepared_conflict_worktree_release');
           const workLeaseSha256 = require('crypto').createHash('sha256')
             .update(`${workFence}:${lease.holder}`).digest('hex');
           return {...before, ownerInstance: owner.instance_id, ownerEpoch, leaseDeadlineMs, workLeaseSha256,

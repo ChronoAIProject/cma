@@ -259,18 +259,20 @@ def prepared_schema_barrier(fixture, arm=None, parentEnvelope=False, parentPause
     variants = parentEnvelope, parentPause, ownerFence, commitAcknowledgement, reservationConflict
     if any(type(value) is not bool for value in (arm, *variants)) or sum(variants) > 1:
         raise ValueError('prepared_schema_race_action_required')
-    if commitAcknowledgement or reservationConflict:
+    if commitAcknowledgement:
         return prepared_worktree_hold(fixture, arm)
     command = {'configureFailPoint': 'failCommand', 'mode': 'off'}
     if arm:
         collection = 'sandboxes' if parentEnvelope else 'cma_agent_manager_owners' if ownerFence else 'worktrees'
+        reads_worktree = reservationConflict or parentPause
         command.update(mode={'times': 20}, data={
-            'failCommands': ['find' if parentEnvelope or parentPause else 'update'],
+            'failCommands': ['find' if parentEnvelope or reads_worktree else 'update'],
             'namespace': 'cma_native_am.' + collection,
-            'appName': PREPARED_MONGO_APP, 'blockConnection': True, 'blockTimeMS': 12000 if parentPause else 2400,
+            'appName': PREPARED_MONGO_APP, 'blockConnection': True, 'blockTimeMS': 12000 if reads_worktree else 2400,
         })
         profile = {'profile': 2, 'filter': {'appName': PREPARED_MONGO_APP, 'command.find': {
-            '$in': ['native_prepared_sandboxes', 'sandboxes', 'workspaces', 'worktrees', *(['agents'] if parentPause or ownerFence else [])],
+            '$in': ['native_prepared_sandboxes', 'sandboxes', 'workspaces', 'worktrees',
+                    *(['agents'] if reads_worktree or ownerFence else [])],
         }}}
         script = f'if (d.runCommand({json.dumps(profile)}).ok !== 1) throw Error("prepared_schema_profile_arm");\n'
         script += f'if (admin.runCommand({json.dumps(command)}).ok !== 1) throw Error("prepared_schema_barrier_arm");'
