@@ -235,6 +235,19 @@ impl AgentSandboxPools {
             return Ok(false);
         }
         if origin.claim.request.home.policy.is_native_vct() {
+            // A retained, unconverted home can be held for spec drift. A
+            // changed VCT layout or home annotation is an authority refusal.
+            if member.annotations().get(NATIVE_HOME_ANNOTATION) == Some(&encode(origin)?)
+                && model::contains(
+                    &member.data["spec"]["volumeClaimTemplates"],
+                    &desired["volumeClaimTemplates"],
+                )
+                && member.data["spec"]["podTemplate"]["spec"]
+                    .get("volumes")
+                    .is_none_or(|volumes| volumes.as_array().is_some_and(Vec::is_empty))
+            {
+                return Err(crate::AdapterError::AdmittedSandboxSpecDrift);
+            }
             return Err(rejected("native VCT ownership cannot be converted"));
         }
         desired["volumeClaimTemplates"] = json!([]);
