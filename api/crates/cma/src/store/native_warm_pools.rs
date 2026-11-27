@@ -96,6 +96,79 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
     Ok(target)
 }
 
+/// Read only the exact, previously activated pool retained by release authority.
+pub(super) async fn transition_target(
+    database: &Database,
+    deployment: &str,
+    machine: bool,
+    target_id: &str,
+    session: &mut mongodb::ClientSession,
+) -> Result<PoolTarget, WarmPoolError> {
+    let targets: Collection<PoolTarget> = majority_collection(database, COLLECTION);
+    let target = targets
+        .find_one(doc! {
+            "_id": target_id,
+            "plan.deployment": deployment,
+            "document_schema_version": if machine { 2_i64 } else { 1_i64 },
+            "activated_at": {"$type": "date"},
+            "retiring": {"$ne": true},
+            "retired": {"$ne": true},
+        })
+        .session(session)
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+        .ok_or(WarmPoolError::Conflict)?;
+    let target = validate(target)?;
+    if target.machine != machine
+        || target.target_replicas == 0
+        || target.applied_revision != target.revision
+        || target.error.is_some()
+        || target
+            .binding
+            .as_ref()
+            .is_none_or(|binding| binding.uid.is_empty() || binding.template_uid.is_empty())
+    {
+        return Err(WarmPoolError::Conflict);
+    }
+    Ok(target)
+}
+
+/// Promotion requires an image with no previously activated target. A later
+/// same-image plan can inherit its timestamp, so include all activation
+/// tombstones and refuse an ambiguous identity. Bootstrap has its own marker.
+pub(super) async fn confirm_transition_target_identity(
+    database: &Database,
+    target: &PoolTarget,
+    bootstrap: bool,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), WarmPoolError> {
+    let targets: Collection<Document> = majority_collection(database, COLLECTION);
+    let mut scope = doc! {
+        "plan.deployment": &target.plan.deployment,
+        "document_schema_version": target.document_schema_version,
+        "plan.spec.image.uri": &target.plan.spec.image.uri,
+        "activated_at": {"$type": "date"},
+    };
+    if bootstrap {
+        scope.insert("durable_release_authority", true);
+    }
+    let rows: Vec<_> = targets
+        .find(scope)
+        .projection(doc! {"_id": 1})
+        .limit(2)
+        .session(&mut *session)
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+        .stream(session)
+        .try_collect()
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?;
+    match rows.as_slice() {
+        [row] if row.get_str("_id").ok() == Some(target.id.as_str()) => Ok(()),
+        _ => Err(WarmPoolError::Conflict),
+    }
+}
+
 #[async_trait]
 impl PoolTargetStore for MongoNativeWarmPools {
     async fn begin_candidate_effect(&self, target: &PoolTarget) -> Result<bool, WarmPoolError> {

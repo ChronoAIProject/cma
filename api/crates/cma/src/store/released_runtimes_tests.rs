@@ -346,3 +346,6 @@ async fn expire_work_lease(database: &Database, sandbox: &layer2_core::SandboxId
         .unwrap();
     assert_eq!(result.matched_count, 1);
 }
+
+#[path = "released_runtimes_tests/transition_preflight.rs"]
+mod transition_preflight;

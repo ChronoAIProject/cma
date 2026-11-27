@@ -12,11 +12,13 @@ use super::durability::majority_collection;
 
 mod legacy_dispatch;
 mod source;
+mod transition_preflight;
 mod writers;
 pub(super) use legacy_dispatch::{
     pin_first_dispatch, pin_replacement_dispatch, reserve_initial_runtime_image,
 };
 pub(crate) use source::StoreReleasedRuntime;
+pub(crate) use transition_preflight::TransitionDestination;
 pub(crate) use writers::{BootWriter, ResolverLease};
 
 pub(crate) const COLLECTION: &str = "released_runtimes";

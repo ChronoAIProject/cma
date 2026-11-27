@@ -6,6 +6,8 @@ use crate::store::native_warm_pools::MongoNativeWarmPools;
 use crate::store::released_runtimes::MongoReleasedRuntimes;
 use crate::store::transaction_terminal::GuardedTerminal as _;
 
+mod transition_preflight;
+
 pub(crate) async fn set_following(
     lanes: &MongoReleasedRuntimes,
     targets: &MongoNativeWarmPools,
@@ -84,10 +86,18 @@ async fn commit_lane(
 
 pub(crate) async fn command(arguments: &[String]) -> Result<(), String> {
     let command = match arguments {
+        [_, command, rest @ ..] if command == "transition-preflight" => {
+            return transition_preflight::command(rest).await;
+        }
         [_, command] if matches!(command.as_str(), "freeze" | "enable" | "status") => {
             command.as_str()
         }
-        _ => return Err("usage: cma --runtime-pointer <freeze|enable|status>".into()),
+        _ => {
+            return Err(
+                "usage: cma --runtime-pointer <freeze|enable|status|transition-preflight ...>"
+                    .into(),
+            )
+        }
     };
     let config = match crate::config::StartupConfig::from_env()? {
         crate::config::StartupConfig::Execution(config) => config,
