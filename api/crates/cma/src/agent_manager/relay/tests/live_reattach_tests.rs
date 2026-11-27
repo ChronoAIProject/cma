@@ -1,5 +1,5 @@
 use super::*;
-use layer2_core::sandbox::AgentLiveEvent;
+use layer2_core::sandbox::{AgentLiveEvent, AgentUpdateRecorder};
 
 #[tokio::test]
 async fn owner_and_peer_keep_their_subscriptions_across_clean_idle_retirement() {
