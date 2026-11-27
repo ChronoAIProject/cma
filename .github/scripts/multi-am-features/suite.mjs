@@ -11,6 +11,7 @@ import {documentCases} from './features/documents.mjs';
 import {createDocumentAfterLostReply} from './features/document_creation_browser.mjs';
 import {documentEditAndConflict} from './features/document_edit_browser.mjs';
 import {documentBrowse} from './features/document_browse_browser.mjs';
+import {documentPeople} from './features/document_people_browser.mjs';
 import {busyConfigurationCase, competingSystemPrompts, configurationCases, heldConfigurationCases, assertWriterTitle,
   verifyLifecycleReplay} from './features/agent_configuration.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
@@ -158,12 +159,17 @@ async function accountBrowserCases(ams, witness) {
             await browserCase(am, iteration, name, () => run(page));
           }
           let document;
-          await exercise(am, iteration, 'user.documents_browser_create_after_lost_reply', async () => {
+          await browserCase(am, iteration, 'user.documents_browser_create_after_lost_reply', async () => {
             document = await createDocumentAfterLostReply({page, ingress: am, user, ownerId: config.owner_id});
           });
-          await exercise(am, iteration, 'user.documents_browser_edit_and_conflict', () =>
+          await browserCase(am, iteration, 'user.documents_browser_edit_and_conflict', () =>
             documentEditAndConflict({page, ingress: am, user, document}));
-          await exercise(am, iteration, 'user.documents_browser_browse', () => documentBrowse({page, ingress: am,
+          await browserCase(am, iteration, 'user.documents_browser_people_sharing', () => documentPeople({
+            page, ingress: am, owner: user, recipient: admin, documentId: document.id, recipientId: 'native-am-fixture-admin',
+            recordFailure: (stage, error) => retainFailure(config.matrix_output, stage, error,
+              {case: 'user.documents_browser_people_sharing', phase, iteration}),
+          }));
+          await browserCase(am, iteration, 'user.documents_browser_browse', () => documentBrowse({page, ingress: am,
             user, admin, ownerId: config.owner_id, recordFailure: (stage, error) =>
               retainFailure(config.matrix_output, stage, error, {case: 'user.documents_browser_browse', phase, iteration})}));
         });

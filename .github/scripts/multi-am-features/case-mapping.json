@@ -954,9 +954,9 @@
   },
   "cma-user.documents.people-sharing": {
     "cases": [
-      "user.documents_grant_comment_revoke"
+      "user.documents_browser_people_sharing"
     ],
-    "blocked": "API assertions prepared; required real-browser controls and draft/navigation behavior remain unimplemented",
+    "browser": true,
     "minimum_runs": 3,
     "phases": [
       "before_restart",
