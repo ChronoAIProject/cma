@@ -30,6 +30,8 @@ pub(crate) struct CredentialIssuance {
     pub owner: SubjectId,
     pub generation: u64,
     pub identity: IssuanceIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_authority: Option<layer2_core::sandbox::RetirementAuthorityVersion>,
     pub original_holder: String,
     pub original_fence: u64,
     pub created_at: String,
@@ -211,6 +213,7 @@ impl ManagedSandboxCredentials {
                 .map_err(classify_issuer)?;
             (prepared, None)
         };
+        let owner_authority = self.issuance_owner_authority(sandbox, &token).await;
         let intent = CredentialIssuance {
             operation_id,
             sandbox_id: sandbox.id.clone(),
@@ -220,6 +223,7 @@ impl ManagedSandboxCredentials {
                 provider_identity: prepared.provider_identity().into(),
                 request_digest: prepared.request_digest().into(),
             },
+            owner_authority,
             original_holder: original.holder.clone(),
             original_fence: original.fence,
             created_at: rfc3339_at(now),

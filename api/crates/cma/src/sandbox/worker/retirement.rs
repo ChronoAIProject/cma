@@ -127,6 +127,21 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if self.retirement_reauthorization_disabled(&sandbox) {
+            let failure = super::support::WorkerFailure::new(
+                "owner_reauthorization_disabled",
+                "revision-fenced Operations resume is required",
+                false,
+            );
+            return self.retry_failure(sandbox, failure, now).await;
+        }
+        if sandbox
+            .work
+            .retirement_credential_recovery
+            .is_some_and(|recovery| recovery.admitted.is_none())
+        {
+            return self.probe_retirement_reauthorization(sandbox, now).await;
+        }
         if let Err(failure) = self.settle_retirement_credentials(&mut sandbox, now).await {
             self.suspend_credential_blocked_retirement(&mut sandbox, &failure)
                 .await?;

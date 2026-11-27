@@ -104,6 +104,8 @@ pub(super) struct Consents {
 }
 #[derive(Deserialize)]
 pub(super) struct Consent {
+    pub id: Option<String>,
+    pub granted_at: Option<String>,
     pub client_id: String,
     pub scopes: String,
     pub allow_all_services: bool,
@@ -112,6 +114,42 @@ pub(super) struct Consent {
     pub expires_at: Option<String>,
 }
 impl Consent {
+    pub fn retirement_authority_version(
+        &self,
+    ) -> Result<Option<RetirementAuthorityVersion>, StoreError> {
+        let (Some(id), Some(granted_at)) = (&self.id, &self.granted_at) else {
+            return Ok(None);
+        };
+        if self.legacy_unrestricted
+            || !self.live()?
+            || !self.scopes.split_whitespace().any(|scope| scope == "proxy")
+        {
+            return Ok(None);
+        }
+        let grant = uuid::Uuid::parse_str(id)
+            .map_err(|_| unavailable())?
+            .into_bytes();
+        let granted_at_ms = bson::DateTime::parse_rfc3339_str(granted_at)
+            .ok()
+            .and_then(|stamp| u64::try_from(stamp.timestamp_millis()).ok())
+            .filter(|stamp| *stamp > 0)
+            .ok_or_else(unavailable)?;
+        use sha2::{Digest, Sha256};
+        let scopes: BTreeSet<_> = self.scopes.split_whitespace().collect();
+        let scope = serde_json::to_vec(&(
+            &self.client_id,
+            scopes,
+            self.allow_all_services,
+            &self.allowed_service_ids,
+        ))
+        .map_err(|_| unavailable())?;
+        Ok(Some(RetirementAuthorityVersion {
+            grant,
+            scope: Sha256::digest(scope).into(),
+            granted_at_ms,
+        }))
+    }
+
     pub fn validate(&self) -> Result<(), StoreError> {
         if self
             .allowed_service_ids

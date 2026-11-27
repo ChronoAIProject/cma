@@ -12,27 +12,21 @@ import {
   hasVisibleTurnProgress,
 } from './ThinkingProgress';
 import { RESPONSE_STOP_COMMAND_NOTICE } from './stopAgentCopy';
-import type { TaskAcceptance } from '@cma/client';
 import { AgentMascot } from '../brand/AgentMascot';
-import { useTurnVisual, type TurnPresentation } from './turnVisual';
+import type { TurnVisual } from './turnVisual';
 
 /** Ephemeral turn status follows the reply in the conversation, never in stored history. */
 export function ActiveThinking({
   conversation,
   stopping = false,
-  presentation,
-  authority,
-  taskAcceptance,
+  brand,
 }: {
   readonly conversation: ConversationState;
   /** A local admission request is in flight; the durable turn is still authoritative. */
   readonly stopping?: boolean;
-  readonly presentation?: TurnPresentation;
-  readonly authority?: object;
-  readonly taskAcceptance?: TaskAcceptance;
+  readonly brand?: TurnVisual;
 }) {
   const runId = conversation.activeRunId;
-  const brand = useTurnVisual(presentation, authority, conversation, taskAcceptance);
   const placement = useThinkingPlacement(conversation);
   const progressKey = useMemo(() => thinkingProgressKey(conversation), [conversation]);
   const activities = conversation.toolCalls.filter(

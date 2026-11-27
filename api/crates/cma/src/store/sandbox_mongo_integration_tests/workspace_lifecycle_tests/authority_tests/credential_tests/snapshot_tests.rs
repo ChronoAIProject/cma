@@ -68,6 +68,7 @@ async fn issuance_read_keeps_marker_and_intent_at_one_snapshot() {
             provider_identity: "a".repeat(64),
             request_digest: "b".repeat(64),
         },
+        owner_authority: None,
         original_holder: lease.holder.clone(),
         original_fence: lease.fence,
         created_at: at(0),

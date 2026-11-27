@@ -57,6 +57,30 @@ pub struct SandboxWorkLease {
     pub expires_at: String,
 }
 
+/// Provider-verified version of the owner authority used to revoke an exact key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetirementAuthorityVersion {
+    pub grant: [u8; 16],
+    pub scope: [u8; 32],
+    pub granted_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetirementCredentialRecovery {
+    pub newer_than_ms: u64,
+    pub expected_scope: [u8; 32],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admitted: Option<RetirementAuthorityVersion>,
+}
+
+impl RetirementCredentialRecovery {
+    pub fn admits(&self, authority: RetirementAuthorityVersion) -> bool {
+        authority.granted_at_ms > self.newer_than_ms && authority.scope == self.expected_scope
+    }
+}
+
 /// Durable scheduling and fencing state for lifecycle work.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -70,6 +94,8 @@ pub struct SandboxWorkState {
     /// worker consumes it only after a fresh runtime inspection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepared_installation_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retirement_credential_recovery: Option<RetirementCredentialRecovery>,
     pub step: SandboxWorkStep,
     pub ready_at: String,
     pub next_fence: u64,
@@ -84,6 +110,7 @@ impl SandboxWorkState {
             authority_protocol: None,
             execution: None,
             prepared_installation_digest: None,
+            retirement_credential_recovery: None,
             step,
             ready_at,
             next_fence: 1,
@@ -130,6 +157,9 @@ impl SandboxWorkState {
     }
 
     pub fn schedule(&mut self, step: SandboxWorkStep, ready_at: String) {
+        if self.step != step {
+            self.retirement_credential_recovery = None;
+        }
         self.step = step;
         self.ready_at = ready_at;
         self.attempts = 0;
@@ -207,5 +237,33 @@ mod tests {
         state.prepared_installation_digest = Some("a".repeat(64));
         let encoded = serde_json::to_value(state).unwrap();
         assert!(serde_json::from_value::<LegacySandboxWorkState>(encoded).is_err());
+    }
+}
+
+#[cfg(test)]
+mod retirement_authority_tests {
+    use super::*;
+
+    #[test]
+    fn retirement_authority_requires_a_strictly_newer_same_scope_grant() {
+        let recovery = RetirementCredentialRecovery {
+            newer_than_ms: 42,
+            expected_scope: [1; 32],
+            admitted: None,
+        };
+        let version = RetirementAuthorityVersion {
+            grant: [1; 16],
+            scope: [1; 32],
+            granted_at_ms: 43,
+        };
+        assert!(recovery.admits(version));
+        assert!(!recovery.admits(RetirementAuthorityVersion {
+            granted_at_ms: 42,
+            ..version
+        }));
+        assert!(!recovery.admits(RetirementAuthorityVersion {
+            scope: [2; 32],
+            ..version
+        }));
     }
 }

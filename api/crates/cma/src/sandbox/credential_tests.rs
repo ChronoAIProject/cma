@@ -30,6 +30,8 @@ mod model_catalog_tests;
 mod node_access_tests;
 #[path = "credential/provided_tests.rs"]
 mod provided_tests;
+#[path = "credential/retirement_reauthorization_tests.rs"]
+mod retirement_reauthorization_tests;
 
 #[derive(Default)]
 struct Tokens {

@@ -175,7 +175,7 @@ export function PersonalAgentTree({
             {environmentNotice || ready ? null : showRunningTime ? (
               <span className="task-running">
                 <span aria-hidden="true" className="task-running__dot" />
-                {runningTaskTime(agent.taskStartedAt, now)}
+                <span className="task-running__time">{displayedTime}</span>
               </span>
             ) : !Number.isFinite(taskActivityOrder(agent)) ? (
               <span>Task time unavailable</span>
