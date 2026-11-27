@@ -238,7 +238,7 @@ async fn bootstrap_refresh_does_not_retry_generic_starting_agents_or_controls() 
     }
 }
 
-async fn ordinary_fixture() -> (Arc<InMemorySandboxStore>, Arc<Authority>, Agent) {
+pub(super) async fn ordinary_fixture() -> (Arc<InMemorySandboxStore>, Arc<Authority>, Agent) {
     use crate::sandbox::SandboxHome;
     use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 
