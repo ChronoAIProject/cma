@@ -122,7 +122,11 @@ async function browserCase(am, iteration, name, run) {
   const start = performance.now();
   const row = {case: name, phase, iteration, ams: [am], real_browser: true, verdict: 'RUNNING'};
   try { await run(); row.verdict = 'PASS'; }
-  catch (error) { row.verdict = 'FAIL'; throw error; }
+  catch (error) {
+    row.verdict = 'FAIL';
+    row.browser_failure = error?.name === 'TimeoutError' ? 'timeout' : 'assertion_or_transport_error';
+    throw error;
+  }
   finally { row.elapsed_ms = performance.now() - start; await record(row); }
 }
 
@@ -414,7 +418,8 @@ try {
     ...result.coverage, suite_verdict: result.verdict, source: result.source,
     journey_verdict: result.journey ? journeyVerdict : 'NOT_RUN',
     ...journeyFailureSummary(result.journey),
-    first_failed_case: failedCase ? {case: failedCase.case, phase: failedCase.phase, iteration: failedCase.iteration} : null,
+    first_failed_case: failedCase ? {case: failedCase.case, phase: failedCase.phase, iteration: failedCase.iteration,
+      ...(failedCase.browser_failure ? {browser_ingress: failedCase.ams[0], browser_failure: failedCase.browser_failure} : {})} : null,
     writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: Boolean(recovery), owner_restart_replay: recovery?.replay ?? null,
