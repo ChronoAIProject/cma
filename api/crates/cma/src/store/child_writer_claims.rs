@@ -19,6 +19,7 @@ use super::sandbox_mongo::{
     CommitOutcome, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
 use super::sandboxes::read_sandbox;
+use super::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
 use super::workspaces::{read_workspace, workspace_replacement_fields};
 
 mod diagnostics;
@@ -212,21 +213,19 @@ async fn apply(
             super::work_publication::FenceError::Driver(error) => ClaimError::driver(error),
         })?;
     diagnostics.phase = "parent_read";
-    let parent = store
+    let parent_row = store
         .sandboxes
         .find_one(doc! { "_id": sandbox_id.as_str() })
         .session(&mut *session)
         .await
         .map_err(ClaimError::read)?
-        .as_ref()
-        .map(read_sandbox)
-        .transpose()
-        .map_err(ClaimError::domain)?
         .ok_or(ClaimError::domain(SandboxStoreError::NotFound))?;
+    let parent = read_sandbox(&parent_row).map_err(ClaimError::domain)?;
     if parent.owner != *owner {
         return Err(ClaimError::domain(SandboxStoreError::NotFound));
     }
-    if parent.retirement_archive_pending()
+    if parent_row.contains_key(LEDGER_MAINTENANCE_FIELD)
+        || parent.retirement_archive_pending()
         || parent.lifecycle.checkpoint_capture.is_some()
         || (parent.status == layer2_core::sandbox::SandboxStatus::Rotating
             && !matches!(claim, ChildWriterClaim::Agent(agent) if parent.restored_connection_is_ready(agent)))

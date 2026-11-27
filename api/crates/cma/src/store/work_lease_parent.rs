@@ -10,6 +10,7 @@ use super::sandbox_mongo::{
     DOCUMENT_SCHEMA_VERSION,
 };
 use super::sandboxes::read_sandbox;
+use super::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
 use super::work_publication::FenceError;
 
 pub(super) async fn grant(
@@ -88,14 +89,15 @@ pub(super) async fn fence_parent_transaction(
     claimed: &Workspace,
     session: &mut mongodb::ClientSession,
 ) -> Result<bool, FenceError> {
-    let parent = store
+    let parent_row = store
         .sandboxes
         .find_one(doc! {"_id":claimed.sandbox_id.as_str()})
         .session(&mut *session)
         .await?
         .ok_or(SandboxStoreError::NotFound)?;
-    let parent = read_sandbox(&parent)?;
+    let parent = read_sandbox(&parent_row)?;
     if parent.owner != claimed.owner
+        || parent_row.contains_key(LEDGER_MAINTENANCE_FIELD)
         || parent.retirement_archive_pending()
         || parent.lifecycle.checkpoint_capture.is_some()
         || parent.status == SandboxStatus::Rotating

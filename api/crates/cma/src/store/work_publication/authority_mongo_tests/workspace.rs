@@ -44,6 +44,132 @@ fn workspace(parent: &Sandbox) -> Workspace {
     }
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn held_workspace_cannot_take_discovery_slots_or_obtain_worker_authority() {
+    use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+    use mongodb::bson::Bson;
+
+    let fixture = Fixture::new().await;
+    let parent = sandbox("sbx_held_workspace");
+    let mut sibling = sandbox("sbx_unheld_workspace");
+    sibling.name = "unheld workspace parent".into();
+    fixture
+        .independent
+        .create_sandbox(parent.clone())
+        .await
+        .unwrap();
+    fixture
+        .independent
+        .create_sandbox(sibling.clone())
+        .await
+        .unwrap();
+    let mut renew = workspace(&parent);
+    renew.id = WorkspaceId("wks_held_renew".into());
+    renew.name = "held-renew".into();
+    renew.path = "/home/cma/held-renew".into();
+    let pending = workspace(&parent);
+    let mut unheld = workspace(&sibling);
+    unheld.id = WorkspaceId("wks_unheld".into());
+    for row in [&renew, &pending, &unheld] {
+        fixture
+            .independent
+            .create_workspace(row.clone())
+            .await
+            .unwrap();
+    }
+    let claimed = fixture
+        .store
+        .claim_workspace_work(&renew.id, "worker", MINUTE.into(), work_lease_deadline())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        fixture.store.due_workspace_work(MINUTE, 1).await.unwrap(),
+        vec![pending.id.clone()]
+    );
+    let filter = doc! {"_id": parent.id.as_str()};
+    for hold in [Bson::Document(doc! {"phase":"requested"}), Bson::Null] {
+        fixture
+            .independent
+            .sandboxes
+            .update_one(
+                filter.clone(),
+                doc! {"$set": {LEDGER_MAINTENANCE_FIELD: hold.clone()}},
+            )
+            .await
+            .unwrap();
+        let held_parent = fixture
+            .independent
+            .sandboxes
+            .find_one(filter.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(held_parent.get(LEDGER_MAINTENANCE_FIELD), Some(&hold));
+        assert_eq!(
+            fixture.store.due_workspace_work(MINUTE, 1).await.unwrap(),
+            vec![unheld.id.clone()]
+        );
+        assert!(fixture
+            .store
+            .claim_workspace_work(
+                &pending.id,
+                "successor",
+                MINUTE.into(),
+                work_lease_deadline()
+            )
+            .await
+            .unwrap()
+            .is_none());
+        assert!(fixture
+            .store
+            .renew_workspace_authority(&claimed, MINUTE, &work_lease_deadline())
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            fixture
+                .independent
+                .sandboxes
+                .find_one(filter.clone())
+                .await
+                .unwrap(),
+            Some(held_parent)
+        );
+        assert_eq!(
+            fixture
+                .independent
+                .get_workspace(&pending.id)
+                .await
+                .unwrap()
+                .as_ref(),
+            Some(&pending)
+        );
+        assert_eq!(
+            fixture
+                .independent
+                .get_workspace(&renew.id)
+                .await
+                .unwrap()
+                .as_ref(),
+            Some(&claimed)
+        );
+    }
+    assert!(fixture
+        .store
+        .claim_workspace_work(
+            &unheld.id,
+            "successor",
+            MINUTE.into(),
+            work_lease_deadline()
+        )
+        .await
+        .unwrap()
+        .is_some());
+    fixture.drop_database().await;
+}
+
 async fn workspace_parent_read_and_write_abort_preserve_fresh_transaction_retry_case(
     command: &'static str,
     scoped: bool,
