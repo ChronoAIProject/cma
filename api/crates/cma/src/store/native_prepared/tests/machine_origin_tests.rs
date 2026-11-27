@@ -101,7 +101,14 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
         sandbox.owner = owner.clone();
         sandbox.runtime = native.payload.runtime.clone();
         sandbox.lifecycle.home = native.payload.home.clone();
-        sandbox.work.step = SandboxWorkStep::None;
+        if prepared {
+            sandbox.work.step = SandboxWorkStep::None;
+        } else {
+            sandbox.work.schedule(
+                SandboxWorkStep::WaitForCredentialRotation,
+                "2026-09-05T01:00:00Z".into(),
+            );
+        }
         sandbox.credential.reaches = native.plan.warm.reaches.clone();
         sandbox.profile.id =
             private_sandbox_profile_id(&sandbox.owner, &format!("agent-manager:{key}:sandbox"))
@@ -180,6 +187,22 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
         } else {
             ManagedMachineUpdates::All
         };
+        if key == "cold-managed" {
+            let mut rotating = sandbox.clone();
+            rotating
+                .work
+                .claim(
+                    "rotation-worker".into(),
+                    "2026-09-05T01:00:00Z",
+                    "2026-09-05T01:01:00Z".into(),
+                )
+                .unwrap();
+            assert!(store
+                .qualify_retained_machine(&rotating, "2026-09-05T01:00:01Z")
+                .await
+                .unwrap()
+                .is_none());
+        }
         if prepared {
             native.payload.state = WarmSandboxState::Claimed;
             native.ownership = Some(super::super::model::Ownership {
@@ -229,6 +252,7 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
             assert_eq!(qualified.profile, sandbox.profile);
             assert_eq!(qualified.lifecycle.home, sandbox.lifecycle.home);
             assert_eq!(qualified.runtime, sandbox.runtime);
+            assert_eq!(qualified.work, sandbox.work);
             assert_eq!(
                 store.get_sandbox(&sandbox.id).await.unwrap(),
                 Some(qualified.clone())
