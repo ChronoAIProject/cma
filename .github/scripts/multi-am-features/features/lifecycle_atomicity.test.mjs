@@ -4,12 +4,22 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
 import {cleanupFixture} from '../cma/cleanup.mjs';
+import {lineage} from '../cma/core.mjs';
 import {assertRetainedHome, observeAtomicPause, retainedLifecycle, verifySiblingRecovery} from './lifecycle_atomicity.mjs';
 
 const ready = {status: 'ready', revision: 5, last_seq: 4};
 const paused = {status: 'paused', revision: 6, last_seq: 5};
 const snapshot = (status, revision, children) => ({status, revision, children});
 const before = snapshot('active', 9, [ready, ready]);
+
+test('an automatic-title Agent is bound to the original operation-named Sandbox', () => {
+  const record = {agentId: 'agent', sandboxId: 'sandbox', operationId: 'operation',
+    name: 'original', createBody: {title_mode: 'automatic'}};
+  const detail = {id: 'agent', title: 'Renamed', sandbox: {id: 'sandbox', name: 'original sandbox operation'}};
+  assert.equal(lineage(record, detail), true);
+  assert.equal(lineage(record, {...detail, sandbox: {...detail.sandbox, name: 'original sandbox other'}}), false);
+  assert.equal(lineage({...record, sharedSandbox: true}, detail), false);
+});
 
 async function sample(states) {
   const sequence = [...states];
@@ -115,7 +125,8 @@ test('cleanup discovers a late assignment and retires the original home with its
   let status = 'starting';
   let retired = false;
   const mutations = [];
-  const api = {request: async (_, method, path) => {
+  const api = {request: async (_, method, path, options) => {
+    assert.equal(options.direct, true);
     if (path === '/api/v1/agent-lifecycle/operation') {
       return {status: 200, body: {id: 'operation', agent_id: 'agent', phase: 'sandbox_ready'}};
     }

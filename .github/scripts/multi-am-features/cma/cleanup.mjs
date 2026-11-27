@@ -1,7 +1,7 @@
 import {writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {check, hash, id, lineage, other, poll, safeError} from './core.mjs';
+import {check, hash, id, lifecycleSandboxName, lineage, other, poll, safeError} from './core.mjs';
 
 export async function cleanupFixture({record, config, api, killedAm, result}) {
   if (record.deleted || (!record.agentId && !record.operationId)) return;
@@ -15,7 +15,7 @@ export async function cleanupFixture({record, config, api, killedAm, result}) {
     try {
       const response = record.sharedSandbox
         ? await api.rawRequest(target, method, path, options)
-        : await api.request(target, method, path, options);
+        : await api.request(target, method, path, {...options, direct: true});
       const entry = {at:new Date().toISOString(), method, path, ...response};
       if (method === 'GET') journal.last_reads[path] = entry;
       else {journal.mutations.push(entry); await persist();}
@@ -74,8 +74,7 @@ export async function cleanupFixture({record, config, api, killedAm, result}) {
     }
     const sandbox = await cleanupRequest(am, 'GET', `/api/v1/sandboxes/${record.sandboxId}`);
     check(sandbox.body?.id === record.sandboxId && sandbox.body.owner === config.owner_id, 'sandbox_owner_mismatch');
-    const suffix = ' sandbox ' + record.operationId;
-    check(sandbox.body.name === record.name.slice(0, Math.max(0, 64 - suffix.length)) + suffix, 'sandbox_operation_name_mismatch');
+    check(sandbox.body.name === lifecycleSandboxName(record), 'sandbox_operation_name_mismatch');
     let cursor; const seen = new Set();
     do {
       const query = new URLSearchParams({limit: '200', ...(cursor ? {cursor} : {})});

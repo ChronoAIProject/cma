@@ -402,7 +402,10 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       return result;
     }
     let plain;
-    await step('plain_create_a_ready_b', async () => {plain = await create('a', false); return {agent_sha256: hash(plain.agentId)};});
+    await step('plain_create_a_ready_b', async () => {
+      plain = await create('a', false, featureHook ? {title_mode: 'automatic'} : {});
+      return {agent_sha256: hash(plain.agentId)};
+    });
     await step('plain_open_both', () => openBoth(plain));
     if (featureHook) await step('features_before_restart', () => featureHook({
       record: plain, api, adapter, config, create, cleanup, phase: 'before_restart',

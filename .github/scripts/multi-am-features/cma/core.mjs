@@ -9,9 +9,15 @@ export const id = x => typeof x === 'string' && /^[-a-zA-Z0-9_]{1,160}$/.test(x)
 export const other = am => am === 'a' ? 'b' : 'a';
 export function safeError(error) { return /^[a-zA-Z0-9_]+$/.test(error?.message ?? '') ? error.message : 'transport_or_adapter_error'; }
 export const terminal = value => ['completed', 'failed', 'incomplete', 'cancelled'].includes(value.status);
+export function lifecycleSandboxName(record) {
+  const suffix = ' sandbox ' + record.operationId;
+  return record.name.slice(0, Math.max(0, 64 - suffix.length)) + suffix;
+}
 export const lineage = (record, detail) => detail?.id === record.agentId && detail.sandbox?.id === record.sandboxId
-  && [detail.title, detail.owner_title, detail.worktree?.name, detail.sandbox?.name]
-    .some(name => name === record.name || (record.writerTitle && name === record.writerTitle.title));
+  && ((record.createBody?.title_mode === 'automatic' && !record.sharedSandbox
+    && detail.sandbox?.name === lifecycleSandboxName(record))
+    || [detail.title, detail.owner_title, detail.worktree?.name, detail.sandbox?.name]
+      .some(name => name === record.name || (record.writerTitle && name === record.writerTitle.title)));
 export function runtimeBindings(value) {
   check(value?.runtime_images?.base, 'base_runtime_image_required');
   const bindings = {};
