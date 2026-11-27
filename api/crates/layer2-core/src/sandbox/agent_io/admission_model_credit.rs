@@ -133,7 +133,7 @@ impl AgentCommandService {
                 result
             })
             .await;
-        if may_refresh && matches!(&result, Ok(Err(CommandLedgerError::Conflict))) {
+        if may_refresh && matches!(&result, Ok(Err(CommandLedgerError::KnownAborted))) {
             deferred_refusal.pending = refusal.pending.take();
         } else {
             refusal.settle().await?;
@@ -211,7 +211,11 @@ fn admission_refused(
             })
         }
         Ok(CommandReservationResult::Created(_))
-        | Err(CommandLedgerError::Corrupt | CommandLedgerError::Unavailable) => false,
+        | Err(
+            CommandLedgerError::Corrupt
+            | CommandLedgerError::Unavailable
+            | CommandLedgerError::ControlBusy,
+        ) => false,
         Err(
             CommandLedgerError::Budget(_)
             | CommandLedgerError::AdmissionPaused
@@ -220,6 +224,7 @@ fn admission_refused(
             | CommandLedgerError::NotFound
             | CommandLedgerError::IdempotencyConflict
             | CommandLedgerError::Conflict
+            | CommandLedgerError::KnownAborted
             | CommandLedgerError::StaleClaim
             | CommandLedgerError::NotAdmissible
             | CommandLedgerError::QueueFull,

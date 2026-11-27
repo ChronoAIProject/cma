@@ -10,8 +10,12 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-async function delivery(name: string, body: string, index = 1): Promise<AnswerDeliverable> {
-  const bytes = new TextEncoder().encode(body);
+async function delivery(
+  name: string,
+  body: string | Uint8Array<ArrayBuffer>,
+  index = 1,
+): Promise<AnswerDeliverable> {
+  const bytes = typeof body === 'string' ? new TextEncoder().encode(body) : body;
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   return {
     id: `delivery_${String(index).repeat(64)}`,
@@ -83,6 +87,32 @@ function harness(
 const opaque = (body: string) =>
   new Response(body, { headers: { 'content-type': 'application/octet-stream' } });
 const panel = () => within(screen.getByRole('complementary', { name: 'Deliverable preview' }));
+
+it('uses the image viewer only after the live file bytes match the registered digest', async () => {
+  const bytes = Uint8Array.from(
+    atob(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=',
+    ),
+    (character) => character.charCodeAt(0),
+  );
+  const item = await delivery('pixel.png', bytes);
+  const incorrect = bytes.slice();
+  incorrect[0] = 0;
+  let correct = false;
+  harness(
+    [item],
+    async () =>
+      new Response(correct ? bytes : incorrect, {
+        headers: { 'content-type': 'application/octet-stream' },
+      }),
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'Preview pixel.png' }));
+  expect(await panel().findByText('Preview failed; retry.')).toBeVisible();
+  expect(panel().queryByRole('group', { name: 'Image zoom controls' })).toBeNull();
+  correct = true;
+  fireEvent.click(panel().getByRole('button', { name: 'Retry preview' }));
+  expect(await panel().findByRole('group', { name: 'Image zoom controls' })).toBeVisible();
+});
 
 it('renders Markdown without activating untrusted links, images, HTML or SVG', async () => {
   const body =

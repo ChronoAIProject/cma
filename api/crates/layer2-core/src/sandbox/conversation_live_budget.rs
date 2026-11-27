@@ -9,7 +9,10 @@ use layer3_adapter::ingress_budget::{
 use tokio::sync::Semaphore;
 
 use super::live::AgentLiveFragment;
-use crate::AgentId;
+use crate::{
+    agent_ownership::{Authority, OwnershipToken},
+    AgentId,
+};
 
 const PROCESS_BYTES: usize = 32 * 1024 * 1024;
 
@@ -39,29 +42,13 @@ impl LiveBudget {
         source: &AgentLiveFragment,
         chunk: &str,
     ) -> Option<AgentLiveDelivery> {
-        let Some(aggregate) = &self.1 else {
-            return self.retain_local(copy_fragment(source, chunk));
-        };
-        let bytes = coordinated_bytes(source, chunk)?;
-        let permit = IngressReservation::try_acquire(&self.0, Some(aggregate), bytes)?;
+        let bytes = budgeted_bytes(source, chunk)?;
+        let permit = IngressReservation::try_acquire(&self.0, self.1.as_ref(), bytes)?;
         let fragment = permit.initialize_shared(|| copy_fragment(source, chunk));
         Some(AgentLiveDelivery(
-            Delivery::Coordinated(fragment),
+            Delivery::Budgeted(fragment),
             tokio::time::Instant::now(),
-        ))
-    }
-
-    fn retain_local(&self, fragment: AgentLiveFragment) -> Option<AgentLiveDelivery> {
-        // The temporary producer fragment already exists. Reserve before moving
-        // it into retained shared storage, using its actual owned capacities.
-        let bytes = retained_bytes(&fragment)?;
-        let permit = IngressReservation::try_acquire(&self.0, None, bytes as usize)?;
-        Some(AgentLiveDelivery(
-            Delivery::Reserved(Arc::new(Reserved {
-                fragment,
-                _permit: permit,
-            })),
-            tokio::time::Instant::now(),
+            None,
         ))
     }
 
@@ -83,7 +70,7 @@ fn copy_fragment(source: &AgentLiveFragment, chunk: &str) -> AgentLiveFragment {
     }
 }
 
-fn coordinated_bytes(source: &AgentLiveFragment, chunk: &str) -> Option<usize> {
+fn budgeted_bytes(source: &AgentLiveFragment, chunk: &str) -> Option<usize> {
     let bytes = component_shared_owner_bytes::<AgentLiveFragment>()
         .ok()?
         .checked_add(source.agent_id.0.len())?
@@ -92,33 +79,16 @@ fn coordinated_bytes(source: &AgentLiveFragment, chunk: &str) -> Option<usize> {
     Some(u32::try_from(bytes).ok()? as usize)
 }
 
-fn retained_bytes(fragment: &AgentLiveFragment) -> Option<u32> {
-    // Include the owned value, permit, and the two Arc reference counts. The
-    // allocator's bookkeeping/rounding and channel slots are not heap bytes here.
-    let bytes = std::mem::size_of::<Reserved>()
-        .checked_add(2 * std::mem::size_of::<usize>())?
-        .checked_add(fragment.agent_id.0.capacity())?
-        .checked_add(fragment.message_id.capacity())?
-        .checked_add(fragment.delta.capacity())?;
-    bytes.try_into().ok()
-}
-
-struct Reserved {
-    fragment: AgentLiveFragment,
-    _permit: IngressReservation,
-}
-
 #[derive(Clone)]
 enum Delivery {
     Legacy(AgentLiveFragment),
-    Reserved(Arc<Reserved>),
-    Coordinated(SharedComponentOwned<AgentLiveFragment>),
+    Budgeted(SharedComponentOwned<AgentLiveFragment>),
 }
 
 /// Immutable source data. Enabled deliveries share both storage and reservation
 /// across subscribers and deferred frames, until the final clone is dropped.
 #[derive(Clone)]
-pub struct AgentLiveDelivery(Delivery, tokio::time::Instant);
+pub struct AgentLiveDelivery(Delivery, tokio::time::Instant, Option<Arc<Authority>>);
 
 impl Deref for AgentLiveDelivery {
     type Target = AgentLiveFragment;
@@ -126,15 +96,18 @@ impl Deref for AgentLiveDelivery {
     fn deref(&self) -> &Self::Target {
         match &self.0 {
             Delivery::Legacy(fragment) => fragment,
-            Delivery::Reserved(fragment) => &fragment.fragment,
-            Delivery::Coordinated(fragment) => fragment,
+            Delivery::Budgeted(fragment) => fragment,
         }
     }
 }
 
 impl From<AgentLiveFragment> for AgentLiveDelivery {
     fn from(fragment: AgentLiveFragment) -> Self {
-        Self(Delivery::Legacy(fragment), tokio::time::Instant::now())
+        Self(
+            Delivery::Legacy(fragment),
+            tokio::time::Instant::now(),
+            None,
+        )
     }
 }
 
@@ -152,6 +125,23 @@ impl std::fmt::Debug for AgentLiveDelivery {
 }
 
 impl AgentLiveDelivery {
+    pub(super) fn with_authority(mut self, authority: Option<Arc<Authority>>) -> Self {
+        self.2 = authority;
+        self
+    }
+
+    pub fn is_current(&self) -> bool {
+        self.2
+            .as_ref()
+            .is_none_or(|authority| authority.is_current())
+    }
+
+    pub fn is_current_for(&self, owner: &OwnershipToken) -> bool {
+        self.2
+            .as_ref()
+            .is_none_or(|authority| &authority.token == owner && authority.is_current())
+    }
+
     /// Local monotonic publication time; never part of the wire contract.
     pub fn published_at(&self) -> tokio::time::Instant {
         self.1
@@ -162,7 +152,13 @@ impl AgentLiveDelivery {
         let Delivery::Legacy(previous) = &mut self.0 else {
             return false;
         };
-        if !matches!(next.0, Delivery::Legacy(_))
+        let same_authority = match (&self.2, &next.2) {
+            (Some(previous), Some(next)) => Arc::ptr_eq(previous, next),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same_authority
+            || !matches!(next.0, Delivery::Legacy(_))
             || previous.agent_id != next.agent_id
             || previous.message_id != next.message_id
             || previous.kind != next.kind

@@ -22,6 +22,7 @@ import { FileRail } from './FileRail';
 import { canPreviewFile, FilePreview, imageType, textContent } from './FilePreview';
 import { ImagePreview } from './ImagePreview';
 import { useDownloadInterruption } from './useDownloadInterruption';
+import { useInitialFileListing } from './useInitialFileListing';
 import './AgentFiles.css';
 
 export function FileExplorer({
@@ -34,6 +35,7 @@ export function FileExplorer({
   panel = false,
   embedded = false,
   active = true,
+  preserveListing = false,
   initialDirectory: suppliedDirectory,
   navigationMemory,
   changes,
@@ -44,6 +46,7 @@ export function FileExplorer({
   readonly panel?: boolean;
   readonly embedded?: boolean;
   readonly active?: boolean;
+  readonly preserveListing?: boolean;
   readonly client: AgentFilesClient;
   readonly agentId: string;
   readonly readOnly: boolean;
@@ -90,6 +93,7 @@ export function FileExplorer({
     action: (currentFile?: AgentFileEntry) => void;
   }>();
   const lifetime = useRef<AbortController | undefined>(undefined);
+  const listingRequest = useRef<AbortController | undefined>(undefined);
   const readRequest = useRef<AbortController | undefined>(undefined);
   const mutation = useRef(false);
   const dirty = draft !== undefined && content !== undefined && draft !== textContent(content);
@@ -102,7 +106,6 @@ export function FileExplorer({
 
   const failure = useCallback(
     (cause: unknown, download = false) => {
-      if (lifetime.current?.signal.aborted) return;
       setError(
         cause instanceof AgentFileError && cause.code === 'file_runtime_unsupported'
           ? 'File browsing requires the latest Sandbox runtime. The owner can update it from Sandbox details when the Agent is idle.'
@@ -115,6 +118,7 @@ export function FileExplorer({
         ([401, 403].includes(cause.status) || cause.code === 'resource_not_found')
       ) {
         lifetime.current?.abort();
+        listingRequest.current?.abort();
         readRequest.current?.abort();
         setDenied(true);
         setLoading(new Set());
@@ -160,18 +164,18 @@ export function FileExplorer({
     },
     [agentId, client, failure, setError],
   );
+  useInitialFileListing(
+    active,
+    preserveListing,
+    initialRoot,
+    navigationMemory,
+    load,
+    listingRequest,
+  );
   useEffect(() => {
     if (!active) return;
     const request = new AbortController();
     lifetime.current = request;
-    queueMicrotask(() => {
-      if (!request.signal.aborted) {
-        void load(initialRoot, request.signal);
-        const remembered = navigationMemory?.read();
-        if (remembered !== undefined && remembered !== initialRoot)
-          void load(remembered, request.signal);
-      }
-    });
     return () => {
       request.abort();
       readRequest.current?.abort();
@@ -182,7 +186,6 @@ export function FileExplorer({
     const timer = setTimeout(() => setNotice(undefined), 4000);
     return () => clearTimeout(timer);
   }, [notice]);
-
   const navigateDirectory = (path: string, root = false) =>
     navigate(path, root, lifetime.current?.signal, directories.has(path), load);
   const guardDraft = (action: () => void) => {

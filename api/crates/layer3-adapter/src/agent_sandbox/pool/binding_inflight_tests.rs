@@ -1,6 +1,41 @@
 use super::*;
 
 #[tokio::test]
+async fn bound_status_accepts_an_identical_assignment_replay_during_exchange() {
+    let fixture = fixture(true, true).await;
+    fixture
+        .adapter
+        .adopt_runtime(&fixture.adoption)
+        .await
+        .unwrap()
+        .unwrap();
+    let held = fixture.stream.gate.acquire().await.unwrap();
+    let status = tokio::spawn({
+        let adapter = fixture.adapter.clone();
+        let handle = fixture.bound.runtime.clone();
+        async move { adapter.runtime_status(&handle).await }
+    });
+    received(&fixture).await;
+
+    let replay = fixture
+        .backend
+        .provision(fixture.bound.request.clone())
+        .await
+        .unwrap();
+    assert_eq!(replay, fixture.bound.runtime);
+    {
+        let state = fixture.bound.fixture.state.lock().unwrap();
+        assert_eq!(state.assignments.len(), 3);
+        assert_eq!(state.assignments[1], state.assignments[2]);
+    }
+    drop(held);
+
+    let status = status.await.unwrap().unwrap();
+    assert_eq!(status.boot_id, "a".repeat(32));
+    assert_eq!(fixture.stream.requests.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
 async fn combined_native_inspection_revalidates_the_current_status_reply() {
     for boundary in [false, true] {
         for change in [

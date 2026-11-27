@@ -37,8 +37,8 @@ pub(super) mod live;
 mod live_budget;
 pub use live::AgentHeadSubscription;
 pub use live::{
-    AgentLiveError, AgentLiveFragment, AgentLiveFragmentKind, AgentLivePublisher, AgentLiveSource,
-    AgentLiveSubscription,
+    AgentLiveError, AgentLiveEvent, AgentLiveFragment, AgentLiveFragmentKind,
+    AgentLiveInterruption, AgentLivePublisher, AgentLiveSource, AgentLiveSubscription,
 };
 pub use live_budget::AgentLiveDelivery;
 

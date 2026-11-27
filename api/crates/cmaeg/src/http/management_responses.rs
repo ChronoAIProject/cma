@@ -48,31 +48,24 @@ pub(super) fn channel_list_item(
         ));
     }
     let definition = &record.definition;
-    let known = definition
-        .creation
-        .as_ref()
-        .map(|creation| {
-            crate::console::channel_ids::opens_to(
-                &creation.channel_id,
-                &definition.record_id,
-                &state.master_keys,
-                &state.records,
-            )
-            .map_err(|_| ManagementError::Internal("retained channel ID is invalid".into()))?;
-            channel_response(
-                state,
-                &creation.channel_id,
-                definition,
-                record.version,
-                provider_response(definition),
-                &definition.record_id,
-            )
-        })
-        .transpose()?;
+    let creation = definition.creation.as_ref();
+    if let Some(creation) = creation {
+        crate::console::channel_ids::opens_to(
+            &creation.channel_id,
+            &definition.record_id,
+            &state.master_keys,
+            &state.records,
+        )
+        .map_err(|_| ManagementError::Internal("retained channel ID is invalid".into()))?;
+    }
     Ok(ChannelListItem {
         native_discord_activation: crate::discord::activation::view(state, definition),
-        channel_id: known.as_ref().map(|response| response.channel_id.clone()),
-        endpoints: known.map(|response| response.endpoints),
+        channel_id: creation.map(|creation| creation.channel_id.to_string()),
+        // Keep the original ID for recovery and cleanup. Advertise delivery
+        // URLs only after provider setup has been confirmed.
+        endpoints: creation.filter(|creation| creation.ready).map(|creation| {
+            super::channel_endpoints::channel_endpoints(state, &creation.channel_id, definition)
+        }),
         record_id: definition.record_id.to_string(),
         version: record.version,
         provider: provider_response(definition),

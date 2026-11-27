@@ -150,10 +150,11 @@ async fn cached_reserved_creation_does_not_replay_a_channel_deleted_by_another_r
 async fn failed_binding_retains_encrypted_cleanup_identity_and_blocks_events() {
     failed_binding_creation(
         FakeProviderConfig {
-            reject_binding: true,
+            binding_failures: [(0, (422, json!({"code": "profile_refused"})))].into(),
             ..Default::default()
         },
         502,
+        "provider_rejected",
     )
     .await;
 }
@@ -166,11 +167,25 @@ async fn invalid_binding_profile_is_refused_and_retains_only_cleanup_identity() 
             ..Default::default()
         },
         400,
+        "provider_rejected",
     )
     .await;
 }
 
-async fn failed_binding_creation(config: FakeProviderConfig, status: u16) {
+#[tokio::test]
+async fn uncertain_binding_is_listed_as_incomplete_and_remains_recoverable() {
+    failed_binding_creation(
+        FakeProviderConfig {
+            binding_failures: [(0, (503, json!({})))].into(),
+            ..Default::default()
+        },
+        503,
+        "provider_unavailable",
+    )
+    .await;
+}
+
+async fn failed_binding_creation(config: FakeProviderConfig, status: u16, code: &str) {
     let provider = FakeProvider::start(config).await;
     let cma = FakeCma::start(false).await;
     let nyxid = FakeNyxid::start().await;
@@ -179,18 +194,16 @@ async fn failed_binding_creation(config: FakeProviderConfig, status: u16) {
     let (base, stop, task) = serve_app(state).await;
     let client = Client::new();
     let body = reserved_body();
+    let channels_url = format!("{base}/v1/channels");
     let response = client
-        .post(format!("{base}/v1/channels"))
+        .post(&channels_url)
         .bearer_auth("token-alice")
         .json(&body)
         .send()
         .await
         .unwrap();
     assert_eq!(response.status(), status);
-    assert_eq!(
-        response.json::<Value>().await.unwrap()["code"],
-        "provider_rejected"
-    );
+    assert_eq!(response.json::<Value>().await.unwrap()["code"], code);
     let recovered: Value = client
         .get(format!(
             "{base}/v1/channel-records/{}",
@@ -216,7 +229,41 @@ async fn failed_binding_creation(config: FakeProviderConfig, status: u16) {
         .detail
         .unwrap()
         .contains("channel_creation_pending"));
-    assert_eq!(cma.records().len(), 1);
+
+    let sibling = client
+        .post(&channels_url)
+        .bearer_auth("token-alice")
+        .json(&reserved_body())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(sibling.status(), 201);
+    let sibling: Value = sibling.json().await.unwrap();
+    let list = client
+        .get(&channels_url)
+        .bearer_auth("token-alice")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(list.status(), 200);
+    let page: Value = list.json().await.unwrap();
+    let items = page["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    let incomplete = items
+        .iter()
+        .find(|item| item["record_id"] == body["record_id"])
+        .unwrap();
+    assert_eq!(incomplete["definition"]["creation"]["ready"], false);
+    assert_eq!(incomplete["channel_id"], recovered["channel_id"]);
+    assert_eq!(incomplete["version"], recovered["version"]);
+    assert!(incomplete.get("endpoints").is_none());
+    let ready = items
+        .iter()
+        .find(|item| item["record_id"] == sibling["record_id"])
+        .unwrap();
+    assert_eq!(ready["definition"]["creation"]["ready"], true);
+    assert_eq!(ready["endpoints"], sibling["endpoints"]);
+
     let url = format!(
         "{base}/v1/channels/{id}?expected_version={}",
         recovered["version"]
@@ -231,7 +278,7 @@ async fn failed_binding_creation(config: FakeProviderConfig, status: u16) {
             .status(),
         204
     );
-    assert!(cma.records().is_empty());
+    assert_eq!(cma.records().len(), 1);
     assert_eq!(provider.requests().last().unwrap().method, "DELETE");
     stop.send(()).unwrap();
     task.await.unwrap();

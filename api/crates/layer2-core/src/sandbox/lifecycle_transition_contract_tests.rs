@@ -3,6 +3,9 @@ use std::fmt::Debug;
 use super::*;
 use crate::sandbox::store::{SandboxSessionStore, SandboxStoreError, WorkspaceWorkerStore};
 
+#[path = "lifecycle_transition_contract_tests/workspace_prerequisites_tests.rs"]
+mod workspace_prerequisites_tests;
+
 const TRANSITION_AT: &str = "2026-09-05T00:01:00Z";
 
 use SandboxStatus as S;
@@ -317,11 +320,50 @@ async fn workspace_renewal_rejects_expired_and_replaced_claims_without_mutation(
             .unwrap(),
         None
     );
+    let mut old_fence = successor.clone();
+    old_fence.work.lease.as_mut().unwrap().fence = first.work.lease.as_ref().unwrap().fence;
+    let mut wrong_step = successor.clone();
+    wrong_step.work.step = WorkspaceWorkStep::Remove;
+    let mut wrong_owner = successor.clone();
+    wrong_owner.owner = crate::SubjectId::new("other-owner");
+    let mut wrong_parent = successor.clone();
+    wrong_parent.sandbox_id = SandboxId("sbx_other".into());
+    let mut missing = successor.clone();
+    missing.id = crate::WorkspaceId("wks_missing".into());
+    for observed in [old_fence, wrong_step, wrong_owner, wrong_parent, missing] {
+        assert_eq!(
+            store
+                .renew_workspace_authority(&observed, RENEWED_EXPIRY, NEXT_EXPIRY)
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store.get_workspace(&first.id).await.unwrap(),
+            Some(successor.clone())
+        );
+    }
+
+    let mut rotating = parent.clone();
+    rotating
+        .transition(S::Rotating, RENEWED_EXPIRY.into(), None)
+        .unwrap();
+    store
+        .save_sandbox(parent.revision, rotating.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .renew_workspace_authority(&successor, RENEWED_EXPIRY, NEXT_EXPIRY)
+            .await
+            .unwrap(),
+        None
+    );
     assert_eq!(
         store.get_workspace(&first.id).await.unwrap(),
         Some(successor)
     );
-    assert_eq!(store.get_sandbox(&parent.id).await.unwrap(), Some(parent));
+    assert_eq!(store.get_sandbox(&parent.id).await.unwrap(), Some(rotating));
 }
 
 #[tokio::test]

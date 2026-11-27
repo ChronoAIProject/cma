@@ -3,6 +3,7 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { cursor, LocalAgentV2 } from './agent-v2.fixture';
+import { previewBoundary } from './deliverable-preview-fixtures';
 
 for (const [colorScheme, width] of [
   ['light', 1440],
@@ -184,6 +185,44 @@ for (const [colorScheme, width] of [
     }
   });
 }
+
+test('LOCAL opens the verified answer image with the shared viewer and restores focus', async ({
+  page,
+  baseURL,
+}) => {
+  const { boundary, control } = await previewBoundary(page, baseURL!);
+  await page.goto('/agents/agt_contract');
+  const back = page.getByRole('button', { name: 'Back to conversation', exact: true });
+  if (await back.isVisible()) await back.click();
+  await page.getByText('Verified deliveries.', { exact: true }).scrollIntoViewIfNeeded();
+  const card = page.getByRole('button', { name: 'Preview pixel.png', exact: true });
+  await card.click();
+  const preview = page.getByRole('complementary', { name: 'Deliverable preview' });
+  const source = preview.getByRole('img', { name: 'pixel.png', exact: true });
+  await expect(source).toBeVisible();
+  expect(await source.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+  const open = preview.getByRole('button', { name: 'Open full-screen image' });
+  await open.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'pixel.png', exact: true });
+  await expect(dialog.getByRole('img', { name: 'pixel.png', exact: true })).toBeVisible();
+  const viewport = dialog.getByRole('region', { name: 'Image viewport' });
+  await viewport.press('+');
+  await expect(dialog.getByLabel('Image zoom', { exact: true })).toHaveText('141%');
+  await viewport.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(open).toBeFocused();
+  await expect(preview).toBeVisible();
+
+  await open.press('Enter');
+  await expect(dialog).toBeVisible();
+  control.revoked = true;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(preview.getByText('Access unavailable', { exact: true })).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await expect(source).toHaveCount(0);
+  expect(boundary.errors).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+});
 
 // Minimal synthetic OOXML package with content types, a root relationship and a document.
 const docx = Buffer.from(

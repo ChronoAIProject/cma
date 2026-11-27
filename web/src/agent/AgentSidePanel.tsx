@@ -180,6 +180,7 @@ export function AgentSidePanel({
     agentId: string;
     subject?: string;
     runtimeVersion?: string;
+    runtime?: { incarnation: string; revision: number };
     listingAllowed?: boolean;
   }>();
   const sameFileEnvironment =
@@ -188,37 +189,37 @@ export function AgentSidePanel({
     fileEnvironment.subject === subject &&
     fileEnvironment.runtimeVersion === runtimeVersion;
   const listingAllowed = sameFileEnvironment ? fileEnvironment.listingAllowed : undefined;
+  const previousRuntime = sameFileEnvironment ? fileEnvironment.runtime : undefined;
+  const incarnation = features?.runtime_incarnation;
+  const runtime =
+    incarnation && incarnation !== previousRuntime?.incarnation
+      ? { incarnation, revision: previousRuntime ? previousRuntime.revision + 1 : 0 }
+      : previousRuntime;
   const environmentReady = environment.state.status === 'ready';
   const environmentAllowsListing = !features || features.files.state === 'available';
-  const transientEnvironment =
-    environment.state.status === 'error' && environment.state.transient === true;
+  const recheckingEnvironment =
+    environment.state.status === 'loading' ||
+    (environment.state.status === 'error' && environment.state.transient === true);
   const nextListingAllowed = environmentReady
     ? environmentAllowsListing
-    : environment.state.status === 'error'
-      ? transientEnvironment && listingAllowed !== false
-      : listingAllowed;
-  if (!sameFileEnvironment || listingAllowed !== nextListingAllowed)
+    : recheckingEnvironment && listingAllowed;
+  if (!sameFileEnvironment || listingAllowed !== nextListingAllowed || runtime !== previousRuntime)
     setFileEnvironment({
       client,
       agentId,
       subject,
       runtimeVersion,
+      runtime,
       listingAllowed: nextListingAllowed,
     });
-  const keepFilesActiveDuringEnvironmentCheck =
-    filesOpen &&
-    document.visibilityState !== 'hidden' &&
-    client.files?.environment &&
-    (transientEnvironment
-      ? listingAllowed !== false
-      : environment.state.status === 'loading' && listingAllowed === true);
-  const mayRead =
+  const hasFileAccess =
     computerOpen &&
     !lifecycleHeld &&
-    (!shared || authorized?.capabilities.includes('view_files') === true) &&
-    (!client.files?.environment ||
-      (environmentReady && environmentAllowsListing) ||
-      keepFilesActiveDuringEnvironmentCheck);
+    (!shared || authorized?.capabilities.includes('view_files') === true);
+  const mayRead =
+    hasFileAccess && (!client.files?.environment || (environmentReady && environmentAllowsListing));
+  const preserveListing =
+    filesOpen && hasFileAccess && listingAllowed === true && recheckingEnvironment;
   const mayRetain =
     (!shared ||
       authorized?.capabilities.includes('view_files') === true ||
@@ -391,10 +392,11 @@ export function AgentSidePanel({
               initialDirectory={homeFilePath(workingDirectory ?? '')}
               navigationMemory={currentObservation?.fileNavigation}
               changes={changedFiles(operations?.toolCalls, workingDirectory)}
-              key={`${agentId}:${shared}:${subject}:${currentObservation?.scope.authEpoch}:${visitedScope?.generation}`}
+              key={`${agentId}:${shared}:${subject}:${currentObservation?.scope.authEpoch}:${visitedScope?.generation}:${runtime?.revision ?? 0}`}
               panel
               embedded
               active={mayRead}
+              preserveListing={preserveListing}
               client={client.files}
               agentId={agentId}
               readOnly={!mayWrite}

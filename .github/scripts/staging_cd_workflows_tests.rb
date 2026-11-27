@@ -177,10 +177,54 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 2, steps[index.call('Retain complete layer detector evidence')]['timeout-minutes']
   end
 
+  def test_native_image_handoff_precedes_publisher_with_read_only_authority
+    release = workflow('staging-release').fetch('jobs')
+    producer = release.fetch('native')
+    assert_equal './.github/workflows/staging-native-image.yml', producer.fetch('uses')
+    condition = producer.fetch('if')
+    output, status = Open3.capture2e('node', '-e', <<~JS)
+      for (const component of ['am', 'runtime', 'runtime-omarchy', 'web', 'eg']) {
+        for (const bounded of ['true', 'false']) {
+          for (const writer of ['true', 'false']) {
+            const vars = { CMA_STAGING_RELEASE_ARCHIVE_HANDOFF: 'true',
+              CMA_BOUNDED_LAYER_CACHE: bounded, CMA_LAYER_CACHE_WRITER_FLOOR: writer };
+            const inputs = { component, protected_web: false };
+            const runtime = component.startsWith('runtime');
+            const expected = component === 'am' || (runtime && (bounded === 'false' || writer === 'false'));
+            if (Boolean(#{condition}) !== expected) throw new Error([component, bounded, writer]);
+          }
+        }
+      }
+    JS
+    assert status.success?, output
+    assert_equal({ 'contents' => 'read', 'actions' => 'read' }, producer.fetch('permissions'))
+    publish = release.fetch('publish')
+    assert_equal 'native', publish.fetch('needs')
+    assert_includes publish.fetch('if'), "needs.native.result == 'success'"
+    local = publish.fetch('steps').find { |step| step['id'] == 'producer' }
+    assert_includes local.fetch('if'), "needs.native.outputs.artifact == ''"
+    publication = publish.fetch('steps').find { |step| step['id'] == 'publication' }
+    assert_equal '${{ needs.native.outputs.artifact }}', publication.dig('env', 'CD_NATIVE_IMAGE_ARTIFACT')
+
+    workflow_job = workflow('staging-native-image').fetch('jobs').fetch('build')
+    assert_includes workflow_job.fetch('if'), '.github/workflows/staging-cd.yml@refs/heads/develop'
+    assert_equal '${{ github.sha }}', workflow_job.fetch('steps').first.dig('with', 'ref')
+    steps = workflow_job.fetch('steps')
+    tested = steps.index { |step| step['id'] == 'producer' }
+    upload = steps.index { |step| step['id'] == 'upload' }
+    assert_operator tested, :<, upload
+    assert_equal "steps.producer.outputs.native_path != ''", steps[upload]['if']
+    assert_equal '${{ steps.producer.outputs.native_name }}', steps[upload].dig('with', 'name')
+    assert_equal '${{ steps.producer.outputs.native_path }}', steps[upload].dig('with', 'path')
+    refute steps[upload].dig('with', 'overwrite')
+  end
+
   # A setup step with no bound once held the staging queue for five hours: the
   # publish job allows 300 minutes for builds, and a stalled apt mirror used it all.
   def test_every_release_step_is_bounded_well_inside_its_job
     workflow('staging-release')['jobs'].each do |name, job|
+      next if job.key?('uses')
+
       limit = job.fetch('timeout-minutes').to_i
       job.fetch('steps').each do |step|
         label = step['name'] || step['uses']
@@ -463,7 +507,7 @@ class StagingWorkflowTest < Minitest::Test
     deploy = workflow('staging-deploy')
     job = deploy['jobs']['deploy']
     # Verification or, after it, the coordinator under the set lock may find the set overtaken.
-    assert_equal '${{ steps.release.outputs.disposition || steps.coordinate.outputs.disposition }}',
+    assert_equal '${{ steps.release.outputs.disposition || steps.admission.outputs.disposition || steps.coordinate.outputs.disposition }}',
                  job.dig('outputs', 'disposition')
     trigger = deploy['on'] || deploy.fetch(true)
     assert_equal '${{ jobs.deploy.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
@@ -492,6 +536,26 @@ class StagingWorkflowTest < Minitest::Test
     admit = promote['jobs']['admit']
     assert_equal '${{ steps.set.outputs.disposition }}', admit.dig('outputs', 'disposition')
     assert_equal 'automatic', admit['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_RESOLVE_MODE')
+  end
+
+  def test_automatic_admission_runs_after_private_setup_for_both_attempts
+    deploy = workflow('staging-deploy').dig('jobs', 'deploy', 'steps')
+    verify = deploy.index { |step| step['id'] == 'admission' }
+    coordinate = deploy.index { |step| step['id'] == 'coordinate' }
+    assert_operator deploy.index { |step| step['name'] == 'Install reviewed private controller requirements' }, :<, verify
+    assert_equal verify + 1, coordinate
+    assert_equal 'verify-automatic-at-deploy', deploy[verify].dig('env', 'CD_RESOLVE_MODE')
+    assert_equal '${{ inputs.automatic_lane }}', deploy[verify].dig('env', 'CD_PROMOTION_LANE')
+    assert_includes deploy[coordinate]['if'], "steps.admission.outputs.disposition == ''"
+    assert_includes deploy[coordinate]['if'], "steps.admission.outcome == 'success'"
+    assert_includes deploy[coordinate].dig('env', 'CD_STARTED_AT'), 'steps.admission.outputs.started_at'
+    %w[deploy redeploy].each do |name|
+      assert_equal '${{ inputs.lane }}',
+                   workflow('staging-promote').dig('jobs', name, 'with', 'automatic_lane')
+    end
+    early_clock = deploy.find { |step| step['name'] == 'Refuse an expired deployment before setup' }
+    assert_equal "inputs.automatic_lane == ''", early_clock['if']
+    assert_equal "inputs.automatic_lane == ''", deploy.find { |step| step['id'] == 'release' }['if']
   end
 
   def test_only_the_locked_staging_promotion_admission_reads_prior_proofs

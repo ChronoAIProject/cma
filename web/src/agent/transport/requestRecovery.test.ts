@@ -65,6 +65,40 @@ it('preserves disabled behavior without timers or shortened request deadlines', 
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it.each([1000, 4000])('honors a %sms server floor for a scoped retry', async (delay) => {
+  const error = new ApiError(503, 'Busy', 'response_control_busy', undefined, delay);
+  const run = vi.fn().mockRejectedValueOnce(error).mockResolvedValue('receipt');
+  const result = withRequestRecovery(undefined, { ...policy, enabled: false }, (context) =>
+    context.retry(run, (failure) => failure === error),
+  );
+  await vi.advanceTimersByTimeAsync(delay - 1);
+  expect(run).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(1);
+  await expect(result).resolves.toBe('receipt');
+  expect(run.mock.calls).toEqual([[0], [1]]);
+});
+
+it('blocks scoped retry dispatch if fresh authority outlasts the action budget', async () => {
+  const error = new ApiError(503, 'Busy', 'response_control_busy', undefined, 4000);
+  const post = vi.fn();
+  const result = expect(
+    withRequestRecovery(undefined, { ...policy, enabled: false }, (context) =>
+      context.retry(
+        async (retry) => {
+          if (retry === 0) throw error;
+          await new Promise<void>((resolve) => setTimeout(resolve, 22_000));
+          context.checkDeadline();
+          post();
+        },
+        (failure) => failure === error,
+      ),
+    ),
+  ).rejects.toThrow('awaiting confirmation');
+  await vi.advanceTimersByTimeAsync(26_000);
+  await result;
+  expect(post).not.toHaveBeenCalled();
+});
+
 it('shares four retries across independent stages of the same action', async () => {
   const error = new TransportError('Unavailable');
   const first = vi.fn().mockRejectedValueOnce(error).mockResolvedValue(undefined);

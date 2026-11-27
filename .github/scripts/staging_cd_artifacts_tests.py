@@ -156,6 +156,16 @@ class ArtifactTests(unittest.TestCase):
             self.assertEqual(inspect.call_args.kwargs, {"allow_qualified": True, "compatibility": None})
             self.assertEqual(list(root.iterdir()), [path])
 
+    def test_prepared_handoff_requires_the_reserved_release_label(self):
+        expected, _, _, api, download = self.fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with patch("staging_cd_artifacts.inspect", side_effect=Refusal("Reserved release label is absent")) as inspect:
+                self.assertIsNone(try_reuse(expected, root, api, "fixture", download, self.convert,
+                                            require_reserved_label=True))
+            self.assertFalse(inspect.call_args.kwargs["allow_qualified"])
+            self.assertEqual(list(root.iterdir()), [])
+
     def test_split_pr_artifact_uses_only_the_component_workflow(self):
         expected, run, _, api, download = self.fixture()
         run["path"] = ".github/workflows/ci-pr-web.yml"

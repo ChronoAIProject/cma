@@ -24,6 +24,7 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_CHECK_AGE: Duration = Duration::from_secs(5);
 
 mod build_info;
+pub(crate) use build_info::print_build_info;
 
 #[async_trait::async_trait]
 pub trait ReadinessProbe: Send + Sync {

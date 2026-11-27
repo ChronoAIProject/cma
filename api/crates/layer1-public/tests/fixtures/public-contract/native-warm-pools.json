@@ -46,6 +46,23 @@
               "error": null,
               "config_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
               "machine": true
+            },
+            {
+              "id": "wp_contract_retiring_desktop",
+              "revision": 1,
+              "image": "registry/desktop@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "cpu_millis": 2000,
+              "memory_mib": 1024,
+              "target_replicas": 0,
+              "provider_target_replicas": 2,
+              "ready_replicas": null,
+              "observed": false,
+              "status": "pending",
+              "retirement_status": "pending",
+              "resource_name": "pool-contract-retiring-desktop",
+              "error": null,
+              "config_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+              "machine": true
             }
           ],
           "default_image": "registry/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

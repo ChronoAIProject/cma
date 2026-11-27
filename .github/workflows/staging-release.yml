@@ -34,10 +34,28 @@ permissions:
   contents: read
 
 jobs:
+  native:
+    name: Native release image
+    # Runtime cache admission needs the pending layers and replay record on the publishing runner.
+    if: >-
+      vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true' && !inputs.protected_web &&
+      (inputs.component == 'am' ||
+      ((inputs.component == 'runtime' || inputs.component == 'runtime-omarchy') &&
+      !(vars.CMA_BOUNDED_LAYER_CACHE == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true')))
+    uses: ./.github/workflows/staging-native-image.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      component: ${{ inputs.component }}
+      tasks: ${{ inputs.tasks }}
   publish:
     name: Publish
     cache-mode: read
-    if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
+    needs: native
+    if: >-
+      !cancelled() && (needs.native.result == 'success' || needs.native.result == 'skipped') &&
+      github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
     runs-on: ubuntu-24.04
     timeout-minutes: 300
     permissions:
@@ -133,7 +151,7 @@ jobs:
         run: python3 -B .github/scripts/omarchy_key_expiry.py --warn-days 14
       - name: Prepare component Cargo cache
         timeout-minutes: 15
-        if: inputs.component == 'am' || inputs.component == 'eg'
+        if: needs.native.outputs.artifact == '' && (inputs.component == 'am' || inputs.component == 'eg')
         continue-on-error: true
         id: build-cache
         env:
@@ -162,7 +180,7 @@ jobs:
         run: python3 -B .github/scripts/image_detector_cache.py
       - name: Restore bounded layer archive
         id: layer-restore
-        if: ${{ !inputs.protected_web && vars.CMA_BOUNDED_LAYER_CACHE == 'true' && steps.ownership.outputs.superseded != 'true' }}
+        if: ${{ needs.native.outputs.artifact == '' && !inputs.protected_web && vars.CMA_BOUNDED_LAYER_CACHE == 'true' && steps.ownership.outputs.superseded != 'true' }}
         continue-on-error: true
         timeout-minutes: 5
         uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
@@ -182,7 +200,7 @@ jobs:
       - name: Build the exact reserved release archive
         id: producer
         if: >-
-          vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true' && steps.ownership.outputs.superseded != 'true' &&
+          needs.native.outputs.artifact == '' && vars.CMA_STAGING_RELEASE_ARCHIVE_HANDOFF == 'true' && steps.ownership.outputs.superseded != 'true' &&
           (inputs.component == 'am' || inputs.component == 'runtime' || inputs.component == 'runtime-omarchy')
         timeout-minutes: 240
         env:
@@ -203,6 +221,7 @@ jobs:
           CD_COMPONENT: ${{ inputs.component }}
           CD_TASKS: ${{ inputs.tasks }}
           CD_RECEIPTS_PATH: ${{ runner.temp }}/public-receipts/receipts.json
+          CD_NATIVE_IMAGE_ARTIFACT: ${{ needs.native.outputs.artifact }}
           CD_PREPARED_ARCHIVE: ${{ (inputs.protected_web && inputs.web_archive != '' && 'true') || steps.producer.outputs.prepared }}
           CD_WEB_CONTINUITY: ${{ inputs.protected_web && 'required' || '' }}
           CD_WEB_CONTINUITY_SCOPE: ${{ inputs.web_scope }}

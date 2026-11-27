@@ -336,3 +336,85 @@ async fn a_successor_retries_only_the_stop_discarded_by_the_writer() {
     );
     bridge.terminate().await.unwrap();
 }
+
+#[tokio::test]
+async fn bridge_rejects_stale_writer_and_oversized_input_without_queueing_bytes() {
+    let mut bridge = fixture_bridge(true);
+    let root = OwnerFixture::new();
+    let owners = ManagerOwnership::new(root.0.clone());
+    let predecessor = own(&owners, 1).await;
+    let successor = own(&owners, 2).await;
+    let (sender, mut input) = mpsc::channel(1);
+    let _original_input = std::mem::replace(&mut bridge.input, sender);
+    assert!(!bridge.send_owned(b"old".to_vec(), predecessor).await);
+    assert!(
+        !bridge
+            .send(vec![b'x'; crate::bridge::MAX_FRAME_BYTES + 1])
+            .await
+    );
+    assert!(input.try_recv().is_err());
+
+    assert!(bridge.send_owned(b"current".to_vec(), successor).await);
+    assert_eq!(input.recv().await.unwrap().frame, b"current");
+    drop(input);
+    assert!(!bridge.send(b"disconnected".to_vec()).await);
+    assert!(bridge
+        .observation
+        .as_ref()
+        .unwrap()
+        .lock()
+        .await
+        .native_state
+        .is_none());
+    bridge.terminate().await.unwrap();
+}
+
+#[tokio::test]
+async fn writer_discards_stop_when_retained_output_has_a_gap() {
+    use crate::bridge::input::{spawn_writer, BridgeInput, QueuedStop};
+
+    let output = Arc::new(crate::bridge::OutputRetention::default());
+    output.retain(b"original").await;
+    output.gap().await;
+    let discarded = Arc::new(AtomicBool::new(false));
+    let (sender, queued) = mpsc::channel(2);
+    let (writer, peer) = tokio::io::duplex(128);
+    spawn_writer(writer, queued);
+    sender
+        .send(BridgeInput {
+            frame: b"stop".to_vec(),
+            authority: None,
+            stop: Some(QueuedStop {
+                output: output.clone(),
+                discarded: discarded.clone(),
+            }),
+        })
+        .await
+        .ok()
+        .unwrap();
+    sender
+        .send(BridgeInput {
+            frame: b"ordinary".to_vec(),
+            authority: None,
+            stop: None,
+        })
+        .await
+        .ok()
+        .unwrap();
+    drop(sender);
+    let mut lines = BufReader::new(peer).lines();
+    let line = tokio::time::timeout(Duration::from_secs(2), lines.next_line())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(line.as_deref(), Some("ordinary"));
+    assert!(discarded.load(Ordering::Acquire));
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(2), lines.next_line())
+            .await
+            .unwrap()
+            .unwrap(),
+        None
+    );
+    assert!(output.recovery_evidence().await.is_none());
+}

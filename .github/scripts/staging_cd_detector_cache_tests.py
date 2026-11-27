@@ -229,7 +229,9 @@ class DetectorTransportTests(unittest.TestCase):
 
     def test_workflow_only_restores_and_exports_on_protected_publish_job(self):
         text = (Path(__file__).resolve().parents[1] / "workflows/staging-release.yml").read_text()
-        self.assertIn("if: github.event_name == 'push' && github.ref == 'refs/heads/develop'", text)
+        publisher = text.split("\n  publish:\n", 1)[1].split("\n  finalize:\n", 1)[0]
+        self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop'", publisher)
+        self.assertIn("github.repository == 'ChronoAIProject/cma'", publisher)
         self.assertLess(text.index("Restore authenticated layer detector evidence"), text.index("Build once, scan every layer"))
         self.assertLess(text.index("Build once, scan every layer"), text.index("Retain complete layer detector evidence"))
         export = text.split("- name: Retain complete layer detector evidence", 1)[1].split("- name:", 1)[0]

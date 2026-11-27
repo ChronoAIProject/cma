@@ -145,7 +145,12 @@ async fn contended(case: Case, inspect: bool) {
             );
         }
     } else {
-        assert_eq!(result, Err(CommandLedgerError::Conflict));
+        let expected = if case == Case::Persistent {
+            CommandLedgerError::ControlBusy
+        } else {
+            CommandLedgerError::Conflict
+        };
+        assert_eq!(result, Err(expected));
         // A failed transaction must leave source/sidecar documents, queue order,
         // and authorization audits byte-for-byte unchanged.
         assert_eq!(&snapshot(&store).await[2..], &before[2..]);
@@ -166,6 +171,14 @@ async fn contended(case: Case, inspect: bool) {
             assert!(started.elapsed() < Duration::from_secs(9));
             let accepted = store.reserve_targeted_control(retry).await.unwrap();
             assert_eq!(accepted.record.receipt.agent_order, 2);
+            assert_eq!(
+                store
+                    .agent_commands
+                    .count_documents(doc! { "explicit_control": { "$exists": true } })
+                    .await
+                    .unwrap(),
+                1
+            );
         } else if case == Case::Expired {
             assert!(started.elapsed() >= Duration::from_millis(200));
             assert!(started.elapsed() < Duration::from_secs(2));

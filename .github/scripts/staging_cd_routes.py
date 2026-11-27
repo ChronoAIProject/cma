@@ -33,11 +33,15 @@ def routes(matrix, get_policy):
     return lanes, batches
 
 
+def lane_components(lane):
+    require(lane in TARGETS | {"contract"}, "Unknown promotion lane")
+    return GROUP if lane == "contract" else {lane}
+
+
 def check_lane(lane, matrix, release, failures):
     selected = set(groups(matrix))
     decided = set(release["receipts"] if release else {}) | failures.keys()
-    allowed = GROUP if lane == "contract" else {lane}
-    require(lane in TARGETS | {"contract"} and bool(selected) and selected <= decided <= allowed,
+    require(bool(selected) and selected <= decided <= lane_components(lane),
             "Component admission differs from its scheduled scope")
 
 
