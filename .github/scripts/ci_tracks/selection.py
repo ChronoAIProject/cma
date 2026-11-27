@@ -12,7 +12,7 @@ import tempfile
 
 from image_inputs import NAMES, changed_input_maps, image_inputs, recipes, validate_recipe_sources
 from git_comparison import check_sha, comparison_details, git
-from policy import Workspace, select
+from policy import TRACKS, Workspace, select
 from publication_inputs import RECIPE
 from uncertainty import SelectionIntegrityError, conservative, unknown_paths
 
@@ -152,6 +152,25 @@ def determine(root, event, event_name, *, release=False):
     return result
 
 
+def validate_ci_checkout(root, event, event_name):
+    checkout = check_sha(os.environ['GITHUB_SHA'])
+    if checkout == '0' * 40 or git(root, 'rev-parse', 'HEAD').decode().strip() != checkout:
+        raise SelectionIntegrityError('CI checkout differs from event SHA')
+    if event_name == 'merge_group' and checkout != event['merge_group']['head_sha']:
+        raise SelectionIntegrityError('merge queue checkout differs from event head')
+
+
+def apply_pr_rust_coverage(root, paths, result, full):
+    graph = workspace(root)
+    # Removed paths retain their original tracks. Only current paths can add owners.
+    current_paths = [path for path in paths if not unknown_paths([path], [graph])]
+    coverage = select(current_paths, graph, force_all=full or all(result[track] for track in TRACKS))
+    for track in ('am', 'eg'):
+        if coverage[track] or result[track]:
+            result[track] = True
+            result[track + '_packages'] = coverage[track + '_packages'] or sorted(graph.owned[track])
+
+
 def determine_ci(root, event, event_name, repository):
     from ci_events import VERIFICATION_EVENTS, full_ci_required, verification_head
 
@@ -160,18 +179,24 @@ def determine_ci(root, event, event_name, repository):
         result = determine(root, {'after': verification_head()}, 'push')
     else:
         result = determine(root, event, event_name, release=full and event_name == 'pull_request')
-    if full:
+    paths = [] if full else changed_paths(root, result['base'], result['head'])
+    if event_name == 'pull_request' and (full or result['am'] or result['eg']):
+        apply_pr_rust_coverage(root, paths, result, full)
+    elif full:
         with snapshot(root, result['head']) as tree:
             coverage = select([], workspace(tree), force_all=True)
-        for key in ('repo', 'am', 'eg', 'web', 'am_packages', 'eg_packages'):
+        for key in ('am_packages', 'eg_packages'):
             result[key] = coverage[key]
-        result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
+    if full:
+        for track in TRACKS:
+            result[track] = True
         result['reasons'] = sorted(set(result['reasons']) | {'full-ci-event'})
+    result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
     # A Web consumer change can require the shared Rust test archive without
     # changing Agent Manager's product test or image scope.
     result['approval_contract'] = result['am'] or any(
         path in APPROVAL_CONTRACT_INPUTS or path.startswith(APPROVAL_CONTRACT_DIRECTORIES)
-        for path in changed_paths(root, result['base'], result['head'])
+        for path in paths
     )
     return result
 
@@ -186,7 +211,9 @@ def main():
     try:
         event = json.loads(args.event.read_text()) if args.event else {}
         if args.ci:
-            result = determine_ci(args.root.resolve(), event, args.event_name, os.environ['GITHUB_REPOSITORY'])
+            root = args.root.resolve()
+            validate_ci_checkout(root, event, args.event_name)
+            result = determine_ci(root, event, args.event_name, os.environ['GITHUB_REPOSITORY'])
         else:
             result = determine(args.root.resolve(), event, args.event_name)
     except (KeyError, TypeError, ValueError, subprocess.SubprocessError, OSError):
