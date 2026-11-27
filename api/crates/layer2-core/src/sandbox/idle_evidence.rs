@@ -76,3 +76,7 @@ pub fn agentless_idle_refusal(
     }
     None
 }
+
+#[cfg(test)]
+#[path = "idle_evidence_tests.rs"]
+mod tests;

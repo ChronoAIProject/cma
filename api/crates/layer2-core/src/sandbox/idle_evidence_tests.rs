@@ -1,11 +1,12 @@
-use super::lifecycle_test_support::{agent, sandbox, IDLE_AT, NOW};
-use super::{
-    agentless_idle_refusal, Agent, AgentStatus, AgentWorkLease, AgentWorkStep,
-    InactivityPauseRefusal as Refusal, QueuedAgentMessage, Sandbox, Workspace, WorkspaceOrigin,
-    WorkspaceSource, WorkspaceStatus, WorkspaceWorkLease, WorkspaceWorkState, WorkspaceWorkStep,
-};
+use super::agentless_idle_refusal;
 use crate::ids::{SandboxId, SubjectId, WorkspaceId, WorkspaceProfileId};
 use crate::profiles::{WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot};
+use crate::sandbox::lifecycle_test_support::{agent, sandbox, IDLE_AT, NOW};
+use crate::sandbox::{
+    Agent, AgentStatus, AgentWorkLease, AgentWorkStep, InactivityPauseRefusal as Refusal,
+    QueuedAgentMessage, Sandbox, Workspace, WorkspaceOrigin, WorkspaceSource, WorkspaceStatus,
+    WorkspaceWorkLease, WorkspaceWorkState, WorkspaceWorkStep,
+};
 
 const THRESHOLD: u64 = 900;
 
