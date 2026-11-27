@@ -41,9 +41,12 @@ pub(super) async fn admit(
     }
     let reservation = launches::read(store, admission, session).await?;
     let fresh = admission.admission_cause() == layer2_core::admission::AdmissionCause::Fresh;
+    let lifecycle_home = matches!(&admission.sandbox.origin, SandboxOrigin::Lifecycle { .. });
     let bound_home =
         admission.binding.is_some() && matches!(&admission.sandbox.origin, SandboxOrigin::Manual);
-    let operator = if fresh {
+    let operator = if fresh || lifecycle_home {
+        // The operation was admitted, but this insert consumes its first home.
+        // Keep Stop continuation authority and require readable capacity here.
         ceilings
             .as_ref()
             .map_err(|_| AdmissionError::Domain(SandboxStoreError::GlobalCapacityReached))?
@@ -92,7 +95,7 @@ pub(super) async fn admit(
     // Legacy admitted Launches retain their original deployment-cap behavior.
     // Fresh ordinary admissions and new Launch reservations also account for
     // pending homes, preventing one path from spending the other's slots.
-    let pending = if fresh || bound_home || reservation.counts_pending() {
+    let pending = if fresh || lifecycle_home || bound_home || reservation.counts_pending() {
         launches::pending(store, session).await?
     } else {
         0

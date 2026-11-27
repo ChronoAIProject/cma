@@ -2,13 +2,13 @@
 use super::*;
 use layer2_core::{admission::CapacityKind, SubjectId};
 
-pub(super) enum Room {
+pub(in crate::store) enum Room {
     Available,
     Full,
     Unreadable,
 }
 
-pub(super) async fn check(
+pub(in crate::store) async fn check(
     admissions: &Collection<Document>,
     sandboxes: &Collection<Document>,
     mut limit: u32,
