@@ -278,6 +278,7 @@ try {
   const trigger = result.journey?.steps.find(s => s.name === 'trigger_origin_always_on_and_replay' && s.verdict === 'PASS');
   const recovery = result.journey?.steps.find(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS');
   const drain = result.journey?.steps.find(s => s.name === 'owner_drain_and_readiness' && s.verdict === 'PASS');
+  const runtimeLoss = result.journey?.steps.find(s => s.name === 'native_runtime_loss_preserves_agents' && s.verdict === 'PASS');
   const journeyVerdict = result.journey?.verdict === 'LOCAL_TWO_AM_JOURNEY_PASS' ? 'PASS' : 'FAIL';
   // This allowlist is the only suite content eligible for CI artifact upload.
   await writeFile(join(config.summary_dir, 'coverage.json'), JSON.stringify({
@@ -289,6 +290,9 @@ try {
     owner_drain: drain ? {readiness_dropped: drain.readiness_dropped, process_still_live: drain.process_still_live,
       peer_advanced: drain.peer_advanced, drain_ms: drain.drain_ms, takeover_ms: drain.takeover_ms,
       useful_reads_during_restart: drain.useful_reads_during_restart} : null,
+    runtime_loss: runtimeLoss ? {recovered_agents: runtimeLoss.recovered_agents,
+      generation_retirements: runtimeLoss.generation_retirements, post_loss_replies: runtimeLoss.post_loss_replies,
+      previous_pod_sha256: runtimeLoss.previous_pod_sha256, replacement_pod_sha256: runtimeLoss.replacement_pod_sha256} : null,
     trigger_owner_relinquishment: trigger?.owner_relinquishment ?? null,
     lifecycle_owner_relinquishments: rows.filter(row => row.case === 'writer.lifecycle_owner_relinquishment_browser'
       && row.verdict === 'PASS').map(row => ({phase: row.phase, ...row.owner_relinquishment})),

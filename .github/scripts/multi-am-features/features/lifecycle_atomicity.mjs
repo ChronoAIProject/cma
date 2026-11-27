@@ -1,11 +1,12 @@
 import {check, hash, id, other, poll} from '../cma/core.mjs';
 import {ownerlessRevival} from './ownerless_revival.mjs';
 
-export async function retainedLifecycle({api, adapter, record, create, cleanup, step, ...journey}) {
+export async function retainedLifecycle({api, adapter, record, create, cleanup, step, beforePause, ...journey}) {
   check(id(record.workspaceId) && id(record.sandboxId), 'pause_parent_lineage_required');
   const sibling = await create(other(record.am), false, {workspace_id: record.workspaceId});
   check(sibling.sandboxId === record.sandboxId && sibling.workspaceId === record.workspaceId &&
     sibling.agentId !== record.agentId, 'pause_sibling_lineage_changed');
+  await beforePause?.(sibling);
   const read = () => adapter.lifecycleSnapshot({sandboxId: record.sandboxId,
     agentIds: [record.agentId, sibling.agentId]});
   const before = await read();

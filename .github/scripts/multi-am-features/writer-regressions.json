@@ -194,10 +194,10 @@
       "feature": "Connection recovery, runtime-loss reconciliation and sandbox lifecycle",
       "requirement": "Background path re-reads/rebuilds plan after known CAS conflict within a finite budget, preserving exact parent/Agent/log/ownership fences and all-or-none transition. No endless identical scheduler error or partially advanced hierarchy.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Native Mongo source controls cover an independent Agent log append during two-Agent runtime recovery. The exact-image journey still needs deterministic overlapping publication and hosted execution.",
+      "remaining": "The image journey checks both Agents after one runtime loss and rejects a partial generation transition. Native Mongo source controls race an independent Agent log append with recovery. The image journey still needs deterministic overlapping publication and hosted execution.",
       "trigger": "Two AM workers race an Agent log/metadata mutation with connection repair or atomic multi-Agent sandbox transition",
       "required_assertions": [
-        {"case": "native_runtime_loss_preserves_agent", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "native_runtime_loss_preserves_agents", "minimum_runs": 1, "phases": [], "routing": "journey"},
         {"case": "two_agent_pause_all_or_none", "minimum_runs": 1, "phases": [], "routing": "journey"},
         {"case": "two_agent_revival_restores_both", "minimum_runs": 1, "phases": [], "routing": "journey"}
       ]
