@@ -17,6 +17,19 @@ const PREVIEW_ROUTE: &str = "/api/v1/agents/{id}/files/content";
 #[derive(Clone)]
 pub(super) struct VerifiedOwner(pub Destination);
 
+pub(super) struct ProjectedIdentity(HeaderValue);
+
+impl ProjectedIdentity {
+    pub(super) fn into_header(self) -> HeaderValue {
+        self.0
+    }
+
+    #[cfg(test)]
+    pub(super) fn from_test_header(header: HeaderValue) -> Self {
+        Self(header)
+    }
+}
+
 fn eligible(request: &Request) -> bool {
     request.method() == Method::GET
         && request
@@ -30,7 +43,7 @@ pub(super) fn project<'a>(
     request: &Request,
     body: &[u8],
     proof: Option<&'a crate::auth::relay::BrowserRelayProof>,
-) -> impl std::future::Future<Output = Result<Option<HeaderValue>, Response>> + use<'a> {
+) -> impl std::future::Future<Output = Result<Option<ProjectedIdentity>, Response>> + use<'a> {
     let proof = proof.filter(|_| {
         relay.file_preview_peer_identity.get().is_some() && body.is_empty() && eligible(request)
     });
@@ -52,7 +65,7 @@ pub(super) fn project<'a>(
         }
         let mut value = HeaderValue::from_str(&value).map_err(|_| http::unavailable())?;
         value.set_sensitive(true);
-        Ok(Some(value))
+        Ok(Some(ProjectedIdentity(value)))
     }
 }
 
@@ -91,6 +104,9 @@ pub(super) async fn receive(
         Ok(proof) => proof,
         Err(refusal) => return refusal,
     };
+    if !verified.issued_file_preview_identity() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     if relay.coordinator.is_draining() {
         return file_read::refusal(diagnostic.as_ref(), Refusal::CoordinatorNotReady);
     }

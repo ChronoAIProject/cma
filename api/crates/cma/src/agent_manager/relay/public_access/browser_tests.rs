@@ -1,4 +1,8 @@
-use super::super::{authentication::Authentication, file_identity::HEADER, Relay, PROOF};
+use super::super::{
+    authentication::{self, Authentication},
+    file_identity::{ProjectedIdentity, HEADER},
+    file_read, file_write, Relay, PROOF,
+};
 use super::fixture::{fixture, Fixture};
 use crate::auth::relay::tests::Fixture as Browser;
 use axum::{
@@ -197,24 +201,47 @@ async fn exercise_peer_refusals(
         ring::hmac::HMAC_SHA256,
         TEST_SIGNING_KEY,
     ));
-    let sign = |sender: &str, token: &OwnershipToken, headers: HeaderMap, body: &[u8]| {
+    let sign = |sender: &str, token: &OwnershipToken, mut headers: HeaderMap| {
+        let projection = ProjectedIdentity::from_test_header(headers.remove(HEADER).unwrap());
         signer
-            .signed_headers(sender, token, &Method::GET, &uri, headers, body)
+            .signed_file_preview_headers(sender, token, &uri, headers, projection)
             .unwrap()
     };
-    let altered = sign("ingress", token, signed.clone(), &[]);
-    let body = sign("ingress", token, signed.clone(), b"unexpected");
-    let unknown = sign("absent-member", token, signed.clone(), &[]);
+    let sign_legacy = |headers: HeaderMap, body: &[u8]| {
+        signer
+            .signed_headers("ingress", token, &Method::GET, &uri, headers, body)
+            .unwrap()
+    };
+    // The predecessor forwards all otherwise eligible x-cma headers except
+    // these response markers. Its generic signer issues a file handoff nonce.
+    let mut legacy = HeaderMap::new();
+    for (name, value) in signed {
+        if !matches!(
+            name.as_str(),
+            file_read::HANDOFF_HEADER | file_write::NOT_ENTERED_HEADER
+        ) && authentication::forwarded(name.as_str())
+        {
+            legacy.append(name, value.clone());
+        }
+    }
+    assert!(legacy.contains_key(HEADER));
+    let legacy_claim = sign_legacy(legacy.clone(), &[]);
+    legacy.remove(HEADER);
+    let legacy_request = sign_legacy(legacy, &[]);
+    let altered = sign("ingress", token, signed.clone());
+    let body = sign_legacy(signed.clone(), b"unexpected");
+    let unknown = sign("absent-member", token, signed.clone());
     let mut wrong = token.clone();
     wrong.epoch += 1;
-    let stale_epoch = sign("ingress", &wrong, signed.clone(), &[]);
+    let stale_epoch = sign("ingress", &wrong, signed.clone());
     let mut invalid = signed.clone();
     invalid.insert(PROOF, "malformed".parse().unwrap());
     let mut malformed_projection = signed.clone();
     malformed_projection.insert(HEADER, "invalid".parse().unwrap());
-    let malformed_projection = sign("ingress", token, malformed_projection, &[]);
+    let malformed_projection = sign("ingress", token, malformed_projection);
     for (headers, path, body, expected) in [
         (signed.clone(), PREVIEW, "", StatusCode::FORBIDDEN),
+        (legacy_claim, PREVIEW, "", StatusCode::FORBIDDEN),
         (
             altered,
             "/api/v1/agents/agt-public/files/content?path=other",
@@ -235,10 +262,17 @@ async fn exercise_peer_refusals(
         );
     }
     let mut request = Request::builder().uri(PREVIEW).body(Body::empty()).unwrap();
-    *request.headers_mut() = sign("ingress", token, signed.clone(), &[]);
+    *request.headers_mut() = sign("ingress", token, signed.clone());
     browser.store.set_unavailable(true);
     let response = owner.clone().oneshot(request).await.unwrap();
     browser.store.set_unavailable(false);
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(browser.provider_calls(), before);
+    let mut request = Request::builder().uri(PREVIEW).body(Body::empty()).unwrap();
+    *request.headers_mut() = legacy_request;
+    assert_eq!(
+        owner.clone().oneshot(request).await.unwrap().status(),
+        StatusCode::OK
+    );
+    assert_eq!(browser.provider_calls(), (before.0 + 2, before.1 + 2));
 }
