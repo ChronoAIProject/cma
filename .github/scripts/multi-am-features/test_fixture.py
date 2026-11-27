@@ -487,12 +487,14 @@ class OwnershipTests(unittest.TestCase):
         self.assertIn('suggested_followup_admission', policy['capabilities'])
         features = manifests.managers(legacy_manifests.credentials(), {**ready, 'fixture': 'features'})
         features_environment = next(x['stringData'] for x in features if x['kind'] == 'Secret')
+        self.assertEqual(features_environment['CHRONO_ADMISSION_CONTROL_WRITES_ENABLED'], 'true')
         self.assertTrue(features_environment['CHRONO_MONGODB_URI'].endswith('&appName=' + FEATURES_MONGO_APP))
         self.assertEqual(features_environment['CHRONO_AGENT_MANAGER_SANDBOX_CPU'], '1')
         self.assertEqual(features_environment['CHRONO_AGENT_MANAGER_SANDBOX_MEMORY'], '8Gi')
         prepared = synthetic_configmaps(manifests.managers(legacy_manifests.credentials(),
                                                             {**ready, 'fixture': 'prepared'}))
         prepared_environment = next(x['data'] for x in prepared if x['kind'] == 'ConfigMap')
+        self.assertNotIn('CHRONO_ADMISSION_CONTROL_WRITES_ENABLED', prepared_environment)
         self.assertEqual(prepared_environment['CHRONO_AGENT_MANAGER_SANDBOX_CPU'], '500m')
         self.assertEqual(prepared_environment['CHRONO_SANDBOX_CPU'], '500m')
         self.assertNotIn('suggested_followup_admission',
