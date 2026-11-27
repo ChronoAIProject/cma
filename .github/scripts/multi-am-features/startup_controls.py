@@ -7,7 +7,7 @@ import sys
 
 def controls():
     names = Path(__file__).with_name('startup-controls.txt').read_text().splitlines()
-    if len(names) != 19 or len(set(names)) != len(names) or not all(
+    if len(names) != 21 or len(set(names)) != len(names) or not all(
             re.fullmatch(r'[a-z0-9_]+(?:::[a-z0-9_]+)+', name) for name in names):
         raise ValueError('lifecycle publication control inventory is invalid')
     return names
