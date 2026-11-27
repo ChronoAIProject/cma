@@ -52,14 +52,17 @@ impl SandboxReconciliationStore for MongoSandboxStore {
             .find_one(doc! { "_id": &request.sandbox_id })
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        if super::channel_storage_retention::required(
-            &self.client.database(&self.sandboxes.namespace().db),
-            &request.sandbox_id,
-            sandbox.as_ref(),
-            None,
-        )
-        .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        if sandbox
+            .as_ref()
+            .is_some_and(super::sandbox_quarantine::contains)
+            || super::channel_storage_retention::required(
+                &self.client.database(&self.sandboxes.namespace().db),
+                &request.sandbox_id,
+                sandbox.as_ref(),
+                None,
+            )
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
         {
             return Ok(true);
         }
@@ -89,6 +92,19 @@ impl SandboxReconciliationStore for MongoSandboxStore {
         {
             return Ok(true);
         }
+        if self
+            .sandboxes
+            .find_one(doc! {
+                "_id": id.as_str(),
+                (super::sandbox_quarantine::FIELD): {"$exists": true},
+            })
+            .projection(doc! {"_id": 1})
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+            .is_some()
+        {
+            return Ok(true);
+        }
         let Some(reservation) = self.warm_sandbox(id).await? else {
             return Ok(false);
         };
@@ -113,7 +129,9 @@ impl SandboxReconciliationStore for MongoSandboxStore {
         }
         let mut cursor = self
             .sandboxes
-            .find(crate::store::work_schema::query(filter))
+            .find(super::sandbox_quarantine::exclude(
+                crate::store::work_schema::query(filter),
+            ))
             .sort(doc! { "_id": 1 })
             .limit(i64::from(page.limit) + 1)
             .await
@@ -222,7 +240,7 @@ async fn recover(
                 })?;
             }
             CommitOutcome::Failed(error) => {
-                return Err(SandboxStoreError::Unavailable(error.to_string()))
+                return Err(SandboxStoreError::Unavailable(error.to_string()));
             }
         }
     }
