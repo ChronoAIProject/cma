@@ -476,11 +476,11 @@
   },
   "cma-user.files.create-file": {
     "cases": [
-      "user.files_roundtrip"
+      "user.browser_file_creation"
     ],
-    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
-    "minimum_runs": 3,
-    "routing": "non_owner",
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
     "phases": [
       "before_restart",
       "after_restart"
@@ -488,11 +488,11 @@
   },
   "cma-user.files.create-directory": {
     "cases": [
-      "user.files_roundtrip"
+      "user.browser_file_creation"
     ],
-    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
-    "minimum_runs": 3,
-    "routing": "non_owner",
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
     "phases": [
       "before_restart",
       "after_restart"
