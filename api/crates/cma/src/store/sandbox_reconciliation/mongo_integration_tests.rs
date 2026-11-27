@@ -28,6 +28,7 @@ mod bounded;
 mod channel_home_retention;
 mod commit;
 mod recovery;
+mod recovery_overlap;
 mod refusal;
 mod retirement;
 mod retirement_commit;

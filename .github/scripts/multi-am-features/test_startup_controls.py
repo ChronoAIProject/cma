@@ -13,7 +13,7 @@ class StartupControlsTests(unittest.TestCase):
         cases = {name: {'filter-match': {'status': 'matches'}} for name in names}
         cases['unselected::control'] = {'filter-match': {'status': 'mismatch'}}
         listing = {'rust-suites': {'cma::bin/cma': {'testcases': cases}}}
-        self.assertEqual(require_exact_listing(names, listing), 10)
+        self.assertEqual(require_exact_listing(names, listing), 11)
 
     def test_missing_extra_or_duplicate_names_fail_the_control_job(self):
         names = controls()
