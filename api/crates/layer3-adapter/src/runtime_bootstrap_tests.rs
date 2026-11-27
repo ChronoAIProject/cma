@@ -25,6 +25,7 @@ fn request() -> RuntimeBootstrapRequest {
     RuntimeBootstrapRequest {
         version: RUNTIME_BOOTSTRAP_VERSION,
         staging_startup_failure: None,
+        staging_startup_confirmed: false,
         pod_uid: "original-pod".into(),
         environment: BTreeMap::from([
             ("CHRONO_SANDBOX_ID".into(), "sbx_original".into()),

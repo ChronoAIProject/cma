@@ -42,6 +42,8 @@ pub struct RuntimeBootstrapRequest {
     /// Operator-owned qualification, outside the tenant environment map.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub staging_startup_failure: Option<StagingStartupFailure>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub staging_startup_confirmed: bool,
 }
 
 impl std::fmt::Debug for RuntimeBootstrapRequest {
@@ -67,7 +69,8 @@ impl RuntimeBootstrapRequest {
             || self
                 .staging_startup_failure
                 .as_ref()
-                .is_some_and(|fault| !fault.valid_for(value("CHRONO_SANDBOX_ID")))
+                .is_some_and(|fault| !fault.valid_for_assignment(value("CHRONO_SANDBOX_ID")))
+            || self.staging_startup_confirmed && self.staging_startup_failure.is_none()
             || self.environment.len() > 128
             || self.environment.iter().any(|(name, value)| {
                 name.is_empty()

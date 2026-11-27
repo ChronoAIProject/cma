@@ -10,6 +10,7 @@ const MAX_WINDOW: Duration = Duration::from_secs(45 * 60);
 pub struct StagingStartupFailure {
     sandbox_id: String,
     expires_unix_secs: u64,
+    incarnation: Option<String>,
 }
 
 impl StagingStartupFailure {
@@ -21,6 +22,7 @@ impl StagingStartupFailure {
         let fault = Self {
             sandbox_id: sandbox_id.into(),
             expires_unix_secs: expires.parse().ok()?,
+            incarnation: None,
         };
         let expiry = UNIX_EPOCH.checked_add(Duration::from_secs(fault.expires_unix_secs))?;
         (fault.valid_for(sandbox_id) && expiry <= now.checked_add(MAX_WINDOW)?).then_some(fault)
@@ -43,6 +45,22 @@ impl StagingStartupFailure {
                 .duration_since(now)
                 .is_ok_and(|left| !left.is_zero() && left <= MAX_WINDOW)
         })
+    }
+
+    pub fn bind_incarnation(mut self, container_id: &str) -> Option<Self> {
+        if container_id.is_empty() {
+            return None;
+        }
+        self.incarnation = Some(crate::provider_request_digest(&container_id).ok()?);
+        Some(self)
+    }
+
+    pub(super) fn valid_for_assignment(&self, sandbox_id: &str) -> bool {
+        self.valid_for(sandbox_id)
+            && self
+                .incarnation
+                .as_deref()
+                .is_some_and(crate::provider_finality::digest)
     }
 
     pub(crate) fn targets_assignment(

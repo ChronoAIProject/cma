@@ -40,6 +40,30 @@ impl AgentSandboxClient {
         .map_err(|_| unavailable("runtime assignment timed out"))?
     }
 
+    pub(crate) async fn confirm_staging_startup_failure(
+        &self,
+        runtime: &RuntimeHandle,
+        expected: &PodBinding,
+        mut bootstrap: RuntimeBootstrapRequest,
+        receipt: &RuntimeBootstrapReceipt,
+    ) -> Result<()> {
+        receipt.validate_for(&bootstrap)?;
+        self.validate_assignment(runtime, expected, &bootstrap)?;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            if self.pod_binding(runtime).await? != *expected {
+                return Err(rejected(
+                    "runtime incarnation changed before staging confirmation",
+                ));
+            }
+            bootstrap.staging_startup_confirmed = true;
+            self.deliver_assignment(&expected.pod_name, &bootstrap)
+                .await?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| unavailable("staging startup confirmation timed out"))?
+    }
+
     pub(super) fn validate_assignment(
         &self,
         runtime: &RuntimeHandle,
