@@ -339,16 +339,32 @@ async fn apply(
             ClaimPark::Retry(marker) => consumed_park = Some(marker),
         }
         diagnostics.phase = "child_validation";
-        super::agent_log_segments::ordinary::source(store, &current, current_row, session)
+        let source =
+            super::agent_log_segments::ordinary::source(store, &current, current_row, session)
+                .await
+                .map_err(|error| match error {
+                    super::agent_log_integrity::TransactionLogError::Domain(error) => {
+                        ClaimError::domain(error)
+                    }
+                    super::agent_log_integrity::TransactionLogError::Driver(error) => {
+                        ClaimError::read(error)
+                    }
+                })?;
+        if let Some((head, _)) = source {
+            diagnostics.phase = "active_proof_carry";
+            super::agent_log_segments::active_proof::carry_claim(
+                store, &head, &current, agent, session,
+            )
             .await
             .map_err(|error| match error {
                 super::agent_log_integrity::TransactionLogError::Domain(error) => {
                     ClaimError::domain(error)
                 }
                 super::agent_log_integrity::TransactionLogError::Driver(error) => {
-                    ClaimError::read(error)
+                    ClaimError::driver(error)
                 }
             })?;
+        }
         envelope_filter(&current, current_row).map_err(ClaimError::domain)?
     } else {
         doc! {

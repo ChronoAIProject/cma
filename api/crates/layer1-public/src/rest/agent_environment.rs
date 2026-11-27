@@ -33,7 +33,10 @@ pub(crate) struct EnvironmentView {
     agent_id: String,
     policy_revision: u64,
     runtime_incarnation: Option<String>,
+    /// Earliest requested refresh, including pending capability observations.
     revalidate_at: Option<String>,
+    /// Deadline for the access decision, independent of capability retries.
+    access_revalidate_at: Option<String>,
     files: FeatureView,
     operation_output: FeatureView,
     browser: FeatureView,
@@ -48,6 +51,7 @@ impl From<AgentEnvironment> for EnvironmentView {
             policy_revision: value.policy_revision,
             runtime_incarnation: value.runtime_incarnation,
             revalidate_at: value.revalidate_at,
+            access_revalidate_at: value.access_revalidate_at,
             files: value.files.into(),
             operation_output: value.operation_output.into(),
             browser: value.browser.into(),

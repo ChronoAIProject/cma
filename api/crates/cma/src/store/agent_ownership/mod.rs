@@ -218,6 +218,17 @@ impl MongoAgentOwnership {
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<(), FenceError> {
+        let write_error = |phase, error: mongodb::error::Error| {
+            if matches!(error.kind.as_ref(),
+                mongodb::error::ErrorKind::Command(command) if command.code == 112)
+                || matches!(error.kind.as_ref(),
+                    mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(write)) if write.code == 112)
+            {
+                tracing::warn!(agent_id = %token.agent_id, owner_epoch = token.epoch, phase,
+                    driver_code = 112, "Agent ownership fence write conflict");
+            }
+            FenceError::Driver(error)
+        };
         let member = self
             .members
             .update_one(
@@ -230,7 +241,7 @@ impl MongoAgentOwnership {
             )
             .session(&mut *session)
             .await
-            .map_err(FenceError::Driver)?;
+            .map_err(|error| write_error("manager_member", error))?;
         if member.matched_count != 1 {
             return Err(FenceError::Domain(SandboxStoreError::Conflict));
         }
@@ -242,7 +253,7 @@ impl MongoAgentOwnership {
             )
             .session(&mut *session)
             .await
-            .map_err(FenceError::Driver)?
+            .map_err(|error| write_error("agent_owner", error))?
             .matched_count;
         if matched == 1 {
             Ok(())

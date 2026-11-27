@@ -11,6 +11,8 @@ use layer2_core::{now_rfc3339, AgentId};
 use super::{LiveAgentRegistry, RegistryEntry};
 use layer2_core::sandbox::{AgentRuntimeError, AgentRuntimeTarget};
 
+mod missing;
+
 const RECOVERY_RETRY_DELAY: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,6 +27,13 @@ pub(crate) struct LiveAgentAttachmentIdentity {
 #[async_trait::async_trait]
 pub(crate) trait LiveAgentConnectionLossHandler: Send + Sync {
     async fn connection_lost(&self, attachment: LiveAgentAttachmentIdentity);
+
+    async fn missing_attachment(
+        &self,
+        _target: &AgentRuntimeTarget,
+        _registry: &LiveAgentRegistry,
+    ) {
+    }
 
     async fn publication_lost(&self, attachment: LiveAgentAttachmentIdentity) {
         self.connection_lost(attachment).await;
@@ -61,6 +70,12 @@ impl LiveAgentConnectionLossHandler for DurableAgentConnectionLossHandler {
 
     async fn publication_lost(&self, attachment: LiveAgentAttachmentIdentity) {
         self.recover(attachment, true).await;
+    }
+
+    async fn missing_attachment(&self, target: &AgentRuntimeTarget, registry: &LiveAgentRegistry) {
+        let result = self.schedule_missing(target, registry).await;
+        tracing::info!(agent_id = %target.agent_id, outcome = ?result,
+            "Claimed command attachment recovery decision");
     }
 }
 
@@ -151,7 +166,7 @@ impl LiveAgentRegistry {
         &self,
         target: &AgentRuntimeTarget,
     ) -> Result<(), AgentRuntimeError> {
-        let identity = {
+        let (identity, owner) = {
             let state = self.lock();
             let entry = state
                 .entries
@@ -162,15 +177,30 @@ impl LiveAgentRegistry {
             {
                 return Err(AgentRuntimeError::StaleGeneration);
             }
-            LiveAgentAttachmentIdentity {
+            let identity = LiveAgentAttachmentIdentity {
                 agent_id: target.agent_id.clone(),
                 conversation_id: target.conversation_id.clone(),
                 runtime_generation: target.runtime_generation,
                 authority_fence: entry.authority_fence,
                 nonce: entry.nonce,
+            };
+            let owner = entry.manager_authority.clone();
+            if owner.as_ref().is_some_and(|owner| {
+                layer2_core::agent_ownership::execution_authority()
+                    .is_none_or(|caller| owner.token != caller.token || !caller.is_current())
+            }) {
+                return Err(AgentRuntimeError::StaleGeneration);
             }
+            (identity, owner)
         };
-        self.connection_ended(identity).await;
+        if let Some(owner) = owner {
+            owner
+                .run(self.connection_ended(identity))
+                .await
+                .map_err(|_| AgentRuntimeError::StaleGeneration)?;
+        } else {
+            self.connection_ended(identity).await;
+        }
         Ok(())
     }
 

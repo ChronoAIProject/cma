@@ -32,6 +32,7 @@ export function ApprovalCard({
   onApproval,
   active = false,
   reviewPolicy,
+  hideCharacter,
 }: {
   readonly approval: ApprovalRequest;
   readonly busy: boolean;
@@ -39,6 +40,7 @@ export function ApprovalCard({
   readonly onApproval: (id: string, decision: ApprovalDecision) => void;
   readonly active?: boolean;
   readonly reviewPolicy?: ExternalApprovalReviewPolicy;
+  readonly hideCharacter?: boolean;
 }) {
   if (approval.source === 'external')
     return (
@@ -47,13 +49,14 @@ export function ApprovalCard({
         policy={reviewPolicy}
         active={active}
         readOnly={readOnly}
+        hideCharacter={hideCharacter}
       />
     );
   const heading = `approval-${approval.id}`;
   return (
     <section className="approval" aria-labelledby={heading}>
       <div className="approval__head">
-        {approval.decision === undefined ? (
+        {!hideCharacter && approval.decision === undefined ? (
           // Only a request still waiting on a person carries the asking character (§28).
           <CharacterAvatar
             pose="approval"

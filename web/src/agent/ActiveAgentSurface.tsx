@@ -332,6 +332,11 @@ export function ActiveAgentSurface({
             viewPosition={viewPosition}
             conversation={conversation}
             stopping={stopping}
+            turnPresentation={
+              historyIncomplete || starting || firstSendContext === undefined
+                ? undefined
+                : { status, authEpoch: firstSendContext.authEpoch, sandbox: currentSandbox }
+            }
             agentStatus={status}
             optimisticMessages={messageQueue.messages}
             arrivalsEnabled={!accessUncertain}

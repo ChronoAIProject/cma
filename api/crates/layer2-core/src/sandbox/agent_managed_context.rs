@@ -1,16 +1,15 @@
 //! One-time managed context refresh. User work always takes precedence.
-mod recovery;
 use super::agent_operation_dispatch::{
     new_operation, next_sequence, operation_log, runtime_target, PreWriteRollback,
     PreparedAgentOperation,
 };
 use super::agent_operation_service::{operation_store_error, MAX_OPERATION_COMMIT_RETRIES};
+use super::agent_runtime::ReconnectOnDrop;
 use super::{
     Agent, AgentOperationError, AgentOperationIntent, AgentOperationService, AgentRuntimeTarget,
     AgentWorkAuthority,
 };
 use crate::{now_rfc3339, AgentId, RuntimeCapability};
-use recovery::RefreshRecoveryOnDrop;
 
 fn valid_guidance(guidance: &str) -> bool {
     !guidance.is_empty() && guidance.len() <= 16 * 1024 && !guidance.contains('\0')
@@ -141,11 +140,7 @@ impl AgentOperationService {
                 .await
             {
                 Ok(_) => {
-                    let mut recovery = RefreshRecoveryOnDrop {
-                        runtimes: self.runtimes.clone(),
-                        target: target.clone(),
-                        armed: true,
-                    };
+                    let mut recovery = ReconnectOnDrop::new(self.runtimes.clone(), target.clone());
                     let result = self
                         .dispatch_prepared(PreparedAgentOperation {
                             target,

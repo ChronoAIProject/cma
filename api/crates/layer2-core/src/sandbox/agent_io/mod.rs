@@ -6,6 +6,8 @@
 //! that understands their provenance and retained deferred attempts.
 
 mod admission;
+#[cfg(feature = "test-support")]
+pub use super::agent_runtime::reconnect_guard_for_test;
 mod admission_service;
 mod answer_context;
 pub use answer_context::{answer_context_for_log, require_answer_context, AnswerContext};

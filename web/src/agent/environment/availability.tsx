@@ -1,5 +1,5 @@
-import { useMemo } from 'react';
-import { ApiError, type EnvironmentFeature } from '@cma/client';
+import { useCallback, useMemo, useRef } from 'react';
+import { ApiError, type AgentEnvironment, type EnvironmentFeature } from '@cma/client';
 import type { AgentFilesClient } from '../../api/agentFiles';
 import { useAuthorizedRead } from '../../resources/useAuthorizedRead';
 import type { useAgentAccess } from '../../resources/agentAccess';
@@ -17,25 +17,60 @@ export function useAgentEnvironment(
     () => ({ client, agentId, subject, runtimeVersion }),
     [client, agentId, subject, runtimeVersion],
   );
-  const read = useMemo(
-    () =>
-      !active || !scope.client?.environment
-        ? undefined
-        : async (signal: AbortSignal) => {
-            try {
-              const value = await scope.client!.environment!(scope.agentId, { signal });
-              signal.throwIfAborted();
-              if (value.agent_id !== scope.agentId)
-                throw new Error('Agent environment identity changed.');
-              return { value, revalidateAt: value.revalidate_at };
-            } catch (error) {
-              if (error instanceof ApiError && error.status === 404) return { value: undefined };
-              throw error;
-            }
-          },
-    [scope, active],
-  );
-  return useAuthorizedRead(read, false, { scope, applies: ownerRetryDeadline });
+  const observationScope = useMemo(() => ({ scope, active }), [scope, active]);
+  const observed = useRef<{ scope: typeof observationScope; value: AgentEnvironment }>(undefined);
+  const read = useMemo(() => {
+    const { scope: current, active: enabled } = observationScope;
+    if (!enabled || !current.client?.environment) return undefined;
+    return async (signal: AbortSignal) => {
+      try {
+        const response = await current.client!.environment!(current.agentId, { signal });
+        signal.throwIfAborted();
+        if (response.agent_id !== current.agentId)
+          throw new Error('Agent environment identity changed.');
+        const previous =
+          observed.current?.scope === observationScope ? observed.current.value : undefined;
+        const value = retainBrowserObservation(response, previous);
+        observed.current = { scope: observationScope, value };
+        const accessDeadline = value.access_revalidate_at;
+        return {
+          value,
+          revalidateAt: accessDeadline === undefined ? value.revalidate_at : accessDeadline,
+          refreshAt: accessDeadline === undefined ? undefined : value.revalidate_at,
+        };
+      } catch (error) {
+        signal.throwIfAborted();
+        observed.current = undefined;
+        if (error instanceof ApiError && error.status === 404) return { value: undefined };
+        throw error;
+      }
+    };
+  }, [observationScope]);
+  const { state, reload, refreshing } = useAuthorizedRead(read, false, {
+    scope,
+    applies: ownerRetryDeadline,
+  });
+  const reloadEnvironment = useCallback(() => {
+    observed.current = undefined;
+    reload();
+  }, [reload]);
+  return { state, reload: reloadEnvironment, refreshing };
+}
+
+function retainBrowserObservation(current: AgentEnvironment, previous?: AgentEnvironment) {
+  // An observation can be pending on a different replica even with the same
+  // current access policy and runtime. Control always uses the current response.
+  if (
+    current.access_revalidate_at !== undefined &&
+    current.browser.state === 'temporarily_unavailable' &&
+    current.browser.reason === 'observation_pending' &&
+    current.runtime_incarnation !== null &&
+    previous?.runtime_incarnation === current.runtime_incarnation &&
+    previous.policy_revision === current.policy_revision &&
+    (previous.browser.state === 'available' || previous.browser.state === 'not_enabled')
+  )
+    return { ...current, browser: previous.browser };
+  return current;
 }
 
 function ownerRetryDeadline(error: ApiError): boolean {
