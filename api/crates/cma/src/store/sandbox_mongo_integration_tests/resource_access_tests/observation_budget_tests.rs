@@ -1,6 +1,7 @@
 //! Complete public streams on two listening replicas; the driver meter includes
 //! membership, read custody, routing, release fences and all getMore commands.
 use super::*;
+use crate::store::test_measurement::{process_cpu, server_examined_documents};
 use crate::{
     agent_manager::relay::Relay,
     store::{agent_observation::MongoAgentObservation, agent_ownership::MongoAgentOwnership},
@@ -114,7 +115,9 @@ async fn measure_idle(
         assert_shared_slots(&replicas, &agents).await;
     }
     tokio::time::sleep(Duration::from_secs(2)).await;
+    let examined_before = server_examined_documents(&f.client).await;
     f.meter.clear();
+    let cpu_before = process_cpu();
     let started = Instant::now();
     for _ in 0..seconds {
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -123,10 +126,12 @@ async fn measure_idle(
             "all 100 observers must remain connected"
         );
     }
-    let (elapsed, stats) = {
+    let (elapsed, stats, pool) = {
         let stats = f.meter.stats.lock().unwrap();
-        (started.elapsed(), stats.clone())
+        (started.elapsed(), stats.clone(), stats.pool.report())
     };
+    let cpu = process_cpu() - cpu_before;
+    let examined = server_examined_documents(&f.client).await - examined_before;
     for consumer in consumers {
         consumer.abort();
     }
@@ -139,6 +144,15 @@ async fn measure_idle(
     }
     let commands = stats.commands.values().sum::<u64>();
     eprintln!("observation_idle shared={shared_observation} agents={} observers=100 replicas=2 distinct={distinct} history={rows} seconds={:.3} commands={commands} checkouts={} head_cohort_refreshes={} bytes={} details={:?}", agents.len(), elapsed.as_secs_f64(), stats.checkouts, stats.snapshots, stats.bytes, stats.commands);
+    eprintln!(
+        "TC046_IDLE_RESOURCES {}",
+        serde_json::json!({
+            "shared":shared_observation,"agents":agents.len(),"observers":100,"replicas":2,
+            "distinct_owners":distinct,"history":rows,"wall_us":elapsed.as_micros(),
+            "commands":commands,"checkouts":stats.checkouts,"server_examined_documents":examined,
+            "fixture_process_cpu_us":cpu.as_micros(),"pool":pool,
+        })
+    );
     (stats, elapsed)
 }
 
