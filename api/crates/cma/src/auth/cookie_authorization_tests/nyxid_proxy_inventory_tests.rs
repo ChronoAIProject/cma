@@ -1,11 +1,18 @@
+use super::super::super::browser_rejection_tests::NoOperations;
 use super::*;
 use axum::body::Body;
 use axum::http::{Method, Request};
 use axum::middleware::{self, Next};
-use layer1_public::rest::{personal_agent_inventory_router, PersonalAgentInventory};
+use layer1_public::rest::{
+    hierarchy_router, personal_agent_inventory_router, HierarchyState, PersonalAgentInventory,
+};
 use layer1_public::{AuthenticatedCaller, DelegatedCredential};
+use layer2_core::profiles::store::InMemoryProfileStore;
 use layer2_core::sandbox::store::{AgentReadQueryStore, Page};
-use layer2_core::sandbox::{Agent, AgentListQuery, AgentReadError};
+use layer2_core::sandbox::{
+    Agent, AgentListQuery, AgentReadError, FixedSandboxCredentialPrerequisite,
+    HierarchyReadService, SandboxPolicy, SandboxService, WorkspaceService,
+};
 use tower::ServiceExt as _;
 
 struct Inventory(Arc<InMemorySandboxStore>);
@@ -60,6 +67,121 @@ async fn send(app: &Router, method: Method, uri: &str, claims: &Value) -> Respon
         .unwrap();
     *request.headers_mut() = signed_headers(claims);
     app.clone().oneshot(request).await.unwrap()
+}
+
+fn sandbox_inventory(fixture: &ResourceFixture) -> Router {
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    hierarchy_router(HierarchyState::new(
+        SandboxService::new(
+            fixture.store.clone(),
+            profiles.clone(),
+            SandboxPolicy::default(),
+            Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        ),
+        WorkspaceService::new(fixture.store.clone(), profiles),
+        HierarchyReadService::new(fixture.store.clone()),
+        Arc::new(NoOperations),
+    ))
+}
+
+#[tokio::test]
+async fn signed_personal_inventories_survive_explicit_retained_credential_rejection() {
+    let fixture = ResourceFixture::with_owner("owner").await;
+    let ingress = SignedIngress::new(&fixture).await;
+    let subject = SubjectId::new("owner");
+    let control = &fixture.identity.control;
+    let app = personal_agent_inventory_router(Arc::new(Inventory(fixture.store.clone())))
+        .merge(sandbox_inventory(&fixture))
+        .layer(middleware::from_fn(observe_authority))
+        .layer(middleware::from_fn_with_state(
+            ingress.auth.clone(),
+            crate::auth::attach_subject,
+        ));
+    let paths = [
+        ("/api/v1/agents?limit=1", "/items/0/id", "agent"),
+        (
+            "/api/v1/sandboxes?limit=1&exclude_retired=true&shared=false",
+            "/items/0/id",
+            "sandbox",
+        ),
+    ];
+
+    for rejected_by_userinfo in [false, true] {
+        if rejected_by_userinfo {
+            *control.introspection.write().await =
+                Reply::json(json!({"active":true,"sub":"owner","permissions":["cma:sandbox:use"]}));
+            control.userinfo.write().await.status = StatusCode::UNAUTHORIZED;
+        } else {
+            *control.introspection.write().await = Reply::json(json!({"active":false}));
+        }
+        for (uri, id_pointer, id) in paths {
+            let baseline = control.requests.load(Ordering::SeqCst);
+            let claims = signed_claims();
+            let response = send(&app, Method::GET, uri, &claims).await;
+            assert_eq!(response.status(), StatusCode::OK, "{uri}");
+            let observed = response.extensions().get::<ObservedAuthority>().unwrap();
+            assert!(matches!(
+                observed.source,
+                CredentialSource::Independent { .. }
+            ));
+            assert!(observed.sandbox_use);
+            assert!(!observed.delegated);
+            let bytes = axum::body::to_bytes(response.into_body(), 16384)
+                .await
+                .unwrap();
+            let body: Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(body.pointer(id_pointer).and_then(Value::as_str), Some(id));
+            assert!(control.requests.load(Ordering::SeqCst) > baseline);
+            let grant =
+                ProxyGrant::identity(ISSUER, SERVICE, &subject, claims["jti"].as_str().unwrap());
+            assert!(fixture
+                .identity
+                .store
+                .proxy_grant(&grant)
+                .await
+                .unwrap()
+                .is_none());
+
+            let mut unprivileged = signed_claims();
+            unprivileged["permissions"] = json!([]);
+            assert_eq!(
+                send(&app, Method::GET, uri, &unprivileged).await.status(),
+                StatusCode::FORBIDDEN,
+                "{uri}"
+            );
+        }
+    }
+    for (method, uri) in [
+        (Method::GET, "/api/v1/agents?%6Frganization=org"),
+        (Method::GET, "/api/v1/sandboxes?%6Frganization=org"),
+        (Method::GET, "/api/v1/sandboxes?%73hared=tr%75e"),
+        (Method::POST, "/api/v1/sandboxes"),
+    ] {
+        let response = send(&app, method, uri, &signed_claims()).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        assert!(response.extensions().get::<ObservedAuthority>().is_none());
+    }
+
+    control.userinfo.write().await.status = StatusCode::OK;
+    *control.introspection.write().await =
+        Reply::json(json!({"active":true,"sub":"owner","permissions":[]}));
+    for (uri, _, _) in paths {
+        let response = send(&app, Method::GET, uri, &signed_claims()).await;
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
+        let observed = response.extensions().get::<ObservedAuthority>().unwrap();
+        assert!(matches!(
+            observed.source,
+            CredentialSource::IdentityProxy { .. }
+        ));
+        assert!(!observed.sandbox_use);
+        assert!(observed.delegated);
+    }
+    *control.introspection.write().await = Reply::json(json!({"active":"unknown"}));
+    for (uri, _, _) in paths {
+        let response = send(&app, Method::GET, uri, &signed_claims()).await;
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+        assert!(response.extensions().get::<ObservedAuthority>().is_none());
+    }
 }
 
 #[tokio::test]

@@ -12,15 +12,15 @@ use layer2_core::sandbox::{
 use layer2_core::{OperationClaim, OperationReservation, OperationStore, RuntimeCapabilities};
 use tower::ServiceExt as _;
 
-struct NoOperations;
+pub(super) struct NoOperations;
 
 #[async_trait::async_trait]
 impl OperationStore for NoOperations {
     async fn reserve(&self, _: &OperationClaim) -> Result<OperationReservation, StoreError> {
-        panic!("unauthenticated requests must not reserve work")
+        panic!("this request must not reserve work")
     }
     async fn complete(&self, _: &OperationClaim, _: Vec<u8>) -> Result<(), StoreError> {
-        panic!("unauthenticated requests must not complete work")
+        panic!("this request must not complete work")
     }
 }
 
