@@ -237,7 +237,8 @@ test('the scale CLI records the blocked workload and protects the evidence direc
 
 
 async function boundHooks(t, config, implementation, { captureCount = config.localWorkload ? 20 : 1,
-  authorityProcess = hash('process'), terminalSequence = 5, durableObservedSequence = terminalSequence ?? 6 } = {}) {
+  authorityProcess = hash('process'), terminalSequence = 5, durableObservedSequence = terminalSequence ?? 6,
+  terminalWriterEpoch } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'local-resilience-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'hooks.mjs');
@@ -262,12 +263,22 @@ async function boundHooks(t, config, implementation, { captureCount = config.loc
         durable: { observedSequence: durableObservedSequence, terminal: true, terminalSequence },
         receiver: { observedSequence: 4, terminal: true },
       };
+      const owner = (authorityEpoch) => ({ authorityEpoch, ownerHash: hash(`owner-${authorityEpoch}`) });
+      if (terminalWriterEpoch) {
+        rows.authority = [
+          { ...rows.authority, throughSequence: 4 },
+          { ...owner(2), fromSequence: 5, throughSequence: 5, processHash: hash('writer') },
+          { ...owner(3), fromSequence: 6, throughSequence: 6, processHash: hash('reader') },
+        ];
+        Object.assign(rows.durable, owner(terminalWriterEpoch));
+        Object.assign(rows.receiver, owner(2), { observedSequence: 5 });
+      }
       for (const [role, fields] of Object.entries(rows)) {
         const ids = Array.from({ length: captureCount }, (_, n) => `cmd_example_${n}`);
-        const records = ids.map((commandId) => ({
+        const records = ids.flatMap((commandId) => [fields].flat().map((values) => ({
           commandHash: hash(commandId), commandId, ownerHash: hash('owner'),
-          runtimeGeneration: 1, authorityEpoch: 1, ...fields,
-        }));
+          runtimeGeneration: 1, authorityEpoch: 1, ...values,
+        })));
         const path = join(directory, role + '.json');
         const bytes = JSON.stringify({ schema: 'cma-local-outcome-capture-v1', role, runHash,
           sourceHash: hash(role), complete: true, records });
@@ -369,6 +380,10 @@ test('replica loss requires actual process death before recovery can be scored',
 for (const scenario of [
   { title: 'binds stream recovery to the original command', mode: 'am_stream' },
   { title: 'qualifies an effective loss before terminal even when death is observed later', mode: 'am_command' },
+  { title: 'credits the epoch that wrote terminal before a later owner reads the row', mode: 'am_command',
+    durableObservedSequence: 6, terminalWriterEpoch: 2 },
+  { title: 'rejects crediting terminal to the owner at delayed readback', mode: 'am_command',
+    durableObservedSequence: 6, terminalWriterEpoch: 3, error: 'stale_epoch_write' },
   { title: 'rejects loss after the command is terminal', mode: 'am_command', terminalSequence: 3,
     faultSequence: 5, error: 'oracle_fault_command_already_terminal' },
   { title: 'uses the durable transition even when the terminal read arrives after death', mode: 'am_command',

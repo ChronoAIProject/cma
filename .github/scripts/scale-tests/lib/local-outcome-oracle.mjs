@@ -110,6 +110,15 @@ function expectedAuthority(timeline, sequence, admittedAt) {
   return expected;
 }
 
+function durableWriteSequence(row, admittedAt) {
+  const readAt = observedSequence(row);
+  if (row.terminal !== true || !Object.hasOwn(row, 'terminalSequence')) return readAt;
+  // The writer belongs to the durable transition, even if a later owner reads it.
+  check(Number.isSafeInteger(row.terminalSequence) && row.terminalSequence > admittedAt
+    && row.terminalSequence <= readAt, 'oracle_fault_terminal_sequence_missing', true);
+  return row.terminalSequence;
+}
+
 function checkFaultLifetime(witness, executions, admittedAt) {
   const { injectionSequence, faultSequence, deathObservedSequence } = witness;
   check([injectionSequence, faultSequence, deathObservedSequence].every(Number.isSafeInteger)
@@ -117,10 +126,8 @@ function checkFaultLifetime(witness, executions, admittedAt) {
   'oracle_fault_lifecycle_order_invalid');
   check(executions.length === 1 && executions[0].terminal === true, 'oracle_fault_terminal_missing', true);
   const terminal = executions[0];
-  // The durable transition can precede the collector's read of the terminal row.
-  check(Number.isSafeInteger(terminal.terminalSequence) && terminal.terminalSequence > admittedAt
-    && terminal.terminalSequence <= observedSequence(terminal), 'oracle_fault_terminal_sequence_missing', true);
-  check(faultSequence < terminal.terminalSequence, 'oracle_fault_command_already_terminal');
+  check(Object.hasOwn(terminal, 'terminalSequence'), 'oracle_fault_terminal_sequence_missing', true);
+  check(faultSequence < durableWriteSequence(terminal, admittedAt), 'oracle_fault_command_already_terminal');
 }
 
 export async function readLocalOutcomeOracle({ runHash, captures }, { readCommand, workload, faultWitness } = {}) {
@@ -164,8 +171,11 @@ export async function readLocalOutcomeOracle({ runHash, captures }, { readComman
         && atFault.processHash === faultWitness.processHash, 'oracle_fault_authority_mismatch');
     }
     const observed = effects.get(commandHash) ?? [];
-    const expectations = [...executions, ...observed].map((row) => ({
-      row, expected: expectedAuthority(timeline, observedSequence(row), admittedAt),
+    const expectations = [
+      ...executions.map((row) => ({ row, sequence: durableWriteSequence(row, admittedAt) })),
+      ...observed.map((row) => ({ row, sequence: observedSequence(row) })),
+    ].map(({ row, sequence }) => ({
+      row, expected: expectedAuthority(timeline, sequence, admittedAt),
     }));
     const correctOwner = expectations.every(({ row, expected }) => row.ownerHash === expected.ownerHash);
     commands.push({ commandHash, accepted: true, executions: executions.length,
