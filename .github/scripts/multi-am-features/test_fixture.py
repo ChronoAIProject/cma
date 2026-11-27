@@ -414,6 +414,25 @@ class OwnershipTests(unittest.TestCase):
             fixture.preparedSchemaBarrier(True, ownerFence=True)
         self.assertEqual(fixture.mongo.call_count, 2)
 
+    def test_prepared_changed_owner_epoch_requires_the_disposable_prepared_fixture(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        fixture.mongo = Mock()
+        for action in ('inject', 'read', 'restore'):
+            fixture.preparedSchemaRace(action, 'exact-operation', ['exact-reservation'], 'owner_epoch')
+            script = fixture.mongo.call_args.args[0]
+            scope, _ = json.JSONDecoder().raw_decode(script.removeprefix('const scope = '))
+            self.assertEqual(scope, {'action': action, 'operationId': 'exact-operation',
+                                     'reservations': ['exact-reservation'], 'barrier': 'owner_epoch',
+                                     'app': PREPARED_MONGO_APP})
+        fixture.ready['fixture'] = 'features'
+        with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
+            fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'owner_epoch')
+        self.assertEqual(fixture.mongo.call_count, 3)
+
     def test_artifact_abort_targets_only_the_feature_fixture_insert(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12

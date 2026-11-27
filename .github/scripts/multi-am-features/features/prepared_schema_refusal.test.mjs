@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {preparedParentPauseRefusal, preparedSchemaRefusal} from './prepared_schema_refusal.mjs';
+import {preparedOwnerEpochRefusal, preparedParentPauseRefusal, preparedSchemaRefusal} from './prepared_schema_refusal.mjs';
 
 function fixture({aborts = 1, refusals = {a: 1, b: 0}, partial = false, restoreFails = false, changedNativeEffect = false,
   barrier = 'worktree_schema'} = {}) {
@@ -68,6 +68,41 @@ test('the exact Agent work lease can change without committing Ready or its open
   assert.equal(result.prepared_cleanup_refused, false);
   assert.equal(result.startup_receipt_count, 2);
   assert.deepEqual(context.calls, ['arm', 'admit', 'inject', 'disarm', 'read', 'restore', 'disarm', 'cleanup']);
+});
+
+test('a prepared publication refuses its original owner epoch and leaves Agent and Runtime receipts intact', async () => {
+  const context = fixture({barrier: 'owner_epoch'});
+  const race = context.adapter.preparedSchemaRace;
+  let epoch = 13, aborts = 1, unchanged = true;
+  const topology = {ams: {a: {ready: true, instance_id: 'original-owner'},
+    b: {ready: true, instance_id: 'peer'}}};
+  context.adapter.topology = async () => topology;
+  context.adapter.preparedSchemaRace = async input => {
+    const response = await race(input);
+    if (input.action === 'restore') return response;
+    return {...response, ownerInstance: 'original-owner', ownerEpoch: input.action === 'inject' ? 12 : epoch,
+      agentUnchanged: input.action === 'inject' || unchanged};
+  };
+  context.adapter.publicationEvidence = async () => ({a: {
+    owner_authority_refused: {publish_connection: 1}, known_aborted_cas: {publish_connection: aborts},
+  }, b: {}});
+  const result = await preparedOwnerEpochRefusal(context);
+  assert.equal(result.prepared_owner_epoch_refused, true);
+  assert.equal(result.owner_epoch, 12);
+  assert.equal(result.replacement_owner_epoch, 13);
+  assert.equal(result.owner, 'a');
+  assert.equal(result.runtime_receipt_count, 3);
+  assert.deepEqual(context.calls, ['arm', 'admit', 'inject', 'disarm', 'read', 'restore', 'disarm', 'cleanup']);
+
+  epoch = 12;
+  await assert.rejects(preparedOwnerEpochRefusal(context), /prepared_owner_epoch_stale_publication_unproven/);
+  epoch = 13;
+  unchanged = false;
+  await assert.rejects(preparedOwnerEpochRefusal(context), /prepared_owner_epoch_stale_publication_unproven/);
+  unchanged = true;
+  aborts = 0;
+  await assert.rejects(preparedOwnerEpochRefusal(context), /prepared_owner_epoch_outcome_unproven/);
+  assert.deepEqual(context.calls.slice(-2), ['restore', 'disarm']);
 });
 
 test('the schema case fails on a second abort, an unrelated refusal or a partial publication', async () => {
