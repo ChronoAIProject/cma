@@ -172,25 +172,32 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
 
 #[tokio::test]
 async fn queued_message_refreshes_after_output_from_the_same_active_turn() {
-    assert_queued_message_refreshes(Progress::ConversationOutput).await;
+    assert_message_refreshes_after_observation(Progress::ConversationOutput, Some(1)).await;
 }
 
 #[tokio::test]
 async fn queued_message_refreshes_after_usage_from_the_same_active_turn() {
-    assert_queued_message_refreshes(Progress::ConversationUsage).await;
+    assert_message_refreshes_after_observation(Progress::ConversationUsage, Some(1)).await;
 }
 
-async fn assert_queued_message_refreshes(progress: Progress) {
+#[tokio::test]
+async fn first_message_refreshes_after_usage_on_the_same_idle_conversation() {
+    assert_message_refreshes_after_observation(Progress::ConversationUsage, None).await;
+}
+
+async fn assert_message_refreshes_after_observation(progress: Progress, active_turn: Option<u64>) {
     let (store, authority, mut agent) = retry_results::ordinary_fixture().await;
-    let revision = agent.revision;
-    agent.status = AgentStatus::Working;
-    agent.conversation.active_turn = Some(1);
-    agent.revision += 1;
-    store.save_agent(revision, agent).await.unwrap();
+    if let Some(turn) = active_turn {
+        let revision = agent.revision;
+        agent.status = AgentStatus::Working;
+        agent.conversation.active_turn = Some(turn);
+        agent.revision += 1;
+        store.save_agent(revision, agent).await.unwrap();
+    }
 
     let (service, progressing) = service(&store, authority, progress);
     let owner = context("owner");
-    let request = submission("queued-during-output");
+    let request = submission("message-during-observation");
     let accepted = service
         .admit(
             &owner,
