@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual as equal} from 'node:util';
-import {check, other} from '../cma/core.mjs';
+import {assertOwner, check, other} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 import {probeProvider} from './provider_probe.mjs';
 
@@ -126,6 +126,65 @@ export async function configurationCases({api, record: resource, runCase, record
       await recordState('settings_restored', restored);
     }, recordFailure);
   });
+}
+
+export async function competingSystemPrompts({api, adapter, record, recordFailure, recordState = async () => {}}) {
+  const {agentId} = record;
+  const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
+  const ingress = other(owner.am);
+  const path = preferencesPath(record);
+  const {body: before} = await api.rawRequest(owner.am, 'GET', path);
+  const {body: settings} = await api.rawRequest(owner.am, 'GET', settingsPath(record));
+  check(before.prompt_supported === true && before.prompt_pending === false
+    && Number.isSafeInteger(before.revision), 'prompt_race_requires_idle_supported_agent');
+  const readLog = after => adapter.configurationLog({agentId, after});
+  const {through} = await readLog(null);
+  const markers = Array.from({length: 2}, () => 'WS4_INSTRUCTIONS_' + randomUUID().replaceAll('-', ''));
+  const prompts = markers.map(marker => 'Two-AM instructions ' + marker);
+  const request = (am, body, allowed) => api.rawRequest(am, 'PATCH', path,
+    {key: randomUUID(), prefer: 'cma-settings-reasons', body, allowed, timeout: 30000});
+  await withRestoration(async () => {
+    const intents = prompts.map(system_prompt => ({expected_revision: before.revision, system_prompt}));
+    let direct;
+    const forwarded = await api.router.dispatch(agentId, async peer => {
+      check(peer === ingress, 'prompt_race_owner_changed');
+      const replies = await Promise.allSettled([request(owner.am, intents[0], [200, 409]),
+        request(peer, intents[1], [200, 409])]);
+      for (const reply of replies) if (reply.status === 'rejected') throw reply.reason;
+      direct = replies[0].value;
+      return replies[1].value;
+    });
+    const replies = [direct, forwarded];
+    const winner = replies.findIndex(reply => reply.status === 200);
+    check(winner >= 0 && replies[1 - winner].status === 409, 'prompt_race_requires_exactly_one_winner');
+    const accepted = replies[winner].body;
+    const refusal = replies[1 - winner].body?.settings_update_reason;
+    check(accepted?.system_prompt === prompts[winner] && accepted.revision === before.revision + 1
+      && accepted.prompt_pending === false && ['stale_revision', 'dispatch_in_progress'].includes(refusal),
+    'prompt_race_untypeable_or_unconfirmed');
+    const stale = await api.router.dispatch(agentId, peer => request(peer, intents[1 - winner], [409]));
+    check(stale.body?.settings_update_reason === 'stale_revision', 'prompt_race_loser_revision_still_usable');
+    for (const am of [owner.am, ingress]) {
+      const {body: seen} = await api.rawRequest(am, 'GET', path);
+      check(seen.system_prompt === accepted.system_prompt && seen.revision === accepted.revision
+        && seen.prompt_pending === false, 'prompt_race_peer_readback_changed');
+    }
+    await probeProvider({api, adapter, record}, {configuration: {effort: settings.reasoning_effort,
+      instructions: markers[winner]}}, 'configuration_matches', 'prompt_race_runtime_kept_wrong_instructions');
+    const receipt = await configurationReceipt(readLog, through);
+    await confirmConfigurationDispatch(adapter, agentId, owner.am, receipt.admission);
+    await recordState('competing_system_prompts', {winner: winner === 0 ? owner.am : ingress,
+      refusal, revision: accepted.revision, ...receipt});
+  }, async () => {
+    const current = await read(api, path);
+    if (current.system_prompt !== before.system_prompt) {
+      check(prompts.includes(current.system_prompt), 'prompt_race_restore_foreign_value');
+      await patch(api, path, {expected_revision: current.revision, system_prompt: before.system_prompt});
+    }
+    const restored = await read(api, path);
+    check(restored.system_prompt === before.system_prompt && restored.prompt_pending === false,
+      'prompt_race_restore_unconfirmed');
+  }, recordFailure);
 }
 
 // Called only after the held provider's real active-stream oracle is observed.

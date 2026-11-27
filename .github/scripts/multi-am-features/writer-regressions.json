@@ -47,7 +47,7 @@
       "feature": "Settings and system prompt",
       "requirement": "Current owner executes both durable admission and runtime effect; policy/idle/runtime/setting revisions revalidated. No false success from unchanged settings. Non-idle and unauthorized cases remain refused.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The provider oracle checks changed runtime instructions and reasoning effort. Mongo and Manager diagnostics require one admission, owner dispatch and settlement, with no second receipt on replay. Deterministic publication barriers and integrated execution remain pending.",
+      "remaining": "The journey races two changed system prompts against the same preference revision. Provider, Mongo and Manager observations require one admission, owner dispatch and settlement. The deterministic publication barrier and integrated execution remain pending.",
       "trigger": "Changed supported settings/system prompt on eligible idle Agent, via both normal and authorized cross-owner entrypoints",
       "required_assertions": [
         {
@@ -103,7 +103,8 @@
             "after_restart"
           ],
           "routing": "non_owner"
-        }
+        },
+        {"case": "writer.competing_system_prompts", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"}
       ]
     },
     {

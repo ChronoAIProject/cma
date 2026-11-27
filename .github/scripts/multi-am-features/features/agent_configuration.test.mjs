@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {configurationCases, heldConfigurationCases, assertWriterTitle,
+import {competingSystemPrompts, configurationCases, heldConfigurationCases, assertWriterTitle,
   verifyLifecycleReplay} from './agent_configuration.mjs';
 
 function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = false,
@@ -31,7 +31,7 @@ function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = 
       return {status: 409, body: {code: badRefusal ? 'record_revision_changed' : 'agent_not_ready'}};
     }
     if (prompt && body.expected_revision !== preferences.revision) {
-      assert.deepEqual(allowed, [409]);
+      assert(allowed.includes(409));
       return {status: 409, body: {code: 'conflict', settings_update_reason: 'stale_revision'}};
     }
     if (prompt) {
@@ -56,7 +56,9 @@ function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = 
     return {responseId: 'response', error: null, events: [{type: 'response.completed'}],
       abort() {}, done: Promise.resolve()};
   };
-  api.rawRequest = async (_am, method, path) => {
+  api.router = {dispatch: async (id, operation) => { assert.equal(id, record.agentId); return operation('a'); }};
+  api.rawRequest = async (am, method, path, options) => {
+    if (path.endsWith('/preferences') || path.endsWith('/settings')) return api.request(am, method, path, options);
     assert.equal(method, 'GET');
     if (path === '/api/v1/agents/' + record.agentId) return {body: {id: record.agentId, status: 'ready'}};
     assert.equal(path, '/api/v2/responses/response');
@@ -70,7 +72,7 @@ function fixture({falseAck = false, lostAck = false, busy = false, badRefusal = 
   };
   const adapter = {prepareTurn: async value => { armed = value; probes.push(value.configuration); },
     releaseTurn: async ({caseId}) => assert.equal(caseId, armed.caseId),
-    ownerOf: async () => ({am: 'b'}),
+    ownerOf: async () => ({am: 'b', epoch: 1, agent_id: record.agentId, pod_uid: 'owned-pod'}),
     configurationDispatch: async ({agentId, sequence}) => {
       assert.equal(agentId, record.agentId);
       assert.ok(log.some(row => row.sequence === sequence && row.state === 'dispatch_fenced'));
@@ -113,6 +115,22 @@ test('configuration round trips change real values, preserve prompt, refuse stal
   assert.ok(changed.some(row => row.allowed?.includes(409)));
   assert.match(x.probes[0].instructions, /^WS4_INSTRUCTIONS_[a-f0-9]{32}$/);
   assert.deepEqual(x.probes.map(probe => probe.effort), ['high', 'high', 'medium']);
+});
+
+test('competing prompts require one changed value, one owner dispatch and a stale loser', async () => {
+  const x = fixture();
+  await competingSystemPrompts(x);
+  const [first, second, stale, restored] = x.calls.filter(row => row.method === 'PATCH');
+  assert.deepEqual([first.am, second.am], ['b', 'a']);
+  assert.equal(first.body.expected_revision, second.body.expected_revision);
+  assert.notEqual(first.body.system_prompt, second.body.system_prompt);
+  assert.deepEqual(stale.body, second.body);
+  assert.notEqual(stale.key, second.key);
+  assert.equal(restored.body.expected_revision, first.body.expected_revision + 1);
+  assert.equal(x.state().preferences.system_prompt, x.original.preferences.system_prompt);
+  await assert.rejects(competingSystemPrompts(fixture({falseAck: true})), /prompt_race_requires_exactly_one_winner/);
+  await assert.rejects(competingSystemPrompts(fixture({duplicateConfiguration: true})),
+    /configuration_admission_or_settlement_duplicated_or_missing/);
 });
 
 test('configuration requires one durable admission and settlement and no second receipt on unchanged replay', async () => {
