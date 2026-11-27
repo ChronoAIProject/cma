@@ -14,7 +14,7 @@ import {runtimeLoss} from '../features/runtime_loss.mjs';
 import {lifecycleFailureSummary} from '../failure.mjs';
 
 export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook,
-  preparedHook, triggerHook, retirementHook, navigationHook} = {}) {
+  preparedHook, triggerHook, retirementHook, navigationHook, firstAgentHook} = {}) {
   const config = normalizeConfig(raw);
   check(config.adapter_module && config.output_dir && config.owner_id, 'config_missing');
   let runtimes = runtimeBindings(config);
@@ -423,6 +423,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       return {agent_sha256: hash(plain.agentId)};
     });
     await step('plain_open_both', () => openBoth(plain));
+    if (firstAgentHook) await firstAgentHook({api, adapter, record: plain, step});
     if (featureHook) await step('features_before_restart', () => featureHook({
       record: plain, api, adapter, config, create, cleanup, phase: 'before_restart',
     }));

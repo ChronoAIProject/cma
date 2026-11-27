@@ -28,6 +28,7 @@ import legacy_manifests as old
 from identity import ADMIN
 from login import login
 from prepared_runtime import prepared_runtime_evidence
+from provenance_progress import initialize_progress, provenance_backfill
 from publication_evidence import (access_proposal_abort, artifact_publication_abort, artifact_publication_race,
                                   prepared_schema_barrier, prepared_schema_race,
                                   prepared_schema_refusals, publication_evidence,
@@ -62,6 +63,7 @@ class Fixture:
     runtimeLossEvidence = runtime_loss_evidence
     shareRedemptionPublicationAbort = share_redemption_publication_abort
     accessProposalAbort = access_proposal_abort
+    provenanceBackfill = provenance_backfill
     preparedRuntimeEvidence = prepared_runtime_evidence
     preparedSchemaBarrier = prepared_schema_barrier
     preparedSchemaRace = prepared_schema_race
@@ -154,6 +156,9 @@ class Fixture:
         objects=manifests.managers(self.secret,self.ready)
         self.templates={o['metadata']['name'][-1]:o for o in objects if o['kind']=='StatefulSet'}
         self.client.apply([o for o in objects if o['kind']!='StatefulSet'])
+        if self.ready.get('fixture') == 'features':
+            self.mark_initialization_step('provenance_progress_initialize')
+            initialize_progress(self)
         for am in ['a','b']:
             # Initialize the fresh database once before the second AM joins;
             # the complete journey begins only with both independent AMs Ready.
@@ -447,7 +452,7 @@ class Fixture:
                              'retirementPurge','retirementTitleDeferral','removeRuntimePod','artifactPublicationAbort','artifactPublicationRace','preparedSchemaBarrier',
                              'preparedSchemaRace','preparedSchemaRefusals','writerPublicationAbort','writerPublicationEvidence',
                              'runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
-                             'shareRedemptionPublicationAbort','accessProposalAbort','seedOversizeFile']
+                             'shareRedemptionPublicationAbort','accessProposalAbort','provenanceBackfill','seedOversizeFile']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:
