@@ -7,7 +7,9 @@ use mongodb::bson::{doc, Document};
 use super::database;
 use crate::store::{
     runtime_routing::MongoRuntimeRouting,
-    sandbox_mongo::{MongoSandboxStore, SANDBOXES},
+    sandbox_mongo::{
+        commit_transaction, start_transaction, CommitOutcome, MongoSandboxStore, SANDBOXES,
+    },
     sandbox_mongo_integration_tests::sandbox,
     sandbox_quarantine::FIELD,
     sandboxes::{read_sandbox, sandbox_document},
@@ -20,6 +22,18 @@ async fn startup_quarantines_the_v3_machine_origin_and_serves_healthy_sandboxes(
     let (client, name) = database().await;
     let db = client.database(&name);
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let mut session = client.start_session().await.unwrap();
+    start_transaction(&mut session).await.unwrap();
+    work_schema::floor::retain(&store, &mut session)
+        .await
+        .unwrap();
+    work_schema::floor::retain_managed_machine_origin(&store, &mut session)
+        .await
+        .unwrap();
+    assert!(matches!(
+        commit_transaction(&mut session).await,
+        CommitOutcome::Committed
+    ));
     let broken = sandbox("sbx_a_broken");
     let mut healthy = sandbox("sbx_b_healthy");
     healthy.name = "healthy".into();
