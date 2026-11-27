@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::test_measurement::{process_cpu, PoolReport, PoolUsage};
 use mongodb::{
     event::{cmap::CmapEvent, command::CommandEvent, EventHandler},
     options::ClientOptions,
@@ -27,6 +28,7 @@ pub(super) struct Wire {
 pub(super) struct Trace {
     enabled: AtomicBool,
     wire: Mutex<Wire>,
+    pool: Mutex<PoolUsage>,
 }
 
 #[derive(Serialize)]
@@ -45,6 +47,8 @@ pub(super) struct Observation {
     pub docs_examined: i64,
     pub keys_examined: i64,
     pub elapsed_us: u128,
+    pub fixture_process_cpu_us: u128,
+    pub pool: PoolReport,
     pub docs_budget: Option<i64>,
     pub within_docs_budget: Option<bool>,
 }
@@ -79,8 +83,10 @@ pub(super) async fn client() -> (Client, Arc<Trace>) {
     let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
+    trace.pool.lock().unwrap().set_limit(options.max_pool_size);
     let seen = trace.clone();
     options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        seen.pool.lock().unwrap().observe(&event);
         if !seen.enabled.load(SeqCst) {
             return;
         }
@@ -148,7 +154,9 @@ pub(super) async fn sample<T: Returned>(
         .unwrap();
     db.run_command(doc! {"profile":2,"slowms":0}).await.unwrap();
     *trace.wire.lock().unwrap() = Wire::default();
+    trace.pool.lock().unwrap().reset();
     trace.enabled.store(true, SeqCst);
+    let cpu_before = process_cpu();
     let started = std::time::Instant::now();
     let (result, consumed_source) = crate::store::mongo_read_telemetry::isolated_test(async {
         let result = future.await;
@@ -159,8 +167,10 @@ pub(super) async fn sample<T: Returned>(
     })
     .await;
     let elapsed_us = started.elapsed().as_micros();
+    let fixture_process_cpu_us = (process_cpu() - cpu_before).as_micros();
     trace.enabled.store(false, SeqCst);
     let wire = std::mem::take(&mut *trace.wire.lock().unwrap());
+    let pool = trace.pool.lock().unwrap().report();
     db.run_command(doc! {"profile":0}).await.unwrap();
     let after = shape(db, fixture).await;
     let profile = db
@@ -213,6 +223,8 @@ pub(super) async fn sample<T: Returned>(
         docs_examined,
         keys_examined: total("keysExamined"),
         elapsed_us,
+        fixture_process_cpu_us,
+        pool,
         docs_budget,
         within_docs_budget: docs_budget.map(|budget| docs_examined <= budget),
     };
