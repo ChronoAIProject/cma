@@ -3,6 +3,8 @@ import {
   ProtocolError,
   TransportError,
   agentLifecycleFailure,
+  repositoryAccessRefusal,
+  repositoryScopeRepair,
   type AgentLifecycleFailure,
   type Cma,
 } from '@cma/client';
@@ -247,13 +249,15 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
             typeof value.connection !== 'object' ||
             !Array.isArray(value.connection.services) ||
             !value.connection.services.every((service) => typeof service === 'string') ||
-            (value.connection.repository_access !== undefined &&
-              value.connection.repository_access !== 'verification_unavailable') ||
             !isConnectionTarget(value.connection.target))) ||
         (value.status === 'waiting_for_connection' && value.connection === undefined) ||
         (value.status === 'succeeded' && (typeof value.agent_id !== 'string' || !value.agent_id))
       )
         throw new ProtocolError('Agent Manager returned an invalid lifecycle operation.');
+      if (value.connection?.repository_access !== undefined)
+        repositoryAccessRefusal(value.connection.repository_access);
+      if (value.connection?.repository_scope_repair !== undefined)
+        repositoryScopeRepair(value.connection.repository_scope_repair);
       if (value.failure !== undefined) agentLifecycleFailure(value.failure);
       return value;
     },

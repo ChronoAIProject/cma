@@ -103,7 +103,7 @@ export const repositoryAccessRefusal = enumeration(
 );
 export type RepositoryAccessRefusal = Output<typeof repositoryAccessRefusal>;
 
-const repositoryScopeRepair = object({
+export const repositoryScopeRepair = object({
   connection_id: text,
   operation: githubRepositoryNeed,
   required_scope: enumeration('public_repo', 'repo'),
