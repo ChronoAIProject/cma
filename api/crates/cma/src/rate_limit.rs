@@ -82,6 +82,7 @@ enum Budget {
     Create,
     Input,
     Control,
+    Recovery,
 }
 
 /// Independent admission, health, and operation budgets.
@@ -97,6 +98,7 @@ pub(crate) struct RateLimiters {
     create: KeyedLimiter,
     input: KeyedLimiter,
     control: KeyedLimiter,
+    recovery: KeyedLimiter,
     response_input_tier_enabled: bool,
     control_tier_enabled: bool,
     default_leases: lease::LeaseTable,
@@ -174,6 +176,7 @@ impl RateLimiters {
             create: RateLimiter::keyed(create),
             input: RateLimiter::keyed(input),
             control: RateLimiter::keyed(control),
+            recovery: RateLimiter::keyed(control),
             response_input_tier_enabled: false,
             control_tier_enabled: false,
             default_leases: lease::LeaseTable::default(),
@@ -193,6 +196,7 @@ impl RateLimiters {
             Budget::Create => &self.create,
             Budget::Input => &self.input,
             Budget::Control => &self.control,
+            Budget::Recovery => &self.recovery,
         };
         let decision = limiter
             .check_key(key)
@@ -213,6 +217,7 @@ impl RateLimiters {
             self.create.retain_recent();
             self.input.retain_recent();
             self.control.retain_recent();
+            self.recovery.retain_recent();
         }
     }
 
@@ -331,6 +336,7 @@ pub(crate) async fn enforce(
         RequestTier::Create => Budget::Create,
         RequestTier::Input => Budget::Input,
         RequestTier::Control => Budget::Control,
+        RequestTier::Recovery => Budget::Recovery,
         RequestTier::Health => unreachable!("health is admitted above"),
     };
     match limiters.check_operation(budget, &key).await {
