@@ -11,14 +11,13 @@ export async function browserFileCreation({page, api, ingress, agentId, recordFa
   const filename = 'note.txt';
   const file = directory + '/' + filename;
   const peer = other(ingress);
-  const list = (am, parent = '') => api.request(am, 'GET', `${path}/tree?path=${encodeURIComponent(parent)}`, {direct: true});
   const read = am => api.request(am, 'GET', `${path}/content?path=${encodeURIComponent(file)}`, {direct: true});
-  const folderEntry = response => response.body?.entries?.find(entry => entry.path === directory);
-  const initial = await list(peer);
-  check(Array.isArray(initial.body?.entries) && !folderEntry(initial), 'browser_files_initial_directory_present');
+  const folderEntry = am => findRootEntry(api, path, am, directory);
+  const bothViews = () => Promise.all([folderEntry(ingress), folderEntry(peer)]);
+  check((await bothViews()).every(entry => !entry), 'browser_files_initial_directory_present');
   const dialog = page.getByRole('dialog', {name: 'Files', exact: true});
   const button = name => dialog.getByRole('button', {name, exact: true});
-  let folderSubmitted = false;
+  let folderSubmitted = false, folderAcknowledged = false;
   const create = async (folder, name, target, expected) => {
     await button(folder ? 'New folder' : 'New file').click({timeout});
     const field = dialog.getByRole('textbox', {name: folder ? 'Folder name' : 'File name', exact: true});
@@ -42,6 +41,7 @@ export async function browserFileCreation({page, api, ingress, agentId, recordFa
     } else {
       check(response.ok() && body.path === target && body.size_bytes === 0 && body.sha256 === hash(''),
         'browser_files_create_receipt_changed');
+      if (folder) folderAcknowledged = true;
       await dialog.getByText(folder ? 'Folder created.' : 'File created.', {exact: true}).waitFor({timeout});
     }
   };
@@ -55,7 +55,7 @@ export async function browserFileCreation({page, api, ingress, agentId, recordFa
     await button('Refresh files').click({timeout});
     await button(directory).click({timeout});
     await dialog.getByLabel('Current directory', {exact: true}).getByText('/home/' + directory, {exact: true}).waitFor({timeout});
-    const folder = folderEntry(await list(peer));
+    const folder = await folderEntry(peer);
     check(folder?.kind === 'directory' && folder.name === directory, 'browser_files_created_directory_missing_on_peer');
     await create(false, filename, file);
     const original = (await read(peer)).body;
@@ -75,13 +75,29 @@ export async function browserFileCreation({page, api, ingress, agentId, recordFa
     check(retained.path === file && retained.sha256 === hash(replacement), 'browser_files_conflict_replaced_peer_content');
   }, async () => {
     if (!folderSubmitted) return;
-    const observed = await list(peer);
-    if (!folderEntry(observed)) return;
-    const {body} = await api.request(peer, 'DELETE', `${path}?path=${encodeURIComponent(directory)}&recursive=true`, {direct: true});
-    check(body?.path === directory && body.deleted === true, 'browser_files_cleanup_receipt_changed');
-    for (const am of [ingress, peer]) {
-      const after = await list(am);
-      check(Array.isArray(after.body?.entries) && !folderEntry(after), 'browser_files_cleanup_still_visible');
-    }
+    await removeFixtureDirectory({api, path, ingress, directory, acknowledged: folderAcknowledged});
   }, recordFailure);
+}
+
+async function findRootEntry(api, path, am, directory) {
+  const {body} = await api.request(am, 'GET', `${path}/tree?path=`, {direct: true});
+  check(body?.path === '' && Array.isArray(body.entries) && body.entries.every(entry =>
+    typeof entry?.path === 'string' && entry.path.length > 0 && entry.name === entry.path
+    && ['file', 'directory', 'symlink'].includes(entry.kind)), 'browser_files_root_listing_invalid');
+  return body.entries.find(entry => entry.path === directory);
+}
+
+export async function removeFixtureDirectory({api, path, ingress, directory, acknowledged}) {
+  const peer = other(ingress);
+  const bothViews = () => Promise.all([ingress, peer].map(am => findRootEntry(api, path, am, directory)));
+  if (!acknowledged) {
+    const present = (await bothViews()).filter(Boolean);
+    if (!present.length) return;
+    check(present.every(entry => entry.kind === 'directory'), 'browser_files_cleanup_directory_replaced');
+  }
+  const {status, body} = await api.request(peer, 'DELETE', `${path}?path=${encodeURIComponent(directory)}&recursive=true`,
+    {direct: true, allowed: [200, 404]});
+  check(status === 404 ? body?.code === 'file_not_found' : body?.path === directory && body.deleted === true,
+    'browser_files_cleanup_receipt_changed');
+  check((await bothViews()).every(entry => !entry), 'browser_files_cleanup_still_visible');
 }
