@@ -219,6 +219,23 @@ class Identity(BaseHTTPRequestHandler):
                 return self.reply(200, {'access_token': self.config['bearer'], 'token_type': 'Bearer',
                     'refresh_token': self.config['refresh_token'], 'expires_in': 3600,
                     'scope': 'openid profile email roles proxy offline_access'})
+            if self.path == '/oauth/introspect':
+                form = parse_qs(raw.decode(), strict_parsing=True)
+                client = self.config.get('gateway_client')
+                if not client or form.get('token_type_hint') != ['access_token'] or any(
+                    len(form.get(key, [])) != 1 or not hmac.compare_digest(form[key][0], client[key])
+                    for key in ('client_id', 'client_secret')
+                ):
+                    return self.reply(401, {'active': False})
+                token = form.get('token', [])
+                actor = self.actor(token[0]) if len(token) == 1 else None
+                if actor is None:
+                    return self.reply(200, {'active': False})
+                issuer = 'https://identity.localhost.direct'
+                can_read = token[0] in (self.config['bearer'], self.config['admin_bearer'])
+                return self.reply(200, {'active': True, 'iss': issuer, 'sub': actor[0], 'token_type': 'access',
+                    'exp': self.config['expires_at'], 'resource': [issuer + '/api/v1/proxy/s/cma-event-gateway'],
+                    'permissions': ['cma-eg:channels:read'] if can_read else []})
             if self.path == '/introspect':
                 form = parse_qs(raw.decode(), strict_parsing=True)
                 actor = self.actor(form.get('token', [''])[0])

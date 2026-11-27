@@ -2,6 +2,7 @@
 from copy import deepcopy
 import json
 import re
+import secrets
 from pathlib import Path
 import legacy_manifests as old
 from publication_evidence import FEATURES_MONGO_APP, PREPARED_MONGO_APP
@@ -45,6 +46,11 @@ def dependencies(secret, ready):
     private['stringData'].update({'provider-control':secret['provider_control'],
         'provider.crt':secret['provider_cert'],'provider.key':secret['provider_key']})
     if ready.get('expected_eg_image'):
+        gateway_identity = {'client_id': 'disposable-gateway-fixture', 'client_secret': secrets.token_urlsafe(32)}
+        secret['gateway_identity'] = gateway_identity
+        identity = json.loads(private['stringData']['identity.json'])
+        identity['gateway_client'] = gateway_identity
+        private['stringData']['identity.json'] = json.dumps(identity)
         identity_service = next(o for o in objects if o['kind'] == 'Service' and o['metadata']['name'] == 'identity')
         identity_service['spec']['ports'][0]['name'] = 'http'
         identity_service['spec']['ports'].append({'name': 'https', 'port': 443, 'targetPort': 8443})

@@ -41,11 +41,14 @@ class GatewayFixtureTests(unittest.TestCase):
         ]
         client.wait.side_effect = lambda predicate, _seconds, _code: self.assertTrue(predicate())
         client.forward.return_value = 'http://127.0.0.1:12345'
-        client.http.return_value = (200, {'ready': True})
+        client.http.side_effect = [(200, {'ready': True}), (200, {'platforms': [], 'relay_authoring': {}}),
+                                   (403, {}), (401, {})]
         client.http_raw.return_value = (200, {'Content-Type': 'text/html'},
             b'<section id="integration"></section><section id="architecture"></section><section id="protocol"></section>')
         fixture = SimpleNamespace(client=client, mongo=Mock(return_value=True), mark_initialization_step=Mock(),
-            record=Mock(), ready={'fixture': 'features', 'run_id': run, 'context': 'kind-' + run,
+            record=Mock(), secret={'bearer': 'generated-owner', 'outsider_bearer': 'generated-outsider',
+                                   'gateway_identity': {'client_id': 'generated-id', 'client_secret': 'generated-value'}},
+            ready={'fixture': 'features', 'run_id': run, 'context': 'kind-' + run,
                 'server': 'https://127.0.0.1:23456', 'namespace': 'cma-native-am', 'expected_eg_image': image})
 
         self.assertEqual(initialize_gateway(fixture), client.forward.return_value)

@@ -71,14 +71,15 @@ def initialize_gateway(fixture):
 
     namespace = fixture.ready['namespace']
     public_url = 'https://gateway.example.test'
+    identity = fixture.secret['gateway_identity']
     env = {
         'CMAEG_LISTEN': f'0.0.0.0:{PORT}', 'CMAEG_MONGODB_DATABASE': DATABASE,
         'CMAEG_PUBLIC_URL': public_url, 'CMAEG_MONGODB_URI': uri(accounts[0]),
         'CMAEG_CMA_BASE_URL': f'http://am-public.{namespace}.svc:8080',
         'CMAEG_NYXID_BASE_URL': 'https://identity.localhost.direct',
         'CMAEG_CMA_SERVICE_TOKEN': secrets.token_urlsafe(32),
-        'CMAEG_NYXID_CLIENT_ID': 'disposable-gateway-fixture',
-        'CMAEG_NYXID_CLIENT_SECRET': secrets.token_urlsafe(32),
+        'CMAEG_NYXID_CLIENT_ID': identity['client_id'],
+        'CMAEG_NYXID_CLIENT_SECRET': identity['client_secret'],
         'CMAEG_MASTER_KEYS': '1:' + base64.b64encode(secrets.token_bytes(32)).decode().rstrip('='),
     }
     config = {'apiVersion': 'v1', 'kind': 'ConfigMap', 'metadata': metadata('gateway-environment'), 'data': env}
@@ -107,5 +108,20 @@ def initialize_gateway(fixture):
     if (document_status != 200 or not headers.get('Content-Type', '').startswith('text/html')
             or any(f'id="{section}"'.encode() not in body for section in ('integration', 'architecture', 'protocol'))):
         raise RuntimeError('gateway_fixture_docs_readback')
+    verify_gateway_auth(fixture, origin)
     fixture.record('event_gateway_ready', manifest=image.split('@', 1)[1], docs_sha256=hashlib.sha256(body).hexdigest())
     return origin
+
+
+def verify_gateway_auth(fixture, origin):
+    path = '/v1/channel-capabilities'
+    status, value = fixture.client.http(origin, 'GET', path,
+        headers={'Authorization': 'Bearer ' + fixture.secret['bearer']})
+    if (status != 200 or not isinstance(value, dict) or not isinstance(value.get('platforms'), list)
+            or not isinstance(value.get('relay_authoring'), dict)):
+        raise RuntimeError('gateway_fixture_actor_readback')
+    outsider, _ = fixture.client.http(origin, 'GET', path,
+        headers={'Authorization': 'Bearer ' + fixture.secret['outsider_bearer']})
+    anonymous, _ = fixture.client.http(origin, 'GET', path)
+    if outsider != 403 or anonymous != 401:
+        raise RuntimeError('gateway_fixture_authority_refusal')

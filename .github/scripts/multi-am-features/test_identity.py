@@ -69,6 +69,24 @@ class IndependentActorTests(unittest.TestCase):
             'client_id': self.credentials['client_id'], 'client_secret': self.credentials['client_secret']})
         self.assertEqual(status, 401); self.assertFalse(body['active'])
 
+    def test_gateway_introspection_checks_separate_client_and_actor_permissions(self):
+        gateway = {key: secrets.token_urlsafe(32) for key in ('client_id', 'client_secret')}
+        self.credentials['gateway_client'] = gateway
+        form = {**gateway, 'token_type_hint': 'access_token'}
+        path = '/oauth/introspect'
+        for actor, permissions in [('bearer', ['cma-eg:channels:read']),
+                                   ('admin_bearer', ['cma-eg:channels:read']), ('outsider_bearer', [])]:
+            status, value = self.request('POST', path, form={**form, 'token': self.credentials[actor]})
+            self.assertEqual(status, 200)
+            self.assertTrue(value['active'])
+            self.assertEqual(value['iss'], 'https://identity.localhost.direct')
+            self.assertEqual(value['resource'], ['https://identity.localhost.direct/api/v1/proxy/s/cma-event-gateway'])
+            self.assertEqual(value['permissions'], permissions)
+        self.assertEqual(self.request('POST', path, form={**form, 'token': 'unknown-fixture-input'}),
+                         (200, {'active': False}))
+        self.assertEqual(self.request('POST', path, form={**form, 'token': self.credentials['bearer'],
+                             'client_id': self.credentials['client_id']}), (401, {'active': False}))
+
     def test_organization_membership_is_current_and_bound_to_the_exact_actor(self):
         admin = self.credentials['admin_bearer']
         recipient = self.credentials['outsider_bearer']
