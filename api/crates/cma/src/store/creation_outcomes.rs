@@ -105,6 +105,10 @@ impl CreationOutcomes {
             records,
         };
         store.initialize_coverage().await?;
+        tracing::info!(
+            terminal_settlement_enabled = store.config.terminal_settlement,
+            "Sandbox creation outcome coverage initialized"
+        );
         Ok(store)
     }
 
@@ -225,7 +229,18 @@ impl Backend for CreationOutcomes {
     ) -> Result<Outcome, StatusCode> {
         let start = std::time::Instant::now();
         let result = self.resolve(identity, query).await;
-        tracing::debug!(operation = ?identity.operation, outcome = reads::outcome_name(&result), elapsed_ms = start.elapsed().as_millis(), "Sandbox creation lookup");
+        let unknown_reason = match &result {
+            Ok(Outcome::Unknown { reason }) => Some(reason),
+            _ => None,
+        };
+        tracing::debug!(
+            creation_proof = %record_id(identity),
+            operation = ?identity.operation,
+            outcome = reads::outcome_name(&result),
+            ?unknown_reason,
+            elapsed_ms = start.elapsed().as_millis(),
+            "Sandbox creation lookup"
+        );
         result
     }
 

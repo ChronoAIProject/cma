@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import secrets
 import subprocess
 import sys
 from pathlib import Path
@@ -22,8 +23,11 @@ def read_replay(path, *, sealed):
             "Layer replay identity is unavailable")
     value = json.loads(path.read_text())
     fields = {"reservation", "mount_namespace", "archive_digest"} if sealed else {"reservation", "mount_namespace"}
-    require(isinstance(value, dict) and set(value) == fields, "Layer replay identity differs")
+    require(isinstance(value, dict) and set(value) in (fields, fields | {"kind"}), "Layer replay identity differs")
     validate_reservation(value["reservation"])
+    if "kind" in value:
+        require(value["kind"] == "am-dependencies" and value["reservation"]["component"] == "am",
+                "Layer replay kind differs")
     mount = value["mount_namespace"]
     require(mount is None or isinstance(mount, str) and re.fullmatch(r"[a-f0-9]{32}", mount),
             "Layer replay mount identity differs")
@@ -82,22 +86,28 @@ def prove(root, archive, replay, env, *, builder=build):
                    capture_output=True, timeout=30, check=True)
     progress = {}
     with TemporaryDirectory(prefix="layer-replay-", dir=env["RUNNER_TEMP"]) as directory:
-        builder(Path.cwd(), reservation, Path(directory), cache=ReplayCache(root, value["mount_namespace"]),
+        mount = secrets.token_hex(16) if value.get("kind") == "am-dependencies" else value["mount_namespace"]
+        builder(Path.cwd(), reservation, Path(directory), cache=ReplayCache(root, mount),
                 progress=progress)
     require(reused(progress), "Clean builder did not reuse a result from the restored cache")
+    if value.get("kind") == "am-dependencies":
+        require(progress.get("cached_dependency_steps", 0) > 0, "Clean builder did not reuse AM dependencies")
     return fingerprint
 
 
-def main(env):
+def main(env, *, candidate=False):
     parent = Path(env["RUNNER_TEMP"]) / "cma-layer-cache"
-    fingerprint = prove(parent / "verified", parent / "archive.tar", parent / "replay.json", env)
+    fingerprint = prove(parent / ("validated" if candidate else "verified"), parent / "archive.tar", parent / "replay.json", env)
     with Path(env["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"archive_digest={fingerprint}\n")
 
 
 if __name__ == "__main__":
     try:
-        main(os.environ)
+        import argparse
+        parser = argparse.ArgumentParser(description=__doc__)
+        parser.add_argument("--candidate", action="store_true")
+        main(os.environ, candidate=parser.parse_args().candidate)
     except Exception as error:
         print(f"Layer reuse proof withheld ({type(error).__name__})", file=sys.stderr)
         sys.exit(1)

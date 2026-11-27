@@ -20,6 +20,9 @@ pub(super) async fn acquire(
         }
         filter.insert("owner", doc! {"$in":accounts});
     }
+    if let Some(control) = &store.suggestion_control {
+        control.exclude_held_expiry(&mut filter, now_ms).await;
+    }
     let mut selected = None;
     for _ in 0..TRANSACTION_ATTEMPTS {
         let mut session = match store.client.start_session().await {

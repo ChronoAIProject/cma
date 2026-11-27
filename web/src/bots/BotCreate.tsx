@@ -18,18 +18,7 @@ import type { SkillReference } from '../profiles/client';
 import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { connectionTargetFrom } from './connectionTarget';
 import type { ConnectionTarget } from '../connections/client';
-import { useImageManagerAvailability } from '../services/ImageManagerRetirement';
-import {
-  imageVisibilityLabel,
-  listAgentImages,
-  type AgentImageChoice,
-} from '../create/imageCatalog';
-
-const SYSTEM_IMAGE: AgentImageChoice = {
-  id: 'system-default',
-  name: 'System default image',
-  description: 'Maintained by Agent Manager and kept compatible with the default runtime.',
-};
+const SYSTEM_IMAGE_NAME = 'System default image';
 const EFFORT_CHOICES = ['minimal', 'low', 'medium', 'high', 'x_high'] as const;
 
 export interface CreationIntent {
@@ -59,15 +48,10 @@ export function BotCreate({
 }) {
   // Keep the creation client in the boundary for historical setup links.
   void _profiles;
-  const imageManager = useImageManagerAvailability();
   const [step, setStep] = useState(intent === undefined ? 0 : 3);
   const [name, setName] = useState(initialName);
   const [botId, setBotId] = useState('');
   const catalog = useProfileViewsClient()?.authoring;
-  const [images, setImages] = useState<readonly AgentImageChoice[]>([SYSTEM_IMAGE]);
-  const [selectedImage, setSelectedImage] = useState(SYSTEM_IMAGE.id);
-  const [imagesLoading, setImagesLoading] = useState(true);
-  const [imagesError, setImagesError] = useState<string>();
   const [repository, setRepository] = useState('');
   const initialAgent =
     _initialProfile?.kind === 'agent' ? _initialProfile.revision.content : undefined;
@@ -100,10 +84,6 @@ export function BotCreate({
   const selected = choices.value?.find((connection) => connection.connection_ref === botId);
   const historicalRevision =
     intent?.body.event_worker_profile?.revision ?? intent?.body.profile?.revision;
-  const image = useMemo(
-    () => images.find((candidate) => candidate.id === selectedImage) ?? SYSTEM_IMAGE,
-    [images, selectedImage],
-  );
   const admission = admissionFor(policy.admission, policy.senders);
   const ack = Math.round(Number(policy.ackSeconds) * 1000);
   const validName =
@@ -115,26 +95,6 @@ export function BotCreate({
     ack >= 0 &&
     ack <= 60000;
   const ready = [validName && selected !== undefined && choices.fresh, true, validPolicy];
-  useEffect(() => {
-    if (imageManager !== 'legacy') return;
-    const request = new AbortController();
-    void listAgentImages(request.signal)
-      .then((catalogue) => {
-        if (request.signal.aborted) return;
-        setImages([SYSTEM_IMAGE, ...catalogue.filter((candidate) => !candidate.retired)]);
-        setImagesError(undefined);
-      })
-      .catch((error: unknown) => {
-        if (!request.signal.aborted) {
-          setImages([SYSTEM_IMAGE]);
-          setImagesError(error instanceof Error ? error.message : 'Image choices are unavailable.');
-        }
-      })
-      .finally(() => {
-        if (!request.signal.aborted) setImagesLoading(false);
-      });
-    return () => request.abort();
-  }, [imageManager]);
   useEffect(() => () => active.current?.abort(), []);
   useEffect(() => {
     heading.current?.focus();
@@ -147,12 +107,11 @@ export function BotCreate({
         ? undefined
         : {
             key: crypto.randomUUID(),
-            profileName: image.name,
+            profileName: SYSTEM_IMAGE_NAME,
             botName: selected.label,
             body: {
               name,
               connection_ref: selected.connection_ref,
-              ...(image.id === SYSTEM_IMAGE.id ? {} : { image: { id: image.id } }),
               ...(repository.trim() === '' ? {} : { repository: { url: repository.trim() } }),
               agent: {
                 model: model.trim() || undefined,
@@ -273,40 +232,6 @@ export function BotCreate({
           )}
           {step !== 1 ? null : (
             <div className="agent-lifecycle-step">
-              {imageManager !== 'retired' ? (
-                <fieldset className="agent-lifecycle-choices">
-                  <legend>Runtime image</legend>
-                  <p className="profile-field__help">
-                    Image Manager provides private, shared and public images. The system default is
-                    always available.
-                  </p>
-                  {imagesLoading ? <p role="status">Loading images…</p> : null}
-                  {imagesError ? (
-                    <p role="status">{imagesError} Using the system default image.</p>
-                  ) : null}
-                  {images.map((candidate) => (
-                    <label key={candidate.id} className="agent-lifecycle-choice">
-                      <input
-                        type="radio"
-                        name="consumer-image"
-                        value={candidate.id}
-                        checked={selectedImage === candidate.id}
-                        disabled={imageManager === 'loading'}
-                        onChange={() => setSelectedImage(candidate.id)}
-                      />
-                      <span>
-                        <strong>{candidate.name}</strong>
-                        <small>
-                          {candidate.description ?? 'No description'}
-                          {candidate.id === SYSTEM_IMAGE.id
-                            ? ''
-                            : ` · ${imageVisibilityLabel(candidate.visibility)}`}
-                        </small>
-                      </span>
-                    </label>
-                  ))}
-                </fieldset>
-              ) : null}
               <label className="bots__field">
                 GitHub repository workspace (optional)
                 <Input
@@ -393,7 +318,7 @@ export function BotCreate({
                       : 'Agent setup'}
                 </dt>
                 <dd>
-                  {intent?.profileName ?? image.name}
+                  {intent?.profileName ?? SYSTEM_IMAGE_NAME}
                   {historicalRevision === undefined ? '' : ` · Version ${historicalRevision}`}
                 </dd>
                 <dt>{intent?.body.sandbox_profile ? 'Historical Sandbox Profile' : 'Sandbox'}</dt>

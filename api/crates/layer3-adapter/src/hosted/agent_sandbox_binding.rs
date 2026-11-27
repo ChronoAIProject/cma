@@ -242,7 +242,7 @@ impl AgentSandboxBackend {
             self.client.assign_pool_runtime(handle, pod, request),
         )
         .await?;
-        if assigned.is_some() {
+        if let Some((receipt, confirmation)) = assigned {
             if let (Some(incarnation), Some(identity)) = (incarnation, identity) {
                 self.startup_breaker.delivered(
                     handle,
@@ -258,6 +258,15 @@ impl AgentSandboxBackend {
                     assignments.pop_first();
                 }
                 assignments.insert(handle.clone(), candidate);
+            }
+            if let Some(bootstrap) = confirmation {
+                if let Err(error) = self
+                    .client
+                    .confirm_staging_startup_failure(handle, pod, bootstrap, &receipt)
+                    .await
+                {
+                    tracing::warn!(%error, "staging startup failure confirmation did not complete");
+                }
             }
         }
         self.bind_transport(handle, request).await

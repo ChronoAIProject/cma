@@ -13,6 +13,7 @@ import tempfile
 from image_inputs import NAMES, changed_input_maps, image_inputs, recipes, validate_recipe_sources
 from git_comparison import check_sha, comparison_details, git
 from policy import Workspace, select
+from publication_inputs import RECIPE
 from uncertainty import SelectionIntegrityError, conservative, unknown_paths
 
 APPROVAL_CONTRACT_INPUTS = frozenset({
@@ -87,7 +88,7 @@ def summarize_graph(root, graph, fallback):
     return graph, inputs, manifest
 
 
-def analyze_summaries(paths, summaries):
+def analyze_summaries(paths, summaries, *, read_runtime_recipes=None):
     select(paths, force_all=True)
     if any(inputs is None for _, inputs, _ in summaries):
         return conservative(NAMES, 'input-analysis-uncertain', summaries[-1][0], len(paths))
@@ -103,7 +104,9 @@ def analyze_summaries(paths, summaries):
         if result[track] and not result[track + '_packages']:
             result[track + '_packages'] = sorted(summaries[-1][0].owned[track])
     result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
-    result['deployables'] = changed_input_maps(paths, [(inputs, manifest) for _, inputs, manifest in summaries])
+    result['deployables'] = changed_input_maps(
+        paths, [(inputs, manifest) for _, inputs, manifest in summaries],
+        read_runtime_recipes=read_runtime_recipes)
     result['changed_path_count'] = len(paths)
     return result
 
@@ -111,6 +114,15 @@ def analyze_summaries(paths, summaries):
 def analyze(paths, snapshots):
     summaries = [summarize_graph(tree, graph, fallback) for tree, graph, fallback in snapshots]
     return analyze_summaries(paths, summaries)
+
+
+def analyze_comparison(root, base, head, summaries):
+    paths = changed_paths(root, base, head)
+
+    def read_runtime_recipes():
+        return tuple(git(root, 'show', f'{revision}:{RECIPE}').decode('utf-8') for revision in (base, head))
+
+    return analyze_summaries(paths, summaries, read_runtime_recipes=read_runtime_recipes)
 
 
 def determine(root, event, event_name, *, release=False):
@@ -135,8 +147,7 @@ def determine(root, event, event_name, *, release=False):
     if reason:
         result = conservative(NAMES, reason, current[0])
     else:
-        paths = changed_paths(root, base, head)
-        result = analyze_summaries(paths, [previous, current])
+        result = analyze_comparison(root, base, head, [previous, current])
     result.update(base=base, head=head)
     return result
 

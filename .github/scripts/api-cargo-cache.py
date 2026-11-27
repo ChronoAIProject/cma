@@ -7,10 +7,12 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import uuid
 
 from staging_cd_cache_compaction import export_script
@@ -22,8 +24,21 @@ FORMAT = 1
 # The same Alpine 3.22 index already used by the API image, pinned for this helper.
 BRIDGE_IMAGE = "alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8"
 MOUNTS = {"registry": "cma-api-registry", "target": "cma-api-target-amd64"}
-MAX_ARCHIVE_BYTES = 1024**3
-MAX_CONTENT_BYTES = 4 * 1024**3
+# The same bounds as staging CD's verified Cargo bundle (staging_cd_cargo_artifact
+# MAX_BUNDLE_BYTES and MAX_EXPANDED_BYTES). At 1 GiB the develop producer's
+# 1.35 GB archive was refused on every save, so no CI cache entry existed and
+# every merge-group and PR AM build compiled its dependencies cold.
+MAX_ARCHIVE_BYTES = 2 * 1024**3
+# Validation plus transfer stay inside the workflow step's 5-minute bound, so a
+# slow restore falls back to a cold build instead of failing the image job.
+INJECT_SECONDS = 210
+MIN_TRANSFER_SECONDS = 30
+# The optional cache work (validation, transfer and sealing) runs in a child
+# process killed at this bound, so the parent always publishes a clean
+# namespace or skips the save before the 5-minute workflow step expires.
+WORKER_SECONDS = {"inject": 210, "extract": 210}
+FORWARDED_OUTPUTS = {"inject": ("namespace",), "extract": ("ready",)}
+MAX_CONTENT_BYTES = 6 * 1024**3
 MAX_MEMBERS = 200_000
 
 
@@ -97,8 +112,12 @@ def context():
 
 def prepare(directory):
     directory.mkdir(mode=0o700, exist_ok=False)
-    prefix = compatibility(ROOT, datetime.datetime.now(datetime.timezone.utc))
-    state = {"prefix": prefix, "key": prefix + os.environ["GITHUB_SHA"]}
+    now = datetime.datetime.now(datetime.timezone.utc)
+    prefix = compatibility(ROOT, now)
+    # One entry per compatible prefix and UTC day. A 1-2 GB entry per develop
+    # push would fill the repository's Actions cache (already at its cap) and
+    # evict the layer caches. Restores still take the newest entry by prefix.
+    state = {"prefix": prefix, "key": prefix + now.strftime("%Y%m%d")}
     (directory / "state.json").write_text(json.dumps(state))
     for name, value in state.items():
         emit(name, value)
@@ -259,42 +278,110 @@ def seal(directory, prefix, *, family=None, max_archive=None, max_content=None):
     validate_bundle(directory, prefix, family=family, max_archive=max_archive, max_content=max_content)
 
 
+def select_namespace(directory, namespace):
+    """Record and publish the cache-mount namespace the image builds use."""
+    require(re.fullmatch(r"[0-9a-f]{32}", namespace), "invalid cache namespace")
+    path = directory / "state.json"
+    state = json.loads(path.read_text())
+    state["build_namespace"] = namespace
+    path.write_text(json.dumps(state))
+    emit("namespace", namespace)
+
+
 def run(operation, directory):
-    prefix = json.loads((directory / "state.json").read_text())["prefix"]
+    state = json.loads((directory / "state.json").read_text())
+    prefix = state["prefix"]
     bundle = directory / "data"
     if operation == "inject":
         if not bundle.exists():
+            select_namespace(directory, uuid.uuid4().hex)
             print("API Cargo cache miss; build starts cold.")
             return
+        started = time.monotonic()
         validate_bundle(bundle, prefix)
-        transfer("inject", bundle)
+        remaining = INJECT_SECONDS - (time.monotonic() - started)
+        require(remaining >= MIN_TRANSFER_SECONDS, "cache restore budget exhausted")
+        # Extract into a namespace no build has used. The image builds switch
+        # to it only after validation and extraction both succeed. A failure
+        # part-way leaves it unused and the builds start in a clean namespace.
+        candidate = uuid.uuid4().hex
+        transfer("inject", bundle, namespace=candidate, timeout=int(min(150, remaining)))
+        select_namespace(directory, candidate)
         print("Restored API Cargo mounts; all image checks still run.")
     else:
         require(operation == "extract", "unknown cache command")
+        namespace = state["build_namespace"]
+        require(re.fullmatch(r"[0-9a-f]{32}", namespace), "invalid cache namespace")
         # The restored bundle is expendable. Export while the BuildKit mounts
         # still exist, before CI's mandatory buildx prune and image scan.
         if bundle.exists():
             require(not bundle.is_symlink(), "cache directory cannot be a symlink")
             shutil.rmtree(bundle)
-        transfer("extract", bundle)
+        transfer("extract", bundle, namespace=namespace)
         seal(bundle, prefix)
         emit("ready", "true")
 
 
+def worker_command(operation):
+    return [sys.executable, "-B", str(Path(__file__).resolve()), operation + "-worker"]
+
+
+def bounded(operation, directory):
+    """Run one optional cache operation in a killable child; return its outputs."""
+    private = directory / f"{operation}-output"
+    require(not private.is_symlink(), "worker output cannot be a symlink")
+    private.unlink(missing_ok=True)
+    private.touch(mode=0o600)
+    env = dict(os.environ, GITHUB_OUTPUT=str(private))
+    with subprocess.Popen(worker_command(operation), env=env, start_new_session=True) as process:
+        try:
+            code = process.wait(timeout=WORKER_SECONDS[operation])
+        except subprocess.TimeoutExpired:
+            # The whole group: the worker's docker client must not outlive it.
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            raise
+    require(code == 0, "cache worker failed")
+    keys = FORWARDED_OUTPUTS[operation]
+    return [line for line in private.read_text().splitlines() if line.split("=", 1)[0] in keys]
+
+
 def main():
-    require(len(sys.argv) == 2 and sys.argv[1] in ("prepare", "inject", "extract"), "expected prepare, inject or extract")
+    operations = ("prepare", "inject", "extract", "inject-worker", "extract-worker")
+    require(len(sys.argv) == 2 and sys.argv[1] in operations, "expected prepare, inject or extract")
     directory = context()  # Authority failures are errors, never cache misses.
     operation = sys.argv[1]
     if operation == "prepare":
         prepare(directory)
         return
+    if operation.endswith("-worker"):
+        # Errors fail the worker; its parent decides the fallback.
+        try:
+            run(operation.removesuffix("-worker"), directory)
+        except (ValueError, KeyError, EOFError, OSError, tarfile.TarError, subprocess.SubprocessError) as error:
+            print(f"API Cargo cache worker stopped ({type(error).__name__}).")
+            sys.exit(1)
+        return
     if operation == "extract":
         emit("ready", "false")
     try:
-        run(operation, directory)
+        lines = bounded(operation, directory)
+        with Path(os.environ["GITHUB_OUTPUT"]).open("a") as output:
+            for line in lines:
+                output.write(line + "\n")
     except (ValueError, KeyError, EOFError, OSError, tarfile.TarError, subprocess.SubprocessError) as error:
         # Cache availability cannot replace or skip the real build and scan.
         print(f"::warning::API Cargo cache {operation} unavailable ({type(error).__name__}); normal image checks remain required.")
+        if operation == "inject":
+            # Never build on mounts a failed or killed restore may have partly written.
+            fresh = uuid.uuid4().hex
+            try:
+                select_namespace(directory, fresh)
+            except (ValueError, KeyError, OSError):
+                emit("namespace", fresh)
 
 
 if __name__ == "__main__":

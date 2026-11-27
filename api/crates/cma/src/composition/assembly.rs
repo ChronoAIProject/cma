@@ -7,8 +7,8 @@ impl ControlPlaneComposition {
         let activity = ActivityService::new(stores.activity.clone());
         let documents::DocumentComposition {
             service: documents,
-            maintenance: document_blob_maintenance,
-        } = documents::compose(config, &stores, standing.clone())?;
+            reclaimer: document_reclaimer,
+        } = documents::compose(config, &stores, standing.clone()).await?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -90,10 +90,7 @@ impl ControlPlaneComposition {
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
-        let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
-            config.image_manager_base_url.clone(),
-            config.features.image_manager_retirement,
-        )?;
+        let image_resolver = Arc::new(crate::agent_lifecycle::RetiredImageResolver);
         let inline_lifecycle = crate::agent_lifecycle::InlineAgentLifecycle::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),
@@ -417,7 +414,7 @@ impl ControlPlaneComposition {
             recorder,
             (limits, config),
             (
-                crate::health::router_with_workers(stores.clone(), workers.clone()),
+                routes::health(&stores, &workers, config)?,
                 tool_routes.merge(service_portal::router(
                     auth.clone(),
                     config.gateway.as_ref(),
@@ -429,7 +426,7 @@ impl ControlPlaneComposition {
         Ok(Self {
             activity_worker,
             workers,
-            document_blob_maintenance,
+            document_reclaimer,
             worker_observations,
             router: binding_diagnostics::router(binding_diagnostics, router),
             agent_manager,

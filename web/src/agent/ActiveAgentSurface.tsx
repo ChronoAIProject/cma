@@ -41,6 +41,7 @@ import { messageSubmission } from './messageSubmission';
 import { useFirstTextSend } from './useFirstTextSend';
 import { composerInputAvailability } from './composerPresentation';
 import { turnRetryAvailable } from './turnRetryAvailability';
+import { agentHistoryIssue, WORKSPACE_READ_RECONNECTING } from './controllerError';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -209,10 +210,11 @@ export function ActiveAgentSurface({
     !controlReady ||
     !controller.inputAvailability.allowed ||
     controller.controlsUnavailable === true;
-  const issue = state.historyLoading
-    ? 'Loading conversation activity.'
-    : state.historyUnavailable
-      ? 'Earlier activity could not be loaded. Retrying…'
+  const historyIssue = agentHistoryIssue(state);
+  const issue = state.workspaceUnavailable
+    ? WORKSPACE_READ_RECONNECTING
+    : historyIssue !== undefined
+      ? (controller.streamError ?? historyIssue)
       : (connectionError ?? connections.error ?? controller.actionError);
   const observed = controller.progressObservation;
   const setupRoute = setupEnvironmentRoute(
@@ -310,7 +312,7 @@ export function ActiveAgentSurface({
           <AgentSurfaceIssue
             issue={issue}
             unconfirmed={controller.pendingMessage !== undefined || controller.pendingControl}
-            historyIncomplete={historyIncomplete}
+            historyIncomplete={historyIncomplete || state.workspaceUnavailable === true}
             onRetry={connectionError && !readOnly ? connection.retry : undefined}
             onDismiss={() => {
               connection.clearError();

@@ -34,6 +34,7 @@ impl AgentManager {
             .drain(Duration::from_secs(5).min(until.saturating_duration_since(Instant::now())))
             .await
             .map_err(|_| "Agent Manager local lifecycle drain was not confirmed")?;
+        self.drain_retirement_capture(until).await?;
         // Publication is closed and lifecycle work has terminated. Include
         // late known acquisition results and every noncurrent responsibility.
         let authorities = self.coordinator.owned().await;

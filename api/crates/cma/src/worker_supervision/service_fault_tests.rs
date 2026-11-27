@@ -388,7 +388,8 @@ pub(crate) async fn startup_recovery_with_owned_completion(
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let http = format!("http://{}", listener.local_addr().unwrap());
-    let router = crate::health::router_with_workers(Arc::new(MongoReadiness(database)), workers);
+    let router =
+        crate::health::router_with_workers(Arc::new(MongoReadiness(database)), workers, None);
     let server = tokio::spawn(async move {
         axum::serve(listener, router)
             .with_graceful_shutdown(crate::shutdown::signalled(signal))

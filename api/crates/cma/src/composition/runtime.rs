@@ -1,16 +1,9 @@
 //! Shared deployment runtime authority for pool admission and owner updates.
 use std::sync::Arc;
 
-use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
-
-pub(super) fn image_manager_resolver(
-    config: &Config,
-) -> Result<Arc<crate::agent_lifecycle::ImageManagerResolver>, String> {
-    crate::agent_lifecycle::ImageManagerResolver::new(
-        config.image_manager_base_url.clone(),
-        config.features.image_manager_retirement,
-    )
-}
+use crate::{
+    agent_lifecycle::guidance, config::Config, store::MongoStores, warm_pools::NativeWarmPools,
+};
 
 pub(super) fn configure_inline_lifecycle(
     config: &Config,
@@ -21,10 +14,9 @@ pub(super) fn configure_inline_lifecycle(
     lifecycle
         .with_released_runtime(stores.released_runtime.clone())
         .with_task_experience(config.task_experience.clone())
-        .with_session_guidance(
-            config.features.session_guidance_v4,
-            config.features.session_guidance_v5,
-        )
+        .with_admission_guidance(guidance::configured_admission_instructions(
+            &config.features,
+        ))
         .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
         .with_repository_preflight_config(config, broker)
         .with_public_repository_images(
@@ -163,7 +155,9 @@ pub(super) fn lifecycle_config(
         ownership,
         runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
         native_retirement_finality_enabled: config.features.native_retirement_finality_enabled,
+        native_retirement_capture_enabled: config.features.native_retirement_capture_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
+        inspection_refusal: config.runtime.inspection_refusal.clone(),
         startup_sibling_hold_enabled: config.features.startup_sibling_hold_enabled,
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,
         work_retry_policy_enabled: config.features.work_retry_policy_enabled,

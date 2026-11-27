@@ -1,9 +1,11 @@
 //! Bounded create readiness observations never grant replacement authority.
 use super::{model, pods, AgentSandboxClient, PodBinding};
 use crate::{AdapterError, Result, RuntimeHandle};
-use k8s_openapi::api::core::v1::Pod;
+use k8s_openapi::api::core::v1::{Pod, PodCondition};
 use kube::{api::DynamicObject, api::ListParams, ResourceExt};
 use std::{future::Future, time::Duration};
+
+mod scheduling;
 
 pub(super) const BUDGET: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_millis(100);
@@ -14,6 +16,8 @@ pub enum NativeClaimGuardReason {
     Pending,
     #[error("readiness deadline reached")]
     TimedOut,
+    #[error("runtime pod is unschedulable")]
+    Unschedulable,
     #[error("runtime container is in CrashLoopBackOff")]
     CrashLoop,
     #[error("runtime container restarted during readiness observation")]
@@ -33,6 +37,14 @@ pub(super) fn sample(member: &DynamicObject, pod: &Pod) -> Result<Sample> {
         .uid()
         .filter(|uid| !uid.is_empty())
         .ok_or_else(|| super::rejected("guarded Pod has no UID"))?;
+    if let Some(condition) = unschedulable_condition(member, pod) {
+        if let Some(message) = condition.message.as_deref() {
+            scheduling::report(message);
+        }
+        return Err(AdapterError::NativeClaimNotReady(
+            NativeClaimGuardReason::Unschedulable,
+        ));
+    }
     let container = pod
         .status
         .as_ref()
@@ -66,6 +78,29 @@ pub(super) fn sample(member: &DynamicObject, pod: &Pod) -> Result<Sample> {
         pod_uid,
         restart_count: container.map(|value| value.restart_count),
         crash_loop,
+    })
+}
+
+fn unschedulable_condition<'a>(member: &DynamicObject, pod: &'a Pod) -> Option<&'a PodCondition> {
+    // A bound or terminating Pod can retain an earlier scheduler condition.
+    // Use the condition only while this exact Pod is still awaiting placement.
+    if member.metadata.deletion_timestamp.is_some()
+        || pod.metadata.deletion_timestamp.is_some()
+        || !pod
+            .spec
+            .as_ref()
+            .is_some_and(|spec| spec.node_name.as_deref().is_none_or(str::is_empty))
+    {
+        return None;
+    }
+    let status = pod.status.as_ref()?;
+    if status.phase.as_deref() != Some("Pending") {
+        return None;
+    }
+    status.conditions.as_ref()?.iter().find(|condition| {
+        condition.type_ == "PodScheduled"
+            && condition.status == "False"
+            && condition.reason.as_deref() == Some("Unschedulable")
     })
 }
 
@@ -131,6 +166,9 @@ pub(super) async fn bounded<T>(
         Ok(_) => "ready",
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Pending)) => "pending",
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::TimedOut)) => "timeout",
+        Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Unschedulable)) => {
+            "unschedulable"
+        }
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::CrashLoop)) => "crash_loop",
         Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Restarting)) => "restarting",
         Err(_) => "error",

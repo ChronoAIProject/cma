@@ -99,6 +99,9 @@ async fn apply(
         .map_err(Driver)?
         .ok_or(Domain(SandboxStoreError::NotFound))?;
     let parent = crate::store::sandboxes::read_sandbox(&current).map_err(Domain)?;
+    if parent.lifecycle.runtime_image_origin != sandbox.lifecycle.runtime_image_origin {
+        super::super::managed_machine_origin::fence(store, &parent, sandbox, session).await?;
+    }
     crate::store::native_retirement_action::preserve_custody(&current, &parent, sandbox)
         .map_err(Domain)?;
     parent

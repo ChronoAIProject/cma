@@ -6,7 +6,11 @@ import { isPendingTool } from './toolStatus';
 import { Presence } from '../ui/Presence';
 import { useThinkingPlacement } from './thinkingPlacement';
 import { useMemo } from 'react';
-import { thinkingProgressKey, hasVisibleTurnProgress } from './ThinkingProgress';
+import {
+  thinkingProgressKey,
+  recordedTurnActivity,
+  hasVisibleTurnProgress,
+} from './ThinkingProgress';
 import { RESPONSE_STOP_COMMAND_NOTICE } from './stopAgentCopy';
 
 /** Ephemeral turn status follows the reply in the conversation, never in stored history. */
@@ -52,6 +56,7 @@ export function ActiveThinking({
               progressKey={progressKey}
               waitingForResponse={!hasVisibleTurnProgress(conversation)}
               startedAt={conversation.activeRunStartedAt}
+              recordedActivity={recordedTurnActivity(conversation)}
               text={conversation.reasoning
                 .filter((item) => item.runId === runId)
                 .map((item) => item.content)

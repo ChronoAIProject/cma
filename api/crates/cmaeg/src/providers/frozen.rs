@@ -85,8 +85,11 @@ impl ProviderClient {
                     FrozenSubmission::Unknown
                 };
             }
-            if matches!(observed.response.status().as_u16(), 403 | 422 | 503) {
-                return sender_context_refusal(observed.response).await;
+            if matches!(
+                observed.response.status().as_u16(),
+                403 | 409 | 410 | 422 | 503
+            ) {
+                return documented_cma_refusal(observed.response).await;
             }
             if observed.response.status() == reqwest::StatusCode::BAD_REQUEST {
                 return bad_request(observed.response).await;
@@ -198,7 +201,7 @@ async fn bad_request(response: reqwest::Response) -> FrozenSubmission {
 }
 
 /// Only the documented CMA pre-admission dialect proves that a turn did not start.
-async fn sender_context_refusal(response: reqwest::Response) -> FrozenSubmission {
+async fn documented_cma_refusal(response: reqwest::Response) -> FrozenSubmission {
     let status = response.status().as_u16();
     if response.headers().contains_key("x-cma-response-id")
         || response
@@ -227,13 +230,20 @@ async fn sender_context_refusal(response: reqwest::Response) -> FrozenSubmission
     {
         return FrozenSubmission::Unknown;
     }
-    match (status, value["error"]["code"].as_str()) {
+    let problem = &value["error"];
+    match (status, problem["code"].as_str()) {
         (403, Some("verified_sender_context_invalid"))
         | (422, Some("verified_sender_context_unsupported")) => {
             FrozenSubmission::Rejected(value["error"]["code"].as_str().unwrap().into())
         }
         (503, Some("verified_sender_context_unavailable")) => {
             FrozenSubmission::NotAcceptedWithCode("verified_sender_context_unavailable".into())
+        }
+        (409, Some(code @ "partition_agent_unavailable"))
+        | (410, Some(code @ "partition_agent_missing"))
+            if problem["param"] == "conversation" && problem["message"].is_string() =>
+        {
+            FrozenSubmission::Rejected(code.into())
         }
         _ => FrozenSubmission::Unknown,
     }

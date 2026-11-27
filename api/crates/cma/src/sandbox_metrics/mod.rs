@@ -1,6 +1,7 @@
 //! Background reporting, isolated from Agent/lifecycle transactions.
 mod allocation_maintenance;
 mod diagnostics;
+mod measured;
 mod observer;
 mod projection;
 mod report;
@@ -23,6 +24,7 @@ pub(crate) struct MetricsWorkers {
     native: Option<AgentSandboxClient>,
     cluster: String,
     enabled: bool,
+    measured: Option<crate::store::sandbox_usage_export::CaptureStore>,
 }
 impl MetricsWorkers {
     pub(crate) async fn new(
@@ -42,6 +44,10 @@ impl MetricsWorkers {
         .await
         .map_err(|e| e.to_string())?;
         let store = store.with_view_policy(config.usage_metrics.views.clone());
+        store
+            .require_projection_schema()
+            .await
+            .map_err(|e| e.to_string())?;
         store
             .initialize_allocation_buckets(store.view_policy.allocation_rollups_enabled)
             .await
@@ -78,7 +84,24 @@ impl MetricsWorkers {
         } else {
             (None, None)
         };
+        let measured = if config.usage_measured {
+            Some(
+                crate::store::sandbox_usage_export::CaptureStore::open(
+                    &store.client,
+                    &config.mongodb_database,
+                    config
+                        .usage_capture
+                        .clone()
+                        .ok_or("measured usage capture identity missing")?,
+                )
+                .await
+                .map_err(|e| e.to_string())?,
+            )
+        } else {
+            None
+        };
         Ok(Self {
+            measured,
             store,
             source,
             native,
@@ -110,6 +133,13 @@ impl MetricsWorkers {
             let signal = shutdown.subscribe();
             shutdown.push(tokio::spawn(async move {
                 tokio::select! { _ = crate::shutdown::signalled(signal) => {}, _ = worker.warm_views() => {} }
+            }));
+        }
+        if self.measured.is_some() {
+            let worker = self.clone();
+            let signal = shutdown.subscribe();
+            shutdown.push(tokio::spawn(async move {
+                tokio::select! { _ = crate::shutdown::signalled(signal) => {}, _ = worker.measured_evidence() => {} }
             }));
         }
         if self.enabled {
@@ -170,6 +200,7 @@ pub(crate) async fn reports_fixture(store: Arc<ReportingStore>) {
         store,
         source: None,
         native: None,
+        measured: None,
         cluster: "fixture".into(),
         enabled: false,
     }
@@ -195,6 +226,7 @@ pub(crate) async fn generate_fixture_with_collection(
         store,
         source: None,
         native: None,
+        measured: None,
         cluster: "fixture".into(),
         enabled,
     };
@@ -207,3 +239,6 @@ pub(crate) async fn generate_fixture_with_collection(
 pub(crate) use source::collect_fixture;
 #[cfg(test)]
 pub(crate) use warmer::warm_fixture;
+
+#[cfg(test)]
+pub(crate) use measured::measured_fixture;

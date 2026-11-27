@@ -1,4 +1,4 @@
-# Repository scanner and runtime image validation for the workflow tests.
+# Repository trust and release-policy validation for the workflow tests.
 require 'json'
 require 'open3'
 
@@ -204,4 +204,18 @@ def require_runtime_vulnerability_gate(documents)
     require_check(steps[gate]['run'] == command && !steps[gate].key?('continue-on-error') && steps[gate]['if'] == condition &&
                   steps[gate].dig('env', 'BASE_SHA') == RUNTIME_VULNERABILITY_BASE, "#{file} runtime vulnerability gate differs")
   end
+end
+
+def check_version_label(workflow, condition = '${{ !cancelled() }}')
+  version = workflow.fetch('jobs').fetch('version-label')
+  require_check(version.fetch('name') == 'CI / Version label' && version.fetch('if') == condition, 'version gate missing')
+  require_check(version.fetch('needs') == ['changes'], 'version must use selector')
+  require_check(!version.key?('continue-on-error'), 'version job must propagate failure')
+  label_check = version.fetch('steps').last
+  require_check(label_check['run'] == 'python3 -B .github/scripts/ci_tracks/version_label.py' &&
+    !label_check.key?('if') && !label_check.key?('continue-on-error'), 'version validator missing or bypassed')
+  require_check(label_check.fetch('env') == {
+    'DEPLOYABLES' => '${{ needs.changes.outputs.deployables }}',
+    'SELECTOR_RESULT' => '${{ needs.changes.result }}', 'GH_TOKEN' => '${{ github.token }}'
+  }, 'version selector or live label context differs')
 end

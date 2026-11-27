@@ -5,7 +5,7 @@ export const sandboxRuntimeUpdate = object({
   current_version: nullable(text),
   current_version_confirmed: optional(boolean),
   image_origin: optional(
-    enumeration('managed_agent', 'managed_desktop', 'user_selected', 'unknown'),
+    enumeration('managed_agent', 'managed_desktop', 'managed_machine', 'user_selected', 'unknown'),
   ),
   latest_version: text,
   update_available: boolean,

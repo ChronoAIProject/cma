@@ -7,9 +7,9 @@ use mongodb::{
     Database,
 };
 use std::collections::{BTreeMap, BTreeSet};
-
 #[path = "history.rs"]
 mod history;
+pub(super) use history::discover_usage_projections;
 #[path = "context_inventory.rs"]
 mod inventory;
 const PAGE: i64 = 500;
@@ -144,7 +144,10 @@ impl Context {
                 continue;
             }
             for row in rows(db, name, doc! {"_id":{"$in":ids}}, &self.subject).await? {
-                let owner = super::selectors::strings(&row, owner_path);
+                let mut owner = super::selectors::strings(&row, owner_path);
+                if set == Set::Documents {
+                    owner.extend(super::selectors::strings(&row, "audit_owner_subject"));
+                }
                 let foreign = owner.iter().any(|owner| *owner != self.subject);
                 if foreign || (owner.is_empty() && matches!(set, Set::Launches | Set::Bindings)) {
                     if let Ok(id) = row.get_str("_id") {
@@ -362,7 +365,7 @@ pub(super) async fn load_cohort_with_receipt(
     if contexts.is_empty() {
         return Ok(contexts);
     }
-    history::discover(db, &mut contexts).await?;
+    history::discover(db, &mut contexts, !receipt.usage_projections_absent).await?;
     for context in &mut contexts {
         context
             .refresh(db)
@@ -425,7 +428,7 @@ async fn rows(
     // _id sort or hint that could scan other tenants on every refresh.
     let query = collection.find(filter).batch_size(PAGE as u32)
         .projection(doc! {"_id":1,"sandbox_id":1,"workspace_id":1,"worktree_id":1,
-            "owner":1,"owner_kind":1,"owner_subject":1,"record.owner":1,"record.sandbox_id":1,
+            "owner":1,"owner_kind":1,"owner_subject":1,"audit_owner_subject":1,"record.owner":1,"record.sandbox_id":1,
             "binding_id":1,"record.binding_id":1,"record.agent_id":1,"record.workspace_id":1,"record.worktree_id":1});
     let mut cursor = query.await?;
     let mut result = Vec::new();

@@ -12,6 +12,7 @@ ADMISSION_SECONDS = 120
 BOOTSTRAP_ADMISSION_SECONDS = 45
 BOOTSTRAP_TOTAL_SECONDS = 600
 RELEASE_TOTAL_SECONDS = 990
+STAGING_AM_RELEASE_TOTAL_SECONDS = 2700
 # A production rollout takes far longer than staging's release budget. Only a
 # production release requests this total; every other request is unchanged.
 PRODUCTION_RELEASE_TOTAL_SECONDS = 3600

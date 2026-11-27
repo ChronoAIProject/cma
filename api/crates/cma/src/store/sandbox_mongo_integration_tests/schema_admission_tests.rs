@@ -84,7 +84,9 @@ async fn concurrent_admission_serializes_the_limit_and_default_name_allocation()
     for result in results {
         match result {
             Ok(SandboxAdmissionResult::Created(sandbox)) => admitted.push(sandbox),
-            Err(SandboxStoreError::LimitReached { limit: 3, live: 3 }) => {}
+            Err(SandboxStoreError::LimitReached {
+                limit: 3, live: 3, ..
+            }) => {}
             other => panic!("unexpected concurrent admission result: {other:?}"),
         }
     }

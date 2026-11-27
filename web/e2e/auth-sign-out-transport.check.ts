@@ -195,6 +195,10 @@ test('LOCAL storage failure still signs out live tabs and masks restored tabs un
   let releaseRestore!: () => void;
   const heldRestore = new Promise<void>((resolve) => (releaseRestore = resolve));
   try {
+    // Use the static landing character in the multi-tab identity check.
+    await context.addInitScript(() => {
+      Object.defineProperty(window, 'WebGL2RenderingContext', { value: undefined });
+    });
     await Promise.all([page, sibling, reader, restored].map((tab) => prepare(tab, server.origin)));
     await page.addInitScript((key) => {
       const setItem = Storage.prototype.setItem;
@@ -264,7 +268,9 @@ test('LOCAL storage failure still signs out live tabs and masks restored tabs un
     );
     await expect.poll(() => restoreCheckStarted).toBe(true);
     await expect(composer(restored)).toHaveCount(0);
+    const restoreResponse = restored.waitForResponse(`${server.origin}/auth/session`);
     releaseRestore();
+    expect((await restoreResponse).status()).toBe(401);
     await expect(restored.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible();
   } finally {
     release();

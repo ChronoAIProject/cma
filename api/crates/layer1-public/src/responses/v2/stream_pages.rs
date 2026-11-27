@@ -4,7 +4,7 @@ use crate::stream_telemetry::{CloseReason, Contract, ContractKind, Kind, Poll};
 use axum::response::{sse::Event, Response};
 use futures_util::stream::unfold;
 use layer2_core::sandbox::{
-    agent_io::{AgentResponseReading, CommandReceiptView},
+    agent_io::{AgentResponseReading, CommandReceiptView, ObservedResponseReadError},
     AgentEventStreamAuthorization, AgentEventStreamHeader,
 };
 use serde_json::{json, Value};
@@ -170,29 +170,42 @@ impl Open {
             .ok_or("response_observation_unavailable")?;
         // Always re-read current command state and authority, including on quiet
         // heads: queued rejection and revocation need not append Agent events.
-        let command = if self.observation.is_some() {
+        let (command, observed_header) = if self.observation.is_some() {
             self.state
                 .commands
                 .response_for_observed_stream(&self.state.reads, &self.authorization, id)
                 .await
+                .map(|(command, header)| (command, Some(header)))
+                .inspect_err(|error| {
+                    let reason = match error {
+                        ObservedResponseReadError::Command(error) => CloseReason::command(error),
+                        ObservedResponseReadError::Header(error) => CloseReason::read(error),
+                    };
+                    self.evidence.record(reason);
+                })
+                .map_err(|_| "response_observation_unavailable")?
         } else {
             self.state
                 .commands
                 .response_for_stream(&self.authorization, id)
                 .await
-        }
-        .inspect_err(|error| self.evidence.record(CloseReason::command(error)))
-        .map_err(|_| "response_observation_unavailable")?;
+                .map(|command| (command, None))
+                .inspect_err(|error| self.evidence.record(CloseReason::command(error)))
+                .map_err(|_| "response_observation_unavailable")?
+        };
         if command.command.receipt != self.receipt {
             return Err("response_observation_unavailable");
         }
-        let header = self
-            .state
-            .reads
-            .event_stream_header(&self.authorization)
-            .await
-            .inspect_err(|error| self.evidence.record(CloseReason::read(error)))
-            .map_err(|_| "response_observation_unavailable")?;
+        let header = match observed_header {
+            Some(header) => header,
+            None => self
+                .state
+                .reads
+                .event_stream_header(&self.authorization)
+                .await
+                .inspect_err(|error| self.evidence.record(CloseReason::read(error)))
+                .map_err(|_| "response_observation_unavailable")?,
+        };
         let current = Seen { command, header };
         if self.seen.as_ref() == Some(&current) {
             return Ok(false);

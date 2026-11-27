@@ -23,6 +23,7 @@ mod runtime_inventory;
 mod runtime_migration;
 mod state;
 mod stores;
+mod suggestion_control;
 mod usage;
 use crate::{
     auth::AuthState,
@@ -54,8 +55,8 @@ impl ControlPlaneComposition {
         let activity = ActivityService::new(stores.activity.clone());
         let documents::DocumentComposition {
             service: documents,
-            maintenance: document_blob_maintenance,
-        } = documents::compose(config, &stores, standing.clone())?;
+            reclaimer: document_reclaimer,
+        } = documents::compose(config, &stores, standing.clone()).await?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -140,7 +141,7 @@ impl ControlPlaneComposition {
         let projections = projections.with_qualification(qualification);
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
-        let image_resolver = runtime::image_manager_resolver(config)?;
+        let image_resolver = Arc::new(crate::agent_lifecycle::RetiredImageResolver);
         let inline_lifecycle = crate::agent_lifecycle::InlineAgentLifecycle::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),
@@ -250,6 +251,11 @@ impl ControlPlaneComposition {
             },
             runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone(), &stores),
         )?;
+        if let (Some(manager), Some(capture)) =
+            (&agent_manager, sandbox_lifecycle.capture_drain.take())
+        {
+            manager.register_retirement_capture(capture)?;
+        }
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let (admin, binding_diagnostics) = binding_diagnostics::compose(
             config,
@@ -404,6 +410,10 @@ impl ControlPlaneComposition {
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes =
             routes::resource_budgets(resource_routes, &bindings, config, &limits)?;
+        let resource_routes = suggestion_control::routes(
+            resource_routes,
+            stores.sandbox_model.suggestion_control.clone(),
+        );
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,
@@ -457,10 +467,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             recorder,
             (limits, config),
-            (
-                crate::health::router_with_workers(stores.clone(), workers.clone()),
-                tool_routes,
-            ),
+            (routes::health(&stores, &workers, config)?, tool_routes),
             relay.as_ref(),
         );
         let router = binding_diagnostics::router(binding_diagnostics, router);
@@ -468,7 +475,7 @@ impl ControlPlaneComposition {
             creation_outcomes,
             activity_worker,
             workers,
-            document_blob_maintenance,
+            document_reclaimer,
             worker_observations: runtime::worker_observations(config, &stores),
             router: agent_manager::internal_router(&relay, &agent_manager, router),
             agent_manager,

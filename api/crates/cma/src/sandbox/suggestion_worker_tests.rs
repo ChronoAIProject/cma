@@ -170,7 +170,7 @@ impl Fixture {
         let reply = Arc::new(Semaphore::new(1));
         let release_reply = reply.clone();
         let app = Router::new().route(
-            "/api/v1/proxy/s/chrono-llm/v1/responses",
+            "/api/v1/proxy/s/chrono-llm/responses",
             post(
                 move |headers: HeaderMap, Json(body): Json<serde_json::Value>| {
                     let capture = capture.clone();

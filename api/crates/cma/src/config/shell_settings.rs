@@ -280,9 +280,7 @@ mod tests {
                 assert!(
                     !matches!(
                         key,
-                        "CHRONO_RETAIN_OPENSANDBOX"
-                            | "CHRONO_IMAGE_MANAGER_BASE_URL"
-                            | "CHRONO_PLATFORM_BASE_URL"
+                        "CHRONO_RETAIN_OPENSANDBOX" | "CHRONO_PLATFORM_BASE_URL"
                     ),
                     "{key}"
                 );

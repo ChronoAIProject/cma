@@ -23,7 +23,7 @@ type Error = Box<dyn std::error::Error>;
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn backfill_cli_honors_authority_and_preserves_legacy_and_foreign_state() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let db = admin.database(&format!("eg_backfill_{}", uuid::Uuid::new_v4().simple()));
     let result = exercise(&uri, &db).await;

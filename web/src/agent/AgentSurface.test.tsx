@@ -136,6 +136,31 @@ it('preserves a draft and visible history while incomplete event activity retrie
   }
 });
 
+it('shows a live reconnect notice while earlier activity is loading', async () => {
+  const notice = 'Live updates are reconnecting. Recorded activity is retained.';
+  render(
+    <AgentSurface
+      agentId="agt_1"
+      controller={controller(
+        {
+          status: 'ready',
+          detail: AGENT_DETAIL,
+          workspace: workspaceFixture(),
+          conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+          historyLoading: true,
+        },
+        undefined,
+        { streamError: notice },
+      )}
+      detailsOpen={false}
+      onDetailsOpenChange={vi.fn()}
+      onNavigate={vi.fn()}
+    />,
+  );
+  expect(await screen.findByText(notice)).toBeVisible();
+  expect(screen.getByText('The repository is ready.')).toBeVisible();
+});
+
 it('holds approval and Stop response controls during history hydration', async () => {
   const conversation: ConversationState = {
     ...conversationFromTranscript(AGENT_TRANSCRIPT),

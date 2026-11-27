@@ -10,10 +10,29 @@ test('LOCAL Sandbox scope additions enable Save after a ready connection check',
   await boundary.route(page, baseURL!);
   const checks: unknown[] = [];
   const writes: unknown[] = [];
+  let connected = false;
   await page.route('**/auth/connections/check', (route) => {
-    checks.push(route.request().postDataJSON());
+    const body = route.request().postDataJSON();
+    checks.push(body);
+    const needsGitHub =
+      body.target.type === 'agent_service_access' && body.target.services.includes('api-github');
     return route.fulfill({
-      json: { owner: 'local-owner', ready: true, checked_at: localTime, services: [] },
+      json: {
+        owner: 'local-owner',
+        ready: !needsGitHub || connected,
+        checked_at: localTime,
+        services: needsGitHub
+          ? [
+              {
+                service: 'api-github',
+                display_name: 'GitHub',
+                kind: 'nyxid',
+                state: connected ? 'satisfied' : 'missing',
+                connection_mode: 'hosted',
+              },
+            ]
+          : [],
+      },
     });
   });
   await page.route('**/api/agent-manager/v1/agents/*/service-access', (route) => {
@@ -32,6 +51,11 @@ test('LOCAL Sandbox scope additions enable Save after a ready connection check',
   await page.getByRole('tab', { name: 'Access' }).click();
   await expect(page.getByRole('button', { name: 'Save scope' })).toBeDisabled();
   await page.getByRole('checkbox', { name: 'GitHub', exact: true }).check();
+  await expect(page.getByText('Verify connections for GitHub before saving.')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save scope' })).toBeDisabled();
+  expect(writes).toEqual([]);
+  connected = true;
+  await page.getByRole('button', { name: 'Check connections again' }).click();
   await expect(page.getByRole('button', { name: 'Save scope' })).toBeEnabled();
   await page.getByRole('button', { name: 'Save scope' }).click();
   await expect(page.getByText('Agent key updated. Your Agent has been notified.')).toBeVisible();

@@ -30,6 +30,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     super::usage_reports::JOBS,
     super::usage_reports::ROWS,
     super::usage_reports::CHARTS,
+    super::migrations::usage_projections::COLLECTION,
     super::usage_reports::CONTROL,
     super::request_limits::COLLECTION,
     "visitor_launch_days",
@@ -192,6 +193,7 @@ pub(crate) const COLLECTIONS: &[&str] = &[
 ];
 // These stores activate separately. Existing credentials still start while disabled.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    super::migrations::usage_projections::COLLECTION,
     retained_consents::COLLECTION,
     super::migrations::measured_custody::COLLECTION,
     super::migrations::measured_batches::COLLECTION,
@@ -218,6 +220,8 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     "resource_execution_records_v1",
     "resource_revocation_operations_v1",
 ];
+const USAGE_PROJECTIONS: &str = super::migrations::usage_projections::COLLECTION;
+const USAGE_PROJECTION_ACTIONS: &[&str] = &["find", "insert", "remove", "listIndexes"];
 mod measured;
 #[cfg(test)]
 use measured::MEASURED_CUSTODY;
@@ -322,6 +326,8 @@ fn validate_index_role(
                 action == "listCollections"
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
+            } else if collection == USAGE_PROJECTIONS {
+                USAGE_PROJECTION_ACTIONS.contains(&action)
             } else if MEASURED_APPEND_ONLY.contains(&collection) {
                 MEASURED_CUSTODY_ACTIONS.contains(&action)
             } else if collection == MEASURED_MANIFESTS {
@@ -366,10 +372,18 @@ fn validate_index_role(
     {
         return Err(denied());
     }
+    if grants.get(USAGE_PROJECTIONS).is_some_and(|actions| {
+        !USAGE_PROJECTION_ACTIONS
+            .iter()
+            .all(|action| actions.contains(*action))
+    }) {
+        return Err(denied());
+    }
     if !measured::complete(&grants)
         || !COLLECTIONS.iter().all(|name| {
             *name == retained_consents::COLLECTION
                 || *name == MEASURED_MANIFESTS
+                || *name == USAGE_PROJECTIONS
                 || MEASURED_APPEND_ONLY.contains(name)
                 || (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
                 || ACTIONS
@@ -432,16 +446,6 @@ pub(crate) async fn verify_with_authority(
             .map_err(|error| StoreError::Unavailable(error.into()))
         }
     }
-}
-
-#[cfg(test)]
-pub(crate) fn verify_activity_index_authority(
-    status: &Document,
-    database: &str,
-    authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
-    build: bool,
-) -> Result<(), StoreError> {
-    verify_index_operation_authority(status, database, authority, &["activity"], build)
 }
 
 pub(crate) fn verify_index_operation_authority(

@@ -14,12 +14,17 @@ impl SandboxReconciler {
         let Some(release) = self.released.as_ref().map(|released| released.snapshot()) else {
             return Ok(false);
         };
-        let target = &release.agent;
         let stamp = rfc3339_at(now);
         for _ in 0..4 {
             let Some(mut sandbox) = self.store.get_sandbox(id).await? else {
                 return Ok(false);
             };
+            match self.store.qualify_retained_machine(&sandbox, &stamp).await {
+                Ok(Some(qualified)) => sandbox = qualified,
+                Ok(None) => {}
+                Err(SandboxStoreError::Conflict) => continue,
+                Err(error) => return Err(error),
+            }
             let revision = sandbox.revision;
             if !automatic_updates
                 && sandbox
@@ -28,29 +33,24 @@ impl SandboxReconciler {
             {
                 return Ok(false);
             }
-            if automatic_updates
-                && sandbox.managed_desktop_runtime_confirmed()
-                && self
-                    .store
-                    .managed_runtime_target(&sandbox, target)
-                    .is_some()
-                && sandbox
-                    .check_daily_runtime_update(target, &stamp)
-                    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
-            {
-                match self
-                    .store
-                    .save_sandbox_against_release(
-                        revision,
-                        sandbox.clone(),
-                        &release,
-                        layer2_core::released_runtime::ReleasedLane::Agent,
-                    )
-                    .await
+            if automatic_updates && sandbox.managed_desktop_runtime_confirmed() {
+                if let Some((lane, target)) =
+                    self.store.managed_runtime_for_release(&sandbox, &release)
                 {
-                    Ok(()) => {}
-                    Err(SandboxStoreError::Conflict) => continue,
-                    Err(error) => return Err(error),
+                    if sandbox
+                        .check_daily_runtime_update(target, &stamp)
+                        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?
+                    {
+                        match self
+                            .store
+                            .save_sandbox_against_release(revision, sandbox.clone(), &release, lane)
+                            .await
+                        {
+                            Ok(()) => {}
+                            Err(SandboxStoreError::Conflict) => continue,
+                            Err(error) => return Err(error),
+                        }
+                    }
                 }
             }
             let Some(request) = sandbox

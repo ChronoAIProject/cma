@@ -6,6 +6,8 @@ use crate::ingress_budget::{
 };
 use sha2::{Digest as _, Sha256};
 
+type RelayPolicy<'a> = (bool, Option<&'a dyn crate::hosted::HostedOpenReplyLoss>);
+
 impl Bridge {
     #[cfg(test)]
     pub(in crate::hosted) async fn open(
@@ -68,7 +70,7 @@ impl Bridge {
             stream,
             expected_agent,
             cwd,
-            (settings, subscription, false),
+            (settings, subscription, (false, None)),
             resume_conversation,
             recovered_prompt,
             updates_tx,
@@ -80,10 +82,10 @@ impl Bridge {
         stream: Socket,
         expected_agent: &str,
         cwd: String,
-        (settings, subscription, bounded): (
+        (settings, subscription, relay): (
             HostedAgentOpenSettings,
             Option<crate::hosted::subscriptions::HostedSubscriptionBinding>,
-            bool,
+            RelayPolicy<'_>,
         ),
         resume_conversation: Option<String>,
         recovered_prompt: Option<PromptIdentity>,
@@ -93,7 +95,7 @@ impl Bridge {
             ingress::legacy(stream),
             expected_agent,
             cwd,
-            (settings, subscription.map(Into::into), bounded, None),
+            (settings, subscription.map(Into::into), relay, None),
             resume_conversation,
             recovered_prompt,
             updates_tx,
@@ -164,7 +166,7 @@ impl Bridge {
                     (
                         settings,
                         subscription.map(Into::into),
-                        true,
+                        (true, None),
                         Some(policy.clone()),
                     ),
                     resume_conversation,
@@ -181,10 +183,10 @@ impl Bridge {
         stream: ingress::BridgeSocket,
         expected_agent: &str,
         cwd: String,
-        (settings, subscription, bounded, ingress): (
+        (settings, subscription, (bounded, open_reply_loss), ingress): (
             HostedAgentOpenSettings,
             Option<crate::hosted::subscriptions::SubscriptionBinding>,
-            bool,
+            RelayPolicy<'_>,
             Option<crate::ingress_budget::IngressOwnershipPolicy>,
         ),
         resume_conversation: Option<String>,
@@ -446,7 +448,13 @@ impl Bridge {
         };
 
         bridge
-            .handshake(resume_conversation, cwd, settings, &updates)
+            .handshake(
+                resume_conversation,
+                cwd,
+                settings,
+                &updates,
+                open_reply_loss,
+            )
             .await?;
         if reader_task.is_finished() {
             return Err(make(

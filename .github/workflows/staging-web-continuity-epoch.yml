@@ -1,0 +1,164 @@
+name: Protected staging Web writer
+
+on:
+  workflow_call:
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY:
+        required: true
+      CD_NYXID_CLIENT_ID:
+        required: true
+      CD_NYXID_CLIENT_SECRET:
+        required: true
+    inputs:
+      tasks:
+        required: true
+        type: string
+      publication_matrix:
+        required: true
+        type: string
+      infra_ref:
+        required: true
+        type: string
+      file_limit:
+        required: true
+        type: number
+      byte_limit:
+        required: true
+        type: number
+      archive:
+        required: true
+        type: string
+    outputs:
+      finalized:
+        value: ${{ jobs.release.outputs.finalized }}
+      publish_result:
+        value: ${{ jobs.release.result }}
+      disposition:
+        value: ${{ jobs.release.outputs.disposition }}
+      promotion:
+        value: ${{ toJSON(jobs.promote) }}
+
+permissions:
+  contents: read
+
+jobs:
+  observe:
+    name: Read serving Web
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
+    runs-on: ubuntu-24.04
+    environment: chrono-ai-staging
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      scope: ${{ steps.preimage.outputs.scope }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: '3.12'
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
+        id: infra-token
+        continue-on-error: true
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
+        id: infra-token-retry
+        if: steps.infra-token.outcome == 'failure'
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Verify pinned infrastructure revision
+        id: private
+        env:
+          CD_INFRA_REF: ${{ inputs.infra_ref }}
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
+        run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        id: infra-checkout
+        continue-on-error: true
+        with:
+          repository: ChronoAIProject/cma-infra
+          ref: ${{ steps.private.outputs.revision }}
+          token: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
+          path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
+          persist-credentials: false
+          show-progress: false
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        id: infra-checkout-retry
+        if: steps.infra-checkout.outcome == 'failure'
+        with:
+          repository: ChronoAIProject/cma-infra
+          ref: ${{ steps.private.outputs.revision }}
+          token: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
+          path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
+          persist-credentials: false
+          show-progress: false
+      - name: Prepare isolated deployment tools and controller requirements
+        run: |
+          # Use one local budget for read-only setup in this step.
+          CD_STARTED_AT="$(PYTHONPATH=.github/scripts python3 -B -c 'from staging_cd_clock import timestamp; print(timestamp())')"
+          export CD_STARTED_AT
+          python3 -B .github/scripts/staging_cd_tools.py install
+          python3 -B .github/scripts/staging_cd_tools.py requirements
+      - name: Capture authenticated Web release scope
+        id: preimage
+        env:
+          CD_INFRA_REF: ${{ steps.private.outputs.revision }}
+          CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+          CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+          CD_WEB_RETENTION_ROLLOUTS: ${{ vars.CMA_STAGING_WEB_CONTINUITY_RETAIN_ROLLOUTS }}
+        run: '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_web_preimage.py'
+      - name: Remove private checkout
+        if: always()
+        run: python3 -B .github/scripts/staging_cd_checkout.py cleanup
+      - name: Remove isolated deployment tools
+        if: always()
+        run: python3 -B .github/scripts/staging_cd_tools.py cleanup
+  release:
+    name: Finalize protected Web
+    needs: observe
+    permissions:
+      contents: write
+      pull-requests: read
+      actions: read
+      packages: write
+    uses: ./.github/workflows/staging-release.yml
+    with:
+      component: web
+      tasks: ${{ inputs.tasks }}
+      protected_web: true
+      web_scope: ${{ needs.observe.outputs.scope }}
+      web_archive: ${{ inputs.archive }}
+      web_file_limit: ${{ inputs.file_limit }}
+      web_byte_limit: ${{ inputs.byte_limit }}
+  promote:
+    name: Promote web
+    needs: release
+    if: needs.release.outputs.finalized == 'success'
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+      deployments: read
+    uses: ./.github/workflows/staging-promote.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    with:
+      lane: web
+      publication_matrix: ${{ inputs.publication_matrix }}
+      infra_ref: ${{ inputs.infra_ref }}

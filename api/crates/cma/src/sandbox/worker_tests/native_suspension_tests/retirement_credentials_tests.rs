@@ -173,3 +173,118 @@ async fn older_cleanup_phases_hold_the_home_until_parent_only_debt_is_settled() 
         assert!(retired.credential.revoke_debt.is_empty());
     }
 }
+
+#[tokio::test]
+async fn retirement_suspends_native_compute_when_the_final_issuance_check_is_uncertain() {
+    let f = Fixture::native().await;
+    let created = f.harness.create().await;
+    let mut now = start_time(&created);
+    let active = f
+        .drive(
+            &created.id,
+            &mut now,
+            SandboxStatus::Active,
+            &runtime_image(),
+        )
+        .await;
+    let mut retiring = active.clone();
+    retiring.begin_retirement(rfc3339_at(now)).unwrap();
+    f.harness
+        .store
+        .save_sandbox(active.revision, retiring)
+        .await
+        .unwrap();
+    f.step(&active.id, now, &runtime_image()).await;
+    let stopped = f.harness.stored(&active.id).await;
+    assert_eq!(
+        stopped.work.step,
+        SandboxWorkStep::RevokeRetirementCredentials
+    );
+    assert!(stopped.credential.current.is_some());
+
+    use crate::sandbox::credential::CredentialError;
+    *f.harness
+        .credentials
+        .late_settlement_failure
+        .lock()
+        .unwrap() = Some(CredentialError::Uncertain);
+    now = stamp_time(&stopped.work.ready_at);
+    f.backend.lose_suspend.store(true, Ordering::SeqCst);
+    f.step(&active.id, now, &runtime_image()).await;
+    let unconfirmed = f.harness.stored(&active.id).await;
+    assert_eq!(unconfirmed.runtime, active.runtime);
+    assert!(unconfirmed.lifecycle.suspended_runtime.is_none());
+    assert_eq!(unconfirmed.lifecycle.home, active.lifecycle.home);
+    assert!(unconfirmed.work.lease.is_none());
+
+    now = stamp_time(&unconfirmed.work.ready_at);
+    f.step(&active.id, now, &runtime_image()).await;
+    let suspended = f.harness.stored(&active.id).await;
+    assert_eq!(suspended.status, SandboxStatus::Retiring);
+    assert_eq!(
+        suspended.work.step,
+        SandboxWorkStep::RevokeRetirementCredentials
+    );
+    assert!(suspended.runtime.is_none());
+    assert_eq!(
+        suspended.lifecycle.suspended_runtime.as_deref(),
+        active.runtime.as_ref()
+    );
+    assert_eq!(suspended.lifecycle.home, active.lifecycle.home);
+    assert_eq!(suspended.credential, stopped.credential);
+    assert!(suspended.retired_at.is_none());
+    let calls = f.backend.calls.snapshot();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.as_str() == "suspend")
+            .count(),
+        1
+    );
+    assert!(!calls.iter().any(|call| call == "delete-retained"));
+    assert!(!f.backend.home_destroyed.load(Ordering::SeqCst));
+
+    *f.harness
+        .credentials
+        .late_settlement_failure
+        .lock()
+        .unwrap() = None;
+    now = stamp_time(&suspended.work.ready_at);
+    let retired = f
+        .drive(
+            &active.id,
+            &mut now,
+            SandboxStatus::Retired,
+            &runtime_image(),
+        )
+        .await;
+    assert!(retired.lifecycle.home.as_ref().unwrap().released);
+    assert!(retired.lifecycle.suspended_runtime.is_none());
+}
+
+#[tokio::test]
+async fn retirement_suspends_a_proved_empty_native_replacement_before_stopping_agents() {
+    let (f, mut row, _, now) = retirement_tests::failed_revive().await;
+    let revision = row.revision;
+    row.begin_retirement(rfc3339_at(now)).unwrap();
+    f.harness
+        .store
+        .save_sandbox(revision, row.clone())
+        .await
+        .unwrap();
+    use crate::sandbox::credential::CredentialError;
+    *f.harness.credentials.settlement_failure.lock().unwrap() = Some(CredentialError::Uncertain);
+
+    f.step(&row.id, now, &runtime_image()).await;
+    let blocked = f.harness.stored(&row.id).await;
+    assert_eq!(blocked.status, SandboxStatus::Retiring);
+    assert_eq!(blocked.work.step, SandboxWorkStep::StopAgents);
+    assert!(blocked.runtime.is_none());
+    assert_eq!(
+        blocked.lifecycle.suspended_runtime.as_deref(),
+        row.runtime.as_ref()
+    );
+    assert_eq!(blocked.lifecycle.home, row.lifecycle.home);
+    assert_eq!(blocked.credential, row.credential);
+    assert!(!f.backend.home_destroyed.load(Ordering::SeqCst));
+}

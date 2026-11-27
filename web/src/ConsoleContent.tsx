@@ -377,7 +377,7 @@ export function ConsoleContent({
               conversation={ready?.conversation}
               observation={computerObservation}
               onClose={() => setPanel(undefined)}
-              onAccessChanged={fileDownload.onAccessChanged}
+              {...fileDownload.sidePanel}
               publicationScope={artifactPublicationScope}
               historyLoading={ready?.historyLoading || !!ready?.historyUnavailable}
               controlReady={agent.controlBaselineReady}

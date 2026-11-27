@@ -88,6 +88,16 @@ server {
         }
         return 202 '{"reached":"agent-manager"}';
     }
+    location = /auth/service-authorization/callback {
+        add_header Cache-Control 'private, no-store' always;
+        add_header Referrer-Policy no-referrer always;
+        if ($arg_state = invalid) { return 400 '{"code":"invalid_request"}'; }
+        if ($arg_state = unknown) { return 409 '{"code":"authorization_changed"}'; }
+        return 200 '{"code":"cancelled"}';
+    }
+    location = /auth/session {
+        return 401 '{"code":"authentication_required"}';
+    }
 """
         # Any API body the web proxy forwards reaches the fake Agent Manager.
         config += """    location /api/ {
@@ -165,6 +175,25 @@ server {
                 self.assertEqual(response[0], 200)
                 self.assertIn(b"SPA fixture", response[2])
                 self.assertFalse(ready(response))
+
+    def test_service_authorization_callback_has_only_no_referrer(self):
+        for state, status, code in [
+            ("known", 200, "cancelled"),
+            ("invalid", 400, "invalid_request"),
+            ("unknown", 409, "authorization_changed"),
+        ]:
+            with self.subTest(state=state):
+                actual_status, headers, body = self.get(
+                    f"/auth/service-authorization/callback?state={state}&error=access_denied"
+                )
+                self.assertEqual(actual_status, status)
+                self.assertEqual(json.loads(body), {"code": code})
+                self.assertEqual(headers["referrer-policy"], ["no-referrer"])
+                self.assertEqual(headers["cache-control"], "private, no-store")
+
+        status, headers, _ = self.get("/auth/session")
+        self.assertEqual(status, 401)
+        self.assertEqual(headers["referrer-policy"], ["strict-origin-when-cross-origin"])
 
     def test_legal_document_and_artifact_bodies_reach_the_agent_manager(self):
         # 1 MiB of Markdown or decoded artifact bytes is legal; JSON and base64

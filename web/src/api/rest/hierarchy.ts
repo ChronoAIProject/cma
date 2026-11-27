@@ -78,6 +78,8 @@ export function sandboxSummary(value: Wire.SandboxSummary): SandboxSummary {
                     continuing: value.lifecycle.result.continuing,
                     actions: value.lifecycle.result.actions,
                     retryAfterSeconds: value.lifecycle.result.retry_after_seconds,
+                    ownerSlotReleased: value.lifecycle.result.owner_slot_released,
+                    blockedRetirementStep: value.lifecycle.result.blocked_retirement_step,
                   },
             pause: value.lifecycle.pause,
             revive: value.lifecycle.revive,

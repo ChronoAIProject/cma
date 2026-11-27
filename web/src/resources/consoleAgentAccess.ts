@@ -18,11 +18,32 @@ export function useConsoleAgentAccess(
     () => ({ authority, agentId, viewerId }),
     [authority, agentId, viewerId],
   );
-  const [denial, setDenial] = useState<{ scope: typeof downloadScope; message: string }>();
+  const [downloadNotice, setDownloadNotice] = useState<{
+    scope: typeof downloadScope;
+    attempt?: object;
+    message?: string;
+  }>({ scope: downloadScope });
+  if (downloadNotice.scope !== downloadScope) setDownloadNotice({ scope: downloadScope });
+  const beginDownload = useCallback(() => {
+    const attempt = {};
+    setDownloadNotice((current) =>
+      current.scope === downloadScope ? { scope: downloadScope, attempt } : current,
+    );
+    return (message: string) => {
+      setDownloadNotice((current) =>
+        current.scope === downloadScope && current.attempt === attempt
+          ? { scope: downloadScope, message }
+          : current,
+      );
+    };
+  }, [downloadScope]);
   const reload = agentAccess.reload;
   const onFileAccessChanged = useCallback(
     (message?: string) => {
-      if (message) setDenial({ scope: downloadScope, message });
+      if (message)
+        setDownloadNotice((current) =>
+          current.scope === downloadScope ? { scope: downloadScope, message } : current,
+        );
       reload();
     },
     [downloadScope, reload],
@@ -68,9 +89,12 @@ export function useConsoleAgentAccess(
     agentAccess.personalLineage,
   );
   const fileDownload = {
-    message: denial?.scope === downloadScope ? denial.message : undefined,
-    dismiss: () => setDenial(undefined),
-    onAccessChanged: onFileAccessChanged,
+    message: downloadNotice.scope === downloadScope ? downloadNotice.message : undefined,
+    dismiss: () =>
+      setDownloadNotice((current) =>
+        current === downloadNotice ? { scope: downloadScope } : current,
+      ),
+    sidePanel: { beginFileDownload: beginDownload, onAccessChanged: onFileAccessChanged },
   };
   return { agentAccess, accessUncertain, shared, personalAgentId, fileDownload };
 }

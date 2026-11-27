@@ -11,8 +11,8 @@ export function journeyEvidenceFixture() {
     if (kind !== 'agent-lifecycle') journal.push({ ...row, action: 'cleanup_complete' });
   };
   const command = (path) => ({ method: 'POST', path, bodyHash: 'a'.repeat(64), keyHash: 'b'.repeat(64) });
-  const publication = (suffix, publisher, visitor, managed = false) => {
-    const image = managed ? { kind: 'managed_default' } : { kind: 'catalogue', id: `image-${suffix}`, version: 'version-one', referenceHash: 'c'.repeat(64) };
+  const publication = (suffix, publisher, visitor) => {
+    const image = { kind: 'managed_default' };
     const stats = (count) => ({ totals: { launches_total: count, agents_ready_total: count }, placements: [{ placement_id: `placement-${suffix}`, launches_total: count, agents_ready_total: count }] });
     for (const [kind, id, subject] of [
       ['triggers', `trigger-${suffix}`, publisher], ['launches', `launch-${suffix}`, visitor],
@@ -34,9 +34,9 @@ export function journeyEvidenceFixture() {
       commands: [command(`/api/v1/triggers/public/public-${suffix}/launches`)], stats: { before: stats(0), after: stats(1) },
     };
   };
-  const common = { schema: 'cma-public-journey-v1', execution: 'configured_remote_origin', scope: 'current_image_inline', run };
+  const common = { schema: 'cma-public-journey-v1', execution: 'configured_remote_origin', scope: 'managed_default_inline', run };
   const j5 = { ...common, visitor: 'visitor', publications: [publication('first', 'owner', 'visitor'), publication('second', 'second-owner', 'visitor')] };
-  const bootstrap = publication('managed', 'owner', 'owner', true);
+  const bootstrap = publication('managed', 'owner', 'owner');
   own('workspaces', 'workspace-inline', 'owner');
   const agents = ['one', 'two'].map((suffix) => {
     own('agents', `task-${suffix}`, 'owner');

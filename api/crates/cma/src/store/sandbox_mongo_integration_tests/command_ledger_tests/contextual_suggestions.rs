@@ -106,6 +106,12 @@ async fn seed(
     goal: &str,
     answer: &str,
 ) -> (Sandbox, Agent) {
+    let (parent, agent) = seed_identity(store, suffix).await;
+    let agent = seed_completed_answer(store, agent, goal, answer).await;
+    (parent, agent)
+}
+
+async fn seed_identity(store: &MongoSandboxStore, suffix: &str) -> (Sandbox, Agent) {
     let parent = active_sandbox(&format!("sbx_{suffix}"));
     let mut agent = ready_agent(&parent, &format!("agt_{suffix}"));
     agent.conversation.last_seq = 0;
@@ -124,6 +130,15 @@ async fn seed(
     worktree.agent_id = Some(agent.id.clone());
     store.create_worktree(worktree).await.unwrap();
     store.create_agent(agent.clone()).await.unwrap();
+    (parent, agent)
+}
+
+async fn seed_completed_answer(
+    store: &MongoSandboxStore,
+    mut agent: Agent,
+    goal: &str,
+    answer: &str,
+) -> Agent {
     for kind in [
         AgentLogKind::Created {
             workspace_id: agent.workspace_id.clone(),
@@ -171,8 +186,7 @@ async fn seed(
         )
         .await
         .unwrap();
-    let agent = store.get_agent(&agent.id).await.unwrap().unwrap();
-    (parent, agent)
+    store.get_agent(&agent.id).await.unwrap().unwrap()
 }
 
 fn response(output: &str) -> serde_json::Value {

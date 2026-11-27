@@ -147,6 +147,7 @@ async fn stale_success_fails_closed_even_if_the_monitor_stops() {
             workers: None,
             diagnostics: None,
             backend_free: true,
+            runtime_release: None,
         }),
     ];
     for app in &apps {
@@ -160,6 +161,20 @@ async fn stale_success_fails_closed_even_if_the_monitor_stops() {
         assert_eq!(body["dependency"]["age_ms"], 5000);
         assert_eq!(response(app, "/livez").await.0, StatusCode::OK);
     }
+}
+
+#[tokio::test]
+async fn unconfigured_readiness_serves_probes_and_refuses_release_challenges() {
+    let (_sender, store) = watch::channel(None);
+    let app = routes(store, None);
+    let (_, body) = response(&app, "/ready").await;
+    assert!(body.get("runtime_release").is_none());
+    let request = axum::http::Request::get("/ready")
+        .header(releases::CHALLENGE, "fixture")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test(start_paused = true)]
@@ -180,7 +195,7 @@ async fn dropping_the_router_cancels_the_inflight_check_and_stops_retries() {
 async fn execution_capability_is_separate_from_store_and_optional_warm_capacity() {
     let probe = Arc::new(Probe::default());
     let workers = crate::worker_supervision::Workers::new();
-    let app = router_with_workers(probe.clone(), workers.clone());
+    let app = router_with_workers(probe.clone(), workers.clone(), None);
     tokio::task::yield_now().await;
     let (status, body) = response(&app, "/ready").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);

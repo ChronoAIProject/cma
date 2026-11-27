@@ -141,6 +141,40 @@ impl MetricsStore for ReportingStore {
         self.read_owners(report, query).await
     }
     async fn series(&self, report: &Report, query: SeriesQuery) -> Result<Series> {
-        cma_am_reporting::read_series(self.collection(CHARTS), report, query, DB_DEADLINE).await
+        let charts = self.collection(CHARTS);
+        let family = match (&query.group_by, query.series_id.is_some()) {
+            (layer2_core::sandbox_metrics::GroupBy::Total, _) => "chart_total",
+            (layer2_core::sandbox_metrics::GroupBy::Owner, true) => "chart_explicit_owner",
+            (layer2_core::sandbox_metrics::GroupBy::Owner, false) => "chart_owner",
+            (layer2_core::sandbox_metrics::GroupBy::Sandbox, false) => "chart_sandbox",
+            (layer2_core::sandbox_metrics::GroupBy::Sandbox, true) => {
+                if self.projections_allowed(report) {
+                    self.initial_namespace(report).await?;
+                }
+                return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
+            }
+        };
+        let Some(manifest) = self.projected_manifest(report).await? else {
+            return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
+        };
+        if !manifest.has_family(family) {
+            if matches!(family, "chart_owner" | "chart_sandbox") {
+                // Repeating a full-cohort fold on the request path defeats the
+                // generation budget, which can decline an incomplete family.
+                tracing::info!(target: "cma::store::usage_reports::budget",
+                    stage = "ranked_projection_read", family, result = "family_missing");
+                return Err(MetricsError::Busy);
+            }
+            return cma_am_reporting::read_series(charts, report, query, DB_DEADLINE).await;
+        }
+        cma_am_reporting::read_chart_projection(
+            &self.collection(aggregate_projections::COLLECTION),
+            charts,
+            report,
+            query,
+            &manifest,
+            DB_DEADLINE,
+        )
+        .await
     }
 }

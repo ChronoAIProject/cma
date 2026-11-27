@@ -40,6 +40,7 @@ mod home_backup_expiry;
 mod http_serving;
 mod image_manager_retirement;
 mod media_continuations;
+#[cfg(test)]
 use cma_am_auth::permissions;
 mod producer_token;
 mod profile_authoring;
@@ -156,6 +157,9 @@ async fn run() {
                 std::process::exit(2);
             }
         }
+        return;
+    }
+    if store::sandbox_usage_export::run_repair_command(&arguments).await {
         return;
     }
     if retirement_archive::is_command(&arguments) {
@@ -282,8 +286,8 @@ async fn run() {
         }
         return;
     }
-    if store::provenance_progress::is_command(&arguments) {
-        match store::provenance_progress::command(&arguments).await {
+    if let Some(result) = store::backfill_progress_command(&arguments).await {
+        match result {
             Ok(result) => println!("{result}"),
             Err(message) => {
                 eprintln!("{message}");
@@ -315,7 +319,7 @@ async fn run() {
         return;
     }
     if !arguments.is_empty() && arguments != ["--agent-manager-drain"] {
-        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-capture SANDBOX FROM TO | --measured-preview SAMPLE FROM TO | --measured-freeze PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-evidence-read PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-period-read PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-period-replay PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-index-backfill | --measured-index-certify | --home-backup-catalog-export PRIVATE_NEW_FILE | --task-audit PRIVATE_SELECTION PRIVATE_NEW_FILE | --allocator-self-test]");
+        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-capture SANDBOX FROM TO | --measured-preview SAMPLE FROM TO | --measured-freeze PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-evidence-read PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-period-read PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-period-replay PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-index-backfill [EXPECTED_PREDECESSOR_SHA256] | --measured-index-certify | --home-backup-catalog-export PRIVATE_NEW_FILE | --task-audit PRIVATE_SELECTION PRIVATE_NEW_FILE | --allocator-self-test]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

@@ -14,6 +14,10 @@ from staging_cd_checkout import checkout_path
 from staging_cd_clock import CONTROLLER_TOTAL_ENV, dispatch_started, run_created
 from staging_cd_common import Refusal
 from staging_cd_deploy_result_tests import fixture_result
+from staging_cd_receipts import canonical
+from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
+from staging_cd_set import release_set
+from staging_cd_targets import RUNTIME_TARGETS
 from staging_cd_tools import install_requirements
 
 SHA = "a" * 40
@@ -123,7 +127,7 @@ class ClockTests(unittest.TestCase):
 
 
 class BudgetTests(unittest.TestCase):
-    """Only a production release reserves the production controller total."""
+    """The coordinator and its supervising launcher share one absolute deadline."""
 
     def test_the_launcher_reserves_each_targets_own_controller_total(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -139,17 +143,28 @@ class BudgetTests(unittest.TestCase):
                     self.assertEqual(process.call_args.args[2], total - 10)
                     self.assertEqual(process.call_args.kwargs["grace_seconds"], 15)
 
-    def deploy(self, target, finish):
+    def deploy(self, target, finish, *, components=("web",), mode="release", profile=None, withheld=()):
         """One release through the default launcher; the controller returns at `finish`."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env = invoke_fixtures.InvokeTests().environment(root)
-            env["CD_STARTED_AT"] = timestamp(1000)
+            receipts = {key: (fixture_runtime_receipt if key in RUNTIME_TARGETS else fixture_receipt)(
+                component=key) for key in components}
+            env.update(CD_STARTED_AT=timestamp(1000), CD_DEPLOY_MODE=mode,
+                       CD_RELEASE_SET=canonical(release_set(receipts)))
             if target is not None:
-                Path(env["GITHUB_EVENT_PATH"]).write_text(json.dumps(
-                    {"ref": "refs/heads/main", "after": SHA, "deleted": False,
-                     "repository": {"full_name": "ChronoAIProject/cma"}}))
-                env.update(CD_TARGET=target, GITHUB_REF="refs/heads/main")
+                env.update(environment(root, "main", target))
+            elif mode == "bootstrap":
+                env.update(environment(root, "develop", event_name="workflow_dispatch",
+                                       inputs={"deployables": "am,eg,web", "mode": mode}))
+            script = root / "controller/scripts/deploy_set.py"
+            script.parent.mkdir(parents=True)
+            marker = script.with_name("am_rollout_budget.py")
+            if profile == "supported":
+                marker.touch()
+            elif profile == "symlink":
+                script.touch()
+                marker.symlink_to(script)
             clock, launched = [1010], []
 
             def process(args, child_env, wait, **kwargs):
@@ -160,8 +175,10 @@ class BudgetTests(unittest.TestCase):
 
             with patch("staging_cd_clock.time.time", side_effect=lambda: clock[0]), \
                     patch.object(invoke, "run_process", side_effect=process), \
-                    patch.object(invoke, "controller_receipts", side_effect=lambda receipts, *_args: (receipts, 0)):
-                code = invoke.deploy(env, Mock(), lambda _env: root / "deploy_set.py",
+                    patch.object(invoke, "controller_receipts",
+                                 side_effect=lambda receipts, *_args: (
+                                     {key: value for key, value in receipts.items() if key not in withheld}, 0)):
+                code = invoke.deploy(env, Mock(), lambda _env: script,
                                      policy_reader=lambda _script, selected, **_kw: sorted(selected))
             return code, launched
 
@@ -173,6 +190,24 @@ class BudgetTests(unittest.TestCase):
                 self.assertEqual(self.deploy("production", finish), (0, [("3600", 3590, 15)]))
         # A result after the production total is still unverified.
         self.assertEqual(self.deploy("production", 4601), (20, [("3600", 3590, 15)]))
+
+    def test_am_budget_requires_a_supported_staging_release_that_actually_affects_am(self):
+        for component in ("am", "runtime", "runtime-omarchy"):
+            with self.subTest(component=component):
+                self.assertEqual(self.deploy(None, 3700, components=(component,), profile="supported"),
+                                 (0, [("2700", 2690, 15)]))
+                self.assertEqual(self.deploy(None, 3701, components=(component,), profile="supported"),
+                                 (20, [("2700", 2690, 15)]))
+        for profile in (None, "symlink"):
+            self.assertEqual(self.deploy(None, 1991, components=("am",), profile=profile),
+                             (20, [("990", 980, 15)]))
+        self.assertEqual(self.deploy(None, 1991, components=("am", "web"), profile="supported", withheld=("am",)),
+                         (20, [("990", 980, 15)]))
+        self.assertEqual(self.deploy(None, 1991, profile="supported"), (20, [("990", 980, 15)]))
+        self.assertEqual(self.deploy("production", 3000, components=("am",), profile="supported"),
+                         (0, [("3600", 3590, 15)]))
+        self.assertEqual(self.deploy(None, 1600, components=("am", "eg", "web"), mode="bootstrap", profile="supported"),
+                         (0, [("600", 590, 15)]))
 
 
 class ControllerPathTests(unittest.TestCase):

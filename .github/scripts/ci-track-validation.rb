@@ -4,6 +4,7 @@ require 'json'
 require_relative 'omarchy-ci-contract'
 require_relative 'key-provider-ci-contract'
 require_relative 'ci-track-security-validation'
+require_relative 'ci-track-build-validation'
 
 def require_check(value, message)
   raise message unless value
@@ -29,54 +30,6 @@ end
 STAGING_IMAGE_FALLBACK = "steps.staging-image.outputs.adopted != 'true'"
 STAGING_READ_ONLY = {'contents' => 'read', 'actions' => 'read', 'issues' => 'read'}.freeze
 
-
-def check_component_cache_writers(documents)
-  develop = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
-  writer = "${{ #{develop} }}"
-  image_job = documents.fetch('ci-images').fetch('jobs').fetch('images')
-  group = "${{ #{develop} && format('cma-develop-ci-image-{0}', matrix.component) || " \
-    "format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}"
-  require_check(image_job['concurrency'] == {'group' => group, 'queue' => 'max', 'cancel-in-progress' => false},
-    'develop image jobs must queue per component without cancelling active writers')
-  images = image_job.fetch('steps')
-  node_setup = ->(s) { s.fetch('uses', '').start_with?('actions/setup-node@') }
-  image_nodes = images.select(&node_setup)
-  require_check(!image_nodes.empty? && image_nodes.all? { |s|
-    s.dig('with', 'package-manager-cache') == false && !s.fetch('with').key?('cache')
-  }, 'image Node setup must disable automatic and explicit dependency caching')
-  scope = "matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component"
-  builds = images.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
-  bounded = "${{ steps.layer-validate.outcome == 'success' && format('type=local,src={0}/cma-layer-cache/restored', runner.temp) || '' }}"
-  require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from').to_s.lines.map(&:strip) ==
-    ["type=gha,version=2,scope=${{ #{scope} }}", bounded] }, 'both image builds must restore validated component caches')
-  exports = builds.map { |s| s.dig('with', 'cache-to') }.compact
-  require_check(exports.empty?, 'CI image builds must not publish unbounded layers')
-  {'docker/setup-qemu-action' => 'cache-image', 'docker/setup-buildx-action' => 'cache-binary',
-   'aquasecurity/trivy-action' => 'cache'}.each do |action, option|
-    step = images.find { |s| s.fetch('uses', '').start_with?(action + '@') }
-    require_check(step&.dig('with', option) == writer, "#{action} may save a PR cache")
-  end
-  web = documents.fetch('ci-web').fetch('jobs').fetch('web').fetch('steps')
-  web_nodes = web.select(&node_setup)
-  require_check(web_nodes.size == 1 && web_nodes.first.dig('with', 'package-manager-cache') == false &&
-    web_nodes.first.dig('with', 'cache') == "${{ #{develop} && 'npm' || '' }}", 'setup-node may save a PR cache')
-  writers = (images + web).select { |s| s.fetch('uses', '').match?(%r{\Aactions/cache(?:/save)?@}) }
-  require_check(writers.size == 1 && writers.first['uses'].start_with?('actions/cache/save@') &&
-    writers.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (success() && #{develop} && matrix.component == 'api' && vars.CMA_LAYER_CACHE_WRITER_FLOOR != 'true' && steps.api-cargo-cache-export.outputs.ready == 'true')",
-    'only the accepted develop Cargo archive may be saved')
-  restore = 'actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25'
-  npm = {'path' => '${{ steps.npm-cache.outputs.directory }}',
-    'key' => "node-cache-${{ runner.os }}-${{ steps.npm-cache.outputs.architecture }}-npm-${{ hashFiles('web/package-lock.json') }}"}
-  database = {'path' => '${{ github.workspace }}/.cache/trivy', 'key' => 'cache-trivy-readonly', 'restore-keys' => 'cache-trivy-'}
-  [[web, 'Restore npm download cache', 'Install (lockfile integrity)', npm],
-   [images, 'Restore Trivy databases', 'Vulnerability scan', database]].each do |steps, name, consumer, inputs|
-    index = steps.index { |s| s['name'] == name }
-    run = steps.index { |s| s['name'] == consumer }
-    require_check(index && run && index < run && steps[index]['uses'] == restore && steps[index]['with'] == inputs &&
-      steps[index]['if'] == "github.event_name != 'push' || github.ref != 'refs/heads/develop'",
-      "#{name} must restore without saving before #{consumer}")
-  end
-end
 
 MERGE_GROUP_EXPORT = "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || " \
   "github.event.pull_request.head.repo.full_name == github.repository)"
@@ -239,26 +192,14 @@ def check_flaky_tracker(workflows)
   require_check(writers.keys == [TRACKER], 'only the flaky tracker may write issues')
 end
 
-def check_version_label(workflow)
-  version = workflow.fetch('jobs').fetch('version-label')
-  require_check(version.fetch('name') == 'CI / Version label' && version.fetch('if') == '${{ !cancelled() }}', 'version gate missing')
-  require_check(version.fetch('needs') == ['changes'], 'version must use selector')
-  require_check(!version.key?('continue-on-error'), 'version job must propagate failure')
-  label_check = version.fetch('steps').last
-  require_check(label_check['run'] == 'python3 -B .github/scripts/ci_tracks/version_label.py' &&
-    !label_check.key?('if') && !label_check.key?('continue-on-error'), 'version validator missing or bypassed')
-  require_check(label_check.fetch('env') == {
-    'DEPLOYABLES' => '${{ needs.changes.outputs.deployables }}',
-    'SELECTOR_RESULT' => '${{ needs.changes.result }}', 'GH_TOKEN' => '${{ github.token }}'
-  }, 'version selector or live label context differs')
-end
-
 def validate(documents, actions)
   KeyProviderCIContract.check(documents)
   require_repo_secret_shards(documents)
   require_runtime_inventory(documents)
   require_image_secret_scan(documents)
   require_runtime_vulnerability_gate(documents)
+  check_web_result(documents)
+  check_web_jobs(documents)
   check_component_cache_writers(documents)
   check_merge_group_artifacts(documents)
   check_staging_image_adoption(documents)
@@ -297,7 +238,7 @@ def validate(documents, actions)
   }
   required.each do |key, (name, dependencies)|
     job = jobs.fetch(key)
-    require_check(job.fetch('name') == name && job.fetch('if') == 'always()', 'stable gate missing or conditional')
+    require_check(job.fetch('name') == name && job.fetch('if') == "always() && (#{verification_ref})", 'stable develop CI gate or ref guard missing')
     require_check(job.fetch('needs').sort == dependencies.sort, 'gate dependency omitted')
     require_check(job.fetch('steps').any? { |step| step.fetch('run', '').include?('ci_tracks/gate.py') }, 'gate validator missing')
   end
@@ -339,7 +280,8 @@ def validate(documents, actions)
   select_workflow = documents.fetch('ci-track-selection')
   require_check(select_workflow.fetch('jobs').fetch('changes') == jobs.fetch('changes').reject { |key, _| key == 'if' },
     'pull requests and post-merge CI must use identical selection')
-  %w[ci ci-pr-repo].each { |workflow| check_version_label(documents.fetch(workflow)) }
+  check_version_label(ci, "!cancelled() && (#{verification_ref})")
+  check_version_label(documents.fetch('ci-pr-repo'))
   selector = jobs.fetch('changes').fetch('steps').find { |step| step['id'] == 'select' }
   require_check(selector && selector['run'] == 'python3 -B .github/scripts/ci_tracks/selection.py --ci' &&
     !selector.key?('if') && !selector.key?('continue-on-error'), 'CI-specific selection must be required')
@@ -406,7 +348,7 @@ def validate(documents, actions)
   end
   %w[mongo-harness mongo-shards].each { |id| require_check(rust[id]['if'] == "inputs.track == 'am'", 'AM Mongo selection differs') }
   require_check(rust['mongo-eg']['if'] == "inputs.track == 'eg'", 'EG Mongo selection differs')
-  require_check(rust['mongo-eg']['steps'].any? { |s| s['run'] == 'bash .github/scripts/image-manager-mongo-contract.sh eg' }, 'Gateway contracts omitted')
+  require_check(rust['mongo-eg']['steps'].any? { |s| s['run'] == 'bash .github/scripts/authenticated-mongo-contract.sh eg' }, 'Gateway contracts omitted')
   require_check(rust['mongo-harness']['steps'].last['run'].include?('node --test .github/scripts/mongo-contract-tests.test.mjs') &&
     rust['mongo-harness']['steps'].last['run'].include?('python3 -B .github/scripts/mongo-contract-shards-tests.py'), 'Mongo regressions omitted')
   timing = rust.fetch('timing').fetch('steps')

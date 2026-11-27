@@ -49,7 +49,9 @@ pub(crate) struct SandboxLifecycleConfig {
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
+    pub native_retirement_capture_enabled: bool,
     pub parent_not_ready_pacing_enabled: bool,
+    pub inspection_refusal: Option<crate::config::InspectionRefusalControl>,
     pub startup_sibling_hold_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
@@ -81,6 +83,7 @@ pub(crate) struct SandboxLifecycleConfig {
 
 pub(crate) struct SandboxLifecycleComposition {
     inline_lifecycle: Option<crate::agent_lifecycle::LifecycleDrain>,
+    pub(crate) capture_drain: Option<crate::agent_lifecycle::LifecycleDrain>,
     pub(crate) reopen_worker: Arc<SandboxWorker>,
     warmup: super::warmup::LegacyWarmSandboxCleanup,
     reconciliation: SandboxReconciler,
@@ -231,6 +234,18 @@ impl SandboxLifecycleComposition {
             .with_execution(config.execution)
             .with_replicas(config.renewable_work),
         );
+        let capture_delivery = (config.native_retirement_finality_enabled
+            && config.native_retirement_capture_enabled
+            && config.ownership.is_some())
+        .then(|| {
+            super::native_retirement_delivery::CaptureDelivery::new(
+                dependencies.store.clone(),
+                crate::store::DISCOVERY_BATCH,
+            )
+        });
+        let capture_drain = capture_delivery
+            .as_ref()
+            .map(|delivery| delivery.tasks.clone());
         let mut agent_config = AgentWorkerConfig::new(
             format!("{}:agent", config.holder),
             config.deployment_id.clone(),
@@ -248,9 +263,11 @@ impl SandboxLifecycleComposition {
         .with_managed_documents(config.managed_documents_enabled)
         .with_access_transport_migration(config.access_transport_migration);
         agent_config.owner_stop_settlement_enabled = config.owner_stop_settlement_enabled;
+        agent_config.inspection_refusal = config.inspection_refusal;
         if config.native_retirement_finality_enabled {
             agent_config.retirement_reporter = Some(dependencies.store.clone());
         }
+        agent_config.capture_delivery = capture_delivery;
         let agent_worker = AgentWorker::new(
             AgentWorkerDependencies {
                 store: dependencies.store.clone(),
@@ -263,15 +280,19 @@ impl SandboxLifecycleComposition {
             agent_config,
         );
         let funding_renewal = FundingRenewalWorker::new(Arc::clone(&dependencies.funding));
-        let retirement_finalizer = Arc::new(
+        let mut retirement_finalizer =
             super::native_retirement_finalizer::NativeRetirementFinalizer::new(
                 dependencies.store.clone(),
                 dependencies.adapter.clone(),
                 config.deployment_id.clone(),
                 dependencies.store.clone(),
                 config.native_retirement_finality_enabled,
-            ),
-        );
+            );
+        if config.native_retirement_finality_enabled {
+            retirement_finalizer = retirement_finalizer
+                .with_capture(dependencies.store.clone(), capture_drain.clone());
+        }
+        let retirement_finalizer = Arc::new(retirement_finalizer);
         let mut sandbox_config = SandboxWorkerConfig::with_policy_source(
             format!("{}:sandbox", config.holder),
             config.deployment_id,
@@ -309,6 +330,7 @@ impl SandboxLifecycleComposition {
 
         Ok(Self {
             inline_lifecycle: None,
+            capture_drain,
             reopen_worker: sandbox_worker.clone(),
             warmup,
             updates,

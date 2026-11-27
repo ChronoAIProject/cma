@@ -60,6 +60,8 @@ zeroize = { workspace = true }
 serde_json_canonicalizer = "=0.3.2"
 
 [dev-dependencies]
+cma-am-auth = { path = "../cma-am-auth", features = ["test-support"] }
+cma-am-reporting = { path = "../cma-am-reporting", features = ["test-support"] }
 jsonschema = { version = "0.33.0", default-features = false }
 tracing-subscriber = { workspace = true, features = ["json"] }
 http-body-util = { workspace = true }

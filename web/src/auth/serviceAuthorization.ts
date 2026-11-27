@@ -48,13 +48,14 @@ export async function startServiceAuthorization(
   owner: string,
   returnTo: string,
   signal: AbortSignal,
+  purpose?: 'skill_catalog',
 ): Promise<string> {
   const response = await fetch('/auth/service-authorization/start', {
     method: 'POST',
     credentials: 'same-origin',
     cache: 'no-store',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ target, return_to: returnTo }),
+    body: JSON.stringify({ target, return_to: returnTo, purpose }),
     signal,
   });
   if (response.status === 401) return new URL(signInPath(returnTo), window.location.origin).href;

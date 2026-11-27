@@ -160,12 +160,18 @@ impl RoutedTargetExecutor {
         }) {
             return Ok(Disposition::Settled);
         }
-        if matches!(
-            self.delivery
-                .tool_reply_status(&work.identity, &work.target_id, lease, body)
-                .await?,
-            ToolReplyStatus::Unknown
-        ) {
+        let inspect_primary = journal.accepted_answer_receipts
+            && body.delivery.auto_final
+            && body.delivery.destination == cmaeg_core::channel::ReplyChoice::Origin
+            && !super::custom_delivery::is_custom_origin(body);
+        if !inspect_primary
+            && matches!(
+                self.delivery
+                    .tool_reply_status(&work.identity, &work.target_id, lease, body)
+                    .await?,
+                ToolReplyStatus::Unknown
+            )
+        {
             return Ok(Disposition::Settled);
         }
         let started = Instant::now();
@@ -236,10 +242,18 @@ impl RoutedTargetExecutor {
                 // rollback, without regenerating IDs or requiring new headers.
                 projection.retain_trace_contract(&mut frame);
                 journal.guard(lease).await?;
+                let primary = super::AcceptedAnswerIdentity::from_frame(
+                    &frame,
+                    journal.accepted_answer_receipts,
+                )?
+                .is_some()
+                    && inspect_primary;
                 let effect = if let Some(effect) = projection.pending_effect(&frame)? {
                     effect
                 } else {
-                    let durable_reply = if projection.needs_tool_receipt(&frame, body) {
+                    // The shared answer operation handles both matching and
+                    // unrelated guards for a committed primary frame.
+                    let durable_reply = if !primary && projection.needs_tool_receipt(&frame, body) {
                         match self
                             .delivery
                             .tool_reply_status(&work.identity, &work.target_id, lease, body)
@@ -276,7 +290,8 @@ impl RoutedTargetExecutor {
                 if trace.is_none() {
                     trace = BoundOperation::start(projection.trace.get(), Stage::Replay);
                 }
-                let delivery = self.deliver_with_tool_wait(work, journal, lease, &frame, effect);
+                let delivery =
+                    self.deliver_with_tool_wait(work, journal, lease, &frame, effect, primary);
                 let delivered = match &trace {
                     Some(trace) => trace.within(delivery).await,
                     None => delivery.await,

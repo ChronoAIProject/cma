@@ -33,6 +33,25 @@ impl PublicationParents {
         }
     }
 
+    pub(in crate::sandbox::agent_worker) fn workspace_became_ready(
+        &self,
+        current: &Self,
+        agent: &Agent,
+    ) -> bool {
+        if self.workspace.status != WorkspaceStatus::Preparing
+            || current.workspace.status != WorkspaceStatus::Ready
+            || current.workspace.revision <= self.workspace.revision
+        {
+            return false;
+        }
+        let mut normalized = current.clone();
+        normalized.workspace.status = self.workspace.status;
+        normalized.workspace.work = self.workspace.work.clone();
+        normalized.workspace.resolved_commit = self.workspace.resolved_commit.clone();
+        normalized.workspace.ready_at = self.workspace.ready_at.clone();
+        self.compatible(&normalized, agent)
+    }
+
     fn compatible(&self, current: &Self, agent: &Agent) -> bool {
         if validate_lineage(
             agent,
@@ -210,10 +229,6 @@ impl AgentWorker {
             let durable = layer2_core::seconds_from_rfc3339(&current.updated_at)
                 .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
                 .ok_or_else(|| SandboxStoreError::Corrupt("invalid Agent update time".into()))?;
-            let at = (now + started.elapsed()).max(durable);
-            if !same_publication_claim(&original, &current, &self.config.holder, at) {
-                return Err(SandboxStoreError::Conflict);
-            }
             if let Some(authority) = &authority {
                 if authority.token.agent_id != original.id || !authority.is_current() {
                     return Err(SandboxStoreError::Conflict);
@@ -224,6 +239,10 @@ impl AgentWorker {
                         .await
                         .map_err(|_| SandboxStoreError::Conflict)?;
                 }
+            }
+            let at = (now + started.elapsed()).max(durable);
+            if !same_publication_claim(&original, &current, &self.config.holder, at) {
+                return Err(SandboxStoreError::Conflict);
             }
             match publish(current.clone(), at, Some(proof)).await? {
                 AgentWorkPublication::Published => return Ok(AgentWorkPublication::Published),

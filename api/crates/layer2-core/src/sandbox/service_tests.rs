@@ -1265,7 +1265,11 @@ async fn create_reads_current_policy_for_each_admission() {
             .create(&owner, request(reference.clone()))
             .await
             .unwrap_err(),
-        SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
+        SandboxServiceError::SandboxLimitReached {
+            limit: 1,
+            live: 1,
+            usage: Default::default()
+        }
     );
 
     *source.0.lock().expect("policy lock") = SandboxPolicy {
@@ -1426,7 +1430,9 @@ async fn concurrent_admission_never_exceeds_the_live_limit() {
     for task in tasks {
         match task.await.unwrap() {
             Ok(sandbox) => admitted.push(sandbox),
-            Err(SandboxServiceError::SandboxLimitReached { limit: 3, live: 3 }) => refused += 1,
+            Err(SandboxServiceError::SandboxLimitReached {
+                limit: 3, live: 3, ..
+            }) => refused += 1,
             result => panic!("unexpected admission result: {result:?}"),
         }
     }
@@ -1788,7 +1794,11 @@ fn service_error_codes_are_stable_typed_refusals() {
             "trust_confirmation_required",
         ),
         (
-            SandboxServiceError::SandboxLimitReached { limit: 3, live: 3 },
+            SandboxServiceError::SandboxLimitReached {
+                limit: 3,
+                live: 3,
+                usage: Default::default(),
+            },
             "sandbox_limit_reached",
         ),
         (SandboxServiceError::NameConflict, "sandbox_name_conflict"),

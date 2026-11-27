@@ -14,6 +14,8 @@ mod normalization;
 mod nyxid_shapes;
 #[path = "relay/platforms.rs"]
 mod platforms;
+#[path = "relay/routing_notice.rs"]
+mod routing_notice;
 #[path = "relay/signer.rs"]
 mod signer;
 #[path = "relay/support.rs"]

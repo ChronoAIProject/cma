@@ -1,13 +1,14 @@
 //! Shared MongoDB boundary for the fresh sandbox-model schema.
-use layer2_core::StoreError;
+use layer2_core::{sandbox::SandboxStoreError, StoreError};
 use mongodb::bson::{doc, Document};
 use mongodb::error::Error;
-use mongodb::{Client, Collection};
+use mongodb::{Client, ClientSession, Collection};
 use std::future::Future;
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
 mod handles;
+mod open_reply_loss;
 mod records;
 pub(super) use records::{
     i64_field_matches, nullable, read_record, record_bson, require_version, signed,
@@ -28,8 +29,6 @@ pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
 mod topology;
 pub(super) use topology::require_transaction_topology;
-#[cfg(test)]
-use topology::validate_transaction_server;
 
 pub(super) const TRANSACTION_ATTEMPTS: usize = 5;
 const RECONCILIATION_TIMEOUT: Duration = Duration::from_secs(30);
@@ -136,6 +135,7 @@ pub struct MongoSandboxStore {
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
     pub(super) suggestions: Collection<Document>,
+    pub(crate) suggestion_control: Option<crate::store::suggestion_control::SuggestionControl>,
     pub(super) agent_creation_provenance: Collection<Document>,
     pub(super) agent_channel_usage: Collection<Document>,
     pub(super) channel_usage_events: Collection<Document>,
@@ -169,6 +169,7 @@ pub struct MongoSandboxStore {
     pub(super) managed_runtime_version: Option<String>,
     pub(crate) default_pool_holds: std::sync::Arc<crate::warm_pools::DefaultPoolHolds>,
     pub(crate) runtime_image_origin_enabled: bool,
+    pub(crate) managed_machine_updates: crate::config::ManagedMachineUpdates,
     pub(crate) desktop_verified_runtime_image: Option<String>,
     pub(super) managed_machine_runtime_version: Option<String>,
     /// The process's released-default authority. When set it supersedes the
@@ -228,14 +229,26 @@ impl MongoSandboxStore {
         release.filter(|image| !self.default_pool_holds.image(image))
     }
 
-    pub(super) fn managed_agent_release_for(
+    pub(super) async fn managed_resume_destination(
         &self,
         sandbox: &layer2_core::sandbox::Sandbox,
-    ) -> Option<String> {
-        self.managed_agent_release().filter(|target| {
-            layer2_core::sandbox::store::SandboxStore::managed_runtime_target(self, sandbox, target)
-                .is_some()
-        })
+        session: &mut ClientSession,
+    ) -> Result<Option<String>, SandboxStoreError> {
+        use layer2_core::sandbox::store::SandboxStore;
+        if sandbox.status != layer2_core::sandbox::SandboxStatus::Paused
+            || sandbox
+                .runtime_update_request()
+                .is_some_and(|request| request.completed_at.is_none())
+        {
+            return Ok(None);
+        }
+        let release = self.released_runtime();
+        let Some((lane, version)) = self.managed_runtime_for_release(sandbox, &release) else {
+            return Ok(None);
+        };
+        self.fence_released_admission(&release, lane, session)
+            .await?;
+        Ok(Some(version.into()))
     }
 
     pub(crate) fn with_agent_control_write_coordination(mut self, enabled: bool) -> Self {

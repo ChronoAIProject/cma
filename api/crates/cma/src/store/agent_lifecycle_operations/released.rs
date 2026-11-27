@@ -1,3 +1,4 @@
+use futures_util::TryStreamExt;
 use layer1_public::rest::AgentLifecycleCreateRequest;
 use layer2_core::released_runtime::ReleasedLane;
 use layer2_core::sandbox::{store::SandboxStoreError, Sandbox, SandboxOrigin};
@@ -90,6 +91,7 @@ pub(in crate::store) async fn protects_pool(
     database: &Database,
     machine: bool,
     image: &str,
+    capacity: Option<layer3_adapter::SandboxCapacity>,
 ) -> mongodb::error::Result<bool> {
     // Include old admissions made before the durable lane marker existed.
     let mut filter = doc! {
@@ -111,6 +113,29 @@ pub(in crate::store) async fn protects_pool(
                 doc! {"input.behavior": {"$in": ["repository_choice", "public_repository"]}},
             ],
         );
+    }
+    if let Some(capacity) = capacity {
+        // The admitted capacity is immutable. A differently sized operation
+        // on the same released Desktop image cannot select this exact pool.
+        // Legacy records without a pin must still defer retirement.
+        const MAX_ADMISSIONS: i64 = 10_000;
+        let mut rows = majority_collection::<LifecycleRecord>(database, COLLECTION)
+            .find(filter)
+            .limit(MAX_ADMISSIONS + 1)
+            .await?;
+        let mut count = 0;
+        while let Some(row) = rows.try_next().await? {
+            count += 1;
+            if count > MAX_ADMISSIONS
+                || row
+                    .input
+                    .capacity
+                    .is_none_or(|pin| pin == capacity || pin.cpu_millis == 0 || pin.memory_mib == 0)
+            {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
     }
     Ok(majority_collection::<Document>(database, COLLECTION)
         .find_one(filter)

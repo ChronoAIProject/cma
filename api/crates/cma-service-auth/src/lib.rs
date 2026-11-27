@@ -11,19 +11,16 @@ pub use service_key::{is_service_key, ServiceKeyAuth, ServiceKeyPrincipal};
 #[derive(Clone, Copy, Debug)]
 pub enum Service {
     EventGateway,
-    ImageManager,
 }
 impl Service {
     pub fn slug(self) -> &'static str {
         match self {
             Self::EventGateway => "cma-event-gateway",
-            Self::ImageManager => "cma-image-manager",
         }
     }
     pub fn permission_prefix(self) -> &'static str {
         match self {
             Self::EventGateway => "cma-eg",
-            Self::ImageManager => "cma-im",
         }
     }
 }

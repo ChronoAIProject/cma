@@ -18,22 +18,58 @@ use tokio::net::TcpListener;
 use url::Url;
 
 use crate::{
+    config::Config,
     ledger::{Claim, Ledger},
     model::{now, Check, Mode, Reason},
     protocol::{Outcome, Protocol},
     runner::first,
 };
 
-use super::{channel, config, job};
+use super::{channel, config, gateway_config_value, job};
 
 enum Fault {
     None,
+    GatewayPrefix,
     Html,
     Interrupted,
     MissingReceipt,
     NoTerminal,
     Credentials,
     WrongOutputId,
+}
+
+#[tokio::test]
+async fn gateway_checks_use_the_public_api_prefix_for_ingress_and_evidence() {
+    let dir = TempDir::new().unwrap();
+    let (server, task) = serve(Fault::GatewayPrefix).await;
+    let path = dir.path().join("config.json");
+    let mut value = gateway_config_value(&server.base, dir.path());
+    std::fs::write(&path, value.to_string()).unwrap();
+    let config = Arc::new(Config::load(&path).unwrap());
+    let protocol = Protocol::new(config.clone()).unwrap();
+    for (check, mode) in [
+        (Check::GatewayEvents, Mode::Read),
+        (Check::Gateway, Mode::Deterministic),
+    ] {
+        let intent = protocol.intent(job(&config, check, mode), now()).unwrap();
+        let result = first(&protocol, &intent).await;
+        assert_eq!(result.reason, Reason::Passed, "{}", intent.job.key());
+        if mode == Mode::Deterministic {
+            assert!(result.evidence.receipt_at.is_some());
+            assert!(result.evidence.terminal_at.is_some());
+            assert!(result.evidence.delivery_at.is_some());
+        }
+    }
+    assert_eq!(server.admissions.lock().unwrap().len(), 1);
+
+    value["deterministic"]["gateway"]["ingress"] =
+        json!(server.base.join("gateway-other/custom/det").unwrap());
+    std::fs::write(&path, value.to_string()).unwrap();
+    assert!(matches!(
+        Config::load(&path),
+        Err("invalid or shared synthetic targets")
+    ));
+    task.abort();
 }
 
 struct Fixture {
@@ -154,6 +190,17 @@ async fn failures_are_classified_and_restart_cannot_resend() {
 async fn handler(State(state): State<Arc<Fixture>>, request: Request) -> Response {
     let (parts, body) = request.into_parts();
     let path = parts.uri.path();
+    let path = if matches!(state.fault, Fault::GatewayPrefix) {
+        let Some(path) = path
+            .strip_prefix("/gateway")
+            .filter(|path| path.starts_with('/'))
+        else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+        path
+    } else {
+        path
+    };
     let bytes = to_bytes(body, 16 * 1024).await.unwrap();
     match path {
         "/" => html(if matches!(state.fault, Fault::Html) { "<html><h1>Error</h1></html>" } else { "<html><head><link rel=stylesheet href=/app.css><script type=module src=/app.js></script></head><body><div id=root></div></body></html>" }),

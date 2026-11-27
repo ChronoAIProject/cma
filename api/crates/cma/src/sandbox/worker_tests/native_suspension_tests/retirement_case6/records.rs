@@ -102,3 +102,43 @@ pub(in super::super) fn pod() -> layer3_adapter::RetirementPod {
         restart_count: 0,
     }
 }
+
+use crate::store::native_retirement_action::capture::{
+    CapturedRetirementObservation, RetirementCaptureConsumer,
+};
+
+#[derive(Default)]
+pub(super) struct UnavailableCapture(pub(super) AtomicUsize);
+
+#[async_trait::async_trait]
+impl RetirementCaptureConsumer for UnavailableCapture {
+    async fn offer(&self, _: &Sandbox, _: &Agent) -> Result<(), SandboxStoreError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Err(SandboxStoreError::Unavailable(
+            "capture store unavailable".into(),
+        ))
+    }
+
+    async fn observed(
+        &self,
+        _: &Sandbox,
+        _: &[Agent],
+    ) -> Result<Option<CapturedRetirementObservation>, SandboxStoreError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Err(SandboxStoreError::Unavailable(
+            "capture store unavailable".into(),
+        ))
+    }
+
+    async fn admit(
+        &self,
+        _: &Sandbox,
+        _: &RetirementAction,
+        _: &CapturedRetirementObservation,
+    ) -> Result<(), SandboxStoreError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Err(SandboxStoreError::Unavailable(
+            "capture store unavailable".into(),
+        ))
+    }
+}

@@ -21,7 +21,7 @@ async fn real_cancelled_terminal_command_can_end_its_own_session_under_the_exact
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_terminal_grant_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);
@@ -83,7 +83,7 @@ async fn real_transaction_barrier_is_authorized_by_the_exact_runtime_grant() {
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_barrier_grant_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);
@@ -144,11 +144,12 @@ async fn real_transaction_barrier_is_authorized_by_the_exact_runtime_grant() {
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
     use futures_util::TryStreamExt as _;
+    use layer2_core::document_artifacts::{digest, DocumentQuotaStore, DocumentSourceReservation};
     use mongodb::{
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_am_contract_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);
@@ -186,7 +187,14 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
         matches!(broad, Err(StoreError::Unavailable(ref detail)) if detail.contains("not isolated"))
     );
     assert_eq!(db.list_collection_names().await.unwrap(), before);
-    for _ in 0..2 {
+    let source = DocumentSourceReservation {
+        owner_hash: digest(b"reclamation-startup-owner"),
+        document_id: "doc_00000000000000000000000000000001".into(),
+        sha256: digest(b"body"),
+        bytes: 4,
+    };
+    let mut original_fence = None;
+    for (attempt, enabled) in [true, true, false].into_iter().enumerate() {
         let stores = crate::store::MongoStores::open(
             runtime.clone(),
             &name,
@@ -199,6 +207,29 @@ async fn real_agent_manager_credential_cannot_read_gateway_or_images() {
         .await
         .expect("the complete production store assembly must initialize with runtime grants");
         stores.ping().await.unwrap();
+        if attempt == 0 {
+            crate::store::durability::majority_collection::<Document>(
+                &isolated, crate::document_artifacts::QUOTA_COLLECTION,
+            ).insert_one(doc! { "_id": "activation", "document_schema_version": 1_i64,
+                "kind": "activation", "phase": "ready", "activation_id": uuid::Uuid::new_v4().to_string(),
+                "inventory_sha256": digest(b"inventory"), "storage_namespace_sha256": digest(b"isolation-storage"), "storage_namespace_bound_at":mongodb::bson::DateTime::now(), "baseline_rows": 0_i64, "next_row": 0_i64,
+            }).await.unwrap();
+        }
+        let fence = stores
+            .document_artifacts
+            .with_source_commits(enabled)
+            .with_generation_writes(enabled)
+            .with_storage_namespace(Some(digest(b"isolation-storage")))
+            .quota(true)
+            .reserve_source(&source)
+            .await
+            .unwrap()
+            .unwrap();
+        if let Some(original) = &original_fence {
+            assert_eq!(&fence, original);
+        } else {
+            original_fence = Some(fence);
+        }
         let indexes: Vec<_> = isolated
             .collection::<Document>(super::super::sandbox_mongo::SANDBOX_BILLING)
             .list_indexes()
@@ -492,10 +523,11 @@ fn activity_operation_authority_accepts_app_user_drop_index_in_shared_mode() {
         .into(),
     );
     let status = status(grants);
-    assert!(verify_activity_index_authority(
+    assert!(verify_index_operation_authority(
         &status,
         "cma",
         cma_service_auth::mongodb_authority::MongoAuthorityMode::SharedSchema,
+        &["activity"],
         true,
     )
     .is_ok());
@@ -554,7 +586,7 @@ async fn real_progress_grants_cannot_delete_receipts_or_access_another_service()
         options::{ClientOptions, Credential},
         Client,
     };
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_progress_auth_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);
@@ -633,7 +665,7 @@ async fn real_measured_custody_role_can_be_added_and_revoked_with_capture_off() 
     };
     use std::{sync::Arc, time::Duration};
 
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_measured_role_{}", uuid::Uuid::new_v4().simple());
     let db = admin.database(&name);

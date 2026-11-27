@@ -1,5 +1,7 @@
 use super::*;
 
+const RELEASE_BATCH_WINDOW: Duration = Duration::from_millis(6);
+
 pub(super) async fn run(
     service: Weak<AgentObservationService>,
     mut receive: mpsc::Receiver<Fence>,
@@ -25,14 +27,23 @@ pub(super) async fn run(
             }
             first = receive.recv() => {
                 let Some(first) = first else { return };
-                // Coalesce independently pending release fences. No completed
-                // decision or snapshot is reused by a later release request.
-                tokio::task::yield_now().await;
+                let Some(service) = service.upgrade() else { return };
                 let mut cohort = vec![first];
                 while cohort.len() < MAX_OBSERVATION_COHORT {
                     match receive.try_recv() { Ok(request) => cohort.push(request), Err(_) => break }
                 }
-                let Some(service) = service.upgrade() else { return };
+                // Other readers can queue their next fence before the fresh
+                // snapshot. Dispatch a lone subscriber or a full batch now.
+                let multiple_readers = service.registry.lock().unwrap().subscribers > 1;
+                if multiple_readers && cohort.len() < MAX_OBSERVATION_COHORT {
+                    let deadline = Instant::now() + RELEASE_BATCH_WINDOW;
+                    while cohort.len() < MAX_OBSERVATION_COHORT {
+                        match tokio::time::timeout_at(deadline, receive.recv()).await {
+                            Ok(Some(request)) => cohort.push(request),
+                            _ => break,
+                        }
+                    }
+                }
                 release(&service, cohort).await;
             }
         }

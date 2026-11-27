@@ -209,7 +209,9 @@ jobs:
   release_web:
     name: Release web
     needs: [allocate, infrastructure]
-    if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['web'] != ''
+    if: >-
+      vars.CMA_STAGING_WEB_CONTINUITY != 'true' && needs.allocate.outputs.changed == 'true' &&
+      fromJSON(needs.allocate.outputs.publications)['web'] != ''
     # Each release_* job runs one release of its component at a time. Newer
     # pushes queue behind the running build, which finishes; a queued job that
     # a newer reservation already owns skips in seconds, so the newest source
@@ -227,6 +229,31 @@ jobs:
     with:
       component: web
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['web'] }}
+  protected_web:
+    name: Publish protected Web
+    needs: [allocate, infrastructure]
+    if: >-
+      vars.CMA_STAGING_WEB_CONTINUITY == 'true' && needs.allocate.outputs.changed == 'true' &&
+      fromJSON(needs.allocate.outputs.lanes)['web'] == 'web' &&
+      fromJSON(needs.allocate.outputs.publications)['web'] != ''
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: read
+      actions: read
+      packages: write
+      deployments: read
+    uses: ./.github/workflows/staging-web-continuity.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    with:
+      tasks: ${{ fromJSON(needs.allocate.outputs.publications)['web'] }}
+      publication_matrix: ${{ toJSON(fromJSON(needs.allocate.outputs.batches)['web']) }}
+      infra_ref: ${{ needs.infrastructure.outputs.revision }}
+      file_limit: ${{ fromJSON(vars.CMA_STAGING_WEB_CONTINUITY_FILE_LIMIT || '0') }}
+      byte_limit: ${{ fromJSON(vars.CMA_STAGING_WEB_CONTINUITY_BYTE_LIMIT || '0') }}
   release_am:
     name: Release am
     needs: [allocate, infrastructure]
@@ -295,10 +322,77 @@ jobs:
     with:
       component: runtime-omarchy
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['runtime-omarchy'] }}
+  release_journey_probe:
+    name: Publish journey probe
+    if: github.repository == 'ChronoAIProject/cma' && github.event_name == 'push' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Select journey image changes
+        id: select
+        env:
+          PREVIOUS_SHA: ${{ github.event.before }}
+        run: |
+          # A multi-commit push can exceed the shallow history. In that case
+          # build rather than risk missing a change.
+          changed=true
+          if git cat-file -e "${PREVIOUS_SHA}^{commit}" 2>/dev/null &&
+              git diff --quiet "$PREVIOUS_SHA" "$GITHUB_SHA" -- \
+                .dockerignore api/Cargo.toml api/Cargo.lock api/rust-toolchain.toml \
+                api/crates/cma-journey-probe \
+                .github/workflows/staging-cd.yml .github/image-secret-classifications \
+                .github/scripts/staging_cd_transport.sh .github/scripts/install-image-gitleaks.sh \
+                .github/scripts/image-secret-scanner .github/scripts/deployables.py .github/scripts/deployables.json \
+                .github/scripts/ci_tracks/deployable_manifest.py .github/scripts/eg_schema.py \
+                .github/scripts/ci_outcome.py .github/scripts/ci_outcomes.json \
+                .github/scripts/ci_retry.py .github/scripts/os_refresh_key.py \
+                ':(glob).github/scripts/staging_cd_*.py' ':(glob).github/scripts/image_*' \
+                ':(exclude,glob).github/scripts/*_tests.py'; then
+            changed=false
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+        if: steps.select.outputs.changed == 'true'
+      - name: Build the exact journey runner archive
+        if: steps.select.outputs.changed == 'true'
+        run: python3 -B .github/scripts/staging_cd_journey_probe.py build
+      - name: Ensure registry transport
+        if: steps.select.outputs.changed == 'true'
+        env:
+          CD_COMPONENT: journey-probe
+        run: bash .github/scripts/staging_cd_transport.sh
+      - name: Install pinned image secret scanner backend
+        if: steps.select.outputs.changed == 'true'
+        run: bash .github/scripts/install-image-gitleaks.sh
+      - name: Scan the archive and publish it by digest
+        id: publish
+        if: steps.select.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 -B .github/scripts/staging_cd_journey_probe.py publish
+      - name: Retain journey publication evidence
+        if: always() && steps.publish.outcome != 'skipped' && steps.publish.outcome != 'cancelled'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: journey-probe-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/journey-image/publication.json
+            ${{ runner.temp }}/journey-image/scan-failure.json
+          if-no-files-found: ${{ steps.publish.outcome == 'success' && 'error' || 'ignore' }}
+          retention-days: 90
   promote_web:
     name: Promote web
     needs: [allocate, infrastructure, release_web]
-    if: needs.allocate.outputs.changed == 'true' && needs.release_web.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['web'] == 'web'
+    if: >-
+      vars.CMA_STAGING_WEB_CONTINUITY != 'true' && needs.allocate.outputs.changed == 'true' &&
+      needs.release_web.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['web'] == 'web'
     concurrency:
       group: cma-staging-deploy-set
       queue: max
@@ -309,6 +403,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -330,6 +425,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -351,6 +447,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -360,8 +457,18 @@ jobs:
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   promote_runtime:
     name: Promote runtime
-    needs: [allocate, infrastructure, release_runtime]
-    if: needs.allocate.outputs.changed == 'true' && needs.release_runtime.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime'] == 'runtime'
+    needs: [allocate, infrastructure, release_runtime, promote_am]
+    # A runtime pin rolls the AM deployment. Let this run's independently
+    # selected AM release converge before changing the pin.
+    if: >-
+      !cancelled() && needs.allocate.result == 'success' && needs.infrastructure.result == 'success' &&
+      needs.allocate.outputs.changed == 'true' && needs.release_runtime.result == 'success' &&
+      needs.release_runtime.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime'] == 'runtime' &&
+      (fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||
+       (needs.promote_am.result == 'success' && needs.promote_am.outputs.admit == 'success' &&
+        (fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified' ||
+         (needs.promote_am.outputs.admit_disposition == 'already-verified' &&
+          needs.promote_am.outputs.admitted == '["am"]'))))
     concurrency:
       group: cma-staging-deploy-set
       queue: max
@@ -372,6 +479,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -381,8 +489,16 @@ jobs:
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   promote_runtime_omarchy:
     name: Promote runtime-omarchy
-    needs: [allocate, infrastructure, release_runtime_omarchy]
-    if: needs.allocate.outputs.changed == 'true' && needs.release_runtime_omarchy.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] == 'runtime-omarchy'
+    needs: [allocate, infrastructure, release_runtime_omarchy, promote_am]
+    if: >-
+      !cancelled() && needs.allocate.result == 'success' && needs.infrastructure.result == 'success' &&
+      needs.allocate.outputs.changed == 'true' && needs.release_runtime_omarchy.result == 'success' &&
+      needs.release_runtime_omarchy.outputs.finalized == 'success' && fromJSON(needs.allocate.outputs.lanes)['runtime-omarchy'] == 'runtime-omarchy' &&
+      (fromJSON(needs.allocate.outputs.lanes)['am'] != 'am' ||
+       (needs.promote_am.result == 'success' && needs.promote_am.outputs.admit == 'success' &&
+        (fromJSON(needs.promote_am.outputs.component_result || '{}').components.am.state == 'controller-verified' ||
+         (needs.promote_am.outputs.admit_disposition == 'already-verified' &&
+          needs.promote_am.outputs.admitted == '["am"]'))))
     concurrency:
       group: cma-staging-deploy-set
       queue: max
@@ -393,6 +509,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -422,6 +539,7 @@ jobs:
       CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
       CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     permissions:
+      id-token: write
       contents: read
       actions: read
       deployments: read
@@ -431,7 +549,7 @@ jobs:
       infra_ref: ${{ needs.infrastructure.outputs.revision }}
   publication_signal:
     name: Signal verified image publication
-    needs: [allocate, release_web, release_am, release_eg, release_runtime, release_runtime_omarchy]
+    needs: [allocate, release_web, protected_web, release_am, release_eg, release_runtime, release_runtime_omarchy]
     if: >-
       ${{ !cancelled() && vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true' &&
           needs.allocate.result == 'success' && needs.allocate.outputs.changed == 'true' }}
@@ -449,12 +567,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_PUBLICATION_MATRIX: ${{ needs.allocate.outputs.matrix }}
-          CD_PUBLISH_WEB: ${{ needs.release_web.result }}
+          CD_PUBLISH_WEB: ${{ vars.CMA_STAGING_WEB_CONTINUITY == 'true' && (needs.protected_web.outputs.publish_result || needs.protected_web.result) || needs.release_web.result }}
           CD_PUBLISH_AM: ${{ needs.release_am.result }}
           CD_PUBLISH_EG: ${{ needs.release_eg.result }}
           CD_PUBLISH_RUNTIME: ${{ needs.release_runtime.result }}
           CD_PUBLISH_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.result }}
-          CD_FINALIZED_WEB: ${{ needs.release_web.outputs.finalized }}
+          CD_FINALIZED_WEB: ${{ fromJSON(vars.CMA_STAGING_WEB_CONTINUITY == 'true' && toJSON(needs.protected_web.outputs.finalized) || toJSON(needs.release_web.outputs.finalized)) }}
           CD_FINALIZED_AM: ${{ needs.release_am.outputs.finalized }}
           CD_FINALIZED_EG: ${{ needs.release_eg.outputs.finalized }}
           CD_FINALIZED_RUNTIME: ${{ needs.release_runtime.outputs.finalized }}
@@ -477,7 +595,7 @@ jobs:
     outputs:
       release_outcome: ${{ steps.outcome.outputs.release_outcome }}
     needs: [plan, allocate, infrastructure,
-            release_web, release_am, release_eg, release_runtime, release_runtime_omarchy,
+            release_web, protected_web, release_am, release_eg, release_runtime, release_runtime_omarchy,
             promote_web, promote_am, promote_eg, promote_runtime, promote_runtime_omarchy, promote_contract]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
@@ -502,22 +620,22 @@ jobs:
           CD_ALLOCATION_RESULT: ${{ needs.allocate.result }}
           CD_INFRASTRUCTURE_RESULT: ${{ needs.infrastructure.result }}
           CD_LANES: ${{ needs.allocate.outputs.lanes }}
-          CD_PUBLISH_WEB: ${{ needs.release_web.result }}
+          CD_PUBLISH_WEB: ${{ vars.CMA_STAGING_WEB_CONTINUITY == 'true' && (needs.protected_web.outputs.publish_result || needs.protected_web.result) || needs.release_web.result }}
           CD_PUBLISH_AM: ${{ needs.release_am.result }}
           CD_PUBLISH_EG: ${{ needs.release_eg.result }}
           CD_PUBLISH_RUNTIME: ${{ needs.release_runtime.result }}
           CD_PUBLISH_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.result }}
-          CD_DISPOSITION_WEB: ${{ needs.release_web.outputs.disposition }}
+          CD_DISPOSITION_WEB: ${{ fromJSON(vars.CMA_STAGING_WEB_CONTINUITY == 'true' && toJSON(needs.protected_web.outputs.disposition) || toJSON(needs.release_web.outputs.disposition)) }}
           CD_DISPOSITION_AM: ${{ needs.release_am.outputs.disposition }}
           CD_DISPOSITION_EG: ${{ needs.release_eg.outputs.disposition }}
           CD_DISPOSITION_RUNTIME: ${{ needs.release_runtime.outputs.disposition }}
           CD_DISPOSITION_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.outputs.disposition }}
-          CD_FINALIZED_WEB: ${{ needs.release_web.outputs.finalized }}
+          CD_FINALIZED_WEB: ${{ fromJSON(vars.CMA_STAGING_WEB_CONTINUITY == 'true' && toJSON(needs.protected_web.outputs.finalized) || toJSON(needs.release_web.outputs.finalized)) }}
           CD_FINALIZED_AM: ${{ needs.release_am.outputs.finalized }}
           CD_FINALIZED_EG: ${{ needs.release_eg.outputs.finalized }}
           CD_FINALIZED_RUNTIME: ${{ needs.release_runtime.outputs.finalized }}
           CD_FINALIZED_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.outputs.finalized }}
-          CD_PROMOTE_WEB: ${{ toJSON(needs.promote_web) }}
+          CD_PROMOTE_WEB: ${{ vars.CMA_STAGING_WEB_CONTINUITY == 'true' && (needs.protected_web.outputs.promotion || '{"result":"skipped","outputs":{}}') || toJSON(needs.promote_web) }}
           CD_PROMOTE_AM: ${{ toJSON(needs.promote_am) }}
           CD_PROMOTE_EG: ${{ toJSON(needs.promote_eg) }}
           CD_PROMOTE_RUNTIME: ${{ toJSON(needs.promote_runtime) }}

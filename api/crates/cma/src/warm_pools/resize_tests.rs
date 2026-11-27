@@ -185,6 +185,11 @@ async fn machine_pool_survives_reconciliation_beside_a_different_agent_image() {
         format!("registry.example/agent@sha256:{}", "b".repeat(64)),
         Some((agent, 2)),
     );
+    assert!(!service_mut.current_plan(&original).unwrap());
+    service_mut.default_capacity = layer3_adapter::SandboxCapacity {
+        cpu_millis: original.plan.spec.cpu_millis,
+        memory_mib: original.plan.spec.memory_mib,
+    };
     assert!(service.current_plan(&original).unwrap());
     service
         .resize(

@@ -11,6 +11,9 @@ fn owner_edits_preserve_exact_managed_revision_and_owner_whitespace() {
         managed_v3(),
         managed_v4(),
         managed_v5(),
+        managed_v6(),
+        managed_v7(),
+        managed_v8(),
     ] {
         let owner = "  Keep citations.\n\nDo not change my formatting.\n";
         let original = compose_managed(Some(managed), owner);
@@ -58,51 +61,170 @@ fn owner_policy_uses_the_captured_revision_even_after_transport_refresh() {
     assert_eq!(edited.matches(SESSION_GUIDANCE_V1).count(), 1);
     assert_eq!(edited.matches(managed_v3()).count(), 1);
 
-    let owner = format!("{GITHUB_PERMISSION_V1}\n\n  exact owner text\n");
-    agent.profile.content.system_prompt = compose_managed(Some(managed_v5()), &owner);
-    agent.conversation.settings = Some(AgentSettings {
-        system_prompt: Some(agent.profile.content.system_prompt.clone()),
-        ..agent.settings()
-    });
-    assert_eq!(policy.owner_prompt(&agent), owner);
-    assert_eq!(policy.pinned_managed_guidance(&agent), Some(managed_v5()));
-    let edited = policy.compose(&agent, "  New owner text\n");
-    assert_eq!(edited, format!("{}\n\n  New owner text\n", managed_v5()));
-    assert_eq!(edited.matches(GITHUB_PERMISSION_V1).count(), 1);
-    assert_eq!(edited.matches(managed_v4()).count(), 1);
+    for (managed, prefix) in [
+        (managed_v5(), GITHUB_PERMISSION_V1),
+        (managed_v6(), CLARIFICATION_V1),
+        (managed_v7(), PERMISSION_REMEDIATION_V1),
+        (managed_v8(), FIRST_PERMISSION_REPORT_V1),
+    ] {
+        let owner = format!("{prefix}\n\n  exact owner text\n");
+        agent.profile.content.system_prompt = compose_managed(Some(managed), &owner);
+        agent.conversation.settings = Some(AgentSettings {
+            system_prompt: Some(agent.profile.content.system_prompt.clone()),
+            ..agent.settings()
+        });
+        assert_eq!(policy.owner_prompt(&agent), owner);
+        assert_eq!(policy.pinned_managed_guidance(&agent), Some(managed));
+        let edited = policy.compose(&agent, "  New owner text\n");
+        assert_eq!(edited, format!("{managed}\n\n  New owner text\n"));
+        assert_eq!(edited.matches(GITHUB_PERMISSION_V1).count(), 1);
+        assert_eq!(edited.matches(managed_v4()).count(), 1);
+    }
 }
 
 #[test]
 fn new_admission_guidance_requires_explicit_activation() {
     const V4: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED";
     const V5: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED";
-    for (v4, v5, expected) in [
-        (None, None, managed_v3()),
-        (Some("false"), Some("false"), managed_v3()),
-        (Some("true"), Some("false"), managed_v4()),
-        (None, Some("true"), managed_v5()),
-        (Some("true"), Some("true"), managed_v5()),
+    const V6: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V6_ENABLED";
+    const V7: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V7_ENABLED";
+    for (v4, v5, v6, v7, expected) in [
+        (None, None, None, None, managed_v3()),
+        (
+            Some("false"),
+            Some("false"),
+            Some("false"),
+            None,
+            managed_v3(),
+        ),
+        (Some("true"), Some("false"), None, None, managed_v4()),
+        (None, Some("true"), Some("false"), None, managed_v5()),
+        (Some("true"), Some("true"), None, None, managed_v5()),
+        (None, None, Some("true"), None, managed_v6()),
+        (
+            Some("true"),
+            Some("true"),
+            Some("true"),
+            Some("false"),
+            managed_v6(),
+        ),
+        (None, None, None, Some("true"), managed_v7()),
+        (None, None, Some("true"), Some("true"), managed_v7()),
     ] {
         let flags = crate::config::FeatureFlags::from_lookup(&mut |key| {
             Ok(match key {
                 V4 => v4.map(str::to_owned),
                 V5 => v5.map(str::to_owned),
+                V6 => v6.map(str::to_owned),
+                V7 => v7.map(str::to_owned),
                 _ => None,
             })
         })
         .unwrap();
-        assert_eq!(
-            admission_instructions(flags.session_guidance_v4, flags.session_guidance_v5),
-            expected
-        );
+        assert_eq!(configured_admission_instructions(&flags), expected);
     }
-    for flag in [V4, V5] {
+    for flag in [V4, V5, V6, V7] {
         let error = crate::config::FeatureFlags::from_lookup(&mut |key| {
             Ok((key == flag).then(|| "TRUE".to_owned()))
         })
         .unwrap_err();
         assert!(error.contains(flag));
     }
+}
+
+#[test]
+fn clarification_requires_a_question_even_when_part_of_the_task_can_proceed() {
+    let guidance = managed_v6();
+    assert_eq!(
+        guidance.strip_prefix(CLARIFICATION_V1),
+        Some(format!("\n\n{}", managed_v5()).as_str())
+    );
+    for instruction in [
+        "ask a direct question in the first reply",
+        "an answer, issue filing, or both",
+        "Ask even when you can answer a clearly authorized part",
+        "Wait for the owner's answer",
+    ] {
+        assert!(CLARIFICATION_V1.contains(instruction));
+    }
+}
+
+#[test]
+fn permission_gap_progress_message_includes_the_remedy_or_waits() {
+    const V8: &str = "CHRONO_AGENT_SESSION_GUIDANCE_V8_ENABLED";
+    let flags = |v8: Option<&str>| {
+        crate::config::FeatureFlags::from_lookup(&mut |key| {
+            Ok(match key {
+                "CHRONO_AGENT_SESSION_GUIDANCE_V7_ENABLED" => Some("true".to_owned()),
+                V8 => v8.map(str::to_owned),
+                _ => None,
+            })
+        })
+    };
+    assert_eq!(
+        configured_admission_instructions(&flags(None).unwrap()),
+        managed_v7()
+    );
+    assert_eq!(
+        configured_admission_instructions(&flags(Some("false")).unwrap()),
+        managed_v7()
+    );
+    assert!(flags(Some("TRUE")).unwrap_err().contains(V8));
+    let guidance = configured_admission_instructions(&flags(Some("true")).unwrap());
+    assert_eq!(guidance, managed_v8());
+    assert_eq!(
+        guidance.strip_prefix(FIRST_PERMISSION_REPORT_V1),
+        Some(format!("\n\n{}", managed_v7()).as_str())
+    );
+    for required in [
+        "The first public message that mentions a permission denial or missing capability",
+        "the complete owner action in that same message",
+        "progress updates, commentary before tool calls, and final replies",
+        "before making any further tool calls after reporting the gap",
+        "While you are still checking the cause or the remedy, use a neutral progress update",
+        "the smallest grant and its scope, what work you will resume",
+        "include the available fallback in that first report",
+    ] {
+        assert!(
+            FIRST_PERMISSION_REPORT_V1.contains(required),
+            "missing guidance: {required}"
+        );
+    }
+    assert!(guidance.len() <= 16 * 1024);
+}
+
+#[test]
+fn permission_remediation_gives_the_owner_an_exact_action_in_the_first_reply() {
+    let guidance = managed_v7();
+    assert_eq!(
+        guidance.strip_prefix(PERMISSION_REMEDIATION_V1),
+        Some(format!("\n\n{}", managed_v6()).as_str())
+    );
+    for required in [
+        "In the first reply reporting a verified permission gap",
+        "a verified link, a runnable command, or the actual console labels and steps",
+        "Name the smallest grant, who and what it affects, what task you can resume",
+        "the Agent key access dialog in this Agent's conversation",
+        "Review the proposed services and their Sandbox-wide scope",
+        "select the intended connection or complete its checks if prompted, then choose Approve",
+        "If the owner dismissed the dialog, choose Review access request to reopen it",
+        "including during a read-only check",
+        "open Service access, choose Manage on Sandbox",
+        "under Agent key scope on the Access tab",
+        "then choose Save scope",
+        "Keep the existing services selected",
+        "using the selected connection and the intended GitHub operation",
+        "after approval and CMA confirmation",
+        "A read-only check cannot confirm write permission",
+        "offer a working console or control-plane route",
+        "provide a redacted CMA feedback draft for owner review",
+    ] {
+        assert!(
+            PERMISSION_REMEDIATION_V1.contains(required),
+            "missing guidance: {required}"
+        );
+    }
+    assert!(guidance.len() <= 16 * 1024);
 }
 
 #[test]
@@ -130,6 +252,9 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
         managed_v3(),
         managed_v4(),
         managed_v5(),
+        managed_v6(),
+        managed_v7(),
+        managed_v8(),
     ] {
         for (sandbox, workspace) in [
             (None, None),
@@ -172,7 +297,15 @@ fn captured_instructions_survive_replay_and_leave_submitted_request_unchanged() 
             assert_eq!(prompt.contains(MEMORY_V1), instructions != GITHUB_API_V1);
             assert_eq!(
                 prompt.contains(DOCUMENTS_V1),
-                [managed_v3(), managed_v4(), managed_v5()].contains(&instructions)
+                [
+                    managed_v3(),
+                    managed_v4(),
+                    managed_v5(),
+                    managed_v6(),
+                    managed_v7(),
+                    managed_v8(),
+                ]
+                .contains(&instructions)
             );
             assert_eq!(prompt.matches("CMA GitHub workflow:").count(), 1);
             let restored: LifecycleInput =

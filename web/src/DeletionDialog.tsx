@@ -26,9 +26,8 @@ import {
   sameDeletionRequest,
 } from './deletionRecovery';
 import { Modal } from './ui/Modal';
-import { Button } from './ui/Button';
 import { DeletionConfirmation } from './DeletionConfirmation';
-import { DeletionStatusPanel } from './DeletionStatusPanel';
+import { DeletionStatusActions, DeletionStatusPanel } from './DeletionStatusPanel';
 import { transitionRefreshDelay } from './sandbox/lifecycle';
 import { readableError } from './vocabulary/errors';
 export function DeletionDialog({
@@ -154,11 +153,13 @@ export function DeletionDialog({
     let events: DeletionObservation['events'] = [];
     let agentEvents: DeletionObservation['agentEvents'] = [];
     let reading = false;
+    let retirementFailed = false;
     const startedAt = Date.now();
     const settled = () => completed.current || deletionWasSettled(client, latestRequest.current);
     const poll = () => {
       if (
         reading ||
+        retirementFailed ||
         controller.signal.aborted ||
         document.hidden ||
         settled() ||
@@ -199,8 +200,9 @@ export function DeletionDialog({
           events = next.events;
           agentEvents = next.agentEvents;
           setObservation(next);
+          retirementFailed = next.retirementFailed === true;
           setReadError(undefined);
-          if (next.inProgress && !request.accepted && !settled()) {
+          if ((next.inProgress || retirementFailed) && !request.accepted && !settled()) {
             const accepted = { ...request, accepted: true };
             persist(accepted);
             setStarted(true);
@@ -213,7 +215,7 @@ export function DeletionDialog({
             forgetDeletion(identity.viewerId, request.key);
             requestChanged.current?.(undefined);
             changed.current();
-          } else
+          } else if (!retirementFailed)
             timer = setTimeout(poll, request.accepted ? transitionRefreshDelay(startedAt) : 1500);
         })
         .catch((error: unknown) => {
@@ -458,33 +460,28 @@ export function DeletionDialog({
   return (
     <Modal
       open
-      title={complete ? `${target} deleted` : `Deleting ${target}`}
+      title={
+        complete
+          ? `${target} deleted`
+          : observation?.retirementFailed
+            ? `${target} deletion stopped`
+            : `Deleting ${target}`
+      }
       description={name}
       dismissible={!sending}
       onClose={close}
       footer={
-        <>
-          <Button disabled={sending} onClick={close}>
-            {complete ? 'Done' : 'Close'}
-          </Button>
-          {!request.accepted && !complete ? (
-            <Button
-              variant="primary"
-              disabled={sending || blockedBeforeDelete(request) || !enabled}
-              onClick={() => void submit()}
-            >
-              {request.stop?.phase === 'requested' && !deleteMayHaveBeenSent(request)
-                ? 'Retry stop request'
-                : 'Check request'}
-            </Button>
-          ) : null}
-          {request.stop?.phase === 'blocked' && !request.accepted && !complete ? (
-            <Button onClick={abandon}>End this request</Button>
-          ) : null}
-          {readError === undefined || complete ? null : (
-            <Button onClick={() => setRevision((value) => value + 1)}>Refresh status</Button>
-          )}
-        </>
+        <DeletionStatusActions
+          request={request}
+          complete={complete}
+          sending={sending}
+          enabled={enabled}
+          canRefresh={readError !== undefined || observation?.retirementFailed === true}
+          onClose={close}
+          onRetry={() => void submit()}
+          onAbandon={abandon}
+          onRefresh={() => setRevision((value) => value + 1)}
+        />
       }
     >
       <DeletionStatusPanel

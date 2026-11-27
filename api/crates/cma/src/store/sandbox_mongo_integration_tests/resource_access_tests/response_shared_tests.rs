@@ -116,41 +116,58 @@ async fn measure(
     enabled: bool,
     observers: usize,
 ) -> (meter::Stats, Vec<Vec<Value>>) {
-    let replicas = servers_mode(f, enabled).await;
+    let (start_idle, idle_start) = tokio::sync::watch::channel(false);
+    let replicas = response_budget_servers(f, enabled, idle_start).await;
     let client = client();
     f.meter.clear();
-    let mut consumers = Vec::new();
-    let mut buffers = Vec::new();
-    for index in 0..observers {
-        let response = request(
-            &client,
-            f,
-            &replicas[index % 2],
-            &format!("/api/v2/responses/{id}/events"),
-        )
-        .send()
+    let path = format!("/api/v2/responses/{id}/events");
+    let openings = (0..observers).map(|index| {
+        let (client, replica, path) = (&client, &replicas[index % 2], &path);
+        async move {
+            let response = request(client, f, replica, path).send().await.unwrap();
+            assert_eq!(
+                response.status(),
+                reqwest::StatusCode::OK,
+                "{}",
+                response.text().await.unwrap()
+            );
+            let buffer = Arc::new(Mutex::new(Vec::new()));
+            let captured = buffer.clone();
+            let opened = std::time::Instant::now();
+            let consumer = tokio::spawn(async move {
+                let mut body = response.bytes_stream();
+                while let Some(chunk) = body.next().await {
+                    captured.lock().unwrap().extend_from_slice(&chunk.unwrap());
+                }
+                let captured = captured.lock().unwrap();
+                let last_event = events(&captured).pop();
+                let kind = last_event.as_ref().and_then(|event| event["type"].as_str());
+                let code = last_event.as_ref().and_then(|event| event["code"].as_str());
+                panic!(
+                    "unchanged response stream closed: shared={enabled} observer={index} age={:?} last_type={kind:?} code={code:?}",
+                    opened.elapsed()
+                );
+            });
+            (buffer, consumer)
+        }
+    });
+    // Give both routes the same bounded admission concurrency so the shared
+    // route can coalesce pending release checks during cold replay.
+    let (buffers, consumers): (Vec<_>, Vec<_>) = futures_util::stream::iter(openings)
+        .buffered(8)
+        .collect::<Vec<_>>()
         .await
-        .unwrap();
-        assert_eq!(
-            response.status(),
-            reqwest::StatusCode::OK,
-            "{}",
-            response.text().await.unwrap()
-        );
-        let buffer = Arc::new(Mutex::new(Vec::new()));
-        let captured = buffer.clone();
-        consumers.push(tokio::spawn(async move {
-            let mut body = response.bytes_stream();
-            while let Some(chunk) = body.next().await {
-                captured.lock().unwrap().extend_from_slice(&chunk.unwrap());
-            }
-            panic!("unchanged response stream closed");
-        }));
-        buffers.push(buffer);
-    }
+        .into_iter()
+        .unzip();
     readiness::wait_for_replay(&buffers, &consumers).await;
+    let cold_snapshots = f.meter.stats.lock().unwrap().snapshot_commands;
+    start_idle.send_replace(true);
     tokio::time::sleep(Duration::from_secs(12)).await;
     let measured = f.meter.stats.lock().unwrap().clone();
+    eprintln!(
+        "response_snapshot_commands shared={enabled} observers={observers} cold={cold_snapshots} total={}",
+        measured.snapshot_commands
+    );
     for consumer in consumers {
         assert!(!consumer.is_finished());
         consumer.abort();

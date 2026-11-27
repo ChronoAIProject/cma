@@ -42,6 +42,7 @@ pub struct ProviderHostedControlTransport {
     archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
     state: Arc<Mutex<TransportState>>,
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
+    open_reply_loss: Option<(String, Arc<dyn super::HostedOpenReplyLoss>)>,
     native_transport: NativeRuntimeTransport,
     legacy_receiver_image: Option<LegacyReceiverImage>,
     stale_turn_image: Option<String>,

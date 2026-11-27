@@ -8,9 +8,8 @@ pub(super) async fn participants(auth: &AuthState, state: &SubjectAuthState, exp
     tokio::time::timeout(Duration::from_secs(2), async {
         loop {
             let joined = auth
-                .cookie_verifications
-                .entries
-                .lock()
+                .fixture_cookie_verifications()
+                .fixture_entries()
                 .await
                 .get(&key(state))
                 .and_then(Weak::upgrade)
@@ -54,9 +53,8 @@ async fn overlapping_cookie_requests_share_one_provider_check_but_the_next_reque
     }
     assert!(fixture
         .auth
-        .cookie_verifications
-        .entries
-        .lock()
+        .fixture_cookie_verifications()
+        .fixture_entries()
         .await
         .is_empty());
     *fixture.control.introspection.write().await = Reply::json(json!({
@@ -109,9 +107,8 @@ async fn cancelled_initializer_does_not_cancel_a_remaining_callers_verification(
     assert!(second.await.unwrap().is_ok());
     assert!(fixture
         .auth
-        .cookie_verifications
-        .entries
-        .lock()
+        .fixture_cookie_verifications()
+        .fixture_entries()
         .await
         .is_empty());
     fixture.assert_unchanged(&state).await;
@@ -126,9 +123,8 @@ async fn cancellation_of_all_callers_retains_no_authority_and_a_new_request_star
     assert!(first.await.is_err_and(|error| error.is_cancelled()));
     assert!(fixture
         .auth
-        .cookie_verifications
-        .entries
-        .lock()
+        .fixture_cookie_verifications()
+        .fixture_entries()
         .await
         .get(&key(&state))
         .unwrap()
@@ -140,9 +136,8 @@ async fn cancellation_of_all_callers_retains_no_authority_and_a_new_request_star
     assert_eq!(fixture.control.requests.load(Ordering::SeqCst), 5);
     assert!(fixture
         .auth
-        .cookie_verifications
-        .entries
-        .lock()
+        .fixture_cookie_verifications()
+        .fixture_entries()
         .await
         .is_empty());
     fixture.assert_unchanged(&state).await;
@@ -177,9 +172,8 @@ async fn cancelled_initializer_never_restarts_a_waiters_own_total_deadline() {
     gate.release.notify_waiters();
     assert!(fixture
         .auth
-        .cookie_verifications
-        .entries
-        .lock()
+        .fixture_cookie_verifications()
+        .fixture_entries()
         .await
         .get(&key(&state))
         .unwrap()
@@ -222,7 +216,7 @@ async fn a_timed_out_waiter_does_not_remove_a_still_pending_shared_flight() {
 async fn verification_registry_is_bounded_and_never_reuses_a_completed_flight() {
     let fixture = Fixture::new().await;
     let state = fixture.seed().await;
-    let flights = &fixture.auth.cookie_verifications;
+    let flights = &fixture.auth.fixture_cookie_verifications();
     let original = key(&state);
     let first = flights.acquire(&original).await;
     assert!(Arc::ptr_eq(&first, &flights.acquire(&original).await));
@@ -242,11 +236,14 @@ async fn verification_registry_is_bounded_and_never_reuses_a_completed_flight() 
         next.generation = state.token_generation + generation;
         held.push(flights.acquire(&next).await);
     }
-    assert_eq!(flights.entries.lock().await.len(), MAX_VERIFICATION_FLIGHTS);
+    assert_eq!(
+        flights.fixture_entries().await.len(),
+        MAX_VERIFICATION_FLIGHTS
+    );
     drop(held);
     drop(first);
     let fresh = flights.acquire(&original).await;
-    assert_eq!(flights.entries.lock().await.len(), 1);
+    assert_eq!(flights.fixture_entries().await.len(), 1);
     assert!(!fresh.initialized());
 }
 
@@ -255,7 +252,7 @@ async fn verification_keys_separate_subject_incarnation_generation_access_and_ex
     let fixture = Fixture::new().await;
     let state = fixture.seed().await;
     let original = key(&state);
-    let flights = &fixture.auth.cookie_verifications;
+    let flights = &fixture.auth.fixture_cookie_verifications();
     let first = flights.acquire(&original).await;
     for case in 0..5 {
         let mut next = state.clone();

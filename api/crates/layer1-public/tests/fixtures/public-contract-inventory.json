@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 339,
+  "openapi_operations": 340,
   "operations": {
     "POST /api/v1/admin/sandboxes/{id}/runtime-migration": {
       "classification": "openapi",
@@ -161,7 +161,8 @@
         "forbidden",
         "invalid_profile_authoring_query",
         "not_authenticated",
-        "profile_skills_unavailable"
+        "profile_skills_unavailable",
+        "skill_catalog_authorization_required"
       ]
     },
     "POST /api/v1/profile-authoring/repositories/resolve": {
@@ -972,7 +973,7 @@
         "store_failed"
       ],
       "non_problem_statuses": {
-        "400": "api/crates/cma/src/auth/flow.rs# Invalid return destinations use the redirect-flow error document without a code field."
+        "400": "api/crates/cma-am-auth/src/auth/flow.rs# Invalid return destinations use the redirect-flow error document without a code field."
       }
     },
     "GET /auth/logout": {
@@ -984,13 +985,13 @@
     },
     "GET /auth/session": {
       "classification": "supplemental_auth",
-      "source": "api/crates/cma/src/auth/middleware.rs# Session identity outages return identity_unavailable with Retry-After; only GET /auth/session may use bounded recent browser identity evidence. Other operations remain fail closed.",
+      "source": "api/crates/cma-am-auth/src/auth/middleware.rs# Session identity outages return identity_unavailable with Retry-After; only GET /auth/session may use bounded recent browser identity evidence. Other operations remain fail closed.",
       "required_problems": [
         "store_failed",
         "identity_unavailable"
       ],
       "non_problem_statuses": {
-        "401": "api/crates/cma/src/auth/session_routes.rs# Unsigned browser session is an authentication-state response with authenticated false, not a problem document."
+        "401": "api/crates/cma-am-auth/src/auth/session_routes.rs# Unsigned browser session is an authentication-state response with authenticated false, not a problem document."
       }
     },
     "GET /auth/signup-options": {
@@ -3307,6 +3308,26 @@
         "missing_idempotency_key",
         "not_authenticated"
       ]
+    },
+    "DELETE /api/v1/documents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "account_deletion_in_progress",
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ],
+      "unreachable_problems": {
+        "invalid_document_request": "api/crates/layer1-public/src/rest/documents/writes.rs# The required key extractor and typed revision body reject invalid input before the service; revision mismatches return a conflict."
+      }
     },
     "GET /api/v1/documents/{id}/source": {
       "classification": "openapi",

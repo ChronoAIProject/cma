@@ -331,12 +331,12 @@ impl AgentSandboxClient {
 
     /// Called by the hosted backend before binding transport on initial creation,
     /// adoption or resume. Ordinary cold runtimes already carry their environment.
-    pub async fn assign_pool_runtime(
+    pub(crate) async fn assign_pool_runtime(
         &self,
         runtime: &RuntimeHandle,
         expected: &PodBinding,
         request: &ProviderSandboxRequest,
-    ) -> Result<Option<RuntimeBootstrapReceipt>> {
+    ) -> Result<Option<(RuntimeBootstrapReceipt, Option<RuntimeBootstrapRequest>)>> {
         let object = self
             .get(runtime)
             .await?
@@ -360,22 +360,43 @@ impl AgentSandboxClient {
             "CHRONO_RUNTIME_CONTROL_TOKEN".into(),
             self.control_token(&expected.sandbox_name),
         );
+        let staging_startup_failure = self
+            .staging_startup_failure
+            .as_ref()
+            .filter(|fault| {
+                origin.claim.request.home.policy.is_native_vct()
+                    && self.runtime_startup_breaker_enabled()
+                    && fault.targets_assignment(
+                        &origin.claim.request.home.sandbox_id,
+                        expected.runtime_restart_count,
+                        std::time::SystemTime::now(),
+                    )
+            })
+            .and_then(|fault| {
+                fault
+                    .clone()
+                    .bind_incarnation(expected.runtime_container_id.as_deref()?)
+            });
         let bootstrap = RuntimeBootstrapRequest {
             version: RUNTIME_BOOTSTRAP_VERSION,
             pod_uid: expected.pod_uid.clone(),
             environment,
+            staging_startup_failure,
+            staging_startup_confirmed: false,
         };
-        if origin.claim.request.home.policy.is_native_vct() {
-            return self
-                .assign_native_runtime(runtime, expected, request, &bootstrap, &origin)
-                .await
-                .map(Some);
-        }
-        self.validate_request(runtime, request)
-            .await?
-            .ok_or_else(|| unavailable("native Sandbox disappeared before assignment"))?;
-        self.assign_runtime(runtime, expected, &bootstrap)
-            .await
-            .map(Some)
+        let receipt = if origin.claim.request.home.policy.is_native_vct() {
+            self.assign_native_runtime(runtime, expected, request, &bootstrap, &origin)
+                .await?
+        } else {
+            self.validate_request(runtime, request)
+                .await?
+                .ok_or_else(|| unavailable("native Sandbox disappeared before assignment"))?;
+            self.assign_runtime(runtime, expected, &bootstrap).await?
+        };
+        let confirmation = bootstrap
+            .staging_startup_failure
+            .is_some()
+            .then_some(bootstrap);
+        Ok(Some((receipt, confirmation)))
     }
 }

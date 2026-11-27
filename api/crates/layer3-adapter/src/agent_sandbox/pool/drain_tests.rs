@@ -380,3 +380,58 @@ async fn positive_retirement_target_never_delegates_deletion_to_the_controller()
     }
     unchanged(&fixture, before);
 }
+
+#[tokio::test]
+async fn spare_drain_requests_the_provider_without_downscaling_and_replays_a_lost_response() {
+    let (fixture, home) = fixture(false).await;
+    let pool = binding(&home);
+    let request = "cma/native-pool-spare-drain-v1";
+    fixture.edit("sandboxwarmpools", &pool.name, |row| {
+        row["spec"]["replicas"] = json!(2);
+    });
+    fixture.lost("PATCH", "sandboxwarmpools");
+    for _ in 0..2 {
+        assert!(fixture
+            .client
+            .request_spare_drain(pool, std::slice::from_ref(&home), &[])
+            .await
+            .is_err());
+    }
+    let row = fixture.row("sandboxwarmpools", &pool.name);
+    assert_eq!(row["spec"]["replicas"], 2);
+    assert_eq!(row["metadata"]["annotations"][request], pool.uid);
+    {
+        let state = fixture.state.lock().unwrap();
+        let writes = state
+            .calls
+            .iter()
+            .filter(|(call, _)| !call.starts_with("GET "))
+            .collect::<Vec<_>>();
+        assert_eq!(writes.len(), 1);
+        let (call, patch) = writes[0];
+        assert!(call.starts_with("PATCH "));
+        assert_eq!(patch["metadata"]["uid"], pool.uid);
+        assert!(patch["metadata"]["resourceVersion"].as_str().is_some());
+        assert!(patch.get("spec").is_none());
+    }
+
+    fixture.edit("sandboxwarmpools", &pool.name, |row| {
+        row["spec"]["replicas"] = json!(0);
+        row["metadata"]["generation"] = json!(8);
+        row["status"]["observedGeneration"] = json!(7);
+    });
+    assert!(fixture
+        .client
+        .request_spare_drain(pool, std::slice::from_ref(&home), &[])
+        .await
+        .is_err());
+    fixture.edit("sandboxwarmpools", &pool.name, |row| {
+        row["status"]["observedGeneration"] = json!(8);
+        row["status"]["readyReplicas"] = json!(0);
+    });
+    fixture
+        .client
+        .request_spare_drain(pool, std::slice::from_ref(&home), &[])
+        .await
+        .unwrap();
+}

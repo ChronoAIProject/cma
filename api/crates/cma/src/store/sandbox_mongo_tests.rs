@@ -57,29 +57,6 @@ fn integer_conversion_keeps_the_bson_signed_boundary() {
     );
 }
 
-#[test]
-fn transaction_server_requires_topology_and_snapshot_support() {
-    assert!(
-        validate_transaction_server(&doc! { "setName": "rs0", "maxWireVersion": 13_i32 }).is_ok()
-    );
-    assert!(
-        validate_transaction_server(&doc! { "msg": "isdbgrid", "maxWireVersion": 25_i64 }).is_ok()
-    );
-
-    let standalone = validate_transaction_server(&doc! { "maxWireVersion": 25_i32 })
-        .unwrap_err()
-        .to_string();
-    assert!(standalone.contains("replica set or mongos"));
-    let old = validate_transaction_server(&doc! { "setName": "rs0", "maxWireVersion": 12_i32 })
-        .unwrap_err()
-        .to_string();
-    assert!(old.contains("MongoDB 5.0 or later"));
-    let missing = validate_transaction_server(&doc! { "setName": "rs0" })
-        .unwrap_err()
-        .to_string();
-    assert!(missing.contains("maxWireVersion"));
-}
-
 #[tokio::test(start_paused = true)]
 async fn reconciliation_deadline_detaches_instead_of_cancelling_driver_work() {
     let (release, blocked) = tokio::sync::oneshot::channel::<()>();

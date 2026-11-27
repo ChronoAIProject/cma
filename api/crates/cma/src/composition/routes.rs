@@ -38,6 +38,18 @@ pub(super) fn stream_budget(resources: Router, limit: usize) -> Router {
     ))
 }
 
+pub(super) fn health(
+    stores: &Arc<MongoStores>,
+    workers: &crate::worker_supervision::Workers,
+    config: &crate::config::Config,
+) -> Result<Router, String> {
+    Ok(crate::health::router_with_workers(
+        stores.clone(),
+        workers.clone(),
+        crate::health::pointer_release_source(stores, config)?,
+    ))
+}
+
 pub(super) fn compose(
     resources: Router,
     connections: Arc<BrowserConnections>,
@@ -214,7 +226,10 @@ pub(super) fn tools(
 ) -> Result<Router, String> {
     Ok(tools.merge(crate::auth::service_portal::router(
         auth.clone(),
-        config.gateway.as_ref(),
+        config
+            .gateway
+            .as_ref()
+            .map(|gateway| gateway.base_url.as_str()),
     )?))
 }
 

@@ -16,6 +16,8 @@ from staging_cd_versions import REPOSITORY
 PAGE_SIZE = 12
 FENCE_SECONDS = 2
 PREFIX = "Verified staging receipts "
+PROTECTED_WEB_JOB = "Publish protected Web / Protect Web rollout / "
+WEB_OBSERVER_JOB = PROTECTED_WEB_JOB + "Read serving Web"
 WORKFLOWS = {".github/workflows/staging-cd.yml": ("push", "infrastructure"),
              ".github/workflows/redeploy-staging.yml": ("workflow_dispatch", "resolve")}
 # The newest writer of each component, read as one fenced snapshot: proofs of
@@ -45,6 +47,9 @@ def proven_components(evidence, latest, history):
         receipts = {key: latest[key] for key in keys}
         if row["writer"] not in history.positions or any(history.position(r["source"]) > history.position(row["writer"])
                                                         for r in receipts.values()):
+            continue
+        # A previous mixed-component stamp cannot prove a standalone two-phase Web release.
+        if len(receipts) > 1 and "asset_continuity" in receipts.get("web", {}):
             continue
         request = private_document(release_set(receipts))
         if proof(request["components"]) == stamp:
@@ -80,7 +85,7 @@ def observation(deployment, request):
             or run.get("head_repository", {}).get("full_name") != REPOSITORY or run.get("event") != workflow[0]
             or run.get("head_sha") != source or run.get("head_branch") != "develop" or deployment.get("ref") != "develop"):
         return blocked
-    if job["name"] == workflow[1]:
+    if job["name"] == workflow[1] or (run["event"] == "push" and job["name"] == WEB_OBSERVER_JOB):
         return set(), ""
     scope = TARGETS
     if run["event"] == "push":
@@ -94,8 +99,13 @@ def observation(deployment, request):
 
 def push_scope(name):
     """The components a develop push run's deploy job writes, or None for any other job."""
-    lane = re.fullmatch(r"Promote ([a-z-]+) / Deploy admitted components(?: again)? / Deploy set", name or "")
+    name = name or ""
+    protected = name.startswith(PROTECTED_WEB_JOB)
+    lane = re.fullmatch(r"Promote ([a-z-]+) / Deploy admitted components(?: again)? / Deploy set",
+                        name.removeprefix(PROTECTED_WEB_JOB))
     if not lane or lane[1] not in TARGETS | {"contract"}:
+        return None
+    if protected and lane[1] != "web":
         return None
     return GROUP if lane[1] == "contract" else {lane[1]}
 

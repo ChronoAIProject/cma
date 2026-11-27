@@ -21,7 +21,7 @@ impl DatabaseFixture {
         Self::with_migration(binary, "--migrate-replicas").await
     }
     async fn with_migration(binary: &std::path::Path, migration: &str) -> Self {
-        let uri = std::env::var("CMA_IM_TEST_MONGODB_URI")
+        let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI")
             .expect("run the authenticated service Mongo contract");
         let admin = Client::with_uri_str(&uri).await.unwrap();
         let name = format!("cma_eg_process_{}", uuid::Uuid::new_v4().simple());

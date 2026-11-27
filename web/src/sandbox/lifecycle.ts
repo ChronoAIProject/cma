@@ -40,6 +40,16 @@ export function sandboxRetirementWaitExceeded(sandbox: SandboxRetirementObservat
   );
 }
 
+export function sandboxRetirementFailed(sandbox: SandboxRetirementObservation): boolean {
+  const result = sandbox.lifecycle?.result;
+  return (
+    sandbox.status === 'retiring' &&
+    result?.state === 'failed' &&
+    result.code === 'retirement_retry_exhausted' &&
+    !result.continuing
+  );
+}
+
 export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
   return [
     'active',

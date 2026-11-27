@@ -1,9 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   connectionClient,
+  isConnectionReport,
   type ConnectionReport,
   type ConnectionTarget,
 } from '../connections/client';
+import { observeRead } from './transport/readObserver';
+import { readRetryDelay } from './transport/readRetry';
 
 /** Complete optional external sign-in before the owner's final scope approval. */
 export function useScopeConnections(
@@ -27,41 +30,55 @@ export function useScopeConnections(
     report?: ConnectionReport;
     error?: string;
   }>();
-  const [reload, setReload] = useState(0);
+  const observer = useRef<ReturnType<typeof observeRead> | undefined>(undefined);
   useEffect(() => {
     if (!enabled || !owner) return;
-    const controller = new AbortController();
-    void connectionClient
-      .check(target, undefined, controller.signal)
-      .then((report) => {
-        if (controller.signal.aborted) return;
-        if (report.owner !== owner)
-          throw new Error('Your CMA account changed. Open the Agent again.');
-        setResult({ scope, report });
-      })
-      .catch((cause: unknown) => {
-        if (!controller.signal.aborted)
+    const access = observeRead(
+      async (signal) => {
+        setResult(undefined);
+        try {
+          const report = await connectionClient.check(target, undefined, signal);
+          if (signal.aborted) return;
+          if (!isConnectionReport(report))
+            throw new Error('Service connections could not be verified.');
+          if (report.owner !== owner)
+            throw new Error('Your CMA account changed. Open the Agent again.');
+          setResult({ scope, report });
+          // Connections may be completed outside this tab. Recheck on focus or
+          // an explicit retry without polling while the owner is away.
+          return report.ready ? undefined : { cooldown: 0 };
+        } catch (cause) {
+          if (signal.aborted) return;
           setResult({
             scope,
             error:
               cause instanceof Error ? cause.message : 'Service connections could not be verified.',
           });
-      });
-    return () => controller.abort();
-  }, [enabled, owner, target, scope, reload]);
+          return { cooldown: readRetryDelay(cause, 1), failed: true };
+        }
+      },
+      { immediateForeground: true },
+    );
+    observer.current = access;
+    return () => {
+      observer.current = undefined;
+      access.dispose();
+    };
+  }, [enabled, owner, target, scope]);
   const current = result?.scope === scope ? result : undefined;
   return {
     target,
     ready: enabled && current?.report?.ready === true,
     checking: enabled && !!owner && current === undefined,
     needsConnection: current?.report?.ready === false,
+    missingServices: current?.report?.services.filter((service) => service.state !== 'satisfied'),
     error: current?.error,
-    retry: () => {
-      setResult(undefined);
-      setReload((value) => value + 1);
-    },
+    retry: () => observer.current?.refresh(),
     connected: (report: ConnectionReport) => {
-      if (report.owner === owner && report.ready) setResult({ scope, report });
+      if (isConnectionReport(report) && report.owner === owner && report.ready) {
+        observer.current?.dispose();
+        setResult({ scope, report });
+      }
     },
   };
 }

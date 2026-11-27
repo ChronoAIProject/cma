@@ -68,26 +68,28 @@ export function ResponseStop({
   const action = shortcut ? 'Stop response (Esc)' : 'Stop response';
   return (
     <>
-      {hint ? (
-        <span id={id} className="agent-composer__stop-hint">
-          {hint}
-        </span>
-      ) : null}
       {control.enabled ? (
-        <span className="sr-only" id={scopeId}>
+        <span className="agent-composer__stop-scope" id={scopeId}>
           {RESPONSE_STOP_COMMAND_NOTICE}
         </span>
       ) : null}
-      <Button
-        placement="agent-composer__submit agent-composer__submit--stop"
-        variant="primary"
-        icon={<IconStopFill16 />}
-        aria-label={control.inProgress ? 'Stopping response' : 'Stop response'}
-        aria-describedby={description || undefined}
-        title={control.notice ?? `${action}. ${RESPONSE_STOP_COMMAND_NOTICE}`}
-        disabled={!control.enabled}
-        onClick={control.stop}
-      />
+      <div className="agent-composer__actions">
+        {hint ? (
+          <span id={id} className="agent-composer__stop-hint">
+            {hint}
+          </span>
+        ) : null}
+        <Button
+          placement="agent-composer__submit agent-composer__submit--stop"
+          variant="primary"
+          icon={<IconStopFill16 />}
+          aria-label={control.inProgress ? 'Stopping response' : 'Stop response'}
+          aria-describedby={description || undefined}
+          title={control.notice ?? `${action}. ${RESPONSE_STOP_COMMAND_NOTICE}`}
+          disabled={!control.enabled}
+          onClick={control.stop}
+        />
+      </div>
     </>
   );
 }

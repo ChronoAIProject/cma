@@ -34,6 +34,7 @@ import { exportRawHistory } from './rest/history';
 import { readReplyPreview } from './rest/replyPreview';
 import { readOriginalRequest } from './rest/originalRequest';
 import { BusinessReadError, readBusinessProblem } from './rest/businessReadProblem';
+import { readWorkspaceDetail } from './rest/workspaceRead';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -264,7 +265,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       return { items: page.items.map(sandboxSummary), next: page.next };
     },
     readSandbox: async (id, options) => sandboxDetail(await sdk.sandboxes.read(id, options)),
-    readWorkspace: async (id, options) => workspaceDetail(await sdk.workspaces.read(id, options)),
+    readWorkspace: (id, options) => readWorkspaceDetail(sdk, id, options),
     readAgent: async (id, options) => agentDetail(await sdk.agents.read(id, options)),
     readAgentResources: (id, options) => sdk.agents.resources(id, options),
     readAgentSource: (id, options) => sdk.agents.sourceAccessible(id, options),
