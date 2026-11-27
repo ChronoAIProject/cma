@@ -1,21 +1,66 @@
 use super::*;
 use crate::sandbox::conversation_recorder::live::{AgentLiveFragmentKind, AgentLiveHub};
 use crate::AgentId;
+use std::{
+    alloc::{GlobalAlloc, Layout, System},
+    cell::{Cell, RefCell},
+    sync::Barrier,
+};
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
+
+struct TestAllocator;
+
+#[global_allocator]
+static ALLOCATOR: TestAllocator = TestAllocator;
+
+thread_local! {
+    static REQUESTED: Cell<Option<usize>> = const { Cell::new(None) };
+    static BEFORE_COPY: RefCell<Option<Arc<Barrier>>> = const { RefCell::new(None) };
+}
+
+// SAFETY: All allocation and deallocation requests use System and its layouts.
+unsafe impl GlobalAlloc for TestAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        let barrier = BEFORE_COPY
+            .try_with(|pause| pause.borrow_mut().take())
+            .ok()
+            .flatten();
+        if let Some(barrier) = barrier {
+            barrier.wait();
+            barrier.wait();
+        }
+        let _ = REQUESTED.try_with(|bytes| {
+            if let Some(total) = bytes.get() {
+                bytes.set(Some(total.saturating_add(layout.size())));
+            }
+        });
+        unsafe { System.alloc(layout) }
+    }
+
+    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
+        unsafe { System.dealloc(ptr, layout) };
+    }
+}
+
+fn requested_bytes<T>(run: impl FnOnce() -> T) -> (usize, T) {
+    REQUESTED.set(Some(0));
+    let result = run();
+    (REQUESTED.replace(None).unwrap(), result)
+}
 
 #[test]
 fn live_fragments_compete_with_adapter_storage_and_keep_the_last_owner_charged() {
     let source = fragment("one", "retained");
-    let bytes = retained_bytes(&source).unwrap() as usize;
+    let bytes = coordinated_bytes(&source, &source.delta).unwrap();
     let aggregate = IngressBudget::new(bytes);
     let local = Arc::new(Semaphore::new(bytes));
     let budget = LiveBudget(local, Some(aggregate.clone()));
     let external = Arc::new(Semaphore::new(bytes));
     let held = IngressReservation::try_acquire(&external, Some(&aggregate), bytes).unwrap();
-    assert!(budget.retain(source.clone()).is_none());
+    assert!(budget.copy_chunk(&source, &source.delta).is_none());
     assert_eq!(budget.available(), bytes);
     drop(held);
-    let first = budget.retain(source).unwrap();
+    let first = budget.copy_chunk(&source, &source.delta).unwrap();
     let last = first.clone();
     drop(first);
     assert_eq!(aggregate.available_bytes(), 0);
@@ -31,11 +76,43 @@ fn production_live_pool_uses_the_same_process_coordinator_as_the_adapter() {
     let before = root.available_bytes();
     let live = LiveBudget::process_coordinated();
     let source = fragment("one", "source");
-    let weight = retained_bytes(&source).unwrap() as usize;
-    let held = live.retain(source).unwrap();
+    let weight = coordinated_bytes(&source, &source.delta).unwrap();
+    let held = live.copy_chunk(&source, &source.delta).unwrap();
     assert_eq!(root.available_bytes(), before - weight);
     drop(held);
     assert_eq!(root.available_bytes(), before);
+}
+
+#[test]
+fn coordinated_copy_accounts_for_requested_allocations_before_copying() {
+    let mut source = fragment("agent", "the entire source is distinct from the slice");
+    source.agent_id.0.reserve(256);
+    source.message_id.reserve(512);
+    source.delta.reserve(1024);
+    let chunk = "é😀";
+    let bytes = coordinated_bytes(&source, chunk).unwrap();
+    for (local, root) in [(bytes - 1, bytes), (bytes, bytes - 1), (bytes, bytes)] {
+        let aggregate = IngressBudget::new(root);
+        let budget = LiveBudget(Arc::new(Semaphore::new(local)), Some(aggregate.clone()));
+        // Warm the semaphore's platform-specific backing outside the measurement.
+        drop(budget.copy_chunk(&source, chunk));
+        let (requested, delivery) = requested_bytes(|| budget.copy_chunk(&source, chunk));
+        if local == bytes && root == bytes {
+            let delivery = delivery.unwrap();
+            assert_eq!(requested, bytes);
+            assert_eq!(budget.available(), 0);
+            assert_eq!(aggregate.available_bytes(), 0);
+            assert_eq!(delivery.agent_id, source.agent_id);
+            assert_eq!(delivery.message_id, source.message_id);
+            assert_eq!(delivery.delta, chunk);
+            drop(delivery);
+        } else {
+            assert_eq!(requested, 0);
+            assert!(delivery.is_none());
+        }
+        assert_eq!(budget.available(), local);
+        assert_eq!(aggregate.available_bytes(), root);
+    }
 }
 
 fn fragment(id: &str, text: &str) -> AgentLiveFragment {
@@ -56,6 +133,42 @@ fn setup(bytes: usize) -> (Arc<LiveBudget>, AgentLiveHub) {
     (budget, hub)
 }
 
+fn coordinated_setup(bytes: usize) -> (Arc<LiveBudget>, AgentLiveHub) {
+    let budget = Arc::new(LiveBudget(
+        Arc::new(Semaphore::new(bytes)),
+        Some(IngressBudget::new(bytes)),
+    ));
+    (budget.clone(), AgentLiveHub::with_budget(budget))
+}
+
+#[test]
+fn coordinated_delivery_releases_capacity_when_the_last_receiver_exits_before_send() {
+    let source = fragment("one", "last receiver");
+    let bytes = coordinated_bytes(&source, &source.delta).unwrap();
+    let (budget, hub) = coordinated_setup(bytes);
+    drop(budget.copy_chunk(&source, &source.delta));
+    let receiver = hub.subscribe(&source.agent_id);
+    let barrier = Arc::new(Barrier::new(2));
+    std::thread::scope(|scope| {
+        let peer = barrier.clone();
+        scope.spawn(move || {
+            peer.wait();
+            drop(receiver);
+            peer.wait();
+        });
+        // The first allocation in publish is after it holds the lane sender.
+        BEFORE_COPY.with(|pause| *pause.borrow_mut() = Some(barrier));
+        hub.publish(Some(source));
+        if let Some(unused) = BEFORE_COPY.with(|pause| pause.borrow_mut().take()) {
+            unused.wait();
+            unused.wait();
+            panic!("publish did not construct a coordinated delivery");
+        }
+    });
+    assert_eq!(budget.available(), bytes);
+    assert_eq!(budget.1.as_ref().unwrap().available_bytes(), bytes);
+}
+
 #[test]
 fn retained_clone_holds_actual_string_capacity_until_last_drop() {
     let mut source = fragment("one", "private text");
@@ -63,11 +176,11 @@ fn retained_clone_holds_actual_string_capacity_until_last_drop() {
     let bytes = retained_bytes(&source).unwrap() as usize;
     assert!(bytes > 1024);
     let budget = LiveBudget::new(bytes);
-    let first = budget.retain(source).unwrap();
+    let first = budget.retain_local(source).unwrap();
     let clone = first.clone();
     assert!(std::ptr::eq(first.deref(), clone.deref()));
     assert_eq!(budget.available(), 0);
-    assert!(budget.retain(fragment("two", "next")).is_none());
+    assert!(budget.retain_local(fragment("two", "next")).is_none());
     assert!(!format!("{clone:?}").contains("private text"));
     drop(first);
     assert_eq!(budget.available(), 0);
@@ -98,8 +211,8 @@ async fn lanes_share_capacity_and_return_ordered_gaps_without_blocking() {
 #[test]
 fn subscriber_deferred_copy_retains_reservation_after_every_lane_closes() {
     let source = fragment("one", "first");
-    let bytes = retained_bytes(&source).unwrap() as usize;
-    let (budget, hub) = setup(bytes);
+    let bytes = coordinated_bytes(&source, &source.delta).unwrap();
+    let (budget, hub) = coordinated_setup(bytes);
     let mut first = hub.subscribe(&source.agent_id);
     let mut second = hub.subscribe(&source.agent_id);
     hub.publish(Some(source));
@@ -107,7 +220,10 @@ fn subscriber_deferred_copy_retains_reservation_after_every_lane_closes() {
     let deferred = held.clone();
     let other = second.try_recv().unwrap();
     assert!(std::ptr::eq(held.deref(), other.deref()));
-    drop((first, second, held, other));
+    std::thread::scope(|scope| {
+        scope.spawn(|| drop((first, held)));
+        scope.spawn(|| drop((second, other)));
+    });
     assert_eq!(budget.available(), 0);
     drop(deferred);
     assert_eq!(budget.available(), bytes);
@@ -116,8 +232,8 @@ fn subscriber_deferred_copy_retains_reservation_after_every_lane_closes() {
 #[test]
 fn gap_is_after_the_accepted_frame_and_before_later_recovered_delivery() {
     let source = fragment("one", "first");
-    let bytes = retained_bytes(&source).unwrap() as usize;
-    let (budget, hub) = setup(bytes);
+    let bytes = coordinated_bytes(&source, &source.delta).unwrap();
+    let (budget, hub) = coordinated_setup(bytes);
     let mut watching = hub.subscribe(&source.agent_id);
     hub.publish(Some(source));
     hub.publish(Some(fragment("one", "refused")));
@@ -132,7 +248,7 @@ fn gap_is_after_the_accepted_frame_and_before_later_recovered_delivery() {
 #[test]
 fn utf8_fragments_are_shared_and_bounded_without_unaccounted_coalescing() {
     let text = "€".repeat(7000);
-    let (budget, hub) = setup(65536);
+    let (budget, hub) = coordinated_setup(65536);
     let mut first = hub.subscribe(&AgentId("one".into()));
     let mut second = hub.subscribe(&AgentId("one".into()));
     hub.publish(Some(fragment("one", &text)));
