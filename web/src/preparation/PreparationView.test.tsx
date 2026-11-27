@@ -1,7 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
+import { agentMascotAssets } from '../brand/agentMascotAssets';
 import { PreparationView } from './PreparationView';
-import { derivePreparationView } from './preparationPresentation';
+import { derivePreparationView, type PreparationFacts } from './preparationPresentation';
 
 it('shows one original request and keeps recovery actions outside collapsed setup details', () => {
   const retry = vi.fn();
@@ -65,3 +66,37 @@ it('makes the original acceptance timestamp focusable and never turns progress i
   expect(time.getAttribute('title')).toBe(time.getAttribute('aria-label'));
   expect(screen.queryByText(/Last progress/)).toBeNull();
 });
+
+const receipt = { id: 'operation' };
+const succeeded = { id: receipt.id, status: 'succeeded', phase: 'completed', events: [] };
+
+it.each([
+  ['preparing', { receipt }, 'Getting its cloud computer ready'],
+  ['question', { connectionRequired: true }, 'Waiting for connection'],
+  ['rest', { receipt, readError: 'Read interrupted' }, 'Setup updates interrupted'],
+  ['failed', { receipt, setupFailure: 'Confirmed failure' }, 'Setup needs attention'],
+  ['rest', { receipt, environmentReady: true }, 'Cloud computer ready'],
+  ['rest', { receipt, operation: succeeded }, 'Cloud computer ready'],
+  [
+    'ready',
+    { receipt, operation: { ...succeeded, agent_id: 'agent' }, agentId: 'agent' },
+    'Cloud computer ready',
+  ],
+  [
+    'rest',
+    { receipt, operation: { ...succeeded, agent_id: 'old-agent' }, agentId: 'agent' },
+    'Cloud computer ready',
+  ],
+] as const)(
+  'uses one decorative %s poster with the existing setup text',
+  (action, facts, title) => {
+    const model = derivePreparationView(facts satisfies PreparationFacts);
+    const { container } = render(<PreparationView model={model} />);
+    const poster = container.querySelector('.agent-mascot__poster');
+    expect(screen.getByRole('heading', { name: title })).toBeVisible();
+    expect(container.querySelectorAll('.agent-mascot')).toHaveLength(1);
+    expect(poster).toHaveAttribute('src', agentMascotAssets[action].light.posters[48]);
+    expect(poster?.closest('[aria-hidden="true"]')).not.toBeNull();
+    expect(screen.queryByRole('progressbar')).toBeNull();
+  },
+);

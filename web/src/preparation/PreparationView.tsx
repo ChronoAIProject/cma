@@ -1,10 +1,24 @@
-import type { ReactNode } from 'react';
-import { CharacterAvatar } from '../character/CharacterAvatar';
+import { useMemo, type ReactNode } from 'react';
+import type { CmaWebClient } from '../api/client';
+import { AgentMascot } from '../brand/AgentMascot';
 import { Badge } from '../ui/Badge';
 import { activityLabel } from '../shell/treePresentation';
 import type { PreparationPresentation } from './preparationPresentation';
 import { PreparationMessage } from './PreparationMessage';
 import './PreparationView.css';
+
+export interface PreparationMotionContext {
+  readonly client: CmaWebClient;
+  readonly viewerId?: string;
+  readonly authEpoch?: number;
+  readonly visible?: boolean;
+}
+
+interface PreparationMotion extends PreparationMotionContext {
+  readonly requestKey?: string;
+  readonly agentId?: string;
+  readonly incarnation?: string;
+}
 
 function EvidenceTime({ value }: { readonly value: string }) {
   const absolute = new Date(value).toLocaleString();
@@ -18,6 +32,7 @@ function EvidenceTime({ value }: { readonly value: string }) {
 
 export function PreparationView({
   model,
+  motion,
   message,
   details,
   actions,
@@ -26,6 +41,7 @@ export function PreparationView({
   titleId,
 }: {
   readonly model: PreparationPresentation;
+  readonly motion?: PreparationMotion;
   readonly message?: string;
   readonly details?: ReactNode;
   readonly actions?: ReactNode;
@@ -33,6 +49,11 @@ export function PreparationView({
   readonly draft?: ReactNode;
   readonly titleId?: string;
 }) {
+  const { client, viewerId, authEpoch, requestKey, agentId, incarnation, visible } = motion ?? {};
+  const scope = useMemo(
+    () => ({ client, viewerId, authEpoch, requestKey, agentId, incarnation }),
+    [client, viewerId, authEpoch, requestKey, agentId, incarnation],
+  );
   if (model.started) return null;
   return (
     <section className="preparation" aria-label="Task preparation">
@@ -44,11 +65,14 @@ export function PreparationView({
       </header>
       {message !== undefined ? <PreparationMessage text={message} /> : null}
       <div className="preparation__hero">
-        <CharacterAvatar
-          pose={model.stage === 'failed' ? 'failed' : 'preparing'}
-          size={88}
-          still={!model.animate}
-        />
+        <span inert={visible === false || undefined}>
+          <AgentMascot
+            visual={model.visual}
+            size={48}
+            decorative
+            playback={{ scope, enabled: model.animate && Boolean(viewerId) }}
+          />
+        </span>
         <div>
           <h2>{model.headline}</h2>
           {model.notStarted ? (
