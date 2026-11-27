@@ -362,6 +362,11 @@ impl Worker {
             return;
         }
         if self.reported.len() < HOLD_CAPACITY || self.reported.contains_key(&candidate) {
+            tracing::info!(
+                command_id = %candidate.command,
+                reason,
+                "Stale turn reconciliation held"
+            );
             self.reported
                 .insert(candidate, (reason, Instant::now() + HOLD_INTERVAL));
         }
