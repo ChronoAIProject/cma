@@ -16,7 +16,7 @@ const props: Props = {
   children: <textarea aria-label="Your task" defaultValue="Keep my draft" />,
 };
 
-it('defaults to null and retains the existing mascot without a provider', () => {
+it('renders one static rest poster with no decoration provider', () => {
   function DefaultSlot() {
     const value = useContext(TaskHomeDecorationContext);
     expect(value).toBeNull();
@@ -24,7 +24,10 @@ it('defaults to null and retains the existing mascot without a provider', () => 
   }
   const { container } = render(<DefaultSlot />);
   expect(container.querySelector('.task-home__decoration')).toBeEmptyDOMElement();
-  expect(container.querySelector('.character-avatar')).toHaveAttribute('data-motion', 'still');
+  const mascot = container.querySelector('.task-home__first-mascot');
+  expect(mascot).toHaveAttribute('aria-hidden', 'true');
+  expect(mascot?.querySelectorAll('.agent-mascot__poster')).toHaveLength(1);
+  expect(mascot?.querySelector('.agent-mascot__sprite')).toBeNull();
   expect(screen.getByRole('heading', { name: 'Give it a job.' })).toBeVisible();
 });
 
