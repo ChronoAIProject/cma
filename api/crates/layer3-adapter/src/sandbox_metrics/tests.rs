@@ -31,7 +31,10 @@ fn measured_production_fixture_preserves_all_four_raw_sources() {
         let decoded = decode_export(&serde_json::to_vec(row).unwrap(), &selection(metric)).unwrap();
         assert_eq!(decoded.len(), 1);
         assert_eq!(decoded[0].samples.len(), 10);
-        assert!(decoded[0].samples.iter().all(|s| s.value > 0.));
+        assert!(decoded[0]
+            .samples
+            .iter()
+            .all(|s| s.value.is_some_and(|value| value > 0.)));
         assert!(decoded[0]
             .samples
             .windows(2)

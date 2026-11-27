@@ -202,6 +202,23 @@ impl MetricsWorkers {
         bindings: &[Binding],
         range: Range,
     ) -> Result<(Vec<PhysicalSeries>, bool)> {
+        self.read_source(bindings, range, true).await
+    }
+
+    pub(super) async fn raw_for_measured_evidence(
+        &self,
+        bindings: &[Binding],
+        range: Range,
+    ) -> Result<(Vec<PhysicalSeries>, bool)> {
+        self.read_source(bindings, range, false).await
+    }
+
+    async fn read_source(
+        &self,
+        bindings: &[Binding],
+        range: Range,
+        allow_stale: bool,
+    ) -> Result<(Vec<PhysicalSeries>, bool)> {
         let Some(source) = &self.source else {
             return Ok((Vec::new(), false));
         };
@@ -258,7 +275,14 @@ impl MetricsWorkers {
                 )
                 .await
                 {
-                    Ok(Ok(values)) => result.extend(values),
+                    Ok(Ok(values))
+                        if allow_stale
+                            || values.iter().all(|series| {
+                                series.samples.iter().all(|sample| sample.value.is_some())
+                            }) =>
+                    {
+                        result.extend(values);
+                    }
                     _ => complete = false,
                 }
                 self.store.release(slot, &holder).await?;
