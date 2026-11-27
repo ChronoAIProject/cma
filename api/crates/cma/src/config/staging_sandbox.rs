@@ -104,6 +104,9 @@ mod tests {
         })
         .unwrap();
         assert_eq!(controls.open_reply_loss.as_deref(), Some(other));
-        assert_eq!(controls.park_runtime_update, Some(SandboxId(FIXTURE.into())));
+        assert_eq!(
+            controls.park_runtime_update,
+            Some(SandboxId(FIXTURE.into()))
+        );
     }
 }
