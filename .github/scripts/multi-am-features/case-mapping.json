@@ -887,9 +887,9 @@
   },
   "cma-user.documents.edit": {
     "cases": [
-      "user.documents_create_edit_conflict"
+      "user.documents_browser_edit_and_conflict"
     ],
-    "blocked": "API assertions prepared; required real-browser controls and draft/navigation behavior remain unimplemented",
+    "browser": true,
     "minimum_runs": 3,
     "phases": [
       "before_restart",
@@ -917,9 +917,9 @@
   },
   "cma-user.documents.conflict-draft": {
     "cases": [
-      "user.documents_create_edit_conflict"
+      "user.documents_browser_edit_and_conflict"
     ],
-    "blocked": "API assertions prepared; required real-browser controls and draft/navigation behavior remain unimplemented",
+    "browser": true,
     "minimum_runs": 3,
     "phases": [
       "before_restart",

@@ -9,6 +9,7 @@ import {ADMIN_PERMISSIONS} from './features/admin_matrix.mjs';
 import {userCases} from './features/user.mjs';
 import {documentCases} from './features/documents.mjs';
 import {createDocumentAfterLostReply} from './features/document_creation_browser.mjs';
+import {documentEditAndConflict} from './features/document_edit_browser.mjs';
 import {busyConfigurationCase, competingSystemPrompts, configurationCases, heldConfigurationCases, assertWriterTitle,
   verifyLifecycleReplay} from './features/agent_configuration.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
@@ -121,9 +122,7 @@ async function accountBrowserCases(ams, witness) {
     ['user.account_build_version', page => accountBuildVersion(page, config.expected_api_source)],
     ['user.account_documentation', page => accountDocumentation(page, witness.agentId)],
     ['user.navigation_legacy_routes', legacyNavigation],
-    ['user.navigation_tasks', page => taskNavigation(page, witness)],
-    ['user.documents_browser_create_after_lost_reply', (page, ingress) =>
-      createDocumentAfterLostReply({page, ingress, user, ownerId: config.owner_id})]];
+    ['user.navigation_tasks', page => taskNavigation(page, witness)]];
   if (config.eg_origin) cases.push(['eg.public_documentation', gatewayDocumentation]);
   async function exercise(am, iteration, name, run) {
     const start = performance.now();
@@ -137,8 +136,14 @@ async function accountBrowserCases(ams, witness) {
       for (const am of ['a', 'b']) {
         await browser.forIngress(am, async ({page}) => {
           for (const [name, run] of cases) {
-            await exercise(am, iteration, name, () => run(page, am));
+            await exercise(am, iteration, name, () => run(page));
           }
+          let document;
+          await exercise(am, iteration, 'user.documents_browser_create_after_lost_reply', async () => {
+            document = await createDocumentAfterLostReply({page, ingress: am, user, ownerId: config.owner_id});
+          });
+          await exercise(am, iteration, 'user.documents_browser_edit_and_conflict', () =>
+            documentEditAndConflict({page, ingress: am, user, document}));
         });
         await browser.forIngress(am, async ({page}) => {
           const peer = am === 'a' ? 'b' : 'a';

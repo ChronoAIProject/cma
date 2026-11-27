@@ -68,4 +68,5 @@ export async function createDocumentAfterLostReply({page, ingress, user, ownerId
     check(matches?.length === 1 && matches[0].id === original.id && equal(await read(am), original),
       'document_browser_retry_duplicated_or_changed_commit');
   }
+  return original;
 }
