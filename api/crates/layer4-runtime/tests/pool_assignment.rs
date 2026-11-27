@@ -387,7 +387,7 @@ async fn staging_startup_failure_requires_exact_confirmation_and_clears_on_the_s
 }
 
 #[tokio::test]
-async fn staging_startup_failure_without_manager_confirmation_serves_normally() {
+async fn staging_startup_failure_without_confirmation_permits_disarmed_reassignment() {
     use layer3_adapter::runtime_bootstrap::NATIVE_ASSIGNMENT_DEADLINE;
 
     let fixture = Fixture::new();
@@ -413,7 +413,26 @@ async fn staging_startup_failure_without_manager_confirmation_serves_normally() 
     )
     .await
     .unwrap();
-    assert!(!fixture.status(&request).await.installation_ready);
+    let mut ordinary = request.clone();
+    ordinary.staging_startup_failure = None;
+    let mut changed = ordinary.clone();
+    changed
+        .environment
+        .insert("CHRONO_RUNTIME_GENERATION".into(), "2".into());
+    fixture.assign(&changed, false).await;
+    fixture.assign(&ordinary, true).await;
+    fixture.assign(&ordinary, true).await;
+    let status = fixture.status(&ordinary).await;
+    assert!(!status.installation_ready);
+
+    let mut stale_confirmation = request.clone();
+    stale_confirmation.staging_startup_confirmed = true;
+    fixture.assign(&stale_confirmation, false).await;
+    fixture.assign(&request, false).await;
+    assert_eq!(
+        fixture.status(&ordinary).await.installation_ready,
+        status.installation_ready
+    );
     runtime.kill().await.unwrap();
     let output = runtime.wait_with_output().await.unwrap();
     let logs = [output.stdout, output.stderr].concat();
