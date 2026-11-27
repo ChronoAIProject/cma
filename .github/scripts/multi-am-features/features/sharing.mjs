@@ -1,4 +1,6 @@
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
+import {once} from 'node:events';
+import {createServer} from 'node:http';
 import {assertOwner, check, other} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 
@@ -131,4 +133,60 @@ export async function artifactUnknownPublication({adapter, user, record, recordF
       'artifact_unknown_recovery_effect_missing_or_duplicated');
   }
   await recordState('artifact_unknown_publication', {unacknowledged_writes: 1, recovered_artifacts: 1});
+}
+
+export async function artifactCommittedWithoutAcknowledgement({adapter, user, record, recordFailure,
+  recordState = async () => {}}) {
+  const {agentId} = record;
+  const path = `/api/v1/agents/${encodeURIComponent(agentId)}/artifacts`;
+  const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
+  const ingress = other(owner.am);
+  const data = Buffer.from('Synthetic artifact with a disconnected caller\n');
+  const intent = {key: randomUUID(), body: {name: `fixture-${randomUUID()}.txt`, media_type: 'text/plain',
+    content_base64: data.toString('base64')}, allowed: [201]};
+  const digest = createHash('sha256').update(data).digest('hex');
+  let original;
+  // The loopback relay observes the upstream response and cuts the caller's
+  // connection before delivering the acknowledgement. It forwards one write.
+  const relay = createServer((request, response) => {
+    if (original || request.method !== 'POST' || request.url !== '/') {
+      response.writeHead(400).end();
+      return;
+    }
+    original = user.rawRequest(ingress, 'POST', path, intent);
+    const disconnect = () => response.destroy();
+    void original.then(disconnect, disconnect);
+  });
+  let committed;
+  await withRestoration(async () => {
+    relay.listen(0, '127.0.0.1');
+    await once(relay, 'listening');
+    let callerError;
+    try {
+      await fetch(`http://127.0.0.1:${relay.address().port}/`, {method: 'POST', signal: AbortSignal.timeout(35000)});
+    } catch (error) { callerError = error; }
+    check(original, 'artifact_acknowledgement_write_not_dispatched');
+    const response = await original;
+    check(callerError?.cause?.code === 'UND_ERR_SOCKET' && response.status === 201,
+      'artifact_acknowledgement_disconnect_unproven');
+    committed = response.body;
+    check(typeof committed?.id === 'string' && committed.agent_id === agentId && committed.sha256 === digest,
+      'artifact_acknowledgement_commit_unbound');
+  }, async () => {
+    if (!relay.listening) return;
+    await new Promise((resolve, reject) => relay.close(error => error ? reject(error) : resolve()));
+  }, recordFailure);
+  const readOnce = async am => {
+    const {body} = await user.rawRequest(am, 'GET', path);
+    check(Array.isArray(body?.items) && body.next === undefined, 'artifact_acknowledgement_listing_unbound');
+    const rows = body.items.filter(row => row.name === intent.body.name || row.id === committed.id);
+    check(rows.length === 1 && rows[0].id === committed.id && rows[0].sha256 === digest,
+      'artifact_acknowledgement_effect_missing_or_duplicated');
+  };
+  await readOnce(owner.am);
+  const {body: recovered} = await user.rawRequest(owner.am, 'POST', path, intent);
+  check(recovered?.id === committed.id && recovered.created_at === committed.created_at && recovered.sha256 === digest,
+    'artifact_acknowledgement_replay_changed_receipt');
+  await readOnce(ingress);
+  await recordState('artifact_committed_without_acknowledgement', {upstream_commits_observed: 1, recovered_artifacts: 1});
 }

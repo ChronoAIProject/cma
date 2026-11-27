@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
-import {artifactUnknownPublication, shareAgentArtifact} from './sharing.mjs';
+import {artifactCommittedWithoutAcknowledgement, artifactUnknownPublication, shareAgentArtifact} from './sharing.mjs';
 
 function scenario({duplicateRedemption = false, divergingArtifact = false, aborts = 1} = {}) {
   const agentId = 'fixture-agent';
@@ -148,4 +148,45 @@ test('unknown artifact publication rejects an extra effect or incorrect uncertai
     assert.equal(scenario.posts.length, requests);
     assert.deepEqual(scenario.actions, [[true, 'unknown'], [false, undefined]]);
   }
+});
+
+function committedPublication({duplicate = false, changedReceipt = false} = {}) {
+  const agentId = 'fixture-agent';
+  const calls = [];
+  let initial, published;
+  const adapter = {ownerOf: async () => ({am: 'a', epoch: 2, agent_id: agentId, pod_uid: 'pod-a'})};
+  const user = {rawRequest: async (am, method, path, options) => {
+    assert.equal(path, '/api/v1/agents/fixture-agent/artifacts');
+    calls.push([am, method]);
+    if (method === 'GET') {
+      const items = duplicate ? [published, {...published, id: 'second'}] : [published];
+      return {body: {items}};
+    }
+    assert.equal(method, 'POST');
+    if (!initial) {
+      initial = options;
+      published = {id: 'artifact-first', name: options.body.name, agent_id: agentId, created_at: 'fixture-time',
+        sha256: createHash('sha256').update(Buffer.from(options.body.content_base64, 'base64')).digest('hex')};
+    } else {
+      assert.deepEqual(options, initial);
+      if (changedReceipt) return {status: 201, body: {...published, id: 'altered-replay'}};
+    }
+    return {status: 201, body: published};
+  }};
+  return {calls, run: () => artifactCommittedWithoutAcknowledgement({adapter, user, record: {agentId}})};
+}
+
+test('a caller disconnect after commit recovers the original receipt through the other Manager', async () => {
+  const scenario = committedPublication();
+  await scenario.run();
+  assert.deepEqual(scenario.calls, [['b', 'POST'], ['a', 'GET'], ['a', 'POST'], ['b', 'GET']]);
+});
+
+test('a lost acknowledgement fails if the commit duplicates the effect or the replay changes its receipt', async () => {
+  const duplicate = committedPublication({duplicate: true});
+  await assert.rejects(duplicate.run(), /artifact_acknowledgement_effect_missing_or_duplicated/);
+  assert.deepEqual(duplicate.calls, [['b', 'POST'], ['a', 'GET']]);
+  const replay = committedPublication({changedReceipt: true});
+  await assert.rejects(replay.run(), /artifact_acknowledgement_replay_changed_receipt/);
+  assert.deepEqual(replay.calls, [['b', 'POST'], ['a', 'GET'], ['a', 'POST']]);
 });
