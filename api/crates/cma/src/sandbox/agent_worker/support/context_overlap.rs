@@ -26,6 +26,7 @@ impl AgentWorker {
                 let attached = super::super::super::inspection_park::observe(
                     agent,
                     &sandbox,
+                    None,
                     crate::sandbox::runtime_attachment::inspect_bound_runtime_after(
                         self.dependencies.adapter.as_ref(),
                         &sandbox,

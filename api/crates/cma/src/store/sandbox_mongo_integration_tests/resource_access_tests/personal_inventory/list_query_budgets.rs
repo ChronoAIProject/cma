@@ -3,7 +3,8 @@ use super::*;
 use axum::{http::StatusCode, Router};
 use futures_util::future::join_all;
 use serde_json::{json, Value};
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
+use tokio::sync::Barrier;
 
 const AGENTS: &str = "/api/v1/agents?limit=200";
 const ORGANIZATIONS: &str = "/api/v1/organizations";
@@ -63,28 +64,77 @@ async fn concurrent_reads(
     requests: &[(&str, &Value)],
     fixture: &fixture::Fixture,
     budget: usize,
+    scored: bool,
 ) {
+    if scored {
+        profile::server(fixture, true).await;
+    }
     fixture.meter.take();
-    let mut elapsed = join_all((0..READERS).map(|index| async move {
-        let (path, expected) = requests[index % requests.len()];
-        let start = Instant::now();
-        let (status, body) = public::request_cookie(app, path, cookie).await;
-        let micros = start.elapsed().as_micros();
-        assert_eq!(status, StatusCode::OK, "{path}");
-        assert_eq!(&body, expected, "{path} reader {index}");
-        micros
-    }))
-    .await;
-    let stats = fixture.meter.take();
+    let cases: Vec<_> = requests
+        .iter()
+        .map(|(path, expected)| (path.to_string(), Arc::new((**expected).clone())))
+        .collect();
+    let admission = Arc::new(Barrier::new(READERS + 1));
+    let readers: Vec<_> = (0..READERS)
+        .map(|index| {
+            let (path, expected) = cases[index % cases.len()].clone();
+            let app = app.clone();
+            let cookie = cookie.to_owned();
+            let admission = admission.clone();
+            tokio::spawn(async move {
+                admission.wait().await;
+                let start = Instant::now();
+                let (status, body) = public::request_cookie(&app, &path, &cookie).await;
+                let micros = start.elapsed().as_micros();
+                assert_eq!(status, StatusCode::OK, "{path}");
+                assert_eq!(&body, expected.as_ref(), "{path} reader {index}");
+                micros
+            })
+        })
+        .collect();
+    // Release the same reader cohort across the fixture's Tokio workers.
+    admission.wait().await;
+    let mut elapsed: Vec<_> = join_all(readers)
+        .await
+        .into_iter()
+        .map(|result| result.expect("reader task completed"))
+        .collect();
+    let mut stats = fixture.meter.take();
+    if scored {
+        profile::server(fixture, false).await;
+        let server = profile::server_report(fixture).await;
+        stats.commands = server.commands;
+        stats.failed = server.failed;
+        fixture
+            .client
+            .database(&fixture.name)
+            .collection::<Document>("system.profile")
+            .drop()
+            .await
+            .unwrap();
+    }
     assert_budget(&stats, READERS * budget);
     elapsed.sort_unstable();
     println!(
-        "TC-107 {} readers={READERS} p95_us={} p99_us={} commands={}",
+        "TC-107 {} scored={scored} readers={READERS} p95_us={} p99_us={} commands={}",
         requests[0].0,
         elapsed[94],
         elapsed[98],
         stats.count()
     );
+    // The driver observer materializes complete reply BSON. Score the same
+    // optimized workload with server-side command counts and client checkouts.
+    if scored {
+        let p95 = elapsed[94];
+        let p99 = elapsed[98];
+        if requests[0].0 == ORGANIZATIONS {
+            assert!(p95 < 1_000_000, "organization p95 {p95} us");
+            assert!(p99 < 2_000_000, "organization p99 {p99} us");
+        } else {
+            assert!(p95 <= 500_000, "Agent p95 {p95} us");
+            assert!(p99 <= 2_000_000, "Agent p99 {p99} us");
+        }
+    }
     assert!(stats
         .commands
         .keys()
@@ -94,8 +144,16 @@ async fn concurrent_reads(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires disposable MongoDB replica set"]
 async fn tc107_agent_pages_preserve_order_and_query_budget_after_history_growth() {
+    agent_pages(true).await;
+    if !cfg!(debug_assertions) {
+        agent_pages(false).await;
+    }
+}
+
+async fn agent_pages(observe_commands: bool) {
     for distinct in [false, true] {
-        let fixture = fixture::Fixture::new(400, distinct).await;
+        let fixture =
+            fixture::Fixture::new_with_command_observer(400, distinct, observe_commands).await;
         seed_history(&fixture, 1..=1).await;
         let app = fixture.app(true, false);
         let filtered = format!("{AGENTS}&status=starting");
@@ -105,68 +163,78 @@ async fn tc107_agent_pages_preserve_order_and_query_budget_after_history_growth(
                 seed_history(&fixture, 2..=10).await;
             }
             fixture.cold().await;
-            profile::server(&fixture, true).await;
+            if observe_commands {
+                profile::server(&fixture, true).await;
+            }
             fixture.meter.take();
             let (status, first) = public::request(&app, AGENTS).await;
             assert_eq!(status, StatusCode::OK, "{first}");
             assert_agent_ids(&first, 0..200);
             assert_eq!(first["next"], "agt_list_0199");
             let first_stats = fixture.meter.take();
-            assert_budget(&first_stats, 10);
+            if observe_commands {
+                assert_budget(&first_stats, 10);
+            }
             let tail = format!("{AGENTS}&cursor={}", first["next"].as_str().unwrap());
             let (status, last) = public::request(&app, &tail).await;
             assert_eq!(status, StatusCode::OK, "{last}");
             assert_agent_ids(&last, 200..400);
             assert!(last["next"].is_null());
             let last_stats = fixture.meter.take();
-            assert_budget(&last_stats, 10);
+            if observe_commands {
+                assert_budget(&last_stats, 10);
+            }
             assert_eq!(
                 public::request(&app, &filtered).await,
                 (StatusCode::OK, first.clone())
             );
-            assert_budget(&fixture.meter.take(), 10);
-
-            profile::server(&fixture, false).await;
-            let database = fixture.client.database(&fixture.name);
-            let profiles = database.collection::<Document>("system.profile");
-            let query_collections = [
-                "agents",
-                "agent_log",
-                "sandboxes",
-                "workspaces",
-                "worktrees",
-            ]
-            .map(|name| format!("{}.{name}", fixture.name));
-            let mut rows = profiles
-                .find(doc! {
-                    "appName": &fixture.app_name,
-                    "ns": {"$in": query_collections.to_vec()},
-                    "docsExamined": {"$exists": true},
-                })
-                .await
-                .unwrap();
-            let mut documents_examined = 0;
-            while rows.advance().await.unwrap() {
-                let row: Document = rows.deserialize_current().unwrap();
-                documents_examined += row
-                    .get_i64("docsExamined")
-                    .or_else(|_| row.get_i32("docsExamined").map(i64::from))
-                    .unwrap();
+            if observe_commands {
+                assert_budget(&fixture.meter.take(), 10);
             }
-            assert!(documents_examined > 0);
-            profiles.drop().await.unwrap();
-            let measured = (
-                first_stats.commands,
-                last_stats.commands,
-                documents_examined,
-            );
-            println!(
-                "TC-107 agent history={history_size} distinct={distinct} commands={measured:?}"
-            );
-            if let Some(before) = &before {
-                assert_eq!(before, &measured);
-            } else {
-                before = Some(measured);
+
+            if observe_commands {
+                profile::server(&fixture, false).await;
+                let database = fixture.client.database(&fixture.name);
+                let profiles = database.collection::<Document>("system.profile");
+                let query_collections = [
+                    "agents",
+                    "agent_log",
+                    "sandboxes",
+                    "workspaces",
+                    "worktrees",
+                ]
+                .map(|name| format!("{}.{name}", fixture.name));
+                let mut rows = profiles
+                    .find(doc! {
+                        "appName": &fixture.app_name,
+                        "ns": {"$in": query_collections.to_vec()},
+                        "docsExamined": {"$exists": true},
+                    })
+                    .await
+                    .unwrap();
+                let mut documents_examined = 0;
+                while rows.advance().await.unwrap() {
+                    let row: Document = rows.deserialize_current().unwrap();
+                    documents_examined += row
+                        .get_i64("docsExamined")
+                        .or_else(|_| row.get_i32("docsExamined").map(i64::from))
+                        .unwrap();
+                }
+                assert!(documents_examined > 0);
+                profiles.drop().await.unwrap();
+                let measured = (
+                    first_stats.commands,
+                    last_stats.commands,
+                    documents_examined,
+                );
+                println!(
+                    "TC-107 agent history={history_size} distinct={distinct} commands={measured:?}"
+                );
+                if let Some(before) = &before {
+                    assert_eq!(before, &measured);
+                } else {
+                    before = Some(measured);
+                }
             }
             concurrent_reads(
                 &app,
@@ -174,6 +242,7 @@ async fn tc107_agent_pages_preserve_order_and_query_budget_after_history_growth(
                 &[(AGENTS, &first), (&tail, &last), (&filtered, &first)],
                 &fixture,
                 10,
+                !observe_commands,
             )
             .await;
         }
@@ -184,7 +253,14 @@ async fn tc107_agent_pages_preserve_order_and_query_budget_after_history_growth(
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires disposable MongoDB replica set"]
 async fn tc107_organization_list_and_agent_cursor_reflect_membership_revocation() {
-    let fixture = organization::owned(201, true).await;
+    organization_pages(true).await;
+    if !cfg!(debug_assertions) {
+        organization_pages(false).await;
+    }
+}
+
+async fn organization_pages(observe_commands: bool) {
+    let fixture = organization::owned_with_command_observer(201, true, observe_commands).await;
     let app = organization::app(&fixture, true);
     let mut choices: Vec<_> = (0..199)
         .rev()
@@ -202,7 +278,9 @@ async fn tc107_organization_list_and_agent_cursor_reflect_membership_revocation(
     fixture.cold().await;
     let (status, before) = public::request_cookie(&app, ORGANIZATIONS, &reader).await;
     assert_eq!(status, StatusCode::OK, "{before}");
-    assert_budget(&fixture.meter.take(), 20);
+    if observe_commands {
+        assert_budget(&fixture.meter.take(), 20);
+    }
     let items = before["items"].as_array().unwrap();
     assert_eq!(items.len(), 200);
     for (item, expected) in items
@@ -213,7 +291,15 @@ async fn tc107_organization_list_and_agent_cursor_reflect_membership_revocation(
         assert_eq!(item["role"], expected["your_role"]);
     }
 
-    concurrent_reads(&app, &reader, &[(ORGANIZATIONS, &before)], &fixture, 20).await;
+    concurrent_reads(
+        &app,
+        &reader,
+        &[(ORGANIZATIONS, &before)],
+        &fixture,
+        20,
+        !observe_commands,
+    )
+    .await;
     let scoped = format!("{AGENTS}&organization=owner");
     let (status, page) = public::request_cookie(&app, &scoped, &reader).await;
     assert_eq!(status, StatusCode::OK, "{page}");
@@ -230,7 +316,9 @@ async fn tc107_organization_list_and_agent_cursor_reflect_membership_revocation(
     let (status, after) = public::request_cookie(&app, ORGANIZATIONS, &reader).await;
     assert_eq!(status, StatusCode::OK, "{after}");
     assert_eq!(after["items"], json!(items[..199]));
-    assert_budget(&fixture.meter.take(), 20);
+    if observe_commands {
+        assert_budget(&fixture.meter.take(), 20);
+    }
     for path in [&scoped, &continuation] {
         let (status, body) = public::request_cookie(&app, path, &reader).await;
         assert!(

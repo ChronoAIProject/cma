@@ -11,15 +11,8 @@ pub(super) fn is_effect_free_workspace_wait_requeue(mutation: &AgentWorkMutation
         && mutation.sandbox_event.is_none()
 }
 
-pub(super) fn fence_workspace_wait_lease(
-    filter: &mut Document,
-    current: &Agent,
-    mutation: &AgentWorkMutation,
-) {
-    if current.work.step == AgentWorkStep::WaitForWorkspace
-        && (mutation.agent.work.step == AgentWorkStep::AddWorktree
-            || is_effect_free_workspace_wait_requeue(mutation))
-    {
+pub(super) fn fence_workspace_wait_lease(filter: &mut Document, current: &Agent) {
+    if current.work.step == AgentWorkStep::WaitForWorkspace {
         filter.insert(
             "$expr",
             doc! {
@@ -82,7 +75,7 @@ pub(super) async fn advance_agent(
     };
     owner_stop::fence_live_lease(&mut filter, mutation);
     restart_ready::fence_live_lease(&mut filter, current);
-    fence_workspace_wait_lease(&mut filter, current, mutation);
+    fence_workspace_wait_lease(&mut filter, current);
     let advanced = store
         .agents
         .update_one(filter, doc! { "$set": fields })

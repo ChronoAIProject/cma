@@ -5,7 +5,7 @@ use layer3_adapter::{CheckpointReceipt, ConversationSnapshot, WriterState};
 use sha2::{Digest, Sha256};
 mod public_api;
 
-async fn completed_retirement(harness: &Harness, remove_runtime: bool) {
+async fn completed_retirement(harness: &Harness, remove_runtime: bool, released_home: bool) {
     let mut parent = harness
         .store
         .get_sandbox(&harness.workspace.sandbox_id)
@@ -25,6 +25,21 @@ async fn completed_retirement(harness: &Harness, remove_runtime: bool) {
         .unwrap();
     let expected = parent.revision;
     parent.runtime = None;
+    if released_home {
+        let mut home = layer2_core::sandbox::SandboxHome::reserve(
+            &parent.id,
+            layer3_adapter::HomeVolumePolicy {
+                mode: Default::default(),
+                storage_class: "fixture".into(),
+                capacity_gib: 64,
+                template_name: "fixture-seed".into(),
+                template_generation: "generation-one".into(),
+            },
+        )
+        .unwrap();
+        home.released = true;
+        parent.lifecycle.home = Some(Box::new(home));
+    }
     parent.credential.delivered = false;
     parent.credential.current = None;
     parent
@@ -72,7 +87,7 @@ async fn retired_sandbox_agent_delete_removes_records_without_recreating_runtime
                 .await
                 .unwrap();
         }
-        completed_retirement(&harness, remove_runtime).await;
+        completed_retirement(&harness, remove_runtime, false).await;
         let before = harness.backend.requests().await.len();
         harness
             .store
@@ -126,13 +141,85 @@ async fn retired_sandbox_agent_delete_removes_records_without_recreating_runtime
 }
 
 #[tokio::test]
+async fn retired_home_settles_failed_worktree_debt_only_after_observing_runtime_absence() {
+    for (remove_runtime, released_home, wrong_evidence) in [
+        (true, true, None),
+        (false, true, None),
+        (true, false, None),
+        (true, true, Some("operation")),
+        (true, true, Some("digest")),
+    ] {
+        let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+        let admitted = harness.admit("retired-first-worktree", Vec::new()).await;
+        harness.backend.fail_next(
+            WireOperation::AddWorktree,
+            "runtime_mutation_outcome_unknown",
+            "worktree addition left partial Git state",
+        );
+        harness.run(&admitted.id, harness.now).await;
+        let mut failed = harness.stored(&admitted.id).await;
+        assert_eq!(failed.status, AgentStatus::Failed);
+        assert!(
+            matches!(failed.work.cleanup_debt.as_slice(), [debt] if debt.step == AgentWorkStep::AddWorktree)
+        );
+        if let Some(field) = wrong_evidence {
+            let debt = &mut failed.work.cleanup_debt[0];
+            match field {
+                "operation" => debt.operation_id = "worktree:project:wt-2:add:v1".into(),
+                "digest" => debt.request_sha256 = "b".repeat(64),
+                _ => unreachable!(),
+            }
+            let revision = failed.revision;
+            failed.revision += 1;
+            harness
+                .store
+                .save_agent(revision, failed.clone())
+                .await
+                .unwrap();
+        }
+        completed_retirement(&harness, remove_runtime, released_home).await;
+        let before = harness.backend.requests().await.len();
+        let at = harness.now + Duration::from_secs(11);
+        harness
+            .store
+            .schedule_agent_delete(AgentDeleteRequest {
+                target: AgentControlTarget::from(&failed),
+                requested_at: rfc3339_at(at),
+            })
+            .await
+            .unwrap();
+        for _ in 0..4 {
+            harness.worker.run_one(&failed.id, at).await.unwrap();
+        }
+        let agent = harness.stored(&failed.id).await;
+        let worktree = harness
+            .store
+            .get_worktree(&failed.worktree_id)
+            .await
+            .unwrap()
+            .unwrap();
+        if remove_runtime && released_home && wrong_evidence.is_none() {
+            assert_eq!(agent.status, AgentStatus::Deleted);
+            assert_eq!(worktree.status, WorktreeStatus::Removed);
+            assert!(agent.work.cleanup_debt.is_empty());
+        } else {
+            assert_eq!(agent.status, AgentStatus::Failed);
+            assert_eq!(worktree.status, WorktreeStatus::Failed);
+            assert_eq!(agent.work.cleanup_debt, failed.work.cleanup_debt);
+        }
+        assert_eq!(agent.work.receipts, failed.work.receipts);
+        assert_eq!(harness.backend.requests().await.len(), before);
+    }
+}
+
+#[tokio::test]
 async fn retired_sandbox_workspace_removal_requires_provider_absence_and_finishes_pending_work() {
     use crate::sandbox::workspace_worker::{
         WorkspaceWorker, WorkspaceWorkerConfig, WorkspaceWorkerDependencies,
     };
     for remove_runtime in [true, false] {
         let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
-        completed_retirement(&harness, remove_runtime).await;
+        completed_retirement(&harness, remove_runtime, false).await;
         harness
             .store
             .begin_workspace_removal(

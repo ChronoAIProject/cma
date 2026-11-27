@@ -1,5 +1,6 @@
 use super::freeze::MeasuredPublication;
 use super::*;
+use crate::sandbox_usage_export::completeness_contract::Basis;
 use crate::store::{sandbox_metric_bindings, usage_reports};
 use serde_json::json;
 
@@ -89,7 +90,7 @@ impl CaptureStore {
             self.retain_manifest(session, publication).await?;
         }
         if held {
-            let key = format!("hold/{}/{:016x}", stream.id, input.minute);
+            let key = keys::hold(&stream.id, input.minute);
             self.collection(INVENTORY).replace_one(doc! {"_id":keys::id(&key)}, doc! {
                 "_id":keys::id(&key),"document_schema_version":1_i64,"stream_id":&stream.id,
                 "minute":number(input.minute).map_err(Domain)?,"evidence_id":&publication.digest,"reason":&publication.manifest.hold,
@@ -169,11 +170,44 @@ impl CaptureStore {
                 .await
                 .map_err(Driver)?;
         }
+        // The local flag controls the first statement. Once a minute has a
+        // chain, every writer must carry its holds and corrections forward.
+        if held && advance {
+            self.stage_measured_hold(session, &stream, publication)
+                .await?;
+        }
+        if !held
+            && (self.completeness_enabled()
+                || self
+                    .retained_statement(
+                        session,
+                        &stream.source_stream,
+                        input.minute,
+                        Basis::Measured,
+                    )
+                    .await?
+                    .is_some())
+        {
+            let current: FactHead = self
+                .collection(INVENTORY)
+                .find_one(doc! {"_id":keys::id(&key)})
+                .session(&mut *session)
+                .await
+                .map_err(Driver)?
+                .as_ref()
+                .map(decode)
+                .transpose()
+                .map_err(Domain)?
+                .ok_or_else(|| Domain(corrupt()))?;
+            let outcome = self
+                .stage_measured_completeness(session, &stream, &publication.manifest, &current)
+                .await?;
+            self.record_measured_completeness(session, &stream, input.minute, &current, outcome)
+                .await?;
+        }
         if !held {
             self.collection(INVENTORY)
-                .delete_one(
-                    doc! {"_id":keys::id(&format!("hold/{}/{:016x}",stream.id,input.minute))},
-                )
+                .delete_one(doc! {"_id":keys::id(&keys::hold(&stream.id,input.minute))})
                 .session(&mut *session)
                 .await
                 .map_err(Driver)?;

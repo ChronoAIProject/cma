@@ -161,7 +161,8 @@
         "forbidden",
         "invalid_profile_authoring_query",
         "not_authenticated",
-        "profile_skills_unavailable"
+        "profile_skills_unavailable",
+        "skill_catalog_authorization_required"
       ]
     },
     "POST /api/v1/profile-authoring/repositories/resolve": {

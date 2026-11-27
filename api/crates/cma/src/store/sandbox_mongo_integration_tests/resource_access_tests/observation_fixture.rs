@@ -33,12 +33,27 @@ pub(super) async fn servers_with_capacity(
     start_servers(f, enabled, enabled, capacity, None).await
 }
 
+pub(super) async fn response_budget_servers(
+    f: &Fixture,
+    enabled: bool,
+    idle_start: watch::Receiver<bool>,
+) -> Vec<Server> {
+    let barrier = PollBarrier::ResponseReplay(idle_start);
+    start_servers(f, enabled, enabled, Default::default(), Some(barrier)).await
+}
+
+#[derive(Clone)]
+enum PollBarrier {
+    AgentEvents(watch::Receiver<bool>),
+    ResponseReplay(watch::Receiver<bool>),
+}
+
 async fn start_servers(
     f: &Fixture,
     shared_observation: bool,
     bounded_responses: bool,
     capacity: crate::config::RelayCapacityConfig,
-    idle_start: Option<watch::Receiver<bool>>,
+    idle_start: Option<PollBarrier>,
 ) -> Vec<Server> {
     let (auth, identity_server) = identity().await;
     let source = Arc::new(
@@ -123,7 +138,7 @@ async fn start_servers(
                 .install_observation(store.clone(), reads.clone(), Some(commands.clone()))
                 .unwrap();
         }
-        let responses = layer1_public::responses::v2::router(
+        let mut responses = layer1_public::responses::v2::router(
             layer1_public::responses::v2::ResponsesV2State::new(
                 layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
                 commands.clone(),
@@ -138,13 +153,21 @@ async fn start_servers(
         );
         let agui = super::agui_budget_tests::app_with_reads(f, reads.clone(), updates.clone());
         let mut events = v2.merge(agui);
-        if let Some(start) = idle_start.clone() {
+        if let Some(PollBarrier::AgentEvents(start)) = idle_start.clone() {
             // The relay must send its admission record before the ingress can
             // return public headers. Gate only the inner event body.
             events = events.layer(axum::middleware::from_fn(
                 move |request: axum::extract::Request, next: axum::middleware::Next| {
                     let start = start.clone();
                     async move { defer_idle_polls(next.run(request).await, start) }
+                },
+            ));
+        }
+        if let Some(PollBarrier::ResponseReplay(start)) = idle_start.clone() {
+            responses = responses.layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    let start = start.clone();
+                    async move { defer_polls_after_replay(next.run(request).await, start) }
                 },
             ));
         }
@@ -212,6 +235,66 @@ fn defer_idle_polls(
     axum::response::Response::from_parts(parts, axum::body::Body::from_stream(body))
 }
 
+fn defer_polls_after_replay(
+    response: axum::response::Response,
+    start: watch::Receiver<bool>,
+) -> axum::response::Response {
+    if !response.status().is_success()
+        || response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .is_none_or(|value| value != "text/event-stream")
+    {
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let body = futures_util::stream::unfold(
+        (body.into_data_stream(), start, false),
+        |(mut body, mut start, mut replayed)| async move {
+            if replayed {
+                start.wait_for(|ready| *ready).await.ok()?;
+            }
+            let frame = body.next().await?;
+            // Axum supplies each SSE event as one body frame here, before
+            // the relay or HTTP can combine frames. Let the full cold replay
+            // reach the client, then hold subsequent polls until all opens finish.
+            replayed |= frame.as_ref().is_ok_and(|bytes| {
+                bytes
+                    .split(|byte| *byte == b'\n')
+                    .any(|line| line == b"id: 7")
+            });
+            Some((frame, (body, start, replayed)))
+        },
+    );
+    axum::response::Response::from_parts(parts, axum::body::Body::from_stream(body))
+}
+
+#[tokio::test]
+async fn response_replay_reaches_the_client_before_idle_polling_is_released() {
+    use axum::body::{Body, Bytes};
+    use axum::http::{header::CONTENT_TYPE, HeaderValue};
+    use std::convert::Infallible;
+
+    let frames = ["id: 6\n\n", "id: 7\n\n", "id: 8\n\n"];
+    let mut response = axum::response::Response::new(Body::from_stream(
+        futures_util::stream::iter(frames.map(|frame| Ok::<_, Infallible>(Bytes::from(frame)))),
+    ));
+    response
+        .headers_mut()
+        .insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
+    let (start, wait) = watch::channel(false);
+    let mut body = defer_polls_after_replay(response, wait)
+        .into_body()
+        .into_data_stream();
+
+    for frame in &frames[..2] {
+        assert_eq!(body.next().await.unwrap().unwrap(), *frame);
+    }
+    assert!(futures_util::poll!(body.next()).is_pending());
+    start.send_replace(true);
+    assert_eq!(body.next().await.unwrap().unwrap(), frames[2]);
+}
+
 pub(super) async fn budget_servers(f: &Fixture) -> Vec<Server> {
     budget_servers_with_observation(f, true, None).await
 }
@@ -230,7 +313,7 @@ pub(super) async fn budget_servers_with_observation(
             limit: 100,
             control_reserve: 0,
         },
-        idle_start,
+        idle_start.map(PollBarrier::AgentEvents),
     )
     .await
 }

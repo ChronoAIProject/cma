@@ -22,8 +22,18 @@ on:
         description: Release requires a healthy baseline; bootstrap requires private authorization
         required: true
         type: choice
-        options: [release, bootstrap]
+        options: [release, bootstrap, publication-plan]
         default: release
+      publication_run:
+        description: Completed publication run ID for publication-plan
+        type: string
+      publication_attempt:
+        description: Publication attempt for publication-plan
+        type: string
+        default: '1'
+      publication_signal:
+        description: Canonical publication signal SHA256 for publication-plan
+        type: string
       infra_ref:
         description: Infrastructure commit; empty resolves main once at run start
         required: false
@@ -35,7 +45,7 @@ permissions:
 
 jobs:
   resolve:
-    if: github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
+    if: inputs.mode != 'publication-plan' && github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     permissions:
@@ -104,9 +114,24 @@ jobs:
       mode: ${{ needs.resolve.outputs.mode }}
       started_at: ${{ needs.resolve.outputs.started_at }}
       infra_ref: ${{ needs.resolve.outputs.infra_ref }}
+  publication_plan:
+    if: inputs.mode == 'publication-plan' && github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
+    uses: ./.github/workflows/staging-publication-plan.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
   report:
     needs: [resolve, deploy]
-    if: always()
+    if: always() && inputs.mode != 'publication-plan'
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:

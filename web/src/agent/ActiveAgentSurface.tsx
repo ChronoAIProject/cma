@@ -41,7 +41,7 @@ import { messageSubmission } from './messageSubmission';
 import { useFirstTextSend } from './useFirstTextSend';
 import { composerInputAvailability } from './composerPresentation';
 import { turnRetryAvailable } from './turnRetryAvailability';
-import { WORKSPACE_READ_RECONNECTING } from './controllerError';
+import { agentHistoryIssue, WORKSPACE_READ_RECONNECTING } from './controllerError';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -164,14 +164,7 @@ export function ActiveAgentSurface({
   if (state.status === 'idle' || state.status === 'loading')
     return <AgentOpening headingRef={headingRef} />;
   if (state.status === 'error')
-    return (
-      <AgentUnavailable
-        message={state.message}
-        retryAt={state.retryAt}
-        headingRef={headingRef}
-        onRetry={controller.reload}
-      />
-    );
+    return <AgentUnavailable state={state} headingRef={headingRef} onRetry={controller.reload} />;
 
   const { detail, conversation } = state;
   const inputAvailability = composerInputAvailability(
@@ -210,16 +203,15 @@ export function ActiveAgentSurface({
     !controlReady ||
     !controller.inputAvailability.allowed ||
     controller.controlsUnavailable === true;
-  const historyIssue = state.historyLoading
-    ? 'Loading conversation activity.'
-    : state.historyUnavailable
-      ? 'Earlier activity could not be loaded. Retrying…'
-      : undefined;
+  const historyIssue = agentHistoryIssue(state);
+  const streamIssue = status === 'failed' ? undefined : controller.streamError;
   const issue = state.workspaceUnavailable
     ? WORKSPACE_READ_RECONNECTING
-    : historyIssue !== undefined
-      ? (controller.streamError ?? historyIssue)
-      : (connectionError ?? connections.error ?? controller.actionError);
+    : (streamIssue ??
+      historyIssue ??
+      connectionError ??
+      connections.error ??
+      controller.actionError);
   const observed = controller.progressObservation;
   const setupRoute = setupEnvironmentRoute(
     status,
@@ -316,7 +308,9 @@ export function ActiveAgentSurface({
           <AgentSurfaceIssue
             issue={issue}
             unconfirmed={controller.pendingMessage !== undefined || controller.pendingControl}
-            historyIncomplete={historyIncomplete || state.workspaceUnavailable === true}
+            historyIncomplete={
+              historyIncomplete || state.workspaceUnavailable === true || streamIssue !== undefined
+            }
             onRetry={connectionError && !readOnly ? connection.retry : undefined}
             onDismiss={() => {
               connection.clearError();

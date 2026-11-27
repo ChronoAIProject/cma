@@ -80,6 +80,13 @@ class CampaignCellTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "ran a different plan"):
             cells.aggregate(plan, [self.derived(other)])
 
+    def test_explicit_release_probe_cannot_claim_pairwise_coverage(self):
+        plan = plan_bytes()
+        value = evidence(plan)
+        value["release_probe"] = {"writer_policy": "enabled"}
+        with self.assertRaisesRegex(ValueError, "per-role execution evidence"):
+            self.derived(value)
+
     def test_unsafe_collection_names_are_refused_at_derive(self):
         plan = plan_bytes()
         value = evidence(plan)

@@ -114,7 +114,6 @@ async fn native_runtime_render_refuses_replaced_authority_before_later_api_error
         (VOLUME, "/metadata/ownerReferences/0/uid", Some(MEMBER)),
         (MEMBER, "/metadata/uid", None),
         (MEMBER, "/metadata/ownerReferences/0/uid", None),
-        (MEMBER, "/spec/podTemplate/spec/containers/0/image", None),
     ] {
         let mut replacement = fixture.state.lock().unwrap().rows[path].clone();
         *replacement.pointer_mut(pointer).unwrap() = json!("replacement");
@@ -135,6 +134,31 @@ async fn native_runtime_render_refuses_replaced_authority_before_later_api_error
         );
         assert_eq!(reads.calls.lock().unwrap().len(), 3);
     }
+}
+
+#[tokio::test]
+async fn native_runtime_render_classifies_member_image_drift_after_authority_reads() {
+    let fixture = Fixture::new().await;
+    let claim = assigned_spec(&fixture, &spec()).await;
+    let home = adopted(&fixture, &claim).await;
+    let origin = home.receipt.native_authority.as_deref().unwrap();
+    let request = request(&home, 1);
+    let mut member = fixture.state.lock().unwrap().rows[MEMBER].clone();
+    member["spec"]["podTemplate"]["spec"]["containers"][0]["image"] =
+        json!("example.invalid/runtime:drifted");
+    let reads = Reads::new(
+        &fixture,
+        BTreeMap::from([(MEMBER.into(), (200, member))]),
+        BTreeMap::new(),
+    );
+    assert!(matches!(
+        reads
+            .pools(&fixture)
+            .runtime_desired(origin, &request, "warm-member")
+            .await,
+        Err(AdapterError::AdmittedSandboxSpecDrift)
+    ));
+    assert_eq!(reads.calls.lock().unwrap().len(), 3);
 }
 
 #[tokio::test]

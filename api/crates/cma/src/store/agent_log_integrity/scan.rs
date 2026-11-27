@@ -279,6 +279,7 @@ pub(in crate::store) struct ScanOptions<C = MonotonicClock> {
     snapshot: bool,
     cooperation: Policy,
     raw_batches: bool,
+    limits: (u64, usize),
     clock: C,
 }
 impl Default for ScanOptions {
@@ -292,8 +293,13 @@ impl ScanOptions {
             snapshot,
             cooperation,
             raw_batches: cooperation.enabled,
+            limits: (PHYSICAL_AGENT_LOG_ENTRIES, PHYSICAL_AGENT_LOG_BYTES),
             clock: MonotonicClock,
         }
+    }
+    pub(in crate::store) fn with_limits(mut self, max_entries: u64, max_bytes: usize) -> Self {
+        self.limits = (self.limits.0.min(max_entries), self.limits.1.min(max_bytes));
+        self
     }
     #[cfg(test)]
     pub(in crate::store) fn with_clock<C: Clock>(self, clock: C) -> ScanOptions<C> {
@@ -301,6 +307,7 @@ impl ScanOptions {
             snapshot: self.snapshot,
             cooperation: self.cooperation,
             raw_batches: self.raw_batches,
+            limits: self.limits,
             clock,
         }
     }
@@ -341,11 +348,12 @@ where
         mode.options.cooperation,
         mode.options.clock,
     );
-    if last_seq > PHYSICAL_AGENT_LOG_ENTRIES {
+    let (max_entries, max_bytes) = mode.options.limits;
+    if last_seq > max_entries {
         tracing::warn!(
             limit_kind = "physical_entries",
             existing_entries = last_seq,
-            max_entries = PHYSICAL_AGENT_LOG_ENTRIES,
+            max_entries,
             "Agent log capacity rejected"
         );
         return Err(capacity_error().into());
@@ -355,7 +363,7 @@ where
     let find = raw_log
         .find(mongodb::bson::doc! { "agent_id": agent_id.as_str() })
         .sort(mongodb::bson::doc! { "seq": 1 })
-        .limit(i64::try_from(PHYSICAL_AGENT_LOG_ENTRIES + 1).unwrap_or(i64::MAX));
+        .limit(i64::try_from(max_entries + 1).unwrap_or(i64::MAX));
     let find = if mode.options.snapshot {
         find.read_concern(ReadConcern::snapshot())
     } else {
@@ -384,14 +392,14 @@ where
         }
         encoded_bytes = encoded_bytes
             .checked_add(document_bytes)
-            .filter(|total| *total <= PHYSICAL_AGENT_LOG_BYTES)
+            .filter(|total| *total <= max_bytes)
             .ok_or_else(|| {
                 tracing::warn!(
                     limit_kind = "physical_bytes",
                     scanned_entries = entry_count,
                     scanned_bytes = encoded_bytes,
                     document_bytes,
-                    max_bytes = PHYSICAL_AGENT_LOG_BYTES,
+                    max_bytes,
                     "Agent log capacity rejected"
                 );
                 capacity_error()

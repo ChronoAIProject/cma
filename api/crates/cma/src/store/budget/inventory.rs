@@ -1,5 +1,7 @@
 //! Explicit observation of retained turn records, without accounting mutations.
 mod authority;
+#[cfg(test)]
+mod certification_tests;
 mod cli;
 #[cfg(test)]
 mod mongo_tests;

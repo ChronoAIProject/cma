@@ -173,13 +173,99 @@ async fn exact_registered_recovery_and_controls_precede_input_policy_for_all_aut
             ] {
                 let response = app
                     .clone()
-                    .oneshot(request(method, path, "owner"))
+                    .oneshot(request(method.clone(), path, "owner"))
                     .await
                     .unwrap();
-                assert_eq!(response.headers()["x-test-tier"], "default", "{path}");
+                let expected = if matches!(method, Method::GET | Method::HEAD)
+                    && (path.ends_with("/controls") || path.ends_with("/queued-cancellation"))
+                {
+                    "recovery"
+                } else {
+                    "default"
+                };
+                assert_eq!(response.headers()["x-test-tier"], expected, "{path}");
             }
         }
     }
+}
+
+#[tokio::test]
+async fn recovery_budget_is_separate_from_observation_input_and_control() {
+    for enabled in [false, true] {
+        let quota = Quota::per_hour(NonZeroU32::MIN);
+        let mut limits = RateLimiters::from_quotas(
+            quota,
+            quota,
+            quota,
+            quota,
+            quota,
+            quota,
+            TrustedProxyConfig::sample(),
+        );
+        limits.control_tier_enabled = enabled;
+        let app = Router::new()
+            .route("/api/v1/agents", get(|| async { StatusCode::OK }))
+            .route(
+                "/api/v2/agents/{agent_id}/queued-inputs",
+                get(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/api/v2/agents/{agent_id}/responses/receipt",
+                post(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/api/v1/agents/{id}/stop",
+                post(|| async { StatusCode::OK }),
+            )
+            .route(
+                "/api/v1/agents/{id}/input",
+                post(|| async { StatusCode::OK }),
+            )
+            .layer(middleware::from_fn_with_state(Arc::new(limits), enforce));
+        let send = |method, path| app.clone().oneshot(request(method, path, "owner"));
+        let general = || send(Method::GET, "/api/v1/agents");
+        assert_eq!(general().await.unwrap().status(), StatusCode::OK);
+        refusal(general().await.unwrap()).await;
+        let queue = send(Method::GET, "/api/v2/agents/agt_one/queued-inputs")
+            .await
+            .unwrap();
+        if enabled {
+            assert_eq!(queue.status(), StatusCode::OK);
+            refusal(
+                send(Method::POST, "/api/v2/agents/agt_one/responses/receipt")
+                    .await
+                    .unwrap(),
+            )
+            .await;
+        } else {
+            refusal(queue).await;
+        }
+        for path in [
+            "/api/v1/agents/agt_one/stop",
+            "/api/v1/agents/agt_one/input",
+        ] {
+            assert_eq!(
+                send(Method::POST, path).await.unwrap().status(),
+                StatusCode::OK
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn unregistered_and_anonymous_recovery_requests_keep_the_original_budget() {
+    let path = "/api/v2/agents/agt_one/queued-inputs";
+    assert_eq!(
+        request_tier(&request(Method::GET, path, "owner"), true, true),
+        RequestTier::Default,
+    );
+    let route = Router::new().route(
+        "/api/v2/agents/{agent_id}/queued-inputs",
+        get(|request: Request| async move { request_tier(&request, true, true).name() }),
+    );
+    let call = Request::builder().uri(path).body(Body::empty()).unwrap();
+    let response = route.oneshot(call).await.unwrap();
+    assert_eq!(to_bytes(response.into_body(), 32).await.unwrap(), "default");
 }
 
 #[tokio::test]

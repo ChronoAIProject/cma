@@ -51,11 +51,13 @@ pub(crate) struct SandboxLifecycleConfig {
     pub native_retirement_finality_enabled: bool,
     pub native_retirement_capture_enabled: bool,
     pub parent_not_ready_pacing_enabled: bool,
+    pub inspection_refusal: Option<crate::config::InspectionRefusalControl>,
     pub startup_sibling_hold_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
     pub reopen_output_refusal_enabled: bool,
+    pub park_runtime_update_sandbox: Option<layer2_core::SandboxId>,
     pub cleanup_continuation_enabled: bool,
     pub owner_stop_settlement_enabled: bool,
     pub bounded_live_fragments: bool,
@@ -262,6 +264,7 @@ impl SandboxLifecycleComposition {
         .with_managed_documents(config.managed_documents_enabled)
         .with_access_transport_migration(config.access_transport_migration);
         agent_config.owner_stop_settlement_enabled = config.owner_stop_settlement_enabled;
+        agent_config.inspection_refusal = config.inspection_refusal;
         if config.native_retirement_finality_enabled {
             agent_config.retirement_reporter = Some(dependencies.store.clone());
         }
@@ -305,6 +308,7 @@ impl SandboxLifecycleComposition {
         .with_home_policy(config.home_policy);
         sandbox_config.retirement_finalizer = Some(retirement_finalizer);
         sandbox_config.reopen_output_refusal_enabled = config.reopen_output_refusal_enabled;
+        sandbox_config.park_runtime_update_sandbox = config.park_runtime_update_sandbox;
         let sandbox_worker = SandboxWorker::new_with_funding(
             SandboxWorkerDependencies {
                 store: dependencies.store.clone(),

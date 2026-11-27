@@ -15,7 +15,7 @@ from unittest.mock import Mock, patch
 from image_secret_gate import ScanRefusal
 from staging_cd_build import command
 from staging_cd_common import Refusal
-from staging_cd_publication_diagnostics import ImageCommandRefusal, run_publication
+from staging_cd_publication_diagnostics import ImageCommandRefusal, run_publication, skopeo_version
 import staging_cd_publish as publication
 import staging_cd_publish_tests as fixtures
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt
@@ -56,6 +56,26 @@ class PublicationDiagnosticTests(unittest.TestCase):
                 self.assertEqual(self.observe(operation),
                                  (1, f'FAIL publication\nFAIL publication stage=build reason={reason}\n'))
 
+    def test_registry_failure_outcome_keeps_only_operation_and_explicit_status(self):
+        cases = (("login", [], b"unauthorized private", ("login", "unknown")),
+                 ("copy", ["docker://private", "oci-archive:private"], b"status code 401 private", ("pull", "401")),
+                 ("copy", ["docker://private", "oci-archive:private"],
+                  b"invalid status code from registry 403 (Forbidden)", ("pull", "403")),
+                 ("copy", ["docker://private", "oci-archive:private"],
+                  b"invalid status code from registry 401 (Unauthorized)", ("pull", "401")),
+                 ("copy", ["docker://private", "oci-archive:private"], b"StatusCode: 401, private", ("pull", "401")),
+                 ("copy", ["docker://private", "oci-archive:private"], b"private offset 403", None),
+                 ("copy", ["oci-archive:private", "docker://private"], b"response status: 403 private", ("push", "403")))
+        for command, arguments, stderr, expected in cases:
+            outcome = {}
+            def operation(_masker, diagnostics):
+                diagnostics.mark("registry_preflight")
+                raise ImageCommandRefusal(["skopeo", command, *arguments], stderr)
+            with self.subTest(command=command), contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(run_publication(operation, outcome=outcome), 1)
+                self.assertEqual(outcome.get("registry_failure"), expected)
+                self.assertNotIn("private", output.getvalue())
+
     def test_http_reads_distinguish_denial_from_other_failures(self):
         for status, reason in [(401, 'registry_denied'), (403, 'registry_denied'), (503, 'registry_read_failed')]:
             with self.subTest(status=status):
@@ -65,6 +85,49 @@ class PublicationDiagnosticTests(unittest.TestCase):
                                                                          'private', {}, None)
                 self.assertEqual(self.observe(operation),
                                  (1, f'FAIL publication\nFAIL publication stage=registry_preflight reason={reason}\n'))
+
+    def test_copy_diagnostic_distinguishes_explicit_status_from_unrelated_numbers(self):
+        command = ["skopeo", "copy", "oci-archive:private", "docker://private"]
+        cases = ((b"writing manifest: invalid status code from registry 400 (Bad Request)", ("manifest_write", "400")),
+                 (b"checking whether a blob exists: unexpected status code 503", ("blob_reuse", "503")),
+                 (b"copying config: private offset 403", ("config_copy", "unknown")),
+                 (b"StatusCode: 429; response status: 503", ("unknown", "unknown")),
+                 (b"copying blob: would require changing layer representation", ("digest_preservation", "unknown")))
+        for stderr, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertEqual(ImageCommandRefusal(command, stderr).copy_failure,
+                                 (*expected, "unknown", "none"))
+        self.assertIsNone(ImageCommandRefusal(command[:2] + command[2:][::-1], b"StatusCode: 400").copy_failure)
+
+    def test_registry_copy_uses_only_fixed_fatal_reasons_and_progress_lines(self):
+        arguments = ["skopeo", "copy", "oci-archive:private", "docker://private"]
+        prefix = b"Getting image source signatures\nCopying blob sha256:" + b"a" * 64 + b"\n"
+        cases = (
+            (b"initializing source private: unpacking tarball: archive/tar: invalid tar header", b"",
+             ("source_read", "unknown", "archive_invalid", "none")),
+            (b"source image rejected: private issuer", b"Getting image source signatures\n",
+             ("unknown", "unknown", "source_policy", "signatures")),
+            (b"fatal: private error", prefix + b"private Writing manifest to image destination\n",
+             ("unknown", "unknown", "unknown", "layers")),
+            (b"copying config: private: no space left on device", prefix + b"Copying config sha256:" + b"b" * 64,
+             ("config_copy", "unknown", "insufficient_space", "config")),
+            (b"writing manifest: MANIFEST_BLOB_UNKNOWN: private", prefix + b"Writing manifest to image destination",
+             ("manifest_write", "unknown", "manifest_invalid", "manifest")),
+        )
+        for stderr, stdout, expected in cases:
+            with self.subTest(expected=expected), patch("staging_cd_build.subprocess.run",
+                    return_value=Mock(returncode=1, stdout=stdout, stderr=stderr)):
+                with self.assertRaises(ImageCommandRefusal) as caught:
+                    command(arguments)
+                self.assertEqual(caught.exception.copy_failure, expected)
+                self.assertEqual(str(caught.exception), "Image operation failed; captured output is private")
+        error = ImageCommandRefusal(arguments, b"", stdout=prefix, returncode=-9)
+        self.assertEqual(error.copy_failure, ("unknown", "unknown", "terminated_by_signal", "layers"))
+
+    def test_copy_tool_version_omits_extra_output_and_survives_a_failed_probe(self):
+        self.assertEqual(skopeo_version(Mock(return_value=b"skopeo version 1.13.3\n")), "1.13.3")
+        self.assertEqual(skopeo_version(Mock(return_value=b"skopeo version 1.13.3\nprivate")), "unknown")
+        self.assertEqual(skopeo_version(Mock(side_effect=OSError("private"))), "unknown")
 
     def test_actual_publish_scan_refusal_never_logs_in_or_copies(self):
         with tempfile.TemporaryDirectory() as directory:

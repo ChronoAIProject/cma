@@ -1,7 +1,9 @@
 from pathlib import Path
+import os
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 import selection
 import test_batch_selection
@@ -181,6 +183,103 @@ class CIEventSelectionTests(unittest.TestCase):
         self.assertEqual(queued, selection.determine_ci(self.root, pull, 'pull_request', repository))
         self.assertFalse(queued['am'])
         self.assertEqual((queued['base'], queued['head']), (release_base, head))
+
+    def test_ci_uses_checkout_rust_packages_for_stale_pr_and_merge_queue(self):
+        retired = 'cma-image-manager'
+        added = 'cma-journey-probe'
+        self.write(f'api/crates/{retired}/Cargo.toml', '# historical workspace member')
+        old_base = self.commit()
+        self.git('checkout', '-qb', 'stale-pr')
+        self.write('api/crates/cma/src/lib.rs', 'pub fn changed() {}')
+        pr_head = self.commit()
+        self.git('checkout', '-q', 'develop')
+        (self.root / 'api/crates' / retired / 'Cargo.toml').unlink()
+        self.write(f'api/crates/{added}/Cargo.toml', '# current workspace member')
+        queue_base = self.commit()
+        self.git('merge', '--no-ff', '-qm', 'Synthetic merge checkout', 'stale-pr')
+        checkout = self.git('rev-parse', 'HEAD')
+        repository = 'example/repository'
+        pull = {'number': 7, 'repository': {'full_name': repository}, 'pull_request': {
+            'base': {'ref': 'develop', 'sha': old_base, 'repo': {'full_name': repository}},
+            'head': {'ref': 'stale-pr', 'sha': pr_head, 'repo': {'full_name': repository}}}}
+        queue = {'action': 'checks_requested', 'repository': {'full_name': repository},
+                 'merge_group': {'base_sha': queue_base, 'head_sha': checkout,
+                                 'base_ref': 'refs/heads/develop',
+                                 'head_ref': 'refs/heads/gh-readonly-queue/develop/pr-7-' + queue_base}}
+
+        def workspace(tree):
+            data = metadata(tree)
+            for name in (retired, added):
+                manifest = tree / 'api/crates' / name / 'Cargo.toml'
+                if manifest.exists():
+                    data['workspace_members'].append(name)
+                    data['packages'].append({'id': name, 'name': name, 'dependencies': [],
+                                             'manifest_path': str(manifest)})
+            return Workspace(data, tree)
+
+        with patch.object(selection, 'workspace', side_effect=workspace):
+            compared = selection.determine(self.root, pull, 'pull_request')
+            self.assertIn(retired, compared['am_packages'])
+            for event, name, source in [(pull, 'pull_request', pr_head), (queue, 'merge_group', checkout)]:
+                with self.subTest(event=name):
+                    result = selection.determine_ci(self.root, event, name, repository)
+                    self.assertEqual(result['test_tracks'], dict(repo=True, am=True, eg=False, web=False))
+                    self.assertEqual(result['head'], source)
+                    self.assertEqual(result['base'], old_base if name == 'pull_request' else queue_base)
+                    self.assertEqual(result['deployables'], compared['deployables'])
+                    self.assertEqual(result['am_packages'], sorted(workspace(self.root).owned['am']))
+                    self.assertEqual(result['eg_packages'], [])
+
+        with patch.dict(os.environ, GITHUB_SHA=checkout):
+            selection.validate_ci_checkout(self.root, queue, 'merge_group')
+            self.git('checkout', '-q', 'stale-pr')
+            with self.assertRaisesRegex(ValueError, 'CI checkout differs'):
+                selection.validate_ci_checkout(self.root, queue, 'merge_group')
+        with patch.dict(os.environ, GITHUB_SHA=pr_head):
+            with self.assertRaisesRegex(ValueError, 'merge queue checkout differs'):
+                selection.validate_ci_checkout(self.root, queue, 'merge_group')
+
+    def test_pr_checkout_preserves_removed_paths_and_adds_new_rust_owners(self):
+        checkout_marker = self.root / 'new-eg-owner'
+        helper = 'cma-journey-probe'
+        helper_path = f'api/crates/{helper}/src/lib.rs'
+        changed = {'src': helper_path}
+
+        def graph(tree):
+            data = metadata(tree)
+            if tree != self.root or changed['src'] == helper_path:
+                manifest = tree / 'api/crates' / helper / 'Cargo.toml'
+                data['workspace_members'].append(helper)
+                data['packages'].append({'id': helper, 'name': helper, 'dependencies': [],
+                                         'manifest_path': str(manifest)})
+                if checkout_marker.exists() and tree == self.root:
+                    eg = next(package for package in data['packages'] if package['name'] == 'cmaeg')
+                    eg['dependencies'].append({'path': str(manifest.parent), 'kind': None})
+            return Workspace(data, tree)
+
+        repository = 'example/repository'
+        pull = {'number': 7, 'repository': {'full_name': repository}, 'pull_request': {
+            'base': {'ref': 'develop', 'sha': self.base, 'repo': {'full_name': repository}},
+            'head': {'ref': 'feature', 'sha': self.third, 'repo': {'full_name': repository}}}}
+        base_result = selection.select([helper_path], graph(self.root))
+        base_result.update(base=self.base, head=self.third, deployables=['cma-web'])
+        with patch.object(selection, 'determine', side_effect=lambda *_args, **_kw: dict(base_result)), \
+                patch.object(selection, 'workspace', side_effect=graph), \
+                patch.object(selection, 'changed_paths', side_effect=lambda *_args: [changed['src']]):
+            checkout_marker.touch()
+            result = selection.determine_ci(self.root, pull, 'pull_request', repository)
+            self.assertEqual(result['test_tracks'], dict(repo=True, am=True, eg=True, web=False))
+            self.assertIn(helper, result['eg_packages'])
+            self.assertTrue(result['approval_contract'])
+            changed['src'] = 'api/crates/cma-image-manager/src/lib.rs'
+            result = selection.determine_ci(self.root, pull, 'pull_request', repository)
+            self.assertEqual(result['test_tracks'], dict(repo=True, am=True, eg=False, web=False))
+            self.assertEqual(result['am_packages'], sorted(graph(self.root).owned['am']))
+            self.assertEqual(result['deployables'], ['cma-web'])
+            base_result.update(am=True, eg=True, web=True, reasons=['unknown-input-path'])
+            result = selection.determine_ci(self.root, pull, 'pull_request', repository)
+            self.assertEqual(set(result['eg_packages']), graph(self.root).owned['eg'] | SHARED)
+            self.assertEqual(result['deployables'], ['cma-web'])
 
     def test_approval_contract_web_inputs_do_not_select_rust_product_tracks(self):
         repository = 'example/repository'

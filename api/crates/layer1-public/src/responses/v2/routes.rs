@@ -309,7 +309,6 @@ pub(super) async fn retrieve(
     match super::stream::snapshot(&state, &authorization, &status.receipt).await {
         Ok((response, _)) => {
             if state.reads.shared_observation_enabled()
-                && layer2_core::sandbox::agent_observation::observation_agent().is_some()
                 && serde_json::to_vec(&response).map_or(true, |bytes| {
                     bytes.len() > layer2_core::sandbox::store::indexed::OUTPUT_PAGE_BYTES
                 })

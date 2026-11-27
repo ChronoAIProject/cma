@@ -73,6 +73,39 @@ mod admission;
 #[path = "observation_control.rs"]
 mod control;
 
+fn public_response_snapshot(request: &Request) -> bool {
+    request.method() == Method::GET
+        && request.headers().get(PROOF).is_none()
+        && request
+            .uri()
+            .path()
+            .strip_prefix("/api/v2/responses/")
+            .is_some_and(|id| !id.is_empty() && !id.contains('/'))
+}
+
+async fn response_snapshot_fallback(response: Response, next: Next, request: Request) -> Response {
+    if response.status() != StatusCode::SERVICE_UNAVAILABLE
+        || response
+            .headers()
+            .get(axum::http::header::CONTENT_TYPE)
+            .is_none_or(|value| value != "application/problem+json")
+    {
+        return response;
+    }
+    let (parts, body) = response.into_parts();
+    let Ok(bytes) = to_bytes(body, 4096).await else {
+        return http::unavailable();
+    };
+    if serde_json::from_slice::<serde_json::Value>(&bytes)
+        .is_ok_and(|value| value["code"] == "agent_owner_unavailable")
+    {
+        // The public snapshot handler reauthorizes the same request and reads
+        // durable history. This path creates no subscription or execution.
+        return control::durable(next, request).await;
+    }
+    Response::from_parts(parts, Body::from(bytes))
+}
+
 fn agent(request: &Request, body: &[u8]) -> Result<AgentId, ()> {
     let path = request.uri().path();
     let id = if path == "/api/v2/responses" {
@@ -151,6 +184,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
+    let snapshot_fallback = public_response_snapshot(&request);
     let control_fallback =
         request.headers().get(PROOF).is_none() && control::approval_reply(&request, &bytes);
     let permit = match relay.acquire(capacity::Class::Observer) {
@@ -210,6 +244,9 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
     .await
     {
         Ok(Ok(value)) => value,
+        _ if snapshot_fallback => {
+            return http::retain(control::durable(next, request).await, permit);
+        }
         _ => return http::unavailable(),
     };
     let token = wire_token(&destination);
@@ -273,7 +310,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
     if peer.is_some() {
         return http::unavailable();
     }
-    if control_fallback {
+    if snapshot_fallback || control_fallback {
         let (parts, body) = request.into_parts();
         let fallback = Request::from_parts(parts.clone(), Body::from(bytes.clone()));
         let response = forward(
@@ -282,12 +319,21 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
             destination,
             Request::from_parts(parts, body),
             &bytes,
-            permit,
         )
         .await;
+        if snapshot_fallback {
+            return http::retain(
+                response_snapshot_fallback(response, next, fallback).await,
+                permit,
+            );
+        }
+        let response = http::retain(response, permit);
         return control::remote_fallback(response, next, fallback).await;
     }
-    forward(relay, observation, destination, request, &bytes, permit).await
+    http::retain(
+        forward(relay, observation, destination, request, &bytes).await,
+        permit,
+    )
 }
 
 // This envelope is signed over the exact public read URI. It is never converted
@@ -308,7 +354,6 @@ async fn forward(
     destination: ObservationDestination,
     request: Request,
     body: &[u8],
-    permit: capacity::Permit,
 ) -> Response {
     let mut headers = HeaderMap::new();
     for (name, value) in ingress::headers(&request) {
@@ -354,7 +399,7 @@ async fn forward(
     // The peer has admitted capacity and custody. Cold replay now runs under
     // the existing read/transport bounds, outside the admission deadline.
     match admission::response(response).await {
-        Ok(response) => http::retain(response, permit),
+        Ok(response) => response,
         Err(()) => http::unavailable(),
     }
 }

@@ -11,6 +11,7 @@ use std::collections::BTreeMap;
 
 mod authority;
 mod bridge;
+mod completeness;
 mod delivery;
 mod inventory;
 mod publication;
@@ -47,6 +48,7 @@ impl Fixture {
             .await
             .unwrap();
         let config = crate::config::UsageCaptureConfig {
+            completeness_enabled: false,
             namespace: "fixture".into(),
             owner_issuer: "https://identity.example".into(),
         };
@@ -222,11 +224,11 @@ impl Fixture {
             samples: vec![
                 Sample {
                     at: self.minute as f64,
-                    value: 10.0,
+                    value: Some(10.0),
                 },
                 Sample {
                     at: (self.minute + 60) as f64,
-                    value: 10.0 + delta,
+                    value: Some(10.0 + delta),
                 },
             ],
         }]

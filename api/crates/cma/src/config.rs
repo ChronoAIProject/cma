@@ -48,9 +48,16 @@ mod public_streams;
 mod rate_default_lease;
 mod rate_limits;
 pub use rate_limits::RateLimitConfig;
+mod inspection_refusal;
+pub(crate) use inspection_refusal::InspectionRefusalControl;
 mod relay_capacity;
+mod repository_runtime_images;
 mod runtime;
+mod staging_sandbox;
+mod startup_failure_fixture;
+pub(crate) mod suggestion_control;
 pub(crate) use runtime::deployment_id_from_lookup;
+pub(crate) use staging_sandbox::StagingSandboxControls;
 mod runtime_capacity;
 mod runtime_migration;
 mod shell_settings;
@@ -193,6 +200,8 @@ pub struct Config {
     pub mongodb_authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub deployment_id: String,
     pub runtime: RuntimeConfig,
+    pub(crate) staging_startup_failure:
+        Option<layer3_adapter::runtime_bootstrap::StagingStartupFailure>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
@@ -284,9 +293,10 @@ impl Config {
     }
 
     fn with_provider(
-        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        lookup: impl FnMut(&str) -> Result<Option<String>, String>,
         provider: runtime::Provider,
     ) -> Result<Self, String> {
+        let mut lookup = repository_runtime_images::with_bundle(lookup)?;
         let shell_settings::ServerSettings {
             bind,
             metrics_bind,
@@ -404,6 +414,10 @@ impl Config {
             mongodb_authority,
             deployment_id,
             runtime,
+            staging_startup_failure: startup_failure_fixture::from_lookup(
+                &mut lookup,
+                std::time::SystemTime::now(),
+            )?,
             execution,
             baseline_services,
             auth_encryption_key,

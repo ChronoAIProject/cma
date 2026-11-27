@@ -12,7 +12,7 @@ import { useLifecycleIntent } from './lifecycleIntent';
 import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
-import { TaskCreationStatus } from './TaskCreationStatus';
+import { TaskCreationStatus, TaskQuotaNotice } from './TaskCreationStatus';
 import { TaskHomeLayout } from './TaskHomeLayout';
 import { TaskTemplatePanel } from './TaskTemplatePanel';
 import { TaskComposer } from './TaskComposer';
@@ -449,15 +449,7 @@ function TaskHomeContent({
           onRecheck={() => void lifecycle.submit()}
         />
       ) : null}
-      {quotaFailed ? (
-        <p role="alert">
-          The Sandbox environment limit is now reached. Your task draft is saved. Manage
-          environments and check capacity before starting again.
-          {quotaFailure?.quota_usage
-            ? ` Active: ${quotaFailure.quota_usage.active}. Deletions using slots: ${quotaFailure.quota_usage.retiring_charged}. Deletions that released slots: ${quotaFailure.quota_usage.retiring_released}.`
-            : null}
-        </p>
-      ) : null}
+      {quotaFailed ? <TaskQuotaNotice quotaUsage={quotaFailure?.quota_usage} /> : null}
       <RepositoryPreparationHelp
         client={client}
         viewerId={viewerId}

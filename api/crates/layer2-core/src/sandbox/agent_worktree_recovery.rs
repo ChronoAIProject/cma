@@ -69,6 +69,14 @@ fn exact_debt(debt: &AgentCleanupDebt, worktree: &Worktree, workspace_name: &str
         && debt.request_sha256 == request.request_sha256
 }
 
+pub(super) fn exact_recorded_worktree_debt(debt: &AgentCleanupDebt, worktree: &Worktree) -> bool {
+    worktree
+        .path
+        .strip_prefix(super::workspace::SANDBOX_HOME)
+        .and_then(|path| path.strip_suffix(&format!("/.worktrees/{}", worktree.name)))
+        .is_some_and(|name| !name.is_empty() && exact_debt(debt, worktree, name))
+}
+
 impl Agent {
     /// Creation provenance and the initial log forever describe the original worktree.
     pub fn creation_worktree_id(&self) -> &WorktreeId {
@@ -87,10 +95,6 @@ impl Agent {
         }
         for (index, attempt) in attempts.iter().enumerate() {
             let original = &attempt.original_worktree;
-            let workspace_name = original
-                .path
-                .strip_prefix(super::workspace::SANDBOX_HOME)
-                .and_then(|path| path.strip_suffix(&format!("/.worktrees/{}", original.name)));
             let valid = valid_operation(&attempt.operation_id)
                 && crate::seconds_from_rfc3339(&attempt.admitted_at).is_some()
                 && !attempt.requested_by.as_str().is_empty()
@@ -108,9 +112,7 @@ impl Agent {
                     .and_then(|v| v.parse::<u64>().ok())
                     .is_some_and(|v| v > 0)
                 && is_indeterminate_checkout(&attempt.original_failure)
-                && workspace_name.is_some_and(|name| {
-                    !name.is_empty() && exact_debt(&attempt.original_cleanup_debt, original, name)
-                })
+                && exact_recorded_worktree_debt(&attempt.original_cleanup_debt, original)
                 && attempt.original_agent_revision > 0
                 && attempt.original_agent_revision < self.revision
                 && attempt.original_log_sequence <= self.conversation.last_seq

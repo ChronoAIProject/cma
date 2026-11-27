@@ -15,6 +15,13 @@ import {
 export const WORKSPACE_READ_RECONNECTING =
   'Workspace status is temporarily unavailable (HTTP 503). Reconnecting.';
 
+export function agentHistoryIssue(
+  state: Extract<AgentResourceState, { status: 'ready' }>,
+): string | undefined {
+  if (state.historyLoading) return 'Loading conversation activity.';
+  if (state.historyUnavailable) return 'Earlier activity could not be loaded. Retrying…';
+}
+
 export function errorMessage(error: unknown): string {
   const approval = approvalBaselineMessage(error);
   if (approval !== undefined) return approval;

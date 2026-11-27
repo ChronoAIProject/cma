@@ -23,13 +23,13 @@ async fn shifted_samples(reset: bool) {
     let outbox = f.rows(OUTBOX).await;
     let retained = f.rows(EVIDENCE).await;
     if reset {
-        samples.samples[0].value = 50.0;
+        samples.samples[0].value = Some(50.0);
     } else {
         samples.samples.remove(0);
     }
     samples.samples.push(Sample {
         at: (f.minute + 60) as f64,
-        value: 55.0,
+        value: Some(55.0),
     });
     let (published, candidate) = publish(&f, vec![samples]).await;
     let cpu = &candidate.manifest.frozen.as_ref().unwrap().fact().metrics[0];
@@ -63,7 +63,7 @@ async fn late_samples_that_preserve_prior_interval_can_complete_the_fact() {
     let mut samples = early(&f).await;
     samples.samples.push(Sample {
         at: (f.minute + 60) as f64,
-        value: 55.0,
+        value: Some(55.0),
     });
     let (published, candidate) = publish(&f, vec![samples]).await;
     let cpu = &candidate.manifest.frozen.as_ref().unwrap().fact().metrics[0];
@@ -83,7 +83,7 @@ async fn supported_partial_correction_can_decrease_to_zero() {
     let f = Fixture::new().await;
     let mut samples = early(&f).await;
     for (last, quantity) in [(25.0, "15000000000"), (10.0, "0")] {
-        samples.samples[1].value = last;
+        samples.samples[1].value = Some(last);
         retry(&f).await;
         let (published, candidate) = publish(&f, vec![samples.clone()]).await;
         let cpu = &candidate.manifest.frozen.as_ref().unwrap().fact().metrics[0];

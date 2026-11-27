@@ -104,7 +104,7 @@ pub(super) async fn activate(
 /// Every Desktop selection and promotion writes the same deployment-scoped
 /// document, even when no pool has ever been activated. The coordination
 /// record is independent of target identity and survives their retirement.
-pub(super) async fn selection_fence(
+pub(in crate::store::native_warm_pools) async fn selection_fence(
     store: &MongoNativeWarmPools,
     session: &mut ClientSession,
 ) -> mongodb::error::Result<()> {
@@ -132,7 +132,67 @@ async fn select_once(
     session: &mut ClientSession,
 ) -> Result<bool, SelectionError> {
     selection_fence(store, session).await?;
+    store
+        .verify_activation_floor(true, &candidate.plan.spec.image.uri, session)
+        .await?;
+    select_under_fence(store, candidate, session).await
+}
 
+/// The publisher already holds the shared Machine selection fence and its
+/// cutover authorization in the transaction that will insert the first lane.
+pub(in crate::store::native_warm_pools) async fn select_for_publication(
+    store: &MongoNativeWarmPools,
+    candidate: &PoolTarget,
+    session: &mut ClientSession,
+) -> Result<(), WarmPoolError> {
+    select_under_fence(store, candidate, session)
+        .await
+        .map_err(|error| match error {
+            SelectionError::Authority(error) => error,
+            SelectionError::Driver(error) => {
+                tracing::warn!(%error, "Machine publication selection failed");
+                WarmPoolError::Unavailable
+            }
+        })?;
+    let mut filter = release_scope(store, true);
+    filter.insert("activated_at", doc! {"$type":"date"});
+    let latest = store
+        .targets
+        .find_one(filter.clone())
+        .sort(release_order(true))
+        .session(&mut *session)
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+        .ok_or(WarmPoolError::Conflict)?;
+    if latest.id != candidate.id
+        || latest.plan != candidate.plan
+        || latest.retiring
+        || latest.retired
+    {
+        return Err(WarmPoolError::Conflict);
+    }
+    let selected_at = latest
+        .machine_plan_activated_at
+        .ok_or(WarmPoolError::Conflict)?;
+    filter.extend(doc! {"activated_at":latest.activated_at,"machine_plan_activated_at":selected_at,"_id":{"$ne":&latest.id}});
+    if store
+        .targets
+        .find_one(filter)
+        .session(session)
+        .await
+        .map_err(|_| WarmPoolError::Unavailable)?
+        .is_some()
+    {
+        return Err(WarmPoolError::Conflict);
+    }
+    Ok(())
+}
+
+async fn select_under_fence(
+    store: &MongoNativeWarmPools,
+    candidate: &PoolTarget,
+    session: &mut ClientSession,
+) -> Result<bool, SelectionError> {
     let mut exact = release_scope(store, true);
     exact.extend(doc! {"_id":&candidate.id,"retiring":{"$ne":true},"retired":{"$ne":true}});
     let row = store
@@ -141,6 +201,9 @@ async fn select_once(
         .session(&mut *session)
         .await?
         .ok_or(WarmPoolError::Conflict)?;
+    if row.plan != candidate.plan {
+        return Err(WarmPoolError::Conflict.into());
+    }
     if row.machine_plan_activated_at.is_none() {
         let mut image_scope = release_scope(store, true);
         image_scope.extend(doc! {"plan.spec.image.uri": &row.plan.spec.image.uri,

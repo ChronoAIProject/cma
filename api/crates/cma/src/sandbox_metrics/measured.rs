@@ -37,12 +37,12 @@ impl MetricsWorkers {
             let Some(input) = capture.prepare_measured(&lease).await? else {
                 return Ok(false);
             };
-            let (mut series, complete) =
-                self.raw(&input.bindings(), input.range())
-                    .await
-                    .map_err(|_| {
-                        SandboxStoreError::Unavailable("measured source unavailable".into())
-                    })?;
+            let (mut series, complete) = self
+                .raw_for_measured_evidence(&input.bindings(), input.range())
+                .await
+                .map_err(|_| {
+                    SandboxStoreError::Unavailable("measured source unavailable".into())
+                })?;
             for value in &mut series {
                 value.labels.retain(|key, _| {
                     matches!(

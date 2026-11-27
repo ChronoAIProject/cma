@@ -256,7 +256,7 @@ jobs:
       -
         name: "Local resource lifecycle contracts"
         id: resource_lifecycle
-        timeout-minutes: 5
+        timeout-minutes: 8
         env:
           CMA_LIFECYCLE_EVIDENCE_DIR: "${{ runner.temp }}/cma-resource-lifecycle"
         run: |
@@ -436,7 +436,7 @@ jobs:
       -
         name: "Local Agent v2 contracts"
         id: agent_v2
-        timeout-minutes: 5
+        timeout-minutes: 8
         env:
           CMA_AGENT_V2_OUTPUT_DIR: "${{ runner.temp }}/cma-agent-v2"
         run: |

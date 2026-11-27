@@ -77,6 +77,9 @@ impl ProfileAuthoringSource for Source {
         credential: Option<&AuthoringCredential>,
     ) -> Result<ProfilePage<AuthoringSkillEntry>, AuthoringSourceError> {
         self.check()?;
+        if self.mode == "skills_authorization" {
+            return Err(AuthoringSourceError::SkillsAuthorizationRequired);
+        }
         assert_eq!(
             credential.map(AuthoringCredential::value),
             (self.mode == "credential_owner" || self.mode == "credential_sandbox_owner")
@@ -172,6 +175,7 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
             | "credential_anonymous"
             | "empty"
             | "repository_missing"
+            | "skills_authorization"
             | "reference_missing"
     ));
     let service = ProfileAuthoringService::new(

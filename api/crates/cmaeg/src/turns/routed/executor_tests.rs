@@ -389,3 +389,6 @@ async fn persisted_pending_terminal_effect_and_settled_receipt_survive_crashes()
     assert!(rx.try_recv().is_err());
     assert_eq!(http.seen().iter().filter(|v| v.method == "POST").count(), 1);
 }
+
+#[path = "readiness_acknowledgement_tests.rs"]
+mod readiness_acknowledgement;

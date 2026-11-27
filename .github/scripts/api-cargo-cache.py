@@ -159,6 +159,12 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
     require(manifest.get("format") == FORMAT, "incompatible cache format")
     archives = manifest.get("archives")
     require(isinstance(archives, dict) and set(archives) == set(MOUNTS), "missing cache mount")
+    inspect_mounts(directory, family, max_archive, max_content, expected=archives)
+    return manifest
+
+
+def inspect_mounts(directory, family, max_archive, max_content, *, expected=None):
+    checksums = {}
     size = sum((directory / f"{name}.tar.gz").lstat().st_size for name in MOUNTS)
     # The Actions cache path keeps MAX_ARCHIVE_BYTES; staging run artifacts pass their own bound.
     require(size <= (MAX_ARCHIVE_BYTES if max_archive is None else max_archive),
@@ -168,7 +174,9 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
     for name in MOUNTS:
         path = directory / f"{name}.tar.gz"
         require(path.is_file() and not path.is_symlink(), "archive must be a regular file")
-        require(manifest["archives"][name] == digest(path), "archive checksum differs")
+        checksums[name] = digest(path)
+        if expected is not None:
+            require(expected[name] == checksums[name], "archive checksum differs")
         files = 0
         regular_members = set()
         target_links = set()
@@ -192,7 +200,7 @@ def validate_bundle(directory, prefix, *, family=None, max_archive=None, max_con
                     archive_path(member.linkname)
         require(target_links <= regular_members, "cache hard link target is absent")
         require(files > 0, "empty mount cannot replace a warm cache")
-    return manifest
+    return checksums
 
 
 def dockerfile(operation, max_content=None, *, compact_registry=False, max_archive=None):
@@ -272,10 +280,16 @@ def seal(directory, prefix, *, family=None, max_archive=None, max_content=None):
     require(not (directory / "oversize").exists(), "expanded cache exceeds its bound")
     require(not (directory / "oversize-compressed").exists(), "compressed cache exceeds its bound")
     require(not (directory / "empty").exists(), "empty mount cannot replace a warm cache")
-    manifest = {"format": FORMAT, "prefix": prefix,
-                "archives": {name: digest(directory / f"{name}.tar.gz") for name in MOUNTS}}
-    (directory / "manifest.json").write_text(json.dumps(manifest))
-    validate_bundle(directory, prefix, family=family, max_archive=max_archive, max_content=max_content)
+    require(directory.is_dir() and not directory.is_symlink(), "cache bundle absent")
+    files = {path.name for path in directory.iterdir()}
+    require(files - {"manifest.json"} == {"registry.tar.gz", "target.tar.gz"}, "unexpected cache files")
+    manifest_path = directory / "manifest.json"
+    require(not manifest_path.is_symlink() and (not manifest_path.exists() or manifest_path.is_file()),
+            "invalid cache manifest")
+    archives = inspect_mounts(directory, family, max_archive, max_content)
+    document = json.dumps({"format": FORMAT, "prefix": prefix, "archives": archives})
+    require(len(document) < 4096, "invalid cache manifest")
+    manifest_path.write_text(document)
 
 
 def select_namespace(directory, namespace):

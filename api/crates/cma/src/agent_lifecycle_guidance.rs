@@ -68,10 +68,21 @@ fn managed_v7() -> &'static str {
     INSTRUCTIONS.get_or_init(|| format!("{PERMISSION_REMEDIATION_V1}\n\n{}", managed_v6()))
 }
 
+const FIRST_PERMISSION_REPORT_V1: &str = "CMA first permission report (v1):\n\
+The first public message that mentions a permission denial or missing capability must include the complete owner action in that same message. This applies to progress updates, commentary before tool calls, and final replies. A message that reports a service-scope block and says you will investigate has already reported the gap. Deliver the complete owner action before making any further tool calls after reporting the gap.\n\
+While you are still checking the cause or the remedy, use a neutral progress update such as ‘I’m checking the available access and recovery steps.’ Then report the gap together with the exact owner action, the smallest grant and its scope, what work you will resume, and the check you will perform after approval. If you establish that no supported action exists, include the available fallback in that first report. Keep the owner’s approval boundary throughout.";
+
+fn managed_v8() -> &'static str {
+    static INSTRUCTIONS: OnceLock<String> = OnceLock::new();
+    INSTRUCTIONS.get_or_init(|| format!("{FIRST_PERMISSION_REPORT_V1}\n\n{}", managed_v7()))
+}
+
 pub(crate) fn configured_admission_instructions(
     flags: &crate::config::FeatureFlags,
 ) -> &'static str {
-    if flags.session_guidance_v7 {
+    if flags.session_guidance_v8 {
+        managed_v8()
+    } else if flags.session_guidance_v7 {
         managed_v7()
     } else if flags.session_guidance_v6 {
         managed_v6()
@@ -94,6 +105,7 @@ pub(super) fn admission_instructions(v4_enabled: bool, v5_enabled: bool) -> &'st
 /// Similar owner-authored text is never treated as platform instructions.
 pub(crate) fn split_managed(prompt: &str) -> (Option<&'static str>, &str) {
     for managed in [
+        managed_v8(),
         managed_v7(),
         managed_v6(),
         managed_v5(),
@@ -142,7 +154,14 @@ impl layer2_core::sandbox::AgentInstructionPolicy for ManagedInstructionPolicy {
         split_managed(&agent.profile.content.system_prompt)
             .0
             .filter(|managed| {
-                [managed_v4(), managed_v5(), managed_v6(), managed_v7()].contains(managed)
+                [
+                    managed_v4(),
+                    managed_v5(),
+                    managed_v6(),
+                    managed_v7(),
+                    managed_v8(),
+                ]
+                .contains(managed)
             })
     }
 }

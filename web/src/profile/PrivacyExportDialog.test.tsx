@@ -145,6 +145,30 @@ it('withholds the file when a valid later page arrives as the first response', a
   expect(clickDownload).not.toHaveBeenCalled();
 });
 
+it('surfaces the server refusal code and lets the owner retry the same Agent', async () => {
+  const clickDownload = mockExport(async () =>
+    Response.json(
+      {
+        status: 503,
+        code: 'privacy_export_source_unavailable',
+        detail: 'The source is unavailable.',
+      },
+      { status: 503 },
+    ),
+  );
+  const actor = userEvent.setup();
+  render(<PrivacyExportDialog owner={owner} onClose={vi.fn()} />);
+  await screen.findByRole('option', { name: 'Example Agent' });
+  const button = screen.getByRole('button', { name: 'Download conversation' });
+  await actor.click(button);
+  expect(await screen.findByRole('alert')).toHaveTextContent(
+    'Try again later (HTTP 503, privacy_export_source_unavailable).',
+  );
+  expect(button).toBeEnabled();
+  expect(screen.getByRole('combobox', { name: 'Agent' })).toHaveValue(agent);
+  expect(clickDownload).not.toHaveBeenCalled();
+});
+
 it('cancels an in-flight page and withholds the file after the dialog closes', async () => {
   let resolveResponse!: (response: Response) => void;
   let signal: AbortSignal | null | undefined;

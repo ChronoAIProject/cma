@@ -8,6 +8,7 @@ migration matrix. No raw Mongo document writes or credential access occur in
 this fixture; the ephemeral browser cookie stays in the private run directory
 with mode 0600 and is removed by the runner's cleanup.
 """
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -25,6 +26,17 @@ PROFILE_COLLECTIONS = [kind + suffix for kind in ('agent', 'workspace', 'sandbox
                        for suffix in ('_profiles', '_profile_revisions')]
 COLLECTIONS = PROFILE_COLLECTIONS + AUTH_COLLECTIONS
 CREATE_INTERVAL_SECONDS = 6.25
+
+
+def retained_activity(row):
+    record = dict(row)
+    if 'actor_reference' in record:
+        actor = record.get('actor')
+        reference = record.pop('actor_reference')
+        if not isinstance(actor, str) or reference != 'actor-' + hashlib.sha256(
+                b'cma:operator-activity:actor:v1\0' + actor.encode()).hexdigest()[:16]:
+            raise RuntimeError('platform settings activity changed across image switch')
+    return record
 
 
 def usage_snapshot(value, page=False):
@@ -288,7 +300,8 @@ class Fixture:
                         if item.get('action') == 'configure'
                         and item.get('target') == {'kind': 'resource', 'id': 'platform_settings'}]
             activity.sort(key=lambda item: item['id'])
-            if activity != sorted(expected['activity'], key=lambda item: item['id']):
+            if [retained_activity(row) for row in activity] != [
+                    retained_activity(row) for row in sorted(expected['activity'], key=lambda item: item['id'])]:
                 raise RuntimeError('platform settings activity changed across image switch')
         return {'settings': settings, 'usage': usage, 'activity': activity}
 

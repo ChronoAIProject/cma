@@ -236,6 +236,73 @@ async fn mongo_unpublished_recovery_refuses_a_concurrent_agent_revision() {
     client.database(&name).drop().await.unwrap();
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn mongo_unpublished_recovery_refuses_a_release_superseded_after_proof() {
+    use crate::store::released_runtimes::MongoReleasedRuntimes;
+    use layer2_core::released_runtime::{
+        CandidateState, PromotionEvidence, ReleasedLane, ReleasedLaneRecord,
+    };
+    use layer3_adapter::{ReleasedLaneRevisions, ReleasedRuntime};
+
+    let (client, name, mut store) = database().await;
+    let lanes = MongoReleasedRuntimes::open(&client.database(&name), "recovery-test");
+    lanes.initialize().await.unwrap();
+    store.released_lanes = Some(lanes.clone());
+    let image = format!("registry.example/runtime@sha256:{}", "a".repeat(64));
+    let next = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
+    let first = ReleasedLaneRecord::bootstrap(ReleasedLane::Agent, image.clone(), NOW).unwrap();
+    lanes.bootstrap(first.clone()).await.unwrap();
+    let mut request = fixture(&store, "sbx_recovery_release").await;
+    request.target_runtime_version = image.clone();
+    request.released_runtime = Some(ReleasedRuntime {
+        revision: first.active.revision,
+        agent: image,
+        machine: None,
+        lane_revisions: Some(ReleasedLaneRevisions {
+            agent: first.active.revision,
+            machine: None,
+        }),
+    });
+
+    let prepared = first
+        .enable_following()
+        .unwrap()
+        .observe(next.clone(), "promotion".into(), NOW)
+        .unwrap()
+        .settle("promotion", CandidateState::Ready)
+        .unwrap();
+    lanes.replace(&first, prepared.clone(), None).await.unwrap();
+    let evidence = PromotionEvidence {
+        image: next,
+        observation_id: "promotion".into(),
+        lane_revision: prepared.revision,
+    };
+    let (promoted, transition) = prepared.promote(&evidence, NOW).unwrap();
+    let mut session = lanes.session().await.unwrap();
+    lanes
+        .record_promotion(&prepared, promoted, transition, &mut session)
+        .await
+        .unwrap();
+    session.commit_transaction().await.unwrap();
+
+    let id = &request.snapshot.sandbox.id;
+    assert!(matches!(
+        store
+            .admit_unpublished_runtime_recovery(request.clone())
+            .await,
+        Err(SandboxStoreError::Conflict)
+    ));
+    assert_eq!(
+        store
+            .unpublished_runtime_recovery_snapshot(id)
+            .await
+            .unwrap(),
+        request.snapshot
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
 pub(in crate::store) fn home(id: &layer2_core::SandboxId) -> SandboxHome {
     use layer3_adapter::agent_sandbox::*;
     let policy = HomeVolumePolicy {

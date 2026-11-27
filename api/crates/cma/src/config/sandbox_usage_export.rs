@@ -3,6 +3,7 @@
 pub(crate) struct UsageCaptureConfig {
     pub namespace: String,
     pub owner_issuer: String,
+    pub completeness_enabled: bool,
 }
 
 impl UsageCaptureConfig {
@@ -21,9 +22,20 @@ impl UsageCaptureConfig {
             }
             Ok(value)
         };
+        let completeness_enabled =
+            match lookup("CHRONO_SANDBOX_USAGE_COMPLETENESS_ENABLED")?.as_deref() {
+                None | Some("false") => false,
+                Some("true") => true,
+                _ => {
+                    return Err(
+                        "CHRONO_SANDBOX_USAGE_COMPLETENESS_ENABLED must be true or false".into(),
+                    );
+                }
+            };
         Ok(Some(Self {
             namespace: value(lookup, "CHRONO_SANDBOX_USAGE_PRODUCER_NAMESPACE")?,
             owner_issuer: value(lookup, "CHRONO_SANDBOX_USAGE_OWNER_ISSUER")?,
+            completeness_enabled,
         }))
     }
 }
@@ -55,6 +67,7 @@ mod tests {
         assert!(UsageCaptureConfig::from_lookup(&mut |key| Ok(Some(
             match key {
                 "CHRONO_SANDBOX_USAGE_CAPTURE_ENABLED" => "true",
+                "CHRONO_SANDBOX_USAGE_COMPLETENESS_ENABLED" => "false",
                 "CHRONO_SANDBOX_USAGE_PRODUCER_NAMESPACE" => "fixture",
                 "CHRONO_SANDBOX_USAGE_OWNER_ISSUER" => "https://identity.example",
                 _ => panic!("unexpected configuration"),

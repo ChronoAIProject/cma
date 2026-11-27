@@ -5,6 +5,7 @@ use std::panic::AssertUnwindSafe;
 
 mod fixture;
 mod measure;
+mod replay_interleavings;
 
 #[tokio::test]
 #[ignore = "requires a disposable replica set with profiler access"]

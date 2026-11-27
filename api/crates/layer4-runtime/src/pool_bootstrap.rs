@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::runtime_bootstrap::{
-    valid_pod_uid, RuntimeBootstrapReceipt, RuntimeBootstrapRequest, MAX_RUNTIME_BOOTSTRAP_BYTES,
-    RUNTIME_BOOTSTRAP_SOCKET,
+    valid_pod_uid, RuntimeBootstrapReceipt, RuntimeBootstrapRequest, StagingStartupFailure,
+    MAX_RUNTIME_BOOTSTRAP_BYTES, RUNTIME_BOOTSTRAP_SOCKET,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -24,9 +24,11 @@ const MAX_CONNECTIONS: usize = 8;
 pub(crate) struct AssignedRuntime {
     pub config: RuntimeConfig,
     pub auth: Arc<ControlAuth>,
+    pub startup_failure: Option<(StagingStartupFailure, oneshot::Receiver<()>)>,
 }
 
 pub(crate) struct AssignmentServer {
+    admission: Arc<Mutex<Admission>>,
     task: JoinHandle<()>,
     path: PathBuf,
     inode: u64,
@@ -50,7 +52,10 @@ enum Reply {
 
 struct Admission {
     receipt: Option<RuntimeBootstrapReceipt>,
+    disarmed_receipt: Option<RuntimeBootstrapReceipt>,
     sender: Option<oneshot::Sender<AssignedRuntime>>,
+    startup_confirmation: Option<oneshot::Sender<()>>,
+    startup_exit_committed: bool,
 }
 
 impl AssignmentServer {
@@ -83,9 +88,13 @@ impl AssignmentServer {
         let (sender, receiver) = oneshot::channel();
         let admission = Arc::new(Mutex::new(Admission {
             receipt: None,
+            disarmed_receipt: None,
             sender: Some(sender),
+            startup_confirmation: None,
+            startup_exit_committed: false,
         }));
         let socket_path = path.clone();
+        let server_admission = admission.clone();
         let task = tokio::spawn(async move {
             let mut jobs = JoinSet::new();
             let base = Arc::new(base);
@@ -104,7 +113,15 @@ impl AssignmentServer {
                 }
             }
         });
-        Ok((Self { task, path, inode }, receiver))
+        Ok((
+            Self {
+                admission: server_admission,
+                task,
+                path,
+                inode,
+            },
+            receiver,
+        ))
     }
 }
 
@@ -149,14 +166,23 @@ async fn serve(
             serde_json::from_slice::<RuntimeBootstrapRequest>(&bytes)
                 .map_err(|_| "invalid runtime assignment".into())
         });
-    let receipt = match request {
-        Ok(request) if request.pod_uid == pod_uid => accept(request, admission, base, socket).await,
-        _ => Err("runtime assignment identity mismatch".into()),
+    let Ok(request) = request else {
+        return write_reply(&mut stream, Reply::Rejected).await;
     };
-    let reply = match receipt {
+    if request.pod_uid != pod_uid {
+        return write_reply(&mut stream, Reply::Rejected).await;
+    }
+    if request.staging_startup_confirmed {
+        return confirm_startup(request, &admission, &mut stream).await;
+    }
+    let reply = match accept(request, &admission, base, socket).await {
         Ok(receipt) => Reply::Accepted { receipt },
         Err(_) => Reply::Rejected,
     };
+    write_reply(&mut stream, reply).await
+}
+
+async fn write_reply(stream: &mut UnixStream, reply: Reply) -> Result<(), String> {
     let bytes =
         serde_json::to_vec(&reply).map_err(|_| "cannot encode runtime assignment receipt")?;
     stream
@@ -169,9 +195,34 @@ async fn serve(
         .map_err(|_| "cannot finish runtime assignment".into())
 }
 
+async fn confirm_startup(
+    mut request: RuntimeBootstrapRequest,
+    admission: &Mutex<Admission>,
+    stream: &mut UnixStream,
+) -> Result<(), String> {
+    let Ok(receipt) = RuntimeBootstrapReceipt::for_request(&request) else {
+        return write_reply(stream, Reply::Rejected).await;
+    };
+    request.staging_startup_confirmed = false;
+    let Ok(original) = RuntimeBootstrapReceipt::for_request(&request) else {
+        return write_reply(stream, Reply::Rejected).await;
+    };
+    // Keep confirmation delivery and disarm in the same critical section.
+    // A failed reply leaves the assignment eligible for disarm.
+    let mut state = admission.lock().await;
+    if state.receipt.as_ref() != Some(&original) {
+        return write_reply(stream, Reply::Rejected).await;
+    }
+    write_reply(stream, Reply::Accepted { receipt }).await?;
+    if let Some(sender) = state.startup_confirmation.take() {
+        state.startup_exit_committed = sender.send(()).is_ok();
+    }
+    Ok(())
+}
+
 async fn accept(
     mut request: RuntimeBootstrapRequest,
-    admission: Arc<Mutex<Admission>>,
+    admission: &Mutex<Admission>,
     base: &BTreeMap<String, String>,
     socket: &Path,
 ) -> Result<RuntimeBootstrapReceipt, String> {
@@ -179,12 +230,29 @@ async fn accept(
         RuntimeBootstrapReceipt::for_request(&request).map_err(|_| "invalid runtime assignment")?;
     let mut state = admission.lock().await;
     if let Some(current) = &state.receipt {
-        return if current == &receipt {
-            Ok(receipt)
-        } else {
-            Err("runtime is already assigned".into())
-        };
+        if current == &receipt {
+            return Ok(receipt);
+        }
+        if !state.startup_exit_committed && state.disarmed_receipt.as_ref() == Some(&receipt) {
+            // A manager can replay the same assignment after its staging
+            // switch has been removed or expired. Drop the confirmation
+            // sender so a pending Runtime can continue startup immediately.
+            state.startup_confirmation = None;
+            state.disarmed_receipt = None;
+            state.receipt = Some(receipt.clone());
+            return Ok(receipt);
+        }
+        return Err("runtime is already assigned".into());
     }
+    let fault = request.staging_startup_failure.take();
+    let disarmed_receipt = if fault.is_some() {
+        Some(
+            RuntimeBootstrapReceipt::for_request(&request)
+                .map_err(|_| "invalid disarmed runtime assignment")?,
+        )
+    } else {
+        None
+    };
     let token = request
         .environment
         .remove("CHRONO_RUNTIME_CONTROL_TOKEN")
@@ -198,12 +266,22 @@ async fn accept(
     if socket.starts_with(&config.home) {
         return Err("runtime assignment socket must be outside the tenant home".into());
     }
+    let startup_failure = fault.map(|fault| {
+        let (confirm, wait) = oneshot::channel();
+        state.startup_confirmation = Some(confirm);
+        (fault, wait)
+    });
     state
         .sender
         .take()
         .ok_or("runtime assignment receiver is unavailable")?
-        .send(AssignedRuntime { config, auth })
+        .send(AssignedRuntime {
+            config,
+            auth,
+            startup_failure,
+        })
         .map_err(|_| "runtime assignment receiver is unavailable")?;
+    state.disarmed_receipt = disarmed_receipt;
     state.receipt = Some(receipt.clone());
     Ok(receipt)
 }
@@ -307,3 +385,34 @@ async fn read_bounded(reader: impl AsyncRead + Unpin, limit: usize) -> Result<Ve
 #[cfg(test)]
 #[path = "pool_bootstrap_tests.rs"]
 mod tests;
+
+pub(crate) async fn apply_staging_startup_failure(
+    server: &AssignmentServer,
+    fault: StagingStartupFailure,
+    confirmed: oneshot::Receiver<()>,
+) -> Result<(), String> {
+    use layer3_adapter::runtime_bootstrap::NATIVE_ASSIGNMENT_DEADLINE;
+    if fault.armed_at(std::time::SystemTime::now())
+        && matches!(
+            tokio::time::timeout(
+                NATIVE_ASSIGNMENT_DEADLINE + Duration::from_secs(10),
+                confirmed
+            )
+            .await,
+            Ok(Ok(()))
+        )
+    {
+        // Give the confirmation relay time to finish before terminating the process.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if fault.armed_at(std::time::SystemTime::now()) {
+            return Err(
+                "staging qualification: runtime startup interrupted after assignment".into(),
+            );
+        }
+    }
+    // An unconfirmed or expired fault leaves this process available for ordinary adoption.
+    let mut state = server.admission.lock().await;
+    state.startup_confirmation = None;
+    state.startup_exit_committed = false;
+    Ok(())
+}

@@ -1,8 +1,9 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import userEvent from '@testing-library/user-event';
-import { accessRequests, type AgentAccessRequest } from './accessRequests';
+import { accessRequests, AgentAccessError, type AgentAccessRequest } from './accessRequests';
 import { AgentAccessRequests } from './AccessRequestDialog';
+import { useAccessRequests } from './useAccessRequests';
 import { connectionClient } from '../connections/client';
 
 const catalog = vi.hoisted(() => ({ listServices: vi.fn() }));
@@ -43,6 +44,25 @@ function show() {
     />,
   );
 }
+it('keeps the server retry floor across turn changes and live events', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, 'random').mockReturnValue(0);
+  const list = vi.mocked(accessRequests.list);
+  list.mockRejectedValueOnce(new AgentAccessError(429, 'Limited', 10_000, 'rate_limited'));
+  const { rerender } = renderHook(
+    ({ running, revision }) => useAccessRequests('agent-one', 'owner', true, running, revision),
+    { initialProps: { running: false, revision: 0 } },
+  );
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  rerender({ running: true, revision: 1 });
+  rerender({ running: false, revision: 2 });
+  rerender({ running: true, revision: 3 });
+  await act(() => vi.advanceTimersByTimeAsync(9999));
+  expect(list).toHaveBeenCalledTimes(1);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(list).toHaveBeenCalledTimes(2);
+});
+
 it('explains that approval updates access without restarting active Agents', async () => {
   show();
   await screen.findByText(/Approving updates service access without restarting/);

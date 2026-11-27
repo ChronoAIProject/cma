@@ -49,4 +49,7 @@ mod tests;
 mod attachments_tests;
 
 #[cfg(test)]
+mod stale_turn_tests;
+
+#[cfg(test)]
 mod termination_tests;

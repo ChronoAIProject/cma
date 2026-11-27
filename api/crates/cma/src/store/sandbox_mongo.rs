@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 
 mod handles;
+mod open_reply_loss;
 mod records;
 pub(super) use records::{
     i64_field_matches, nullable, read_record, record_bson, require_version, signed,
@@ -134,6 +135,7 @@ pub struct MongoSandboxStore {
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
     pub(super) suggestions: Collection<Document>,
+    pub(crate) suggestion_control: Option<crate::store::suggestion_control::SuggestionControl>,
     pub(super) agent_creation_provenance: Collection<Document>,
     pub(super) agent_channel_usage: Collection<Document>,
     pub(super) channel_usage_events: Collection<Document>,

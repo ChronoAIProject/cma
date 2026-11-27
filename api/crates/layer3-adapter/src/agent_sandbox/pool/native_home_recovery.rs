@@ -3,7 +3,7 @@ use super::{
     api_error, model, rejected, AgentSandboxPools, NativePoolClaim, NativePoolHomeOrigin, Result,
     NATIVE_HOME_ANNOTATION,
 };
-use crate::HomeVolumeAttachment;
+use crate::{AdapterError, HomeVolumeAttachment};
 use k8s_openapi::api::core::v1::PersistentVolumeClaim;
 use kube::{api::DynamicObject, ResourceExt};
 
@@ -57,6 +57,9 @@ impl AgentSandboxPools {
         let Some(origin) = recovery_origin(original, &desired, claim.map_err(api_error)?)? else {
             return Ok(None);
         };
+        if &origin != recorded {
+            return Err(rejected(AdapterError::NATIVE_HOME_IDENTITY_REFUSAL));
+        }
         // recovery_origin rejects a changed assigned name. PVC names derive
         // solely from that name, so these reads match the live origin exactly.
         self.recovered_native_attachment(&origin, member, volume.map_err(api_error))
@@ -86,16 +89,23 @@ impl AgentSandboxPools {
             return Ok(None);
         }
         self.member_owned(&member, &origin.claim)?;
-        if !self.member_spec(&member, origin, false)? {
-            return Ok(None);
-        }
+        let drifted = match self.member_spec(&member, origin, false) {
+            Ok(true) => false,
+            Ok(false) => return Ok(None),
+            Err(AdapterError::AdmittedSandboxSpecDrift) => true,
+            Err(error) => return Err(error),
+        };
         let Some(volume) = volume? else {
             return Ok(None);
         };
         if volume.metadata.deletion_timestamp.is_some() {
             return Ok(None);
         }
-        self.native_attachment(origin, &volume).map(Some)
+        let attachment = self.native_attachment(origin, &volume)?;
+        if drifted {
+            return Err(AdapterError::AdmittedSandboxSpecDrift);
+        }
+        Ok(Some(attachment))
     }
 }
 

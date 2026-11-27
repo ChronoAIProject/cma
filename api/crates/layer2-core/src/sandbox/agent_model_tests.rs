@@ -127,3 +127,32 @@ fn invalid_agent_work_advance_preserves_delayed_cleanup_state() {
         .is_err());
     assert_eq!(work, original);
 }
+
+#[test]
+fn only_workspace_wait_claims_have_a_shorter_maximum_lease() {
+    let standard_expiry = "2026-09-05T00:18:00Z";
+    let wait_expiry = "2026-09-05T00:00:30Z";
+    let mut waiting = AgentWorkState::new(AgentWorkStep::WaitForWorkspace, NOW.into());
+    let first = waiting
+        .claim("worker-a".into(), NOW, standard_expiry.into())
+        .unwrap();
+    assert_eq!(waiting.lease.as_ref().unwrap().expires_at, wait_expiry);
+    assert!(!waiting.is_due("2026-09-05T00:00:29Z"));
+    assert!(waiting.is_due(wait_expiry));
+    let second = waiting
+        .claim("worker-b".into(), wait_expiry, standard_expiry.into())
+        .unwrap();
+    assert!(second > first);
+    assert!(!waiting.owns("worker-a", first));
+
+    let mut short_wait = AgentWorkState::new(AgentWorkStep::WaitForWorkspace, NOW.into());
+    short_wait
+        .claim("worker-a".into(), NOW, LATER.into())
+        .unwrap();
+    assert_eq!(short_wait.lease.unwrap().expires_at, LATER);
+
+    let mut add = AgentWorkState::new(AgentWorkStep::AddWorktree, NOW.into());
+    add.claim("worker-a".into(), NOW, standard_expiry.into())
+        .unwrap();
+    assert_eq!(add.lease.unwrap().expires_at, standard_expiry);
+}
