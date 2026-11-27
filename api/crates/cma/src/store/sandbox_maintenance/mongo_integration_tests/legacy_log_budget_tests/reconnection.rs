@@ -1,3 +1,4 @@
+use super::certification::automatic;
 use super::*;
 use layer2_core::sandbox::store::{
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome, AgentWorkMutation,
@@ -112,10 +113,7 @@ async fn quiet_connection_recovery_keeps_the_material_clock_and_exact_log_head()
         if rows > MAX_LEGACY_ROWS as u64 {
             for _ in 0..3 {
                 assert_eq!(
-                    f.store
-                        .schedule_inactivity_pause(request.clone())
-                        .await
-                        .unwrap(),
+                    automatic(&f, &sandbox).await,
                     SandboxMaintenanceOutcome::NotEligible
                 );
             }
@@ -131,7 +129,7 @@ async fn quiet_connection_recovery_keeps_the_material_clock_and_exact_log_head()
         );
         assert_unchanged(&f.store, &sandbox).await;
         assert_eq!(
-            f.store.schedule_inactivity_pause(request).await.unwrap(),
+            automatic(&f, &sandbox).await,
             if recent_work {
                 SandboxMaintenanceOutcome::NotEligible
             } else {
