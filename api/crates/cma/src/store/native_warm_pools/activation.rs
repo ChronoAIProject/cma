@@ -279,6 +279,17 @@ impl MongoNativeWarmPools {
         self.fence_cutover(epoch, writer, session).await?;
         self.verify_bootstrap_in(target.machine, &record.active.image, Some(&mut *session))
             .await?;
+        lanes
+            .protect_boot_effect_in(writer, Some(&mut *session))
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        if target.machine {
+            retirement::machine_selection::select_for_publication(self, target, session).await?;
+        } else {
+            self.activate_agent_in(target, session).await?;
+        }
+        self.verify_bootstrap_in(target.machine, &record.active.image, Some(&mut *session))
+            .await?;
         let mut filter = self.scope();
         filter.extend(
             doc! {"_id": &target.id, "plan.spec.image.uri": &record.active.image,
@@ -291,10 +302,6 @@ impl MongoNativeWarmPools {
                 .await,
         )
         .await?;
-        lanes
-            .protect_boot_effect_in(writer, Some(&mut *session))
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?;
         lanes
             .insert_bootstrap(record, Some(session))
             .await

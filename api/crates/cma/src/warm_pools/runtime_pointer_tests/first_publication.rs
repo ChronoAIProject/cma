@@ -7,6 +7,9 @@ const CRASH_DATABASE: &str = "CMA_TEST_POINTER_CRASH_DATABASE";
 const CRASH_APP: &str = "CMA_TEST_POINTER_CRASH_APP";
 const CRASH_TEST: &str = "warm_pools::tests::runtime_pointer::promotion::controller::first_publication::publisher_process_loss_allows_two_fixed_releases";
 
+#[path = "first_publication/withdrawal.rs"]
+mod withdrawal;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn publisher_process_loss_allows_two_fixed_releases() {
@@ -16,10 +19,12 @@ async fn publisher_process_loss_allows_two_fixed_releases() {
     }
     let fixture = Fixture::new().await;
     let original = fixture.replica().await;
-    original.seed_defaults().await;
     let first = original
-        .target_for(&fixture.plan(Lane::Agent, 'a', capacity()))
-        .await;
+        .pools
+        .prepare_released_image(&image(Lane::Agent, 'a'), false)
+        .await
+        .unwrap();
+    assert!(first.activated_at.is_none());
     let pending = original
         .pools
         .candidate_target(&image(Lane::Agent, 'd'), &first)
@@ -105,6 +110,15 @@ async fn publisher_process_loss_allows_two_fixed_releases() {
     .unwrap();
     assert_eq!(withdrew.modified_count, 1);
     assert_first_publication_absent(&fixture.database).await;
+    let reopened = fixture.replica().await;
+    assert!(reopened
+        .store
+        .find(&first.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .activated_at
+        .is_none());
     assert_successive_fixed_releases(&fixture, &pending).await;
     fixture.database.drop().await.unwrap();
 }
@@ -296,10 +310,12 @@ async fn first_pointer_orders_compatible_activation_in_both_commit_orders() {
 async fn refused_first_lane_insert_leaves_successive_fixed_releases_available() {
     let fixture = Fixture::new().await;
     let original = fixture.replica().await;
-    original.seed_defaults().await;
     let first = original
-        .target_for(&fixture.plan(Lane::Agent, 'a', capacity()))
-        .await;
+        .pools
+        .prepare_released_image(&image(Lane::Agent, 'a'), false)
+        .await
+        .unwrap();
+    assert!(first.activated_at.is_none());
     let pending = original
         .pools
         .candidate_target(&image(Lane::Agent, 'd'), &first)
@@ -317,6 +333,15 @@ async fn refused_first_lane_insert_leaves_successive_fixed_releases_available() 
     drop(publisher);
     drop(original);
     assert_first_publication_absent(&fixture.database).await;
+    let reopened = fixture.replica().await;
+    assert!(reopened
+        .store
+        .find(&first.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .activated_at
+        .is_none());
     assert_successive_fixed_releases(&fixture, &pending).await;
     fixture.database.drop().await.unwrap();
 }

@@ -175,16 +175,17 @@ impl RuntimePointerController {
     ) -> Result<(), WarmPoolError> {
         let machine = lane == ReleasedLane::Machine;
         self.targets.verify_bootstrap(machine, image).await?;
-        self.pools.ensure_released_image(image, machine).await?;
         if can_publish && !self.pools.default_held(machine) {
             let epoch = self.cutover_epoch.ok_or(WarmPoolError::Unavailable)?;
-            let target = self.pools.active_default_target(image, machine).await?;
+            let target = self.pools.prepare_released_image(image, machine).await?;
             let record =
                 ReleasedLaneRecord::bootstrap(lane, image.into(), &layer2_core::now_rfc3339())
                     .map_err(|_| WarmPoolError::Invalid)?;
             self.targets
                 .publish_bootstrap(&target, &self.release.lanes, &self.writer, &record, epoch)
                 .await?;
+        } else {
+            self.pools.ensure_released_image(image, machine).await?;
         }
         Ok(())
     }

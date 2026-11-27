@@ -94,7 +94,7 @@ async fn first_pointer_startup_rechecks_a_release_activated_after_preflight() {
             .unwrap();
         let pointer = bind_controller(&stale, |_| panic!("startup only reads MongoDB"), true).await;
         pointer.controller.register_boot().await.unwrap();
-        let (reached, resume) = stale.retirement.hold_activation(&old.id);
+        let (reached, resume) = stale.retirement.hold_preparation(&old.id);
         let newer = async {
             reached.await.unwrap();
             let active = fixture.replica_pinned_to('b').await;
