@@ -39,13 +39,8 @@ fn home(id: &str, owner: &SubjectId, operation: &str) -> SandboxAdmission {
     sandbox.origin = SandboxOrigin::Lifecycle {
         operation_id: operation.into(),
     };
-    SandboxAdmission::new(
-        sandbox,
-        SandboxAdmissionName::Allocate("fixture".into()),
-        8,
-        now_rfc3339(),
-    )
-    .unwrap()
+    let name = SandboxAdmissionName::Allocate(sandbox.name.clone());
+    SandboxAdmission::new(sandbox, name, 8, now_rfc3339()).unwrap()
 }
 
 async fn submit(app: &Router, key: &str) -> (StatusCode, Option<String>, serde_json::Value) {
