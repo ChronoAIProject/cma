@@ -1,6 +1,7 @@
 use super::*;
 use crate::store::agent_log_integrity::parse_integrity;
 use crate::store::agent_log_telemetry::{isolated_test as isolated, snapshot, ScanCaller};
+use crate::store::test_measurement::{process_cpu, PoolUsage};
 #[derive(Default, Debug)]
 struct MessageMetrics {
     enabled: bool,
@@ -14,6 +15,8 @@ async fn profiled_message(count: u64, enabled: bool) {
     let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
+    let pool = Arc::new(Mutex::new(PoolUsage::default()));
+    pool.lock().unwrap().set_limit(options.max_pool_size);
     let observed = metrics.clone();
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
@@ -24,7 +27,9 @@ async fn profiled_message(count: u64, enabled: bool) {
         }
     }));
     let observed = metrics.clone();
+    let observed_pool = pool.clone();
     options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+        observed_pool.lock().unwrap().observe(&event);
         if let mongodb::event::cmap::CmapEvent::ConnectionCheckedOut(event) = event {
             let mut values = observed.lock().unwrap();
             if values.enabled {
@@ -55,6 +60,8 @@ async fn profiled_message(count: u64, enabled: bool) {
     db.run_command(doc! { "profile": 2, "slowms": 0 })
         .await
         .unwrap();
+    pool.lock().unwrap().reset();
+    let cpu_before = process_cpu();
     let started = std::time::Instant::now();
     metrics.lock().unwrap().enabled = true;
     let consumed = crate::store::mongo_read_telemetry::isolated_test(async {
@@ -100,6 +107,8 @@ async fn profiled_message(count: u64, enabled: bool) {
     .await;
     metrics.lock().unwrap().enabled = false;
     let elapsed = started.elapsed();
+    let cpu = process_cpu() - cpu_before;
+    let pool = pool.lock().unwrap().report();
     db.run_command(doc! { "profile": 0 }).await.unwrap();
     super::bounded_dispatch_tests::assert_suffix_equivalence(&store, &agent.id).await;
     let rows: Vec<Document> = db
@@ -141,6 +150,13 @@ async fn profiled_message(count: u64, enabled: bool) {
         "TC-046 enabled={enabled} elapsed_us={} agent_log_consumed={consumed:?} metrics={:?}",
         elapsed.as_micros(),
         metrics.lock().unwrap()
+    );
+    println!(
+        "TC046_MESSAGE_RESOURCES {}",
+        serde_json::json!({
+            "history":count,"enabled":enabled,"wall_us":elapsed.as_micros(),
+            "fixture_process_cpu_us":cpu.as_micros(),"docs_examined":total,"pool":pool,
+        })
     );
     if enabled {
         assert!(

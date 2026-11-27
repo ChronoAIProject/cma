@@ -70,18 +70,18 @@ pub(crate) async fn kill_session(client: &Client, lsid: &Document) -> Result<()>
         .map(|_| ())
 }
 
-struct KillOnDrop {
+pub(super) struct KillOnDrop {
     armed: Option<(Client, Document)>,
 }
 
 impl KillOnDrop {
-    fn arm(session: &ClientSession) -> Self {
+    pub(super) fn arm(session: &ClientSession) -> Self {
         Self {
             armed: Some((session.client(), session.id().clone())),
         }
     }
 
-    fn disarm(mut self) {
+    pub(super) fn disarm(mut self) {
         self.armed = None;
     }
 }

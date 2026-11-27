@@ -1,6 +1,6 @@
 //! Hold one authorization snapshot without changing its validation or retry budget.
 
-use crate::store::transaction_terminal::GuardedTerminal as _;
+use crate::store::transaction_terminal::{GuardedTerminal as _, KillOnDrop};
 use layer2_core::resource_access::{
     ResourceAccessSnapshot, ResourceAccessStoreError, ResourceTarget,
 };
@@ -30,13 +30,20 @@ pub(super) async fn read(
             .snapshot(snapshot_session)
             .await
             .map_err(|_| ResourceAccessStoreError::Unavailable)?;
-        if !snapshot_session {
-            start_transaction(&mut session)
-                .await
-                .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+        // A cancelled first read can open the server transaction before the
+        // driver has marked it as started. Cover that interval through abort.
+        let cleanup = (!snapshot_session).then(|| KillOnDrop::arm(&session));
+        if !snapshot_session && start_transaction(&mut session).await.is_err() {
+            if let Some(cleanup) = cleanup {
+                cleanup.disarm();
+            }
+            return Err(ResourceAccessStoreError::Unavailable);
         }
         let result =
             snapshot::read_with_concern(store, target, &mut session, snapshot_session).await;
+        if let Some(cleanup) = cleanup {
+            cleanup.disarm();
+        }
         // Reads have no commit receipt to reconcile. Preserve the read result
         // if transaction cleanup fails; the driver still owns session cleanup.
         if !snapshot_session && session.abort_guarded().await.is_err() {

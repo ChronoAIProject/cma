@@ -194,12 +194,10 @@
   aspect-ratio: 8 / 5;
 }
 
-:is(:fullscreen, .agent-computer[data-expanded]) .agent-desktop[data-embedded] {
+:is(:fullscreen, [data-computer-expanded]) .agent-desktop[data-embedded] {
   height: 100%;
 }
-:is(:fullscreen, .agent-computer[data-expanded])
-  .agent-desktop[data-embedded]
-  .agent-desktop__viewport {
+:is(:fullscreen, [data-computer-expanded]) .agent-desktop[data-embedded] .agent-desktop__viewport {
   flex: 1;
   min-height: 0;
   aspect-ratio: auto;

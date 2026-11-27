@@ -201,4 +201,4 @@ async fn refuse_challenge(
     while socket.recv().await.is_some_and(|frame| frame.is_ok()) {}
 }
 
-mod mongo;
+pub(in crate::sandbox::worker_tests) mod mongo;
