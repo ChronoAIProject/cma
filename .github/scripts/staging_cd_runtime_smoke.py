@@ -126,7 +126,7 @@ def validate_smoke(value, *, source, digest, archive):
     return value
 
 
-def qualify(archive, identity, digest, scanned, directory, runner, *, source=None):
+def qualify(archive, identity, digest, scanned, directory, runner, *, source=None, check_stamp=False):
     if identity["component"] not in RUNTIME_TARGETS:
         return None
     source = Path.cwd() if source is None else source
@@ -142,6 +142,12 @@ def qualify(archive, identity, digest, scanned, directory, runner, *, source=Non
         require(isinstance(imported, list) and len(imported) == 1
                 and imported[0].get("Id") == manifest["config"]["digest"],
                 "Imported runtime differs from scanned image config")
+        if check_stamp:
+            args = ["docker", "run", "--rm", "--pull=never", "--network=none", "--read-only",
+                    imported[0]["Id"], "--print-build-info"]
+            stamp = json.loads(runner(args, timeout=60))
+            require(stamp == {"version": identity["version"], "source_sha": identity["source"]},
+                    "Runtime executable release stamp differs")
         # The Omarchy desktop image carries the desktop Codex pins and probes; the
         # default runtime keeps the unchanged default contract.
         profile = {"CMA_RUNTIME_EVIDENCE_PROFILE": "omarchy"} if identity["component"] == "runtime-omarchy" else {}

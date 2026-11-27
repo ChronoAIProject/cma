@@ -93,6 +93,8 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
 FROM compiler-base AS build
 COPY api/ ./
 ARG TARGETARCH
+ARG CHRONO_BUILD=development
+ARG CHRONO_BUILD_SHA=local-unpinned
 # Rebuild every workspace crate from actual source, even when source timestamps
 # predate the cooked placeholder artifacts. The dependency objects remain reusable.
 # Statically linked against musl, so it runs on any base the runtime stage uses.
@@ -101,7 +103,8 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
     --mount=type=bind,from=dependencies,source=/build/target,target=/dependency-target \
     cp -a /dependency-target/. /build/target/ \
     && cargo clean --release --workspace --locked \
-    && cargo build --jobs 2 --release --locked --bin layer4-runtime \
+    && CHRONO_BUILD="${CHRONO_BUILD}" CHRONO_BUILD_SHA="${CHRONO_BUILD_SHA}" \
+       cargo build --jobs 2 --release --locked --bin layer4-runtime \
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 # The base image carries only debian.sources; any other apt source is refused
