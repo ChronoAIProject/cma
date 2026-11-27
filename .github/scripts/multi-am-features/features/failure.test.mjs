@@ -4,6 +4,7 @@ import {mkdtemp, readdir, readFile, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
+import {runInNewContext} from 'node:vm';
 import {journeyFailureSummary, lifecycleFailureSummary, retainFailure, withRestoration} from '../failure.mjs';
 import {NonOwnerRouter} from '../routing.mjs';
 
@@ -26,6 +27,50 @@ test('hosted summaries keep the initiating failure and count cleanup failures wi
     .first_failed_step_code, 'transport_or_contract_error');
   assert.deepEqual(lifecycleFailureSummary({status: 'private-state', phase: 'private-phase'}),
     {status: 'unknown', phase: 'unknown', agent_assigned: false});
+});
+
+test('the failure snapshot binds parent progress to the exact admitted Agent and owner', async () => {
+  const source = await readFile(new URL('../owner/creation_failure_snapshot.js', import.meta.url), 'utf8');
+  const owner = 'fixture-owner';
+  const operationId = 'fixture-operation';
+  const records = {
+    agent_lifecycle_operations: {_id: operationId, owner, sandbox_id: 'fixture-sandbox', agent_id: 'fixture-agent'},
+    agents: {_id: 'fixture-agent', owner, sandbox_id: 'fixture-sandbox', workspace_id: 'fixture-workspace',
+      worktree_id: 'fixture-worktree', status: 'starting',
+      record: {origin: {operation_id: operationId}, work: {step: 'wait_for_workspace', attempts: 2}}},
+    sandboxes: {_id: 'fixture-sandbox', owner, status: 'active', record: {work: {step: {kind: 'none'}, attempts: 0}}},
+    workspaces: {_id: 'fixture-workspace', owner, sandbox_id: 'fixture-sandbox', status: 'ready',
+      record: {resolved_commit: 'a'.repeat(64), work: {step: 'none', attempts: 0}}},
+    worktrees: {_id: 'fixture-worktree', owner, workspace_id: 'fixture-workspace', sandbox_id: 'fixture-sandbox',
+      status: 'creating', record: {base_commit: ''}},
+  };
+  const snapshot = Object.fromEntries(Object.entries(records).map(([collection, row]) => [collection, {
+    findOne: async query => Object.entries(query).every(([path, expected]) =>
+      path.split('.').reduce((value, key) => value?.[key], row) === expected) ? row : null,
+  }]));
+  let closed = 0;
+  const d = {getName: () => 'fixture', getMongo: () => ({startSession: async () => ({
+    startTransaction: async options => assert.equal(options.readConcern.level, 'snapshot'),
+    getDatabase: name => { assert.equal(name, 'fixture'); return snapshot; },
+    endSession: async () => { closed += 1; },
+  })})};
+  let result;
+  const read = async () => runInNewContext(source, {d, operationId, print: text => { result = JSON.parse(text); }});
+  await read();
+  assert.deepEqual(result, {
+    agent: {status: 'starting', step: 'wait_for_workspace', attempts: 2},
+    sandbox: {status: 'active', step: 'none', attempts: 0},
+    workspace: {status: 'ready', step: 'none', attempts: 0, commit_resolved: true},
+    worktree: {status: 'creating', base_bound: false},
+  });
+  records.workspaces.owner = 'foreign-fixture-owner';
+  await read();
+  assert.equal(result.workspace, null);
+  assert.equal(result.worktree, null);
+  records.agents.record.origin.operation_id = 'another-operation';
+  await read();
+  assert.equal(result.agent, null);
+  assert.equal(closed, 3);
 });
 
 test('post-acceptance attribution failure retains command and stream receipts without replay', async () => {
