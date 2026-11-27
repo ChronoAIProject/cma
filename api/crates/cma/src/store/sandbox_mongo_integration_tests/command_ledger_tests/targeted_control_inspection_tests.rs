@@ -126,6 +126,7 @@ async fn targeted_committed_refusal_conflicts_with_an_older_inflight_admission()
     let (store, mut agent, mut request, _) = composed(&name, &admin).await;
     let old_store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let old_request = request.clone();
+    let retry_request = old_request.clone();
     // First update is the source fence, after reading the absent key, current
     // resources and bound source in the old admission transaction's snapshot.
     let configured = admin
@@ -159,7 +160,16 @@ async fn targeted_committed_refusal_conflicts_with_an_older_inflight_admission()
     reached.unwrap();
     saved.unwrap();
     assert_eq!(inspection.unwrap(), TargetedControlInspection::NotAdmitted);
-    assert_eq!(admission.unwrap_err(), CommandLedgerError::Conflict);
+    // The hold consumes the retry budget. On a fresh attempt the original
+    // request still carries the now-stale Agent revision.
+    assert_eq!(admission.unwrap_err(), CommandLedgerError::ControlBusy);
+    assert_eq!(
+        store
+            .reserve_targeted_control(retry_request)
+            .await
+            .unwrap_err(),
+        CommandLedgerError::Conflict
+    );
     assert_eq!(store.lookup_targeted_control(request).await.unwrap(), None);
     assert_eq!(
         store
