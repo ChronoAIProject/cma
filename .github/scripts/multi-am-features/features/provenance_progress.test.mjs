@@ -3,7 +3,7 @@ import test from 'node:test';
 import {NonOwnerRouter} from '../routing.mjs';
 import {provenanceKnownAbort, provenanceUnknownCommit} from './provenance_progress.mjs';
 
-function fixture({changedTransaction = false, abortCount = 1, unboundSample, entered} = {}) {
+function fixture({changedTransaction = false, aborted = true, unboundSample} = {}) {
   const record = {agentId: 'agent', sandboxId: 'sandbox', operationId: 'operation'};
   const owner = {am: 'a', agent_id: record.agentId, epoch: 4, instance_id: 'owner', pod_uid: 'owner-pod'};
   const original = {agent_id: record.agentId, creation_origin: 'manual', created_at: '2026-01-01T00:00:00Z'};
@@ -25,25 +25,28 @@ function fixture({changedTransaction = false, abortCount = 1, unboundSample, ent
       actions.push(action);
       if (action === 'arm') {
         active = true;
-        return {armed: true, count: 20, agent_revision: revision};
+        return {armed: true, configured: true, agent_revision: revision};
       }
       if (action === 'sample') {
         if (unboundSample) return unboundSample;
         const replaced = ++calls === 2 && changedTransaction;
         return {transaction_sha256: (replaced ? 'b' : 'a').repeat(64), commit_transaction_sha256: 'd'.repeat(64)};
       }
-      if (action === 'abort_fault') return {entered};
+      if (action === 'release') {
+        assert.equal(transaction, 'd'.repeat(64));
+        return {released: true};
+      }
       if (action === 'observe') {
         assert.ok(active && prompt);
         return {recorded: true, sweep_finished: true, agent_revision: revision};
       }
       if (action === 'verify') {
         assert.equal(transaction, 'd'.repeat(64));
-        return {aborted: true};
+        return {aborted};
       }
       assert.equal(action, 'restore');
       active = false;
-      return {restored: true, count: 20 + abortCount};
+      return {restored: true, configured: false};
     },
   };
   const api = {
@@ -71,7 +74,7 @@ test('provenance abort requires one durable observation and restores the origina
   assert.equal(outcome.known_aborts, 1);
   assert.equal(outcome.overlapping_transaction_sha256, 'a'.repeat(64));
   assert.equal(state.proofs[0].verified_owner_write, true);
-  assert.deepEqual(state.actions, ['arm', 'sample', 'sample', 'observe', 'verify', 'restore']);
+  assert.deepEqual(state.actions, ['arm', 'sample', 'sample', 'release', 'verify', 'observe', 'restore']);
   assert.equal(state.writes.length, 2);
   assert.deepEqual(state.read(), {active: false, prompt: null});
 });
@@ -83,27 +86,23 @@ test('provenance abort refuses a replacement transaction and restores both value
   assert.deepEqual(state.read(), {active: false, prompt: null});
 });
 
-test('provenance abort refuses ambiguous failpoint accounting after restoration', async () => {
-  const state = fixture({abortCount: 2});
-  await assert.rejects(provenanceKnownAbort(state), /provenance_progress_abort_not_consumed_once/);
+test('provenance requires an abort attributed to the held transaction', async t => {
+  let now = 0;
+  const state = fixture({aborted: false});
+  t.mock.method(performance, 'now', () => now += state.actions.includes('verify') ? 21_000 : 1);
+  await assert.rejects(provenanceKnownAbort(state), /provenance_progress_abort_transaction_unproven/);
+  assert.deepEqual(state.actions, ['arm', 'sample', 'sample', 'release', 'verify', 'restore']);
   assert.deepEqual(state.read(), {active: false, prompt: null});
 });
 
-test('provenance abort classifies missed holds and restores without a peer write', async t => {
+test('provenance requires a held progress claim before submitting the peer write', async t => {
   let now = 0;
   t.mock.method(performance, 'now', () => now += 21_000);
-  for (const [readSeen, entered, error] of [
-    [true, true, /provenance_progress_read_without_claim/],
-    [false, true, /provenance_progress_fault_entered_without_held_read/],
-    [false, false, /provenance_progress_fault_not_entered/],
-  ]) {
-    const state = fixture({unboundSample: {matching_read_seen: readSeen}, entered});
-    await assert.rejects(provenanceKnownAbort(state), error);
-    const statusCheck = readSeen ? [] : ['abort_fault'];
-    assert.deepEqual(state.actions, ['arm', 'sample', ...statusCheck, 'restore']);
-    assert.deepEqual(state.writes, []);
-    assert.deepEqual(state.read(), {active: false, prompt: null});
-  }
+  const state = fixture({unboundSample: {transaction_sha256: null}});
+  await assert.rejects(provenanceKnownAbort(state), /provenance_progress_claim_not_held/);
+  assert.deepEqual(state.actions, ['arm', 'sample', 'restore']);
+  assert.deepEqual(state.writes, []);
+  assert.deepEqual(state.read(), {active: false, prompt: null});
 });
 
 function uncertainFixture({reusedSweep = false, lost = 5, confirmed = false} = {}) {

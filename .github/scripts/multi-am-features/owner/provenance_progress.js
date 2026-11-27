@@ -1,6 +1,7 @@
 (async () => {
   const controlId = 'agent-provenance-v1';
   const progress = d.agent_provenance_progress;
+  const claimHold = 'waitAfterCommandFinishesExecution';
   const pristine = {_id: controlId, protocol: 1, phase: 'ready', revision: 0, owner: null,
     cursor: null, last_receipt: null, 'counts.scanned': 0};
   const now = new Date();
@@ -51,13 +52,54 @@
     return matches.length === 1 && claim(row.command) ? row.command : null;
   }
 
-  if (action === 'sample' || action === 'verify') {
-    if (action === 'verify') {
-      const aborted = (await logs()).filter(row => row.errCode === 112 && targetRead(row.command)
-        && sha(transaction(row.command)) === scope.transaction);
-      print(JSON.stringify({aborted: aborted.length === 1 && Boolean(await claimedTransaction(aborted[0].command))}));
-      return;
+  if (action === 'arm_claim' || action === 'stop_claim') {
+    const enable = action === 'arm_claim';
+    const configured = await admin.runCommand({configureFailPoint: claimHold, mode: enable ? 'alwaysOn' : 'off',
+      ...(enable ? {data: {ns: d.getName() + '.' + progress.getName(), commands: ['findAndModify']}} : {})});
+    if (configured.ok !== 1) throw Error('provenance_progress_claim_hold_not_configured');
+    print(JSON.stringify({configured: enable}));
+    return;
+  }
+
+  if (action === 'verify') {
+    const aborted = (await logs()).filter(row => row.errCode === 112 && sameTransaction(row.command)
+      && row.command.update === 'agents' && row.command.$db === d.getName()
+      && sha(transaction(row.command)) === scope.transaction);
+    let exact = false;
+    if (aborted.length === 1 && await claimedTransaction(aborted[0].command)) {
+      const {lsid, txnNumber} = aborted[0].command;
+      const reads = await d.getCollection('system.profile').find({
+        appName: app, 'command.aggregate': 'agents', 'command.lsid': lsid,
+        'command.txnNumber': txnNumber, nreturned: 1,
+      }, {command: 1}).limit(2).toArray();
+      exact = reads.length === 1 && targetRead(reads[0].command);
     }
+    print(JSON.stringify({aborted: exact}));
+    return;
+  }
+
+  if (!unknown && (action === 'sample' || action === 'release')) {
+    const held = (await admin.aggregate([
+      {$currentOp: {allUsers: true}},
+      {$match: {active: true, appName: app, failpointMsg: claimHold,
+        'command.findAndModify': progress.getName(), 'command.autocommit': false}},
+      {$limit: 2},
+    ]).toArray()).filter(row => claim(row.command));
+    if (held.length > 1) throw Error('provenance_progress_multiple_held_claims');
+    const identity = held[0] ? transaction(held[0].command) : null;
+    if (action === 'release') {
+      if (!identity || sha(identity) !== scope.transaction) throw Error('provenance_progress_claim_changed');
+      const stopped = await admin.runCommand({configureFailPoint: claimHold, mode: 'off'});
+      if (stopped.ok !== 1) throw Error('provenance_progress_claim_hold_not_released');
+      print(JSON.stringify({released: true}));
+    } else {
+      print(JSON.stringify({transaction_sha256: identity ? sha(String(held[0].opid) + ':' + identity) : null,
+        commit_transaction_sha256: identity ? sha(identity) : null}));
+    }
+    return;
+  }
+
+  if (action === 'sample') {
     const operations = await admin.aggregate([
       {$currentOp: {allUsers: true}},
       {$match: {active: true, appName: app, 'command.$db': d.getName(),
@@ -75,8 +117,7 @@
     const identity = held ? transaction(held.command) : null;
     print(JSON.stringify({transaction_sha256: held ? sha(String(held.opid) + ':' + identity) : null,
       commit_transaction_sha256: identity ? sha(identity) : null,
-      ...(!unknown ? {matching_read_seen: matchingReads.length > 0} : {}),
-      ...(unknown && held ? {claim_revision: targets[0].claimRevision} : {})}));
+      ...(held ? {claim_revision: targets[0].claimRevision} : {})}));
     return;
   }
 

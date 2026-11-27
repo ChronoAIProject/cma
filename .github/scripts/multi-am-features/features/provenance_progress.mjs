@@ -25,8 +25,9 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
   let armed, disarmed, digest;
   await withRestoration(async () => {
     armed = await control('arm');
-    check(armed?.armed === true && Number.isSafeInteger(armed.count), 'provenance_progress_not_armed');
-    const held = await waitForAbortRead(control);
+    check(armed?.armed === true && armed.configured === true, 'provenance_progress_not_armed');
+    const held = await poll(() => control('sample'), value => /^[a-f0-9]{64}$/.test(value?.transaction_sha256 ?? ''),
+      {timeout: 20000, interval: 150, code: 'provenance_progress_claim_not_held'});
     digest = held.transaction_sha256;
     check(/^[a-f0-9]{64}$/.test(held.commit_transaction_sha256 ?? ''), 'provenance_progress_claim_not_bound');
     const {body: updated} = await api.router.dispatch(agentId, am => {
@@ -37,12 +38,15 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
       && updated.prompt_pending === false, 'provenance_progress_peer_write_unbound');
     check((await control('sample'))?.transaction_sha256 === digest,
       'provenance_progress_peer_write_outside_transaction');
+    const transaction = held.commit_transaction_sha256;
+    check((await control('release', {transaction}))?.released === true,
+      'provenance_progress_claim_not_released');
+    await poll(() => control('verify', {transaction}), value => value?.aborted === true,
+      {timeout: 12000, interval: 150, code: 'provenance_progress_abort_transaction_unproven'});
     const completed = await poll(() => control('observe'), value => value?.recorded === true
       && value.sweep_finished === true, {timeout: 25000, interval: 250, code: 'provenance_progress_not_recorded_once'});
     check(Number.isSafeInteger(completed.agent_revision) && completed.agent_revision > armed.agent_revision,
       'provenance_progress_peer_revision_lost');
-    const failed = await control('verify', {transaction: held.commit_transaction_sha256});
-    check(failed?.aborted === true, 'provenance_progress_abort_transaction_unproven');
     for (const am of [owner.am, ingress]) {
       const preferences = await read(am, '/preferences');
       check(preferences?.system_prompt === prompt && preferences.revision === updated.revision,
@@ -53,7 +57,7 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
     }
   }, () => withRestoration(async () => {
     disarmed = await control('restore');
-    check(disarmed?.restored === true, 'provenance_progress_restore_failed');
+    check(disarmed?.restored === true && disarmed.configured === false, 'provenance_progress_restore_failed');
   }, async () => {
     const current = await read(owner.am, '/preferences');
     if (current.system_prompt !== baseline.system_prompt) {
@@ -66,32 +70,11 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
         'provenance_progress_prompt_restore_failed');
     }
   }, recordFailure), recordFailure);
-  check(disarmed.count === armed.count + 1, 'provenance_progress_abort_not_consumed_once');
   for (const am of [owner.am, ingress]) {
     check(equal(await read(am, '/provenance'), original), 'provenance_progress_original_creation_not_restored');
   }
   return {agent_sha256: hash(agentId), ingress, owner: owner.am, owner_epoch: owner.epoch,
     overlapping_transaction_sha256: digest, known_aborts: 1, recorded: 1, original_creation_restored: true};
-}
-
-async function waitForAbortRead(control) {
-  const timeoutCode = 'provenance_progress_read_not_held';
-  let readSeen = false;
-  try {
-    return await poll(async () => {
-      const sample = await control('sample');
-      readSeen ||= sample?.matching_read_seen === true;
-      return sample;
-    }, value => /^[a-f0-9]{64}$/.test(value?.transaction_sha256 ?? ''),
-    {timeout: 20000, interval: 150, code: timeoutCode});
-  } catch (error) {
-    if (error.message !== timeoutCode) throw error;
-    if (readSeen) throw new Error('provenance_progress_read_without_claim', {cause: error});
-    const fault = await control('abort_fault').catch(() => null);
-    if (fault?.entered === true) throw new Error('provenance_progress_fault_entered_without_held_read', {cause: error});
-    if (fault?.entered === false) throw new Error('provenance_progress_fault_not_entered', {cause: error});
-    throw error;
-  }
 }
 
 export async function provenanceUnknownCommit({adapter, api, record, recordFailure}) {

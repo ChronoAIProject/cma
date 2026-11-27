@@ -7,7 +7,7 @@ import re
 
 from common import require_feature_fixture
 from legacy_manifests import pod, resource
-from publication_evidence import FEATURES_MONGO_APP, LOG_BOUND_BYTES, agent_digest, timed_publication_abort
+from publication_evidence import FEATURES_MONGO_APP, LOG_BOUND_BYTES, agent_digest
 
 DATABASE = 'cma_native_am'
 COLLECTION = 'agent_provenance_progress'
@@ -70,7 +70,8 @@ def run_script(fixture, scope, script=SCRIPT):
 
 def profile_progress(fixture, enabled):
     command = ({'profile': 2, 'filter': {'appName': FEATURES_MONGO_APP, '$or': [
-        {'command.findAndModify': COLLECTION}, {'command.aggregate': 'agents'}]}} if enabled else
+        {'command.findAndModify': COLLECTION}, {'command.aggregate': 'agents'},
+        {'command.update': 'agents', 'command.autocommit': False, 'errCode': 112}]}} if enabled else
         {'profile': 0, 'filter': 'unset'})
     return fixture.mongo(f'const result = d.runCommand({json.dumps(command)});'
                          'if (result.ok !== 1) throw Error("provenance_progress_profile_failed");'
@@ -99,7 +100,7 @@ def provenance_backfill(fixture, *, action, agentId, sandboxId, operationId, unk
     require_feature_fixture(fixture)
     for identity in (agentId, sandboxId, operationId):
         agent_digest(identity)
-    proof_action = action in ('verify', 'commit')
+    proof_action = action in ('release', 'verify', 'commit')
     if (type(unknown) is not bool or (transaction is not None) != proof_action
             or (proof_action and ((action == 'commit') != unknown or not isinstance(transaction, str)
                                   or not re.fullmatch(r'[a-f0-9]{64}', transaction)))):
@@ -117,9 +118,7 @@ def provenance_backfill(fixture, *, action, agentId, sandboxId, operationId, unk
         fixture.provenance_original = state
         profile_progress(fixture, True)
         armed = (run_script(fixture, scope, COMMIT_SCRIPT) if unknown else
-                 timed_publication_abort(fixture, 'arm', None, 'agents', operation='aggregate'))
-        if not unknown:
-            state['abort_baseline'] = armed['count']
+                 run_script(fixture, {**scope, 'action': 'arm_claim'}))
         changed = run_script(fixture, {**scope, 'original': original})
         state['previous_receipt'] = changed.pop('previous_receipt', None)
         return {**changed, **armed}
@@ -127,9 +126,7 @@ def provenance_backfill(fixture, *, action, agentId, sandboxId, operationId, unk
         return {'restored': False}
     if state is None or state['target'] != target:
         raise RuntimeError('provenance_progress_scope_changed')
-    if action == 'abort_fault' and not unknown:
-        return timed_publication_abort(fixture, 'wait', state['abort_baseline'], 'agents', operation='aggregate')
-    if action in ('sample', 'observe', 'verify'):
+    if action in ('sample', 'observe', 'release', 'verify'):
         observed = run_script(fixture, {**scope, 'transaction': transaction,
                                         'previous_receipt': state['previous_receipt']})
         if unknown and action == 'sample' and observed.get('commit_transaction_sha256'):
@@ -160,7 +157,7 @@ def provenance_backfill(fixture, *, action, agentId, sandboxId, operationId, unk
     if action == 'restore':
         try:
             disarmed = (run_script(fixture, scope, COMMIT_SCRIPT) if unknown else
-                        timed_publication_abort(fixture, 'disarm', None, 'agents', operation='aggregate'))
+                        run_script(fixture, {**scope, 'action': 'stop_claim'}))
         finally:
             profile_progress(fixture, False)
         restored = run_script(fixture, {**scope, 'original': state['original']})
