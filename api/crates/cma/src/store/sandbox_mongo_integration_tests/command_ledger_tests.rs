@@ -30,7 +30,7 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{
     active_sandbox, insert_agent, ready_agent,
 };
 
-pub(super) fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
+pub(in crate::store) fn request(agent: &Agent, parent: &Sandbox, key: &str) -> CommandReservation {
     let command = AgentCommand::message("Inspect this.");
     CommandReservation {
         binding: None,
