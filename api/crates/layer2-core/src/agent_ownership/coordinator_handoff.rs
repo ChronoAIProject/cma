@@ -20,6 +20,29 @@ impl OwnershipCoordinator {
             .map(|_| ());
             return authority.settlement_error().map_or(result, Err);
         }
+        self.handoff_legacy(authority, bounded(revoke_transport))
+            .await
+    }
+
+    /// Receiver shutdown can outlast one store operation. The caller's drain
+    /// deadline covers the lock, receiver acknowledgement and fenced release.
+    pub async fn handoff_during_drain(
+        &self,
+        authority: &Arc<Authority>,
+        revoke_transport: impl std::future::Future<Output = Result<(), OwnershipError>>,
+        until: Instant,
+    ) -> Result<(), OwnershipError> {
+        if self.contains_failures() || !self.is_draining() {
+            return Err(OwnershipError::Stale);
+        }
+        retirement::within(until, self.handoff_legacy(authority, revoke_transport)).await
+    }
+
+    async fn handoff_legacy(
+        &self,
+        authority: &Arc<Authority>,
+        revoke_transport: impl std::future::Future<Output = Result<(), OwnershipError>>,
+    ) -> Result<(), OwnershipError> {
         // Serialize exact-token retirement through receiver confirmation and
         // durable release. Cancellation leaves completion false for safe retry.
         let mut complete = authority.cleanup.lock().await;
@@ -30,7 +53,7 @@ impl OwnershipCoordinator {
         authority.revoke();
         // Do not shorten the lease until every receiving runtime's cleanup
         // obligation is settled. Delayed input/ACK packets may be in flight.
-        bounded(revoke_transport).await?;
+        revoke_transport.await?;
         // Cooperative cleanup also ends its retry episode. Old completion
         // must not clear observations belonging to a replacement authority.
         if self

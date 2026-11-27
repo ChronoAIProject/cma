@@ -3,7 +3,7 @@ use super::{
     api_error, claims, model, rejected, unavailable, AgentSandboxPools, NativePoolHomeOrigin,
     NATIVE_HOME_ANNOTATION,
 };
-use crate::{HomeVolumeAttachment, Result};
+use crate::{AdapterError, HomeVolumeAttachment, Result};
 use kube::{api::DynamicObject, ResourceExt};
 
 impl AgentSandboxPools {
@@ -63,14 +63,20 @@ impl AgentSandboxPools {
             .map_err(api_error)?
             .ok_or_else(|| unavailable("native Sandbox no longer exists"))?;
         self.member_owned(&member, &origin.claim)?;
-        if !self.member_spec(&member, origin, false)? {
-            return Err(rejected("native Sandbox home authority changed"));
-        }
+        let drifted = match self.member_spec(&member, origin, false) {
+            Ok(true) => false,
+            Ok(false) => return Err(rejected("native Sandbox home authority changed")),
+            Err(AdapterError::AdmittedSandboxSpecDrift) => true,
+            Err(error) => return Err(error),
+        };
         let volume = volume
             .map_err(api_error)?
             .ok_or_else(|| unavailable("native PVC no longer exists"))?;
         if self.native_attachment(origin, &volume)? != *home {
             return Err(rejected("native home identity changed"));
+        }
+        if drifted {
+            return Err(AdapterError::AdmittedSandboxSpecDrift);
         }
         Ok(member)
     }

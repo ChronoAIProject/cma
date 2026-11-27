@@ -21,7 +21,7 @@ async function setup(running: boolean, requests: readonly AgentAccessRequest[] =
   const read = vi.fn().mockResolvedValue(requests);
   const publish = vi.fn();
   const failed = vi.fn();
-  observer = observeAccessRequests({ running, read, publish, failed });
+  observer = observeAccessRequests({ running: () => running, read, publish, failed });
   await vi.advanceTimersByTimeAsync(0);
   return { read, publish, failed };
 }
@@ -51,7 +51,7 @@ it('backs off unchanged active turns at 2, 4, 8 and 15 seconds, then resets for 
     expect(read).toHaveBeenCalledTimes(index + 2);
   }
   read.mockResolvedValue([request]);
-  observer!.hint();
+  observer!.refresh();
   await vi.advanceTimersByTimeAsync(2000);
   expect(read).toHaveBeenCalledTimes(7);
   await vi.advanceTimersByTimeAsync(2000);
@@ -67,17 +67,21 @@ it('uses a thirty-second idle fallback and coalesces foreground events into an i
   expect(read).toHaveBeenCalledTimes(3);
 });
 
-it('coalesces durable event hints at two seconds while still discovering requests within three seconds', async () => {
+it('keeps the adaptive polling window under continuous conversation event hints', async () => {
   const { read, publish } = await setup(true);
   await vi.advanceTimersByTimeAsync(14_000);
   expect(read).toHaveBeenCalledTimes(4);
   read.mockResolvedValue([request]);
-  for (let i = 0; i < 100; i++) observer!.hint();
-  await vi.advanceTimersByTimeAsync(1999);
+  for (let i = 0; i < 14; i++) {
+    observer!.hint();
+    await vi.advanceTimersByTimeAsync(1000);
+  }
   expect(read).toHaveBeenCalledTimes(4);
-  await vi.advanceTimersByTimeAsync(1);
+  await vi.advanceTimersByTimeAsync(1000);
   expect(read).toHaveBeenCalledTimes(5);
   expect(publish).toHaveBeenLastCalledWith([request]);
+  await vi.advanceTimersByTimeAsync(2000);
+  expect(read).toHaveBeenCalledTimes(6);
 });
 
 it('retains displayed requests on failure and backs off 2, 4, 8, 10 seconds despite refresh hints', async () => {
@@ -128,7 +132,7 @@ it('does not overlap a slow read or publish a result after disposal', async () =
   );
   const publish = vi.fn();
   const failed = vi.fn();
-  observer = observeAccessRequests({ running: true, read, publish, failed });
+  observer = observeAccessRequests({ running: () => true, read, publish, failed });
   observer.hint();
   observer.refresh();
   await vi.advanceTimersByTimeAsync(60_000);

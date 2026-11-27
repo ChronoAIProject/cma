@@ -93,8 +93,12 @@ pub(super) async fn page_with_capture(
         return Err(SandboxStoreError::SequenceConflict);
     }
     if !is_segmented(store, agent, session).await? {
-        return crate::store::agent_opening_reads::transcript::page(store, agent, session, request)
-            .await;
+        use crate::store::agent_opening_reads::transcript;
+        return if capture_mode == capture::CaptureMode::PrivacyExport {
+            transcript::export_page(store, agent, session, request).await
+        } else {
+            transcript::page(store, agent, session, request).await
+        };
     }
     let source = capture::capture(store, agent, session, capture_mode)
         .await

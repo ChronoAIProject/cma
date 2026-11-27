@@ -94,11 +94,10 @@ async fn inspection_cleanup_and_drain_join_by_hash_across_owner_handoff() {
         owner.register_receiver(receiver.clone()).unwrap();
         let inspection = owner.run(worker.context(&agent)).await.unwrap();
         assert!(inspection.is_err());
-        assert!(drain_receiver_for_test(
-            &manager,
-            &owner,
-            owner.revoke_transports_after_local_drain()
-        )
+        manager.stop_admission();
+        let until = tokio::time::Instant::now() + std::time::Duration::from_secs(23);
+        assert!(drain_receiver_for_test(&manager, &owner, until, || owner
+            .revoke_transports_after_local_drain())
         .await
         .is_err());
         assert_eq!(
@@ -106,14 +105,11 @@ async fn inspection_cleanup_and_drain_join_by_hash_across_owner_handoff() {
             owner.token
         );
         receiver.0.store(false, Ordering::Relaxed);
-        drain_receiver_for_test(
-            &manager,
-            &owner,
-            owner.revoke_transports_after_local_drain(),
-        )
+        drain_receiver_for_test(&manager, &owner, until, || {
+            owner.revoke_transports_after_local_drain()
+        })
         .await
         .unwrap();
-        manager.stop_admission();
         // Eligibility for placement is read from membership, not the local flag.
         store.heartbeat(instance, true).await.unwrap();
     }
@@ -132,14 +128,14 @@ async fn inspection_cleanup_and_drain_join_by_hash_across_owner_handoff() {
         .lines()
         .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap()["fields"].clone())
         .collect();
-    assert_eq!(fields.len(), 6, "{captured}");
+    assert_eq!(fields.len(), 8, "{captured}");
     for (instance, epoch) in instances.into_iter().zip(epochs) {
         let instance_hash = digest(instance);
         let events: Vec<_> = fields
             .iter()
             .filter(|event| event["instance_sha256"] == instance_hash)
             .collect();
-        assert_eq!(events.len(), 3);
+        assert_eq!(events.len(), 4);
         for event in &events {
             assert_eq!(event["agent_sha256"], digest(agent.id.as_str()));
             assert_eq!(event["sandbox_sha256"], digest(agent.sandbox_id.as_str()));
