@@ -24,8 +24,8 @@ OMARCHY_PACKAGE_EVIDENCE = Path(".github/scripts/image-omarchy-package-evidence.
 # Independently reviewed evidence and verdict digests. Evidence gathered from
 # the candidate image cannot supply either pin.
 APPROVED_PACKAGE_EVIDENCE = (
-    "34ce0c58b09484311a636bcd0b3d8a0d125cb6a990cf2eeaa1e89c82fddffbf0",
-    "df0fabb0c06b3ebe8f144c952c6d35bc8bf201209c55ce9b46e9fe2dadac5a66",
+    "3af63ab380b6f4facc4883c9af492c94a3265ff08a4f93d0d4174e6d9a475764",
+    "5de4a93091a83ca88efc93609bb7f1a652240f6e892e7833be8d0de6211be3e8",
 )
 APPROVED_OMARCHY_PACKAGE_EVIDENCE = (
     "9b9b5ef741a18fdf494d7f7fd3c31b4bb9139814410cf378aae9df1aa60513f7",
