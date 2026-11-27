@@ -253,11 +253,14 @@ def prepared_schema_refusals(fixture, agentId=None, barrier='worktree_schema'):
                          for fields in publication_events(fixture, manager)) for manager in ('a', 'b')}
 
 
-def prepared_schema_barrier(fixture, arm=None, parentEnvelope=False, parentPause=False, ownerFence=False):
+def prepared_schema_barrier(fixture, arm=None, parentEnvelope=False, parentPause=False, ownerFence=False,
+                            commitAcknowledgement=False):
     require_feature_fixture(fixture, kind='prepared')
-    if (any(type(value) is not bool for value in (arm, parentEnvelope, parentPause, ownerFence))
-            or sum((parentEnvelope, parentPause, ownerFence)) > 1):
+    variants = parentEnvelope, parentPause, ownerFence, commitAcknowledgement
+    if any(type(value) is not bool for value in (arm, *variants)) or sum(variants) > 1:
         raise ValueError('prepared_schema_race_action_required')
+    if commitAcknowledgement:
+        return prepared_acknowledgement_barrier(fixture, arm)
     command = {'configureFailPoint': 'failCommand', 'mode': 'off'}
     if arm:
         collection = 'sandboxes' if parentEnvelope else 'cma_agent_manager_owners' if ownerFence else 'worktrees'
@@ -277,12 +280,29 @@ def prepared_schema_barrier(fixture, arm=None, parentEnvelope=False, parentPause
     return fixture.mongo(script + 'print(JSON.stringify({configured: true}));')
 
 
+def prepared_acknowledgement_barrier(fixture, arm):
+    hold = {'configureFailPoint': 'hangDuringBatchUpdate', 'mode': 'off'}
+    if arm:
+        hold.update(mode='alwaysOn', data={'nss': 'cma_native_am.worktrees', 'shouldCheckForInterrupt': True})
+    script = f'if (admin.runCommand({json.dumps(hold)}).ok !== 1) throw Error("prepared_ack_worktree_hold");'
+    if not arm:
+        script = ('try {' + script + '} finally {'
+                  'try {if (admin.runCommand({configureFailPoint:"failCommand",mode:"off"}).ok !== 1) '
+                  'throw Error("prepared_ack_failpoint_off");}'
+                  'finally {if (admin.runCommand({profile:0,filter:"unset"}).ok !== 1) '
+                  'throw Error("prepared_ack_profile_off");}}')
+    return fixture.mongo(script + 'print(JSON.stringify({configured: true}));')
+
+
 def prepared_schema_race(fixture, action=None, operationId=None, reservations=None, barrier='worktree_schema',
-                         parentVersions=None):
+                         parentVersions=None, commitProof=None):
     require_feature_fixture(fixture, kind='prepared')
     supported = ('worktree_schema', 'worktree_cleanup', 'work_lease', 'publication_conflict',
-                 'parent_envelope', 'parent_pause', 'owner_fence')
-    actions = ('sample', 'read') if barrier == 'parent_pause' else ('inject', 'read', 'restore')
+                 'parent_envelope', 'parent_pause', 'owner_fence', 'commit_acknowledgement')
+    actions = {
+        'parent_pause': ('sample', 'read'),
+        'commit_acknowledgement': ('arm_commit', 'verify_commit'),
+    }.get(barrier, ('inject', 'read', 'restore'))
     if (action not in actions or barrier not in supported
             or (action == 'read' and barrier in ('publication_conflict', 'owner_fence'))
             or not isinstance(reservations, list)
@@ -299,5 +319,14 @@ def prepared_schema_race(fixture, action=None, operationId=None, reservations=No
         scope['parentVersions'] = parentVersions
     elif parentVersions is not None:
         raise ValueError('prepared_parent_envelope_versions_required')
+    if action == 'verify_commit':
+        if (not isinstance(commitProof, dict) or set(commitProof) != {'transaction', 'baseline'}
+                or not isinstance(commitProof['transaction'], str)
+                or not re.fullmatch(r'[a-f0-9]{64}', commitProof['transaction'])
+                or type(commitProof['baseline']) is not int or not 0 <= commitProof['baseline'] <= 2**53 - 11):
+            raise ValueError('prepared_acknowledgement_proof_required')
+        scope['commitProof'] = commitProof
+    elif commitProof is not None:
+        raise ValueError('prepared_acknowledgement_proof_required')
     scope = json.dumps(scope)
     return fixture.mongo(f'const scope = {scope};\n' + SCHEMA_RACE.read_text())

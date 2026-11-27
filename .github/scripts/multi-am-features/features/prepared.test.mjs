@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {runInNewContext} from 'node:vm';
-import {preparedJourney, preparedParentEnvelopes} from '../prepared_suite.mjs';
+import {preparedCommitAcknowledgement, preparedJourney, preparedParentEnvelopes} from '../prepared_suite.mjs';
 import {isPreparedSend} from '../prepared_browser.mjs';
 import {hash} from '../cma/core.mjs';
 
@@ -57,6 +57,58 @@ test('parent-envelope cases require exact schemas and unchanged Runtime receipts
   malformed = true;
   await assert.rejects(preparedParentEnvelopes(context), /prepared_parent_envelope_publication_unproven/);
   assert.deepEqual(holds.at(-1), {arm: false});
+});
+
+test('prepared acknowledgement loss requires exact attribution, unique fences and unchanged Runtime receipts', async () => {
+  const agentId = 'fixture-agent', sandboxId = 'fixture-home', operationId = 'fixture-operation';
+  const record = {agentId, sandboxId, operationId, runtime: {pod_uid: 'fixture-runtime'}};
+  const commitProof = {transaction: hash('fixture-transaction'), baseline: 12};
+  const runtime = {pod_sha256: hash('fixture-runtime'), receipts: ['first', 'second', 'third']};
+  const configs = [], cleanups = [], opens = [];
+  let diagnostics = {a: {unknown_commit: {publish_connection: 1}}, b: {}};
+  let fences = [1, 1, 1, 1], readback = runtime;
+  const context = {
+    adapter: {
+      preparedReady: async () => [sandboxId],
+      preparedRuntimeEvidence: async request => request.operationId ? readback : runtime,
+      preparedSchemaBarrier: async config => configs.push(config),
+      async preparedSchemaRace({action, ...scope}) {
+        const common = {operationId, reservations: [sandboxId], barrier: 'commit_acknowledgement'};
+        if (action === 'arm_commit') {
+          assert.deepEqual(scope, common);
+          return {agentId, sandboxId, receipt_count: 2, commitProof};
+        }
+        assert.equal(action, 'verify_commit');
+        assert.deepEqual(scope, {...common, commitProof});
+        return {commitAcknowledgementsLost: 5};
+      },
+      ownerOf: async () => ({agent_id: agentId, am: 'a', epoch: 2, pod_uid: 'fixture-owner-pod'}),
+      publicationEvidence: async () => diagnostics,
+      preparedEvidence: async () => ({consumed: true, agent_ready: true, reservation_bound: true,
+        installation_bound: true, ready_fences: fences, startup_receipts: [1, 1, 1]}),
+    },
+    create: async (_, __, ___, ____, onAdmission) => { onAdmission(record); return record; },
+    openBoth: async subject => opens.push(subject),
+    cleanup: async subject => cleanups.push(subject),
+  };
+  const output = await preparedCommitAcknowledgement(context);
+  assert.equal(output.commit_acknowledgements_lost, 5);
+  assert.equal(output.runtime_receipt_count, 3);
+  assert.deepEqual(opens, [record]);
+  assert.deepEqual(cleanups, [record]);
+
+  diagnostics.a.prepared_commit_work_lease_sha256 = [hash('another-transaction')];
+  await assert.rejects(preparedCommitAcknowledgement(context), /prepared_ack_outcome_unproven/);
+  diagnostics = {a: {unknown_commit: {publish_connection: 1}}, b: {unknown_commit: {publish_connection: 1}}};
+  await assert.rejects(preparedCommitAcknowledgement(context), /prepared_ack_outcome_unproven/);
+  diagnostics.b = {};
+  fences = [1, 2, 1, 1];
+  await assert.rejects(preparedCommitAcknowledgement(context), /prepared_ack_durable_commit_unproven/);
+  fences = [1, 1, 1, 1];
+  readback = {...runtime, receipts: ['changed', 'second', 'third']};
+  await assert.rejects(preparedCommitAcknowledgement(context), /prepared_ack_runtime_receipts_changed/);
+  assert.deepEqual(configs.at(-1), {arm: false, commitAcknowledgement: true});
+  assert.deepEqual(cleanups, [record]);
 });
 
 function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b', 'candidate-c'], repeatReservation = false,

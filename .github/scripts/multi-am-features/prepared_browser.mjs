@@ -2,7 +2,7 @@ import {randomUUID} from 'node:crypto';
 import {createRequire} from 'node:module';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {assertOracle, check, hash, id, poll, safeError} from './cma/core.mjs';
-import {withRestoration} from './failure.mjs';
+import {rateLimitEvidence, withRestoration} from './failure.mjs';
 import {requestPacer} from './pacing.mjs';
 
 const webRoot = fileURLToPath(new URL('../../../web/', import.meta.url));
@@ -24,14 +24,45 @@ function loopback(value) {
   return url.origin;
 }
 
-export async function routeFixtureBrowserRequest(route, origin, pacingKey) {
-  const request = route.request();
-  const url = new URL(request.url());
-  if (url.origin !== origin) return route.abort('blockedbyclient');
-  if (pacingKey && url.pathname.startsWith('/api/')) {
-    await requestPacer.wait(pacingKey, request.method());
-  }
+export async function routeFixtureBrowserRequest(route, origin) {
+  if (new URL(route.request().url()).origin !== origin) return route.abort('blockedbyclient');
   return route.continue();
+}
+
+function sessionCookie(header) {
+  return header?.split(';').map(part => part.trim()).find(part => part.startsWith('cma_session='))
+    ?.slice('cma_session='.length);
+}
+
+export function browserApiPacing(config, freshSession) {
+  const owner = config.bearer ?? config.auth?.bearer;
+  const sessionCredentials = new Map([[config.browser_session_cookie, owner]]);
+  if (config.recipient_browser_session_cookie && config.admin_bearer) {
+    sessionCredentials.set(config.recipient_browser_session_cookie, config.admin_bearer);
+  }
+  let freshOwnerCookie;
+  return {
+    rememberOwnerSession(headers) {
+      if (!freshSession) return;
+      for (const header of headers ?? []) {
+        const cookie = sessionCookie(header.split(';', 1)[0]);
+        if (cookie) freshOwnerCookie = cookie;
+      }
+    },
+    configurePreviewServer(server) {
+      // Middleware runs before Vite proxies the original request, including
+      // browser routes that forward directly and APIRequestContext requests.
+      server.middlewares.use((request, response, next) => {
+        if (!request.url?.startsWith('/api/')) return next();
+        const cookie = sessionCookie(request.headers.cookie);
+        const credential = cookie && cookie === freshOwnerCookie ? owner : sessionCredentials.get(cookie);
+        if (!credential) return next();
+        requestPacer.wait(credential, request.method).then(() => {
+          if (!response.destroyed) next();
+        }, next);
+      });
+    },
+  };
 }
 
 export async function openPreparedBrowser(config) {
@@ -49,6 +80,7 @@ export async function openPreparedBrowser(config) {
     close: () => browser.close(),
     async forIngress(am, run, {freshSession = false} = {}) {
       check(Object.hasOwn(ams, am), 'prepared_browser_invalid_ingress');
+      const pacing = browserApiPacing(config, freshSession);
       const proxyRoutes = {'^/(?:(?:api|auth)/|openapi\\.json(?:\\?|$))': {
         target: ams[am],
         configure(proxy) {
@@ -56,9 +88,17 @@ export async function openPreparedBrowser(config) {
             outgoing.setHeader('Host', publicOrigin.host);
             if (incoming.headers.origin) outgoing.setHeader('Origin', publicOrigin.origin);
           });
-          if (freshSession) proxy.on('proxyRes', (incoming, request) => {
-            if (new URL(request.url, publicOrigin).pathname !== '/auth/login'
-                || !incoming.headers.location) return;
+          proxy.on('proxyRes', (incoming, request) => {
+            const path = new URL(request.url, publicOrigin).pathname;
+            if (incoming.statusCode === 429) {
+              config.observeBrowserRateLimit?.(am,
+                rateLimitEvidence(request.method, path, incoming.headers['retry-after']));
+            }
+            if (!freshSession) return;
+            if (path === '/auth/callback' && incoming.statusCode >= 200 && incoming.statusCode < 400) {
+              pacing.rememberOwnerSession(incoming.headers['set-cookie']);
+            }
+            if (path !== '/auth/login' || !incoming.headers.location) return;
             const authorize = new URL(incoming.headers.location, publicOrigin);
             if (authorize.origin === 'http://identity:8080' && authorize.pathname === '/authorize') {
               incoming.headers.location = '/fixture/authorize' + authorize.search;
@@ -85,13 +125,13 @@ export async function openPreparedBrowser(config) {
       };
       const server = await browserOperation('prepared_browser_preview_failed', () =>
         preview({root: webRoot, configFile: false,
+          plugins: [{name: 'fixture-browser-api-pacing', configurePreviewServer: pacing.configurePreviewServer}],
           preview: {host: '127.0.0.1', port: 0, strictPort: true, proxy: proxyRoutes}}));
       let context;
       try {
         const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
         context = await browser.newContext({baseURL: origin, serviceWorkers: 'block'});
-        const pacingKey = config.bearer ?? config.auth?.bearer;
-        await context.route('**/*', route => routeFixtureBrowserRequest(route, origin, pacingKey));
+        await context.route('**/*', route => routeFixtureBrowserRequest(route, origin));
         if (!freshSession) {
           await context.addCookies([{name: 'cma_session', value: config.browser_session_cookie, url: origin,
             httpOnly: true, secure: true, sameSite: 'Lax'}]);

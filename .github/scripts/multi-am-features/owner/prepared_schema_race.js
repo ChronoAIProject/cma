@@ -342,6 +342,67 @@
     return {restored: 1};
   }
 
+  function transactionDigest(session, number) {
+    return require('crypto').createHash('sha256').update(session.id.toString() + ':' + number.toString()).digest('hex');
+  }
+
+  async function armCommitAcknowledgement() {
+    const rows = await lineage(d);
+    if (!rows) return null;
+    const sample = async () => {
+      const operations = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
+        appName: scope.app, active: true, failpointMsg: 'hangDuringBatchUpdate',
+        ns: d.getName() + '.worktrees', 'command.q._id': rows.tree._id,
+        'transaction.parameters.autocommit': false,
+      }}]).toArray();
+      const matches = operations.filter(operation => operation.lsid?.id && operation.transaction?.parameters
+        && Number(operation.command.u?.$inc?.agent_prepared_open_ready_fence) === 1);
+      if (matches.length > 1) throw Error('prepared_ack_multiple_publications');
+      const [entry] = matches;
+      return entry && {opid: entry.opid,
+        transaction: transactionDigest(entry.lsid, entry.transaction.parameters.txnNumber)};
+    };
+    const held = await sample();
+    if (!held) return null;
+    const before = proof(rows);
+    if (!pending(before)) throw Error('prepared_ack_startup_precondition');
+    if ((await admin.runCommand({profile: 2, filter: {appName: scope.app, 'command.commitTransaction': 1}})).ok !== 1) {
+      throw Error('prepared_ack_profile_on');
+    }
+    const armed = await admin.runCommand({configureFailPoint: 'failCommand', mode: {times: 10}, data: {
+      failCommands: ['commitTransaction'], appName: scope.app,
+      writeConcernError: {code: 50, codeName: 'MaxTimeMSExpired', errmsg: 'fixture prepared commit acknowledgement loss'},
+    }});
+    const baseline = Number(armed.count);
+    if (armed.ok !== 1 || !Number.isSafeInteger(baseline) || baseline < 0) throw Error('prepared_ack_failpoint_on');
+    const stillHeld = await sample();
+    if (stillHeld?.opid !== held.opid || stillHeld.transaction !== held.transaction) {
+      throw Error('prepared_ack_held_transaction_changed');
+    }
+    if ((await admin.runCommand({configureFailPoint: 'hangDuringBatchUpdate', mode: 'off'})).ok !== 1) {
+      throw Error('prepared_ack_worktree_release');
+    }
+    return {...before, commitProof: {transaction: held.transaction, baseline}};
+  }
+
+  async function verifyCommitAcknowledgement() {
+    const off = await admin.runCommand({configureFailPoint: 'failCommand', mode: 'off'});
+    const affected = Number(off.count) - scope.commitProof.baseline;
+    if (off.ok !== 1 || !Number.isSafeInteger(affected) || affected < 5 || affected > 10) {
+      throw Error('prepared_ack_fault_budget_unproven');
+    }
+    const receipt = await admin.runCommand({getLog: 'global'});
+    if (receipt.ok !== 1) throw Error('prepared_ack_commit_log_unavailable');
+    const commits = receipt.log.map(line => EJSON.parse(line)).filter(row => row.msg === 'Slow query'
+      && row.attr?.appName === scope.app && row.attr?.command?.commitTransaction === 1
+      && row.attr.command.lsid?.id && row.attr.command.txnNumber != null
+      && transactionDigest(row.attr.command.lsid, row.attr.command.txnNumber) === scope.commitProof.transaction);
+    if (commits.length !== affected) throw Error('prepared_ack_fault_transaction_unproven');
+    return {commitAcknowledgementsLost: affected};
+  }
+
+  if (scope.action === 'arm_commit') print(JSON.stringify(await armCommitAcknowledgement()));
+  if (scope.action === 'verify_commit') print(JSON.stringify(await verifyCommitAcknowledgement()));
   if (scope.action === 'sample') print(JSON.stringify(await samplePausePublication()));
   if (scope.action === 'inject') print(JSON.stringify(await inject()));
   if (scope.action === 'read') print(JSON.stringify(await read()));
