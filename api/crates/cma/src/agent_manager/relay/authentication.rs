@@ -21,6 +21,9 @@ const REQUEST_ID: &str = "x-request-id";
 // Peers already accept opaque, signed nonces. A prefix negotiates the reply
 // without adding a proof field or trusting a header from the public request.
 const FILE_HANDOFF_NONCE: &str = "file-handoff:";
+// Older receivers recognize this as a file handoff and verify the caller
+// independently. Older senders never issue the versioned nonce.
+const FILE_PREVIEW_IDENTITY_NONCE: &str = "file-handoff:preview-identity-v1:";
 const FILE_WRITE_HANDOFF_NONCE: &str = "file-write-handoff:";
 const WRITE_NOT_ENTERED: &[u8] = b"cma-file-write-not-entered-v1\0";
 
@@ -42,6 +45,19 @@ impl WriteNotEntered {
 }
 
 impl Proof {
+    fn new(sender: &str, owner: &OwnershipToken, nonce: String) -> Result<Self, ()> {
+        Ok(Self {
+            sender: sender.into(),
+            owner: owner.clone(),
+            nonce,
+            until: now()? + 10,
+        })
+    }
+
+    pub(super) fn issued_file_preview_identity(&self) -> bool {
+        self.nonce.starts_with(FILE_PREVIEW_IDENTITY_NONCE)
+    }
+
     pub(super) fn reports_file_handoff(&self) -> bool {
         self.nonce.starts_with(FILE_HANDOFF_NONCE)
     }
@@ -103,6 +119,32 @@ impl Authentication {
         owner: &OwnershipToken,
         method: &Method,
         uri: &Uri,
+        headers: HeaderMap,
+        body: &[u8],
+    ) -> Result<HeaderMap, ()> {
+        let proof = Proof::new(sender, owner, self.nonce(method, uri, body))?;
+        self.attach_proof(proof, method, uri, headers, body)
+    }
+
+    pub(super) fn signed_file_preview_headers(
+        &self,
+        sender: &str,
+        owner: &OwnershipToken,
+        uri: &Uri,
+        mut headers: HeaderMap,
+        projection: file_identity::ProjectedIdentity,
+    ) -> Result<HeaderMap, ()> {
+        let nonce = format!("{FILE_PREVIEW_IDENTITY_NONCE}{}", uuid::Uuid::new_v4());
+        let proof = Proof::new(sender, owner, nonce)?;
+        headers.insert(file_identity::HEADER, projection.into_header());
+        self.attach_proof(proof, &Method::GET, uri, headers, &[])
+    }
+
+    fn attach_proof(
+        &self,
+        proof: Proof,
+        method: &Method,
+        uri: &Uri,
         mut headers: HeaderMap,
         body: &[u8],
     ) -> Result<HeaderMap, ()> {
@@ -111,7 +153,7 @@ impl Authentication {
         headers.remove(REQUEST_ID);
         headers.insert(REQUEST_ID, HeaderValue::from_str(&id).map_err(|_| ())?);
         headers.remove(PROOF);
-        let proof = self.proof(sender, owner, method, uri, &headers, body)?;
+        let proof = self.encode_proof(proof, method, uri, &headers, body)?;
         headers.insert(PROOF, HeaderValue::from_str(&proof).map_err(|_| ())?);
         Ok(headers)
     }
@@ -127,20 +169,13 @@ impl Authentication {
         headers: &HeaderMap,
         body: &[u8],
     ) -> Result<String, ()> {
-        self.proof(sender, owner, method, uri, headers, body)
+        let proof = Proof::new(sender, owner, self.nonce(method, uri, body))?;
+        self.encode_proof(proof, method, uri, headers, body)
     }
 
-    fn proof(
-        &self,
-        sender: &str,
-        owner: &OwnershipToken,
-        method: &Method,
-        uri: &Uri,
-        headers: &HeaderMap,
-        body: &[u8],
-    ) -> Result<String, ()> {
+    fn nonce(&self, method: &Method, uri: &Uri, body: &[u8]) -> String {
         let nonce = uuid::Uuid::new_v4();
-        let nonce = if file_read::eligible(uri.path(), method) {
+        if file_read::eligible(uri.path(), method) {
             format!("{FILE_HANDOFF_NONCE}{nonce}")
         } else if self.file_write_handoff_enabled()
             && file_write::eligible(uri.path(), method, body)
@@ -148,13 +183,17 @@ impl Authentication {
             format!("{FILE_WRITE_HANDOFF_NONCE}{nonce}")
         } else {
             nonce.to_string()
-        };
-        let proof = Proof {
-            sender: sender.into(),
-            owner: owner.clone(),
-            nonce,
-            until: now()? + 10,
-        };
+        }
+    }
+
+    fn encode_proof(
+        &self,
+        proof: Proof,
+        method: &Method,
+        uri: &Uri,
+        headers: &HeaderMap,
+        body: &[u8],
+    ) -> Result<String, ()> {
         let encoded = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&proof).map_err(|_| ())?);
         let signature = hmac::sign(&self.key, &message(&encoded, method, uri, headers, body)?);
         Ok(format!(
