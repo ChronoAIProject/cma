@@ -391,8 +391,13 @@ class OwnershipTests(unittest.TestCase):
         fixture.client = Mock(namespace='cma-native-am')
         fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
                          'server': 'https://127.0.0.1:12345'}
-        fixture.mongo = Mock(side_effect=[{'count': 7}, {'entered': False}, {'count': 8}])
-        self.assertEqual(fixture.runtimeLossPublicationAbort('arm'), {'count': 7})
+        scope = {'sandboxId': 'fixture-sandbox', 'manager': 'b'}
+        fixture.client.kjson.return_value = {'status': {'podIP': '192.0.2.3'}}
+        transaction = [{'id': 'fixture-session'}, '12', 37]
+        fixture.mongo = Mock(side_effect=[1, {'count': 7}, {'entered': False}, {'entered': True},
+                                          [transaction], [transaction], {'count': 8}, 1])
+        self.assertEqual(fixture.runtimeLossPublicationAbort('arm', **scope), {'count': 7})
+        self.assertIn('"command.filter._id": "fixture-sandbox"', fixture.mongo.call_args_list[0].args[0])
         script = fixture.mongo.call_args.args[0]
         command, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
         self.assertEqual(command['mode'], {'times': 1})
@@ -401,16 +406,25 @@ class OwnershipTests(unittest.TestCase):
             'errorCode': 112, 'errorLabels': ['TransientTransactionError'],
             'blockConnection': True, 'blockTimeMS': 12000,
         })
-        self.assertEqual(fixture.runtimeLossPublicationAbort('wait', 7), {'entered': False})
+        self.assertEqual(fixture.runtimeLossPublicationAbort('wait', 7, **scope), {'transaction_sha256': None})
         self.assertIn('"timesEntered": 8, "maxTimeMS": 4000', fixture.mongo.call_args.args[0])
-        self.assertEqual(fixture.runtimeLossPublicationAbort('disarm'), {'count': 8})
-        self.assertIn('"mode": "off"', fixture.mongo.call_args.args[0])
+        fingerprint = hashlib.sha256(json.dumps(transaction, sort_keys=True).encode()).hexdigest()
+        self.assertEqual(fixture.runtimeLossPublicationAbort('wait', 7, **scope), {'transaction_sha256': fingerprint})
+        sample = fixture.mongo.call_args.args[0]
+        for fragment in ['"command.filter._id": "fixture-sandbox"', '"command.update": "agents"',
+                         '"command.lsid":row.command.lsid', '"command.txnNumber":row.command.txnNumber']:
+            self.assertIn(fragment, sample)
+        fixture.client.kjson.assert_called_with(['get', 'pod', 'am-b-0', '-o', 'json'])
+        self.assertEqual(fixture.runtimeLossPublicationAbort('sample', **scope), {'transaction_sha256': fingerprint})
+        self.assertEqual(fixture.runtimeLossPublicationAbort('disarm', **scope), {'count': 8})
+        self.assertIn('"mode": "off"', fixture.mongo.call_args_list[-2].args[0])
+        self.assertIn('profile:0,filter:"unset"', fixture.mongo.call_args.args[0])
         with self.assertRaisesRegex(ValueError, 'timed_publication_abort_action_required'):
-            fixture.runtimeLossPublicationAbort('wait', True)
+            fixture.runtimeLossPublicationAbort('wait', True, **scope)
         fixture.ready['fixture'] = 'prepared'
         with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
             fixture.runtimeLossPublicationAbort('arm')
-        self.assertEqual(fixture.mongo.call_count, 3)
+        self.assertEqual(fixture.mongo.call_count, 8)
 
     def test_retirement_purge_writes_are_scoped_to_the_local_feature_fixture(self):
         run_id = 'cma-ci-' + 'a' * 12
