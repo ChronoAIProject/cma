@@ -91,6 +91,7 @@ async fn open_stream(
     let mut agent = fixture.store.get_agent(&id).await.unwrap().unwrap();
     let revision = agent.revision;
     agent.conversation.active_turn = None;
+    agent.status = layer2_core::sandbox::AgentStatus::Ready;
     agent.revision += 1;
     fixture.store.save_agent(revision, agent).await.unwrap();
     let share = if subject == "reader" {
@@ -125,6 +126,7 @@ async fn start_turn(f: &Fixture, id: &AgentId) -> u64 {
     agent = f.store.get_agent(id).await.unwrap().unwrap();
     let revision = agent.revision;
     agent.conversation.active_turn = Some(sequence);
+    agent.status = layer2_core::sandbox::AgentStatus::Working;
     agent.revision += 1;
     f.store.save_agent(revision, agent).await.unwrap();
     sequence
@@ -141,6 +143,7 @@ async fn finish_turn(f: &Fixture, id: &AgentId, sequence: u64) {
     let mut agent = f.store.get_agent(id).await.unwrap().unwrap();
     let revision = agent.revision;
     agent.conversation.active_turn = None;
+    agent.status = layer2_core::sandbox::AgentStatus::Ready;
     agent.revision += 1;
     f.store.save_agent(revision, agent).await.unwrap();
 }
