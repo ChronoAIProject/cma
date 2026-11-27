@@ -219,6 +219,7 @@ pub(crate) struct MongoAgentLifecycleStore {
     pub(super) creation_terminal_settlement_enabled: bool,
     operations: Collection<LifecycleRecord>,
     admission_settings: Collection<mongodb::bson::Document>,
+    pub(crate) global_sandbox_limit: u16,
     pub(super) released_lanes: Option<super::released_runtimes::MongoReleasedRuntimes>,
 }
 
@@ -277,6 +278,7 @@ impl MongoAgentLifecycleStore {
             creation_terminal_settlement_enabled: false,
             operations,
             admission_settings: majority_collection(database, super::settings::SETTINGS),
+            global_sandbox_limit: 0,
             released_lanes: None,
         })
     }

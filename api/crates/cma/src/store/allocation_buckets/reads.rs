@@ -35,6 +35,15 @@ impl ReportingStore {
             cached.len()
         );
         let _ = cache_us;
+        // A newly admitted long-range cohort has no daily bucket records yet.
+        // Daily fallbacks would probe the ledger for every slice, and a dense
+        // day would put the entire cohort on one cursor. The cold-range reader
+        // reads bounded groups of Sandboxes and reuses the events across slices.
+        if cached.is_empty() {
+            if let Some(prepared) = self.cold_allocation_range(session, states, range).await? {
+                return Ok(prepared);
+            }
+        }
         let mut out = BTreeMap::new();
         let mut from = range.from;
         while from < range.to {

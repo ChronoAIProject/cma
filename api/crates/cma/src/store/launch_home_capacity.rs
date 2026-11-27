@@ -13,6 +13,7 @@ use super::schema::DOCUMENT_SCHEMA_VERSION;
 
 mod room;
 pub(in crate::store) use room::precheck_fresh_home;
+pub(super) use room::{check as check_room, Room};
 
 pub(in crate::store) enum Error {
     Domain(LaunchStoreError),
