@@ -1,6 +1,9 @@
 //! Fresh exact-caller proof before public owner lookup. No completed-result cache.
-use super::{cookie_authorization, persistence::*, session_routes, AuthMode, AuthState};
-use axum::http::{HeaderMap, StatusCode};
+use super::{
+    cookie_authorization, identity::VerifiedSubject, identity_lifetime, persistence::*,
+    session_routes, AuthMode, AuthState,
+};
+use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use layer2_core::resource_access::{CallerContext, CredentialSource};
 use std::{sync::Arc, time::SystemTime};
 
@@ -8,6 +11,46 @@ pub struct RelayCaller {
     auth: Arc<AuthState>,
     context: CallerContext,
     browser: Option<(SecretDigest, SubjectAuthState)>,
+    verification: Option<Arc<VerifiedSubject>>,
+}
+
+#[derive(Clone, Copy)]
+pub struct ReuseFilePreviewIdentity;
+
+/// A live browser verification captured by the ambient middleware for this request.
+#[derive(Clone)]
+pub struct BrowserRelayProof {
+    login: SecretDigest,
+    key: cookie_authorization::VerificationKey,
+    verification: Arc<VerifiedSubject>,
+    target: Option<SecretDigest>,
+}
+
+impl BrowserRelayProof {
+    pub(super) fn capture(
+        login: SecretDigest,
+        receipt: cookie_authorization::BrowserVerification,
+    ) -> Self {
+        Self {
+            login,
+            key: receipt.key,
+            verification: receipt.evidence,
+            target: None,
+        }
+    }
+
+    pub(super) fn bind(mut self, uri: &Uri) -> Self {
+        self.target = Some(Self::target_digest(uri));
+        self
+    }
+
+    pub fn matches(&self, method: &Method, uri: &Uri) -> bool {
+        *method == Method::GET && self.target.as_ref() == Some(&Self::target_digest(uri))
+    }
+
+    fn target_digest(uri: &Uri) -> SecretDigest {
+        SecretDigest::identify("file-preview-relay-target", &uri.to_string())
+    }
 }
 
 impl RelayCaller {
@@ -16,18 +59,23 @@ impl RelayCaller {
         headers: &HeaderMap,
         context: &CallerContext,
         credential: Option<&str>,
+        browser_proof: Option<&BrowserRelayProof>,
     ) -> Result<Self, StatusCode> {
         valid(context)?;
         if matches!(
             context.credential_source,
             CredentialSource::RequestBoundRead { .. }
         ) {
+            if browser_proof.is_some() {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
             // Ordinary middleware already verified the exact method/path/query proof.
             // Its deadline remains attached; ambient credentials never replace it.
             return Ok(Self {
                 auth,
                 context: context.clone(),
                 browser: None,
+                verification: None,
             });
         }
         let browser = if matches!(auth.mode, AuthMode::Provider { .. })
@@ -53,6 +101,36 @@ impl RelayCaller {
         } else {
             None
         };
+        if let Some(proof) = browser_proof {
+            let (login, state) = browser.as_ref().ok_or(StatusCode::UNAUTHORIZED)?;
+            let tokens = state.tokens.as_ref().ok_or(StatusCode::UNAUTHORIZED)?;
+            let super::permissions::PermissionEvidence::Active(permissions) =
+                &proof.verification.permissions
+            else {
+                return Err(StatusCode::UNAUTHORIZED);
+            };
+            if login != &proof.login
+                || cookie_authorization::VerificationKey::new(state, tokens) != proof.key
+                || proof.verification.subject != context.caller.subject
+                || crate::permissions::capabilities_from_permissions(permissions.iter().cloned())
+                    != context.caller.authorization
+                || !identity_lifetime::current(&auth, &proof.verification)
+            {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+            let caller = Self {
+                auth,
+                context: context.clone(),
+                browser,
+                verification: Some(proof.verification.clone()),
+            };
+            caller.current().await?;
+            tracing::debug!(
+                event = "file_preview_ingress_identity_reused",
+                "File preview reused its live ingress identity verification"
+            );
+            return Ok(caller);
+        }
         let resolved = match &browser {
             Some((_, state)) => {
                 cookie_authorization::request_for_browser_cookie(
@@ -78,6 +156,7 @@ impl RelayCaller {
             auth,
             context: context.clone(),
             browser,
+            verification: None,
         };
         proof.current().await?;
         Ok(proof)
@@ -94,6 +173,13 @@ impl RelayCaller {
                     cookie_authorization::CustodyError::Store(_) => StatusCode::SERVICE_UNAVAILABLE,
                 })?;
             require_login(&self.auth, login, &self.context).await?;
+        }
+        if self
+            .verification
+            .as_ref()
+            .is_some_and(|receipt| !identity_lifetime::current(&self.auth, receipt))
+        {
+            return Err(StatusCode::UNAUTHORIZED);
         }
         valid(&self.context)
     }

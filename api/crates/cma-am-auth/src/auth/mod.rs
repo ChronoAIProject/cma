@@ -296,7 +296,7 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
     ) -> Result<Option<RequestAuth>, StoreError> {
-        self.resolve_request_with_proxy_inventory(headers, false)
+        self.resolve_request_with_proxy_inventory(headers, false, None)
             .await
     }
 
@@ -304,6 +304,7 @@ impl AuthState {
         &self,
         headers: &HeaderMap,
         personal_inventory: bool,
+        browser_proof: Option<&mut Option<relay::BrowserRelayProof>>,
     ) -> Result<Option<RequestAuth>, StoreError> {
         if headers.contains_key(nyxid_proxy::HEADER) {
             if self.identity_proxy.is_some() {
@@ -340,51 +341,9 @@ impl AuthState {
                 if let Some(cookie) = session_routes::request_cookie(headers, AUTH_COOKIE) {
                     let id = SecretDigest::identify(AUTH_COOKIE_DOMAIN, cookie);
                     if let Some((login, state)) = self.read_browser_session(&id).await? {
-                        if login.expires_at <= SystemTime::now() {
-                            let _ = self.store.delete_browser_login(&id).await;
-                            return Ok(None);
-                        }
-                        let state = if self.browser_session_join_enabled {
-                            state
-                        } else {
-                            self.store.subject(&login.subject).await?
-                        };
-                        let Some(mut state) = state else {
-                            return Ok(Some(RequestAuth {
-                                binding: None,
-                                credential_source:
-                                    layer2_core::resource_access::CredentialSource::Retained,
-                                subject: login.subject,
-                                authorization: Authorization::none(),
-                                profile: Profile::default(),
-                                delegated_credential: None,
-                            }));
-                        };
-                        if state.subject != login.subject {
-                            return Err(StoreError::Malformed(
-                                "browser authority crossed its identity boundary".into(),
-                            ));
-                        }
-                        let had_tokens = state.tokens.is_some();
-                        refresh::refresh_if_needed(self, &mut state).await?;
-                        if had_tokens && state.tokens.is_none() {
-                            return Ok(None);
-                        }
-                        let resolved = cookie_authorization::request_for_browser_cookie(
-                            self,
-                            &login.subject,
-                            state,
-                        )
-                        .await?;
-                        // Every browser verification rechecks logout after IO,
-                        // including logout committed by another replica.
-                        if !self.store.browser_login(&id).await?.is_some_and(|current| {
-                            current.subject == login.subject
-                                && current.expires_at > SystemTime::now()
-                        }) {
-                            return Ok(None);
-                        }
-                        return Ok(resolved);
+                        return self
+                            .resolve_browser_session(id, login, state, browser_proof)
+                            .await;
                     }
                 }
                 let Some(token) = bearer::bearer_token(headers) else {

@@ -4,6 +4,15 @@ use axum::{extract::Request, http::HeaderMap, middleware::Next, response::Respon
 #[derive(Clone)]
 struct WireHeaders(HeaderMap);
 
+pub(super) async fn file_preview_identity(mut request: Request, next: Next) -> Response {
+    if !request.headers().contains_key(super::PROOF) {
+        request
+            .extensions_mut()
+            .insert(crate::auth::relay::ReuseFilePreviewIdentity);
+    }
+    next.run(request).await
+}
+
 pub(super) async fn capture(mut request: Request, next: Next) -> Response {
     // Request-bound read authentication deliberately removes ambient credentials
     // before the handler. A peer must verify the original proof independently;
