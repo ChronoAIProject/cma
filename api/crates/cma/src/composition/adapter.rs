@@ -189,7 +189,7 @@ pub(super) async fn production_adapter(
             }
             _ => transport,
         };
-        let transport = match &config.runtime.open_reply_loss_sandbox {
+        let transport = match &config.runtime.staging_sandbox.open_reply_loss {
             Some(sandbox_id) => transport.with_open_reply_loss(
                 sandbox_id.clone(),
                 Arc::new(store.open_reply_loss_claim(sandbox_id.clone())),

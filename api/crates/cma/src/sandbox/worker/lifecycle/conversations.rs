@@ -31,6 +31,9 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Some(failure) = self.staging_runtime_update_refusal(&sandbox) {
+            return self.handle_lifecycle_failure(sandbox, failure, now).await;
+        }
         if let Err(failure) = self.reconcile_retired_runtime_paths(&sandbox, now).await {
             return self.handle_lifecycle_failure(sandbox, failure, now).await;
         }
