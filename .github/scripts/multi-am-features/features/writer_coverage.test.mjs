@@ -20,7 +20,7 @@ test('all thirteen writer groups remain required independently of C275', async (
   assert.equal(new Set(groups.map(row => row.id)).size, 13);
   assert.equal(features.groups.at(-1).id, 'SW12');
   assert.deepEqual(prepared.groups.map(row => row.id), ['SW05', 'SW06', 'SW13']);
-  const executableGroups = ['SW01', 'SW02', 'SW03', 'SW07', 'SW09', 'SW12'];
+  const executableGroups = ['SW01', 'SW02', 'SW03', 'SW07', 'SW09', 'SW10', 'SW12'];
   for (const id of executableGroups) assert.equal(groups.find(row => row.id === id).verdict, 'NOT_RUN');
   assert.ok(groups.filter(row => !executableGroups.includes(row.id)).every(row => row.verdict === 'BLOCKED'));
   for (const fixture of ['features', 'prepared']) {
@@ -29,6 +29,20 @@ test('all thirteen writer groups remain required independently of C275', async (
     }
   }
   assert.throws(() => writerCoverage(actual, [], undefined, 'invalid'), /writer_fixture/);
+});
+
+test('SW10 requires all seven sharing and artifact cases through both Managers on each side of restart', async () => {
+  const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
+  const group = registry.cases.find(row => row.id === 'SW10');
+  assert.equal(group.required_assertions.length, 7);
+  const rows = group.required_assertions.flatMap(({case: name}) => ['before_restart', 'after_restart']
+    .map(phase => ({case: name, phase, iteration: 1, ams: ['a', 'b'], verdict: 'PASS'})));
+  const verdict = observed => writerCoverage(registry, observed, undefined, 'features').groups
+    .find(row => row.id === 'SW10').verdict;
+  assert.equal(verdict(rows), 'PASS');
+  assert.equal(verdict(rows.slice(2)), 'NOT_RUN');
+  rows.at(-1).ams = ['a'];
+  assert.equal(verdict(rows), 'FAIL');
 });
 
 test('SW07 requires runtime-loss continuity, atomic pause and both revived Agents', async () => {

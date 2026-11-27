@@ -49,6 +49,7 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
       key: randomUUID(), body: {title, expected_revision: before.revision},
     });
     advanced = rename.body;
+    if (advanced?.title === title) record.writerTitle = {title, revision: advanced.revision};
     check(advanced?.title === title && advanced.revision === before.revision + 1 && !settled,
       'artifact_owner_revision_did_not_advance_before_retry');
     const afterRename = await fault('sample');

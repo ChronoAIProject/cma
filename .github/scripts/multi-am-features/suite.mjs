@@ -332,8 +332,15 @@ try {
         if (iteration === 1) {
           await caseContext.runCase('writer.skill_installs_once', () => installSkillCase(caseContext));
           await caseContext.runCase('writer.skill_publication_retry', () => installSkillCase(caseContext, true));
-          await caseContext.runCase('writer.share_and_artifact_receipts',
-            () => shareAgentArtifact({...caseContext, user, outsider}));
+          await caseContext.runCase('writer.share_and_artifact_receipts', async () => {
+            let child;
+            await withRestoration(async () => {
+              child = await context.create('b', false, {workspace_id: context.record.workspaceId});
+              check(child.agentId !== context.record.agentId && child.workspaceId === context.record.workspaceId
+                && child.sandboxId === context.record.sandboxId, 'artifact_fixture_child_lineage_unbound');
+              await shareAgentArtifact({...caseContext, record: child, user, outsider});
+            }, async () => { if (child) await context.cleanup(child); }, caseContext.recordFailure);
+          });
           await caseContext.runCase('writer.artifact_unknown_publication',
             () => artifactUnknownPublication({...caseContext, user}));
           await caseContext.runCase('writer.artifact_committed_without_acknowledgement',
