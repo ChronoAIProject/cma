@@ -204,6 +204,12 @@ class MigrationKindRunnerTests(unittest.TestCase):
         self.assertEqual(runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)['uid'], 'uid-1')
         with self.assertRaises(RuntimeError):
             runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-current', config)
+        pod['spec']['containers'][0]['image'] = 'docker.io/library/cma-matrix-old:latest'
+        self.assertEqual(runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)['uid'], 'uid-1')
+        pod['spec']['containers'][0]['image'] = 'example.invalid/other/cma-matrix-old:latest'
+        with self.assertRaises(RuntimeError):
+            runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)
+        pod['spec']['containers'][0]['image'] = 'cma-matrix-old'
         pod['status']['containerStatuses'][0]['imageID'] = 'wrong-' + config
         with self.assertRaises(RuntimeError):
             runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)

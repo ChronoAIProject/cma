@@ -6,8 +6,10 @@ class PodSelectionError(RuntimeError):
 
 
 def matches_image(image, expected):
-    return (image in (expected, expected + ':latest')
-            or image.endswith('/' + expected + ':latest'))
+    if '/' in expected or ':' in expected or '@' in expected:
+        return image == expected
+    return image in (expected, expected + ':latest', 'docker.io/library/' + expected,
+                     'docker.io/library/' + expected + ':latest')
 
 
 def matches_identity(image_id, image, config):
