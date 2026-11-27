@@ -170,6 +170,24 @@ Coverage grows page by page and currently includes Event Gateway
 logged in the terminal; writes are refused with `501` and nothing is persisted.
 Fixture mode never reaches production and is absent from builds and tests.
 
+### Message Task Audit
+
+Agent Manager samples message-task reconciliation by default from
+`2026-11-24T16:00:00Z` (25 November 2026, 00:00 at UTC+08:00), with no admission
+end time and a 3,600-second review threshold. The cutoff stays fixed across
+restarts. The threshold flags work for investigation; it does not cancel work.
+
+`CHRONO_TASK_AUDIT_SELECTION` can override the cohort with JSON containing
+`from`, optional `to`, and `overdue_seconds`. Set the variable to the literal
+JSON value `null` to disable this sampling. Invalid overrides fail configuration
+validation instead of silently using the default.
+
+The explicit `am-command-cohort-index-v1` migration remains a prerequisite.
+Missing schema or indexes produce sampling failure metrics; sampling never
+creates them. Queries retain the 10,000-task, 16-MiB and 10-second bounds.
+An open cohort that exceeds these bounds reports failure rather than partial
+counts. Use a fixed `to` when selecting a bounded admission cohort.
+
 ### Local Checks
 
 After installing frontend dependencies, run the core frontend checks from the
