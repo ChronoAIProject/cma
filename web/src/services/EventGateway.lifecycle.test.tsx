@@ -164,17 +164,23 @@ it('quarantines a contradictory same-version refresh until another authoritative
   expect(writes()).toHaveLength(0);
 });
 
-it.each([false, true])(
-  'automatic address recovery retains readiness=%s and updates row and detail together',
-  async (ready) => {
-    const initial = { ...channel(ready), channel_id: undefined, endpoints: undefined };
-    const { current, writes } = fixture(initial);
+it.each([
+  { ready: false, channel_id: undefined, path: '/v1/channel-records/original-record' },
+  { ready: true, channel_id: undefined, path: '/v1/channel-records/original-record' },
+  { ready: false, channel_id: 'original-channel', path: '/v1/channels/original-channel' },
+])(
+  'automatic address recovery for readiness=$ready and channel ID=$channel_id',
+  async ({ ready, channel_id, path }) => {
+    const initial = { ...channel(ready), channel_id, endpoints: undefined };
+    const { current, fetcher, writes } = fixture(initial);
     current.recovered = channel(ready);
     const settings = await open();
+    expect(fetcher.mock.calls.some(([url]) => url === `/api/event-gateway${path}`)).toBe(true);
     expect(settings.getByRole('button', { name: 'Save channel' })).toHaveProperty(
       'disabled',
       !ready,
     );
+    expect(settings.getByRole('button', { name: 'Delete channel' })).toBeEnabled();
     const row = within(screen.getByRole('tree', { name: 'Channels' })).getByRole('button', {
       name: /^Original/,
     });
