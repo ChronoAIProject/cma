@@ -57,27 +57,31 @@ pub(super) fn decode_reporting_export(
 ) -> Result<ReportingExport> {
     let mut named = BTreeMap::new();
     let mut ambiguous_names = BTreeSet::new();
-    for series in decode_series(body, selection, |left, right| left == right)? {
+    for mut series in decode_series(body, selection)? {
         if ambiguous_names.contains(&series.name) {
             continue;
         }
-        let chart = PhysicalSeries {
-            metric: selection.metric,
-            name: series.name,
-            labels: series.labels,
-            samples: series
-                .samples
-                .into_iter()
-                .map(|(timestamp_ms, value)| Sample {
-                    at: timestamp_ms as f64 / 1000.0,
-                    value,
-                })
-                .collect(),
-        };
-        let name = chart.name.clone();
-        match named.entry(name) {
+        match named.entry(series.name.clone()) {
             std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert(chart);
+                // Conflicting values also invalidate this name when the
+                // physical labels agree.
+                if !normalize_samples(&mut series.samples, |left, right| left == right) {
+                    ambiguous_names.insert(series.name);
+                    continue;
+                }
+                entry.insert(PhysicalSeries {
+                    metric: selection.metric,
+                    name: series.name,
+                    labels: series.labels,
+                    samples: series
+                        .samples
+                        .into_iter()
+                        .map(|(timestamp_ms, value)| Sample {
+                            at: timestamp_ms as f64 / 1000.0,
+                            value,
+                        })
+                        .collect(),
+                });
             }
             std::collections::btree_map::Entry::Occupied(entry) => {
                 ambiguous_names.insert(entry.remove_entry().0);
@@ -91,36 +95,35 @@ pub(super) fn decode_reporting_export(
 }
 
 pub fn decode_raw_export(body: &[u8], selection: &Selection) -> Result<Vec<RawPhysicalSeries>> {
-    decode_series(body, selection, |left, right| {
-        left.map(f64::to_bits) == right.map(f64::to_bits)
-    })?
-    .into_iter()
-    .map(|series| {
-        let samples = series
-            .samples
-            .into_iter()
-            .map(|(timestamp_ms, value)| {
-                Ok(RawSample {
-                    timestamp_ms,
-                    value: value.ok_or_else(invalid)?,
+    decode_series(body, selection)?
+        .into_iter()
+        .map(|mut series| {
+            if !normalize_samples(&mut series.samples, |left, right| {
+                left.map(f64::to_bits) == right.map(f64::to_bits)
+            }) {
+                return Err(invalid());
+            }
+            let samples = series
+                .samples
+                .into_iter()
+                .map(|(timestamp_ms, value)| {
+                    Ok(RawSample {
+                        timestamp_ms,
+                        value: value.ok_or_else(invalid)?,
+                    })
                 })
+                .collect::<Result<_>>()?;
+            Ok(RawPhysicalSeries {
+                metric: selection.metric,
+                name: series.name,
+                labels: series.labels,
+                samples,
             })
-            .collect::<Result<_>>()?;
-        Ok(RawPhysicalSeries {
-            metric: selection.metric,
-            name: series.name,
-            labels: series.labels,
-            samples,
         })
-    })
-    .collect()
+        .collect()
 }
 
-fn decode_series(
-    body: &[u8],
-    selection: &Selection,
-    same_value: impl Fn(Option<f64>, Option<f64>) -> bool,
-) -> Result<Vec<DecodedSeries>> {
+fn decode_series(body: &[u8], selection: &Selection) -> Result<Vec<DecodedSeries>> {
     selection.validate()?;
     if body.len() > super::transport::MAX_RESPONSE_BYTES {
         return Err(invalid());
@@ -167,18 +170,22 @@ fn decode_series(
             entry.samples.push((timestamp_ms, value));
         }
     }
-    for entry in series.values_mut() {
-        entry.samples.sort_by_key(|&(timestamp_ms, _)| timestamp_ms);
-        if entry
-            .samples
-            .windows(2)
-            .any(|pair| pair[0].0 == pair[1].0 && !same_value(pair[0].1, pair[1].1))
-        {
-            return Err(invalid());
-        }
-        entry.samples.dedup_by_key(|sample| sample.0);
-    }
     Ok(series.into_values().collect())
+}
+
+fn normalize_samples(
+    samples: &mut Vec<(u64, Option<f64>)>,
+    same_value: impl Fn(Option<f64>, Option<f64>) -> bool,
+) -> bool {
+    samples.sort_by_key(|&(timestamp_ms, _)| timestamp_ms);
+    if samples
+        .windows(2)
+        .any(|pair| pair[0].0 == pair[1].0 && !same_value(pair[0].1, pair[1].1))
+    {
+        return false;
+    }
+    samples.dedup_by_key(|sample| sample.0);
+    true
 }
 fn invalid() -> AdapterError {
     AdapterError::Unavailable("monitoring response is incomplete, ambiguous or invalid".into())
@@ -299,6 +306,51 @@ mod tests {
         let out_of_scope = row("unselected-claim", "fixture-node", 5200);
         let invalid_input = format!("{input}\n{out_of_scope}");
         assert!(decode_reporting_export(invalid_input.as_bytes(), &selected).is_err());
+    }
+
+    #[test]
+    fn reporting_export_isolates_conflicting_timestamps_for_one_name() {
+        let mut selected = selection();
+        selected.names.push("healthy-claim".into());
+        let make_row = |name: &str, value: Option<f64>| {
+            serde_json::json!({
+                "metric": {
+                    "__name__": selected.metric.name(), "cluster": selected.cluster,
+                    "namespace": selected.namespace, "pod": name, "container": "runtime",
+                    "job": "kubelet", "metrics_path": "/metrics/resource",
+                },
+                "timestamps": [1250], "values": [value],
+            })
+        };
+        let healthy = make_row("healthy-claim", Some(5.));
+        let original = make_row("cold-claim", Some(2.));
+        for conflict in [Some(3.), None] {
+            let conflicting = make_row("cold-claim", conflict);
+            for input in [
+                format!("{original}\n{healthy}\n{conflicting}"),
+                format!("{conflicting}\n{healthy}\n{original}"),
+            ] {
+                let decoded = decode_reporting_export(input.as_bytes(), &selected).unwrap();
+                assert_eq!(
+                    decoded.ambiguous_names,
+                    BTreeSet::from(["cold-claim".into()])
+                );
+                assert_eq!(decoded.series.len(), 1);
+                assert_eq!(decoded.series[0].name, "healthy-claim");
+                assert_eq!(decoded.series[0].samples[0].value, Some(5.));
+                assert!(decode_export(input.as_bytes(), &selected).is_err());
+                assert!(decode_raw_export(input.as_bytes(), &selected).is_err());
+            }
+        }
+
+        let input = format!("{original}\n{healthy}\n{original}");
+        let decoded = decode_reporting_export(input.as_bytes(), &selected).unwrap();
+        assert!(decoded.ambiguous_names.is_empty());
+        assert!(decoded
+            .series
+            .iter()
+            .all(|series| series.samples.len() == 1));
+        assert_eq!(decoded.series.len(), 2);
     }
 
     #[test]

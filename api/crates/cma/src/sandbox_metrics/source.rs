@@ -3,6 +3,7 @@ use layer2_core::sandbox_metrics::{
     aggregate, Binding, BindingKind, MetricRollup, Range, Result, ALGORITHM_VERSION, SOURCE,
 };
 use layer3_adapter::sandbox_metrics::{PhysicalSeries, Selection, SourceMetric};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Default)]
@@ -10,6 +11,63 @@ struct SourceRead {
     samples: Vec<PhysicalSeries>,
     ambiguous_sandboxes: BTreeSet<String>,
     complete: bool,
+}
+
+fn trace_preserved_rollup(task: &str, range: Range, sandbox_id: &str) {
+    // JSON formatters can attach the current span to parentless events.
+    let _root = tracing::info_span!(parent: None, "sandbox_metric_diagnostic").entered();
+    tracing::info!(
+        parent: None,
+        task,
+        range_from = range.from,
+        range_to = range.to,
+        sandbox_hash = %format_args!("{:x}", Sha256::digest(sandbox_id.as_bytes())),
+        "sandbox metric rollup skipped for ambiguous source"
+    );
+}
+
+#[cfg(test)]
+#[test]
+fn rollup_skip_event_uses_a_hash_and_detaches_the_parent_span() {
+    #[derive(Clone, Default)]
+    struct Output(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Output {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let output = Output::default();
+    let writer = output.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .without_time()
+        .with_writer(move || writer.clone())
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        let span = tracing::info_span!("collector", owner = "private-owner");
+        let _entered = span.enter();
+        trace_preserved_rollup("replay", Range { from: 60, to: 120 }, "sandbox-fixture");
+    });
+    let bytes = output.0.lock().unwrap();
+    let text = std::str::from_utf8(&bytes).unwrap();
+    let event: serde_json::Value = serde_json::from_str(text).unwrap();
+    let fields = &event["fields"];
+    assert_eq!(fields["task"], "replay");
+    assert_eq!(fields["range_from"], 60);
+    assert_eq!(fields["range_to"], 120);
+    assert_eq!(
+        fields["sandbox_hash"],
+        format!("{:x}", Sha256::digest("sandbox-fixture"))
+    );
+    assert_eq!(event["span"]["name"], "sandbox_metric_diagnostic");
+    assert_eq!(event["spans"].as_array().unwrap().len(), 1);
+    assert!(!text.contains("sandbox-fixture"));
+    assert!(!text.contains("private-owner"));
 }
 
 #[cfg(test)]
@@ -180,8 +238,8 @@ impl MetricsWorkers {
         let mut rollups = Vec::new();
         let mut readings = Vec::new();
         for id in ids {
-            // A name reused across label sets has no unique physical source.
-            // Leave its existing observations in place and advance the page.
+            // Keep existing observations when any metric has conflicting
+            // samples or more than one physical source for this Sandbox.
             if source.ambiguous_sandboxes.contains(id) {
                 continue;
             }
@@ -254,6 +312,11 @@ impl MetricsWorkers {
             .save_metric_rollups(key, holder, &rollups)
             .await?;
         self.store.save_live(holder, &readings).await?;
+        // Correlate the skipped identity with the completed page and its
+        // retained rows without exposing the ID or provider labels.
+        for id in &source.ambiguous_sandboxes {
+            trace_preserved_rollup(key, range, id);
+        }
         Ok(())
     }
     pub(super) async fn raw(
