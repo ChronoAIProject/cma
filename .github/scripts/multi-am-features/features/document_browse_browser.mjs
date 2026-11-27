@@ -12,12 +12,11 @@ export async function documentBrowse({page, ingress, user, admin, ownerId, recor
   const ownedTitle = prefix + ' owned';
   const sharedTitle = prefix + ' shared';
   const foreignTitle = prefix + ' private';
-  const entries = [];
+  let shared;
   const create = async (actor, am, title) => {
     const {body: document} = await actor.request(am, 'POST', endpoint, {key: randomUUID(),
       body: {title, markdown: '# ' + title + '\n'}, allowed: [201]});
     check(id(document?.id) && document.title === title && document.access === 'owner', 'document_browse_seed_unbound');
-    entries.push({actor, am, path: `${endpoint}/${document.id}`});
     return document;
   };
   const onlyRegistry = url => url.pathname === endpoint && url.searchParams.get('q') === prefix;
@@ -29,7 +28,7 @@ export async function documentBrowse({page, ingress, user, admin, ownerId, recor
   };
   await withRestoration(async () => {
     const owned = await create(user, ingress, ownedTitle);
-    const shared = await create(admin, peer, sharedTitle);
+    shared = await create(admin, peer, sharedTitle);
     const foreign = await create(admin, peer, foreignTitle);
     const sharePath = `${endpoint}/${shared.id}/shares/${encodeURIComponent(ownerId)}`;
     const {body: updated} = await admin.request(peer, 'PUT', sharePath, {key: randomUUID(),
@@ -87,13 +86,19 @@ export async function documentBrowse({page, ingress, user, admin, ownerId, recor
       await page.unroute(onlyRegistry, onePerPage);
     }
   }, async () => {
-    const cleaned = await Promise.allSettled(entries.map(async ({actor, am, path}) => {
-      const {body: document} = await actor.request(am, 'GET', path);
-      const {body: receipt} = await actor.request(am, 'DELETE', path, {key: randomUUID(),
-        body: {expected_revision: document.revision}});
-      check(receipt.id === document.id, 'document_browse_cleanup_unbound');
-      await actor.request(other(am), 'GET', path, {allowed: [404]});
-    }));
-    check(cleaned.every(result => result.status === 'fulfilled'), 'document_browse_cleanup_failed');
+    // The disposable database owns the created Documents. Restore access using
+    // the grant API, which is available with document deletion disabled.
+    if (!shared) return;
+    const path = `${endpoint}/${shared.id}`;
+    const {body: shares} = await admin.request(peer, 'GET', path + '/shares');
+    check(Array.isArray(shares), 'document_browse_grant_readback_failed');
+    if (shares.some(row => row.subject === ownerId)) {
+      const {body: current} = await admin.request(peer, 'GET', path);
+      const {body: receipt} = await admin.request(peer, 'DELETE', path + '/shares/' + encodeURIComponent(ownerId),
+        {key: randomUUID(), body: {expected_revision: current.revision}});
+      check(receipt.id === shared.id && receipt.revision === current.revision + 1,
+        'document_browse_cleanup_unbound');
+    }
+    for (const am of ['a', 'b']) await user.request(am, 'GET', path, {allowed: [404]});
   }, recordFailure);
 }
