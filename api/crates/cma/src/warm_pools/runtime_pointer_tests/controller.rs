@@ -15,6 +15,8 @@ use layer2_core::{
 use layer3_adapter::{PinnedReleasedRuntime, ReleasedRuntimeSource};
 use mongodb::bson::{DateTime, Document};
 
+#[path = "first_publication.rs"]
+mod first_publication;
 #[path = "lifecycle.rs"]
 mod lifecycle;
 #[path = "lifecycle_release.rs"]
@@ -90,12 +92,19 @@ pub(super) async fn bind_controller(
         pod_uid: uuid::Uuid::new_v4(),
         build_digest: format!("sha256:{}", "a".repeat(64)),
     };
+    let cutover_epoch = uuid::Uuid::from_u128(1);
+    replica.database.collection::<Document>("platform_settings").update_one(
+        doc! {"_id":format!("runtime_pointer_cutover:{DEPLOYMENT}")},
+        doc! {"$setOnInsert": {"deployment":DEPLOYMENT,"document_schema_version":1_i64,
+            "epoch":cutover_epoch.to_string(),"build_digest":&writer.build_digest,"state":"fenced"}},
+    ).upsert(true).await.unwrap();
     let controller = RuntimePointerController::new(
         release,
         replica.store.clone(),
         pools.clone(),
         pointer,
         writer.clone(),
+        Some(cutover_epoch),
     );
     ControllerReplica {
         controller,

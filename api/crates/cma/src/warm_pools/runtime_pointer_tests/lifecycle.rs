@@ -56,10 +56,20 @@ impl Lifecycle {
         pin: String,
         machine_pin: String,
     ) -> TestResult<Self> {
-        let store = Arc::new(
+        let store =
             open_pointer_fixture_sandbox_store(&replica.database, pin.clone(), released.clone())
-                .await?,
-        );
+                .await?;
+        Self::with_store(replica, released, pin, machine_pin, store).await
+    }
+
+    pub(super) async fn with_store(
+        replica: &Replica,
+        released: Arc<StoreReleasedRuntime>,
+        pin: String,
+        machine_pin: String,
+        store: MongoSandboxStore,
+    ) -> TestResult<Self> {
+        let store = Arc::new(store);
         let profiles = Arc::new(
             MongoProfileStore::open(replica.database.client(), replica.database.name()).await?,
         );

@@ -15,6 +15,7 @@ fn config(
                 "CHRONO_RUNTIME_REGISTRY_TOKEN" => token,
                 "CHRONO_RUNTIME_POINTER" => Some(agent_ref.as_str()),
                 "CHRONO_MACHINE_RUNTIME_POINTER" => machine.then_some(machine_ref.as_str()),
+                "CHRONO_RUNTIME_POINTER_CUTOVER_EPOCH" => None,
                 "CHRONO_ENVIRONMENT" => Some("staging"),
                 _ => panic!("unexpected configuration key {key}"),
             }
@@ -58,6 +59,32 @@ fn configuration_refuses_noncanonical_environment_and_switch() {
     assert!(config("true", Some("synthetic"), "production-current", false).is_err());
     assert!(config("1", Some("synthetic"), "staging-current", false).is_err());
     assert!(config("true", Some("invalid\ttoken"), "staging-current", false).is_err());
+}
+
+#[test]
+fn first_publication_epoch_is_optional_but_must_be_canonical() {
+    for (value, valid) in [
+        (None, true),
+        (Some("00000000-0000-0000-0000-000000000001"), true),
+        (Some("00000000-0000-0000-0000-000000000000"), false),
+        (Some("1"), false),
+    ] {
+        let config = RuntimePointerConfig::from_lookup(
+            &mut |key| {
+                Ok(match key {
+                    "CHRONO_RUNTIME_POINTER" => Some(format!("{HOST}/{AGENT}:staging-current")),
+                    "CHRONO_ENVIRONMENT" => Some("staging".into()),
+                    "CHRONO_RUNTIME_POINTER_CUTOVER_EPOCH" => value.map(str::to_owned),
+                    _ => None,
+                })
+            },
+            false,
+        );
+        assert_eq!(config.is_ok(), valid);
+        if let Ok(Some(config)) = config {
+            assert_eq!(config.cutover_epoch().is_some(), value.is_some());
+        }
+    }
 }
 
 #[test]
