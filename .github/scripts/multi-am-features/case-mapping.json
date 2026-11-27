@@ -454,9 +454,12 @@
     ]
   },
   "cma-user.files.preview": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
-    "minimum_runs": 3,
+    "cases": [
+      "user.browser_changed_file_preview"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
     "phases": [
       "before_restart",
       "after_restart"

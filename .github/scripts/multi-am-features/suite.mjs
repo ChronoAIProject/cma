@@ -8,6 +8,7 @@ import {ExtendedAdminMatrix} from './features/admin_extended.mjs';
 import {ADMIN_PERMISSIONS, verifyRuntimeInventory} from './features/admin_matrix.mjs';
 import {userCases} from './features/user.mjs';
 import {browserFileRoundtrip} from './features/files_browser.mjs';
+import {browserChangedFilePreview, withChangedFile} from './features/files_preview.mjs';
 import {documentCases} from './features/documents.mjs';
 import {createDocumentAfterLostReply} from './features/document_creation_browser.mjs';
 import {documentEditAndConflict} from './features/document_edit_browser.mjs';
@@ -435,6 +436,16 @@ try {
               });
             }
           }, 'user.agent_open');
+          await withChangedFile({...caseContext, api: user}, witness =>
+            withBrowser(context.config.ams, async browser => {
+              for (const am of ['a', 'b']) {
+                await browser.forIngress(am, ({page}) => browserCase(am, iteration, 'user.browser_changed_file_preview',
+                  async () => {
+                    await agentOpen(page, context.record, witness);
+                    await browserChangedFilePreview(page, witness);
+                  }));
+              }
+            }, 'user.browser_changed_file_preview'));
           await withBrowser(context.config.ams, async browser => {
             for (const am of ['a', 'b']) {
               let witness;

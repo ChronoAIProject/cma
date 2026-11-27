@@ -59,12 +59,16 @@ def arm(case_id, marker, access_request=None, suggestions=False, configuration=N
     if type(title) is not bool or (title and (suggestions or access_request is not None
             or configuration is not None or skill is not None or not re.fullmatch(r'WS4_TITLE_[a-f0-9]{32}', marker))):
         raise ValueError('fixture_title_invalid')
+    file_preview = re.fullmatch(r'WS4_FILE_[a-f0-9]{32}', marker) is not None
+    if file_preview and (access_request or suggestions or configuration or skill or title):
+        raise ValueError('fixture_file_preview_invalid')
     with LOCK:
         if case_id in CASES:
             raise ValueError('case_already_exists')
         CASES[case_id] = {'marker': marker, 'release': threading.Event(), 'access_request': access_request,
                          'access_call_id': 'call_' + digest(case_id)[:24], 'access_tool_calls': 0,
-                         'access_receipt': None,
+                         'access_receipt': None, 'file_preview': file_preview,
+                         'file_preview_calls': 0, 'file_preview_outputs': 0,
                          'suggestions': suggestions, 'suggestion_release': threading.Event(),
                          'configuration': configuration, 'configuration_matches': 0,
                          'skill': skill, 'skill_matches': 0,
@@ -84,6 +88,7 @@ def snapshot(case_id):
                 **{key: case[key] for key in ('request_count', 'completed_effect_count',
                     'disconnect_count', 'active_streams', 'request_hashes', 'response_hashes', 'events')},
                 'access_tool_calls': case['access_tool_calls'], 'access_receipt': case['access_receipt'],
+                'file_preview_calls': case['file_preview_calls'], 'file_preview_outputs': case['file_preview_outputs'],
                 'suggestion_requests': case['suggestion_requests'], 'suggestion_responses': case['suggestion_responses'],
                 'suggestion_released': case['suggestion_release'].is_set(),
                 'configuration_matches': case['configuration_matches'],
@@ -187,6 +192,26 @@ def access_tool_events(response_id, request, request_key, call_id):
         item.update(type='custom_tool_call', name='exec', namespace='functions', input=invocation)
     else:
         raise ValueError('fixture_access_tool_undeclared')
+    return tool_events(response_id, request, item)
+
+
+def file_preview_tool_events(response_id, request, marker, call_id):
+    if not re.fullmatch(r'WS4_FILE_[a-f0-9]{32}', marker):
+        raise ValueError('fixture_file_preview_invalid')
+    filename = 'cma-preview-' + marker.removeprefix('WS4_FILE_') + '.txt'
+    patch = f'*** Begin Patch\n*** Add File: {filename}\n+{marker}\n*** End Patch\n'
+    tools = request.get('tools') or [tool for item in request.get('input', [])
+                                    if item.get('type') == 'additional_tools' for tool in item.get('tools', [])]
+    if not any(tool.get('name') == 'functions' and any(child.get('name') == 'exec' for child in tool.get('tools', []))
+               for tool in tools):
+        raise ValueError('fixture_file_preview_tool_undeclared')
+    item = {'id': 'fc_' + digest(response_id)[:24], 'call_id': call_id, 'status': 'completed',
+            'type': 'custom_tool_call', 'name': 'exec', 'namespace': 'functions',
+            'input': 'text(await tools.apply_patch(' + json.dumps(patch) + '));'}
+    return tool_events(response_id, request, item)
+
+
+def tool_events(response_id, request, item):
     response = {'id': response_id, 'object': 'response', 'created_at': int(time.time()), 'status': 'in_progress',
                 'model': request.get('model', 'ws4-local'), 'output': []}
     frames = [{'type': 'response.created', 'response': response},
@@ -321,6 +346,21 @@ class Handler(BaseHTTPRequestHandler):
             case_id = ACTIVE
             case = CASES.get(case_id)
             tool_result = None
+            if case and case['file_preview']:
+                call_id = 'call_file_' + digest(case_id)[:24]
+                if case['request_count'] == 0 and case['marker'] in encoded:
+                    try:
+                        frames = file_preview_tool_events('resp_ws4_' + digest(case_id + ':1')[:24], body,
+                                                          case['marker'], call_id)
+                    except (ValueError, TypeError, AttributeError):
+                        return self.reply(409, {'error': 'fixture_file_preview_tool_unavailable'})
+                    case['file_preview_calls'] += 1
+                elif case['request_count'] == 1 and isinstance(body.get('input'), list) and any(
+                        isinstance(item, dict) and item.get('type') == 'custom_tool_call_output'
+                        and item.get('call_id') == call_id for item in body['input']):
+                    case['file_preview_outputs'] += 1
+                elif case['marker'] in encoded:
+                    return self.reply(409, {'error': 'fixture_file_preview_output_missing'})
             if case and case['access_request'] and case['request_count'] == 1 and isinstance(body.get('input'), list):
                 tool_result = next((item for item in body['input'] if isinstance(item, dict)
                                     and item.get('type') in ('function_call_output', 'custom_tool_call_output')
@@ -336,7 +376,8 @@ class Handler(BaseHTTPRequestHandler):
                 case['access_receipt'] = access_receipt(tool_result.get('output'))
             elif case and case['access_request'] and case['marker'] in encoded:
                 return self.reply(409, {'error': 'fixture_access_tool_output_missing'})
-            elif case is None or case['marker'] not in encoded:
+            elif case is None or (case['marker'] not in encoded
+                    and not (case['file_preview'] and case['request_count'] == 1 and case['file_preview_outputs'] == 1)):
                 # Real Agent creation can issue its readiness prompt before an
                 # explicit journey turn exists. Keep those requests separate.
                 case = BOOTSTRAP if os.environ.get('WS4_PROVIDER_ALLOW_BOOTSTRAP') == 'true' else None
