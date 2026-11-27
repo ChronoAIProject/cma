@@ -6,6 +6,8 @@ function fixture() {
   const record = {agentId: 'agent'}, custody = {digest: 'a'.repeat(64), requestCount: 1};
   let armed, released = false, sent = false, scope;
   let preferences = {title: 'Original', revision: 1};
+  const provenance = {agent_id: 'agent', creation_origin: 'manual', created_at: '2026-11-26T00:00:00Z',
+    details: {trigger: null, channel_bridge: null}};
   const api = {
     async request(_am, method, path, options) {
       assert.equal(path, '/api/v1/agents/agent/preferences');
@@ -25,6 +27,7 @@ function fixture() {
     },
     async rawRequest(_am, method, path) {
       assert.equal(method, 'GET');
+      if (path.endsWith('/provenance')) return {body: {...provenance}};
       if (path.endsWith('/preferences')) return {body: preferences};
       if (path.endsWith('/transcript')) return {body: {agent_id: 'agent', turns: [{turn_sequence: 4,
         owner_message: 'Return ' + armed.marker}]}};
@@ -46,7 +49,7 @@ function fixture() {
       return title === preferences.title ? [6] : [];
     },
   };
-  return {api, adapter, record, custody};
+  return {api, adapter, record, custody, provenance};
 }
 
 test('first title attempt remains the one retained provider effect across owner restart', async () => {
@@ -56,4 +59,11 @@ test('first title attempt remains the one retained provider effect across owner 
   await titleCustodyAfterRestart(input);
   input.custody.requestCount += 1;
   await assert.rejects(titleCustodyAfterRestart(input), /title_model_effect_changed_or_repeated/);
+});
+
+test('a retained title result cannot hide changed immutable creation evidence', async () => {
+  const input = fixture();
+  await generatedTitleCustody(input);
+  input.provenance.created_at = '2026-11-26T00:01:00Z';
+  await assert.rejects(titleCustodyAfterRestart(input), /title_creation_provenance_changed/);
 });
