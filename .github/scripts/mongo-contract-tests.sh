@@ -106,7 +106,15 @@ if [[ $# == 1 && "$1" == '--list' ]]; then
   nextest_contracts list --message-format json
   exit
 fi
-if [[ $# == 1 && "$1" == '--scale' ]]; then
+list_mode=false
+if [[ $# == 2 && "$1" == '--list' ]]; then
+  list_mode=true
+  shift
+fi
+if [[ "$list_mode" == true && "$1" == '--ordinary' ]]; then
+  selection='ordinary'
+  partition='listing'
+elif [[ $# == 1 && "$1" == '--scale' ]]; then
   selection='scale'
 elif [[ $# == 1 && "$1" == '--owner-allocation' ]]; then
   selection='owner-allocation'
@@ -141,6 +149,7 @@ elif [[ $# == 1 && "$1" == '--cpu-profile' ]]; then
 elif [[ $# == 1 && "$1" == '--observation-budget' ]]; then
   selection='observation-budget'
 else
+  [[ "$list_mode" == false ]] || exit 2
   [[ $# == 1 && "$1" =~ ^count:([1-9][0-9]{0,5})/([1-9][0-9]{0,5})$ ]] || exit 2
   [[ ${BASH_REMATCH[1]} -le ${BASH_REMATCH[2]} ]] || exit 2
   selection='ordinary'
@@ -149,6 +158,12 @@ fi
 
 if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == organization-inventory || "$selection" == agent-list-contracts || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile ) ]]; then
   nextest_build_args=(--locked -p cma)
+fi
+
+if [[ "$list_mode" == true ]]; then
+  cd "$repo_root/api"
+  nextest_contracts list --message-format json
+  exit
 fi
 
 # This entry point always creates its own disposable replica set. It does not
