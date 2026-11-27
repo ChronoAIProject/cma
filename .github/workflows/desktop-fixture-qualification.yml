@@ -108,12 +108,12 @@ jobs:
           def report(component, error):
               if isinstance(error.package_report, dict) and error.package_report.get("complete") is True:
                   error.evidence = project(error.package_report, error.outcome)
-                  # The normal summary shows 20 findings. Retain every sanitized
-                  # location for package attribution while preserving the refusal.
+                  # Bind each location to the detector input where available so
+                  # package attribution can compare the exact observed bytes.
                   for finding in error.evidence["findings"]:
                       location = {
                           field: finding[field]
-                          for field in ("path", "rule", "scope", "layer")
+                          for field in ("path", "rule", "scope", "layer", "file_sha256", "line")
                           if field in finding
                       }
                       print("scan-location " + json.dumps(location), flush=True)
