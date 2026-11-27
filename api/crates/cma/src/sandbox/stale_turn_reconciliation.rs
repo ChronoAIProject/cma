@@ -150,6 +150,11 @@ impl Worker {
             let reason = match observation {
                 Ok(Ok(Observation::Progressing)) => {
                     self.reported.remove(&candidate);
+                    tracing::info!(
+                        command_id = %candidate.command,
+                        reason = "progressing",
+                        "Stale turn reconciliation decision"
+                    );
                     outcome("progressing");
                     continue;
                 }
@@ -361,12 +366,12 @@ impl Worker {
         {
             return;
         }
+        tracing::info!(
+            command_id = %candidate.command,
+            reason,
+            "Stale turn reconciliation decision"
+        );
         if self.reported.len() < HOLD_CAPACITY || self.reported.contains_key(&candidate) {
-            tracing::info!(
-                command_id = %candidate.command,
-                reason,
-                "Stale turn reconciliation held"
-            );
             self.reported
                 .insert(candidate, (reason, Instant::now() + HOLD_INTERVAL));
         }

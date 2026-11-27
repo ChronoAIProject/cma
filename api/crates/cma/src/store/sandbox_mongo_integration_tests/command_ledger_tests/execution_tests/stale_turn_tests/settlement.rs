@@ -15,6 +15,7 @@ use layer3_adapter::{
 };
 
 mod competing;
+mod publication_diagnostics;
 use competing::{budget_turn, Competition, Race, SealProbe};
 
 #[tokio::test]
@@ -335,6 +336,7 @@ async fn exercise_settlement(
         prepare(mismatched, evidence.parent.clone()),
         Err(SandboxStoreError::Conflict)
     ));
+    let publication_log = publication_diagnostics::Log::capture();
     let stale_parent = prepare(seal.clone(), evidence.parent.clone()).unwrap();
     let mut changed = evidence.parent.clone();
     changed.revision += 1;
@@ -357,12 +359,12 @@ async fn exercise_settlement(
         scan.settle(&proof, &mut ProofBudget::default()).await,
         Err(SandboxStoreError::Conflict)
     );
+    publication_log.assert_empty();
     owner
         .run(async {
             if let Some(application) = ambiguous {
                 competing::settle_with_unknown_commit(&client, application, &scan, &proof).await;
             } else {
-                // Two clients contend for the same turn with the same qualified writer.
                 let mut local_budget = ProofBudget::default();
                 let mut peer_budget = ProofBudget::default();
                 let (left, right) = tokio::join!(
@@ -421,9 +423,9 @@ async fn exercise_settlement(
         reservation.insert("settled", true);
         assert_eq!(budget_turn(&peer, &current).await, expected);
     }
-    let logs = peer.agent_log(&agent.id, 0, 100).await.unwrap();
-    assert_eq!(logs.iter().filter(|entry| matches!(&entry.kind, AgentLogKind::TurnFailed { failure, .. } if failure.class == "agent_turn_no_progress")).count(), 1);
-    assert_eq!(logs.iter().filter(|entry| matches!(&entry.kind, AgentLogKind::AgentMessage {content} if content == "retained prefix")).count(), 1);
+    publication_log
+        .assert_terminal(&peer, &agent.id, id, ambiguous.is_some())
+        .await;
     assert_eq!(sends.load(Ordering::SeqCst), 1);
     client.database(&name).drop().await.unwrap();
 }
