@@ -159,6 +159,20 @@ class PolicyTests(unittest.TestCase):
             with self.assertRaisesRegex(policy.PolicyRefusal, "differs from the pinned review"):
                 self.check()
 
+    def test_runtime_package_proofs_match_reserved_build_inputs(self):
+        root = Path(__file__).resolve().parents[2]
+        checked = set()
+        for component, (catalog, _) in policy.package_evidence_pins().items():
+            rows = json.loads((root / catalog).read_bytes())["entries"]
+            for row in rows:
+                for path, expected in row.get("ownership", {}).get("build_inputs", {}).items():
+                    if (component, path, expected) in checked:
+                        continue
+                    checked.add((component, path, expected))
+                    with self.subTest(component=component, path=path):
+                        self.assertEqual(policy.sha256(root / path), expected)
+        self.assertTrue(checked)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,12 @@
 //! an uncertain start only when its provider proves exact-body idempotency;
 //! otherwise it retains Unknown. Platform delivery remains a separate effect.
 mod adapter;
+mod answer_binding;
+mod answer_dispatch;
+mod answer_identity;
+mod answer_receipt;
+pub(crate) use answer_identity::AcceptedAnswerIdentity;
+pub use answer_receipt::{AnswerReceipt, AnswerReceiptLookup};
 mod body;
 mod builder;
 mod custom_delivery;
@@ -17,11 +23,13 @@ mod dispatcher;
 mod dispatcher_authority;
 mod effect_roots;
 mod event_attestation;
+mod execution_port;
 mod executor;
 mod expiry;
 mod generation_provenance;
 mod journal;
 mod live_scope;
+mod measured_executor;
 mod media_delivery;
 mod media_delivery_gate;
 #[cfg(test)]
@@ -39,6 +47,8 @@ pub(crate) mod operator;
 mod operator_tests;
 mod partition_fence;
 mod preparation;
+#[cfg(test)]
+mod provider_start_tests;
 pub(crate) mod quarantine;
 pub use preparation::{BindingPreparation, PreparationIntent, PreparationReceipt};
 #[cfg(test)]
@@ -141,6 +151,8 @@ mod builder_tests;
 
 #[cfg(test)]
 mod executor_activity_tests;
+#[cfg(test)]
+mod executor_answer_tests;
 #[cfg(test)]
 pub(crate) mod executor_tests;
 #[cfg(test)]

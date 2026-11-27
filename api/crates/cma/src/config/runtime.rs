@@ -48,6 +48,7 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
     pub legacy_receiver_image: Option<layer3_adapter::hosted::LegacyReceiverImage>,
     pub stale_turn_runtime_digest: Option<String>,
+    pub(crate) open_reply_loss_sandbox: Option<String>,
     pub allocate_agent_sandbox: bool,
     pub native_prepared_target: u8,
     pub native_machine_prepared_target: u8,
@@ -59,6 +60,7 @@ pub(crate) struct RuntimeConfig {
     pub sandbox_base_url: String,
     pub sandbox_api_key: String,
     pub sandbox_image: String,
+    pub github_repository_runtime_images: Vec<String>,
     /// Optional immutable image used when an Agent explicitly requests a
     /// desktop machine. Keeping this separate from the default image prevents
     /// ordinary Agent creation from silently changing its runtime.
@@ -311,6 +313,17 @@ impl RuntimeConfig {
                     .into(),
             );
         }
+        let github_repository_runtime_images = lookup("CHRONO_GITHUB_REPOSITORY_RUNTIME_IMAGES")?
+            .map(|images| {
+                images
+                    .split(',')
+                    .map(|image| {
+                        parse_pinned_image("CHRONO_GITHUB_REPOSITORY_RUNTIME_IMAGES", image)
+                    })
+                    .collect::<Result<Vec<_>, _>>()
+            })
+            .transpose()?
+            .unwrap_or_default();
         Ok(Self {
             capacity: super::runtime_capacity::from_lookup(lookup)?,
             migration: super::runtime_migration::RuntimeMigrationConfig::from_lookup(lookup)?,
@@ -319,6 +332,7 @@ impl RuntimeConfig {
             agent_sandbox_runtime_transport,
             legacy_receiver_image,
             stale_turn_runtime_digest,
+            open_reply_loss_sandbox: super::open_reply_loss::sandbox_from_lookup(lookup)?,
             allocate_agent_sandbox,
             native_prepared_target,
             native_machine_prepared_target,
@@ -328,6 +342,7 @@ impl RuntimeConfig {
             sandbox_base_url,
             sandbox_api_key,
             sandbox_image,
+            github_repository_runtime_images,
             machine_sandbox_image,
             runtime_pointer,
             runtime_canary_releases,
@@ -343,7 +358,7 @@ impl RuntimeConfig {
     }
 }
 
-pub(super) fn deployment_id_from_lookup(
+pub(crate) fn deployment_id_from_lookup(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<String, String> {
     let value = required(lookup, "CHRONO_DEPLOYMENT_ID")?;

@@ -28,7 +28,7 @@ impl RuntimeStatusRequest {
     }
 }
 
-/// Identifies the Supervisor observed before an Agent restart was accepted.
+/// Pins the Supervisor that proves the predecessor process or accepts its successor.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentRestartRuntime {
@@ -65,6 +65,8 @@ pub struct RuntimeStatus {
     /// The identified supervisor can install a generation-bound GitHub route.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exact_github_credential_route: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub github_repository_scope: bool,
     pub sandbox_id: String,
     pub generation: u64,
     pub home_identity: String,
@@ -83,6 +85,12 @@ impl RuntimeStatus {
                 "agent_process_restart_unsupported".into(),
             ));
         }
+        self.ready_process_identity()
+    }
+
+    /// Identify the exact ready Supervisor for a proof of an existing process.
+    /// Reading a Close proof does not authorize a successor process.
+    pub fn ready_process_identity(&self) -> Result<AgentRestartRuntime> {
         let runtime = RuntimeStatusRequest {
             sandbox_id: self.sandbox_id.clone(),
             generation: self.generation,
@@ -152,19 +160,22 @@ mod compatibility_tests {
             status.restart_runtime(),
             Err(AdapterError::Unsupported(_))
         ));
-        status.agent_process_restart = true;
         assert!(matches!(
-            status.restart_runtime(),
+            status.ready_process_identity(),
             Err(AdapterError::Unavailable(_))
         ));
         status.credential_ready = true;
-        assert_eq!(
-            status.restart_runtime().unwrap(),
-            AgentRestartRuntime {
-                runtime: requested,
-                boot_id: "b".repeat(32),
-            }
-        );
+        let identity = AgentRestartRuntime {
+            runtime: requested,
+            boot_id: "b".repeat(32),
+        };
+        assert_eq!(status.ready_process_identity().unwrap(), identity);
+        assert!(matches!(
+            status.restart_runtime(),
+            Err(AdapterError::Unsupported(_))
+        ));
+        status.agent_process_restart = true;
+        assert_eq!(status.restart_runtime().unwrap(), identity);
     }
 
     #[test]

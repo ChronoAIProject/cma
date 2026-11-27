@@ -47,6 +47,8 @@ pub(super) struct NativeBackend {
     pub status_override: Arc<Mutex<Option<layer3_adapter::RuntimeStatus>>>,
     pub close_transport:
         Arc<Mutex<Option<Arc<layer3_adapter::hosted::ProviderHostedControlTransport>>>>,
+    pub inspection_transport:
+        Arc<Mutex<Option<Arc<layer3_adapter::hosted::ProviderHostedControlTransport>>>>,
     pub deny_inventory: Arc<AtomicBool>,
     pub deny_teardown: Arc<AtomicBool>,
     pub hold_finality: Arc<AtomicBool>,
@@ -55,6 +57,7 @@ pub(super) struct NativeBackend {
         Arc<Mutex<Option<Arc<layer3_adapter::agent_sandbox::AgentSandboxClient>>>>,
     pub timeout_inventory: Arc<AtomicBool>,
     pub nonexecuting: Arc<AtomicBool>,
+    pub nonexecuting_inspection_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     pub proof_revision: Arc<AtomicU64>,
     pub change_before_suspend: Arc<AtomicBool>,
     pub run_before_suspend: Arc<AtomicBool>,
@@ -146,6 +149,11 @@ impl HostedBackend for NativeBackend {
         home: &layer3_adapter::HomeVolumeAttachment,
     ) -> layer3_adapter::Result<Option<layer3_adapter::hosted::NonexecutingRuntimeProof>> {
         use sha2::{Digest, Sha256};
+        let pause = self.nonexecuting_inspection_pause.lock().unwrap().take();
+        if let Some(pause) = pause {
+            pause.entered.notify_one();
+            pause.release.notified().await;
+        }
         self.inspected_generations
             .lock()
             .unwrap()
@@ -308,6 +316,7 @@ impl HostedBackend for NativeBackend {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
+        _for_retirement: bool,
     ) -> layer3_adapter::Result<()> {
         let rows = self.row.lock().await;
         let row = rows.as_ref().ok_or_else(absent)?;
@@ -359,15 +368,9 @@ impl HostedBackend for NativeBackend {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> layer3_adapter::Result<ResponseFrame> {
-        let close_transport = self.close_transport.lock().unwrap().clone();
-        if matches!(request, RequestFrame::CloseAgent(_)) {
-            if let Some(transport) = close_transport {
-                use layer3_adapter::hosted::HostedControlTransport;
-                self.calls.push("receiver-close-attempt");
-                return transport
-                    .exchange(&RuntimeHandle("local-runtime".into()), request)
-                    .await;
-            }
+        if let Some((transport, target)) = self.retirement_exchange(handle, &request) {
+            use layer3_adapter::hosted::HostedControlTransport;
+            return transport.exchange(&target, request).await;
         }
         if matches!(request, RequestFrame::PrepareWorkspace(_))
             && self.interrupted_workspace.load(Ordering::SeqCst)
@@ -432,15 +435,15 @@ impl HostedBackend for NativeBackend {
         self.challenge_retirement_fixture(handle, request, receiver)
             .await
     }
-    async fn retire_unreachable(
+    async fn retire_verified(
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &layer3_adapter::HomeVolumeAttachment,
-        pod: &layer3_adapter::RetirementPod,
+        pod: Option<&layer3_adapter::RetirementPod>,
     ) -> layer3_adapter::Result<()> {
-        self.check_retirement_fixture_pod(pod)?;
-        self.retire_verified_fixture(handle, request, home).await
+        self.retire_verified_fixture(handle, request, home, pod)
+            .await
     }
     async fn verify_retired(
         &self,

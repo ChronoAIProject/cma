@@ -137,12 +137,72 @@ pub fn complete(
     range: Range,
     step: u64,
 ) -> Vec<Bucket> {
-    let mut out = buckets(&[], metric, range, step);
-    let mut first = 0;
-    for b in &mut out {
-        if let Some(value) = sparse.get(&b.from) {
-            *b = value.clone();
+    let mut out = Vec::new();
+    complete_into(&mut out, sparse, expectations, metric, range, step);
+    out
+}
+
+/// Reuse the caller's allocation when folding multiple Sandboxes on one grid.
+pub fn complete_into(
+    out: &mut Vec<Bucket>,
+    sparse: &BTreeMap<u64, Bucket>,
+    expectations: &[allocation::Expectation],
+    metric: Metric,
+    range: Range,
+    step: u64,
+) {
+    out.clear();
+    if range.seconds() == 0 {
+        return;
+    }
+    let mut sparse = sparse.iter();
+    let mut measured = sparse.next();
+    let uniform = match expectations {
+        [interval] if interval.from <= range.from && interval.to >= range.to => {
+            Some(if metric == Metric::Disk {
+                interval.home
+            } else {
+                interval.running
+            })
         }
+        _ => None,
+    };
+    let mut at = range.from / step * step;
+    let mut first = 0;
+    while at < range.to {
+        let from = at.max(range.from);
+        let to = (at + step).min(range.to);
+        while measured.is_some_and(|(key, _)| *key < from) {
+            measured = sparse.next();
+        }
+        let mut b = match measured {
+            Some((&key, value)) if key == from => {
+                measured = sparse.next();
+                value.clone()
+            }
+            _ if uniform.is_some() => {
+                // A missing sample over one covering interval has neither
+                // measured statistics nor any other interval to intersect.
+                let duration = (to - from) as f64;
+                let expected = uniform == Some(Some(true));
+                let excluded = uniform != Some(Some(false));
+                out.push(Bucket {
+                    from,
+                    to,
+                    expected_seconds: if expected { duration } else { 0. },
+                    unknown_mapping_seconds: if excluded { duration } else { 0. },
+                    excluded_count: u64::from(excluded),
+                    ..Default::default()
+                });
+                at += step;
+                continue;
+            }
+            _ => Bucket {
+                from,
+                to,
+                ..Default::default()
+            },
+        };
         while first < expectations.len() && expectations[first].to <= b.from {
             first += 1;
         }
@@ -163,6 +223,7 @@ pub fn complete(
         b.unknown_mapping_seconds = (expected - b.expected_seconds).max(0.) + unknown;
         b.expected_seconds = b.expected_seconds.max(expected);
         b.finish_time();
+        out.push(b);
+        at += step;
     }
-    out
 }

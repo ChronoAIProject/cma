@@ -1,4 +1,4 @@
-use crate::IntentReceipt;
+use crate::{DeliveryOutcome, IntentReceipt};
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 
@@ -43,5 +43,11 @@ impl StoredReceipt {
                 ..
             } => message_parts_pages.count > 0,
         }
+    }
+
+    /// A later refusal cannot erase the platform effects of earlier parts.
+    pub fn requires_reconciliation(&self) -> bool {
+        matches!(self.delivery, DeliveryOutcome::Unknown { .. })
+            || (self.has_parts() && !matches!(self.delivery, DeliveryOutcome::Confirmed { .. }))
     }
 }

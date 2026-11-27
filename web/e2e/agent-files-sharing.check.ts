@@ -1,11 +1,27 @@
 import { createHash } from 'node:crypto';
-import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
+import { readFile } from 'node:fs/promises';
+import {
+  test,
+  expect,
+  type Download,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from '@playwright/test';
 import type { AgentShareLink } from '../src/api-client/index';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
 // Public HTTP fixtures exercise the full browser UI, not a running Sandbox/backend.
 const longName = 'research-findings-with-a-deliberately-long-filename-for-truncation.md';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
+
+function hold() {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  return { promise, release };
+}
 
 async function files(page: Page, writable = true) {
   await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
@@ -353,3 +369,292 @@ test('LOCAL share URL redemption opens an attributed reader with read-only files
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
 });
+
+for (const { access, unavailable } of [
+  { access: 'owner', unavailable: false },
+  { access: 'reader', unavailable: false },
+  { access: 'writer', unavailable: false },
+  { access: 'writer', unavailable: true },
+]) {
+  test(`LOCAL ${access} Computer retains the Files selection during ${unavailable ? 'failed' : 'delayed'} initialization`, async ({
+    page,
+    baseURL,
+  }) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    const filesystem = await files(page, access !== 'reader');
+    let accessUnavailable = false;
+    let sharedTitle = 'Shared Agent';
+    let revalidateAt: string | null = null;
+    let revalidation: Promise<void> | undefined;
+    if (access === 'reader') {
+      await page.clock.install({ time: new Date(localTime) });
+      revalidateAt = new Date(Date.parse(localTime) + 30_000).toISOString();
+    }
+    if (access !== 'owner') {
+      await page.route('**/api/v1/agents/agt_contract', (route) =>
+        route.fulfill({
+          json: {
+            access: 'shared',
+            id: 'agt_contract',
+            title: sharedTitle,
+            status: 'ready',
+            created_at: localTime,
+            updated_at: localTime,
+          },
+        }),
+      );
+      await page.route('**/api/v1/resource-access/agent/agt_contract', (route) =>
+        route.fulfill(
+          accessUnavailable
+            ? { status: 503, json: { code: 'temporarily_unavailable' } }
+            : {
+                json: {
+                  capabilities: [
+                    'view_details',
+                    'view_history',
+                    'view_files',
+                    ...(access === 'writer' ? ['operate_agent'] : []),
+                  ],
+                  policy_revision: 1,
+                  revalidate_at: null,
+                  owner: { kind: 'person', is_current_person: false },
+                },
+              },
+        ),
+      );
+    }
+    let started!: () => void;
+    let complete!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const completion = new Promise<void>((resolve) => {
+      complete = resolve;
+    });
+    await page.route('**/api/v1/agents/agt_contract/environment', async (route) => {
+      started();
+      await completion;
+      await revalidation;
+      if (unavailable) {
+        return route.fulfill({
+          status: 503,
+          headers: { 'content-type': 'application/problem+json' },
+          json: {
+            type: 'about:blank',
+            title: 'Unavailable',
+            status: 503,
+            code: 'temporarily_unavailable',
+          },
+        });
+      }
+      await route.fulfill({
+        json: {
+          agent_id: 'agt_contract',
+          policy_revision: 1,
+          runtime_incarnation: null,
+          revalidate_at: revalidateAt,
+          files: {
+            state: 'available',
+            reason: 'authorized_mounted_home',
+            scope: 'mounted_home',
+            writable: access !== 'reader',
+          },
+          operation_output: {
+            state: 'available',
+            reason: 'recorded_output_only',
+            scope: 'agent_turn_history',
+            writable: false,
+          },
+          browser: {
+            state: 'not_enabled',
+            reason: 'browser_disabled',
+            scope: 'agent_runtime',
+            writable: false,
+          },
+          replay: {
+            state: 'unsupported',
+            reason: 'not_supported_by_contract',
+            scope: 'none',
+            writable: false,
+          },
+          control: {
+            state: 'unsupported',
+            reason: 'not_supported_by_contract',
+            scope: 'none',
+            writable: false,
+          },
+        },
+      });
+    });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    try {
+      await page.goto('/agents/agt_contract');
+      await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+      await pending;
+      const computer = page.getByRole('complementary', { name: 'Agent computer' });
+      const filesTab = computer.getByRole('tab', { name: 'Files' });
+      await filesTab.click();
+      await expect(filesTab).toHaveAttribute('aria-selected', 'true');
+      await expect(computer.getByText('Checking file access…')).toBeVisible();
+      complete();
+      if (unavailable) {
+        await expect(computer.getByText('We couldn’t check file availability.')).toBeVisible();
+      } else {
+        if (access !== 'owner')
+          await expect(computer.getByRole('button', { name: 'README.md' })).toBeVisible();
+        const newFile = computer.getByRole('button', { name: 'New file', exact: true });
+        if (access === 'reader') await expect(newFile).toHaveCount(0);
+        else await expect(newFile).toBeEnabled();
+        // The explicit child navigation survives a real browser access refresh.
+        await computer.getByRole('button', { name: 'Sandbox root /home/' }).click();
+        await computer.getByRole('button', { name: 'cma', exact: true }).click();
+        for (const width of [1440, 375]) {
+          await page.setViewportSize({ width, height: 812 });
+          await expect(computer.getByLabel('Current directory')).toContainText('/home/cma');
+          await expect(
+            computer.getByRole('button', { name: 'notes.md', exact: true }),
+          ).toBeVisible();
+          sharedTitle = `Shared Agent checked at ${width}px`;
+          await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+          if (access !== 'owner') {
+            // Observe the published access result before sending another focus event.
+            // Foreground events coalesce while an access read is pending.
+            await expect(
+              page.getByRole('heading', { name: sharedTitle, exact: true }),
+            ).toBeAttached();
+          }
+          await expect(computer.getByLabel('Current directory')).toContainText('/home/cma');
+        }
+        if (access !== 'owner') {
+          accessUnavailable = true;
+          await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+          const retry = page.getByRole('button', { name: 'Check access again', exact: true });
+          await expect(page.getByRole('heading', { name: 'Agent unavailable' })).toBeVisible();
+          accessUnavailable = false;
+          await retry.click();
+          await expect(computer.getByLabel('Current directory')).toContainText('/home/cma');
+          await expect(
+            computer.getByRole('button', { name: 'notes.md', exact: true }),
+          ).toBeVisible();
+        }
+        await page.setViewportSize({ width: 1440, height: 1000 });
+        await computer.getByRole('button', { name: 'Sandbox root /home/', exact: true }).click();
+        await computer.getByRole('checkbox', { name: 'Show hidden' }).check();
+        await computer.getByRole('button', { name: '.dockerignore', exact: true }).click();
+        const preview = computer.getByRole('textbox', { name: 'Contents of .dockerignore' });
+        const dotfile = filesystem.contents.get('.dockerignore')!;
+        await expect(preview).toHaveValue(dotfile);
+        const downloadButton = computer.getByRole('button', { name: 'Download file' });
+        const downloadPath = '**/agt_contract/files/download?path=.dockerignore';
+        const downloadDotfile = async () => {
+          const [download] = await Promise.all([
+            page.waitForEvent('download', { timeout: 5_000 }),
+            downloadButton.click(),
+          ]);
+          expect(download.suggestedFilename()).toMatch(/^\.?dockerignore$/);
+          expect(await readFile((await download.path())!, 'utf8')).toBe(dotfile);
+        };
+        await downloadDotfile();
+        if (access === 'reader') {
+          const holdDownload = hold();
+          const holdAccess = hold();
+          await page.route(
+            downloadPath,
+            async (route) => {
+              await holdDownload.promise;
+              await route.abort();
+            },
+            { times: 1 },
+          );
+          try {
+            await Promise.all([page.waitForRequest(downloadPath), downloadButton.click()]);
+            await expect(computer.getByText('Downloading file…')).toBeVisible();
+            revalidateAt = null;
+            revalidation = holdAccess.promise;
+            await page.clock.fastForward(31_000);
+            await expect(computer.getByText('Checking file access…')).toBeVisible();
+            holdAccess.release();
+            const interrupted = 'Download was interrupted. Try downloading the file again.';
+            await expect(computer.getByRole('alert')).toContainText(interrupted);
+          } finally {
+            holdAccess.release();
+            holdDownload.release();
+          }
+          await downloadDotfile();
+          const heldResponse = hold();
+          const lateResponse = hold();
+          const downloadEvents: string[] = [];
+          const recordDownload = (download: Download) =>
+            downloadEvents.push(download.suggestedFilename());
+          page.on('download', recordDownload);
+          await page.route(
+            downloadPath,
+            async (route) => {
+              await heldResponse.promise;
+              await route.fulfill({ contentType: 'application/octet-stream', body: dotfile });
+              lateResponse.release();
+            },
+            { times: 1 },
+          );
+          const interrupted = 'Download was interrupted. Try downloading the file again.';
+          const notice = page.getByRole('alert').filter({ hasText: interrupted });
+          try {
+            const [request] = await Promise.all([
+              page.waitForRequest(downloadPath),
+              downloadButton.click(),
+            ]);
+            await expect(computer.getByText('Downloading file…')).toBeVisible();
+            const failed = page.waitForEvent('requestfailed', {
+              predicate: (item) => item === request,
+            });
+            accessUnavailable = true;
+            await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+            await expect(page.getByRole('heading', { name: 'Agent unavailable' })).toBeVisible();
+            await expect(computer).toHaveCount(0);
+            expect((await failed).failure()?.errorText).toContain('ABORTED');
+            await expect(notice).toBeVisible();
+            await expect(notice.getByRole('button', { name: 'Dismiss' })).toBeEnabled();
+            expect(downloadEvents).toEqual([]);
+            accessUnavailable = false;
+            await page.getByRole('button', { name: 'Check access again', exact: true }).click();
+            await computer.getByRole('checkbox', { name: 'Show hidden' }).check();
+            await computer.getByRole('button', { name: '.dockerignore', exact: true }).click();
+            await expect(preview).toHaveValue(dotfile);
+            await downloadDotfile();
+            await expect(notice).toHaveCount(0);
+            heldResponse.release();
+            await lateResponse.promise;
+            await expect(notice).toHaveCount(0);
+            expect(downloadEvents).toHaveLength(1);
+          } finally {
+            heldResponse.release();
+            page.off('download', recordDownload);
+          }
+          await page.route(
+            downloadPath,
+            (route) => route.fulfill({ status: 404, json: { code: 'resource_not_found' } }),
+            { times: 1 },
+          );
+          const unexpectedDownloads: string[] = [];
+          page.on('download', (download) => unexpectedDownloads.push(download.suggestedFilename()));
+          await downloadButton.click();
+          const denied =
+            'File access is no longer available. Ask the Agent owner to check your access.';
+          await expect(page.getByRole('alert').filter({ hasText: denied })).toBeVisible();
+          await expect(preview).toHaveCount(0);
+          expect(unexpectedDownloads).toEqual([]);
+        }
+      }
+      await expect(filesTab).toHaveAttribute('aria-selected', 'true');
+      await expect(computer.getByRole('tab', { name: 'Screen' })).toHaveAttribute(
+        'aria-selected',
+        'false',
+      );
+      expect(filesystem.writes).toEqual([]);
+      expect(boundary.writes).toEqual([]);
+    } finally {
+      complete();
+    }
+  });
+}

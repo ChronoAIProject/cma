@@ -1,14 +1,19 @@
 import { useState } from 'react';
 import type { SandboxSummary } from '../api/types';
+import {
+  sandboxRetirementFailed,
+  sandboxRetirementWaitExceeded,
+  type SandboxRetirementObservation,
+} from '../sandbox/lifecycle';
 import { Button } from '../ui/Button';
 import { IconWarningOutline16 } from '../ui/icons/IconWarningOutline16';
 import { IconCopyOutline16 } from '../ui/icons/IconCopyOutline16';
 import './DeletionProgressList.css';
 
-type DeletingSandbox = Pick<SandboxSummary, 'id' | 'name'> & {
-  readonly status?: SandboxSummary['status'];
-  readonly unknown?: boolean;
-};
+type DeletingSandbox = Pick<SandboxSummary, 'id' | 'name'> &
+  SandboxRetirementObservation & {
+    readonly unknown?: boolean;
+  };
 
 function DeletionProgressRow({
   sandbox,
@@ -19,6 +24,8 @@ function DeletionProgressRow({
 }) {
   const [copy, setCopy] = useState<'copied' | 'failed'>();
   const name = sandbox.name.trim() || 'Sandbox';
+  const delayed = !sandbox.unknown && sandboxRetirementWaitExceeded(sandbox);
+  const failed = !sandbox.unknown && sandboxRetirementFailed(sandbox);
   return (
     <li className="deletion-progress__row">
       <span className="deletion-progress__name" title={name}>
@@ -31,12 +38,20 @@ function DeletionProgressRow({
         <IconWarningOutline16 />
         {sandbox.unknown
           ? 'Deletion not confirmed'
-          : sandbox.status === 'retiring'
-            ? 'Deleting'
-            : 'Deletion requested'}
+          : failed
+            ? 'Cleanup stopped'
+            : delayed
+              ? 'Cleanup taking longer'
+              : sandbox.status === 'retiring'
+                ? 'Deleting'
+                : 'Deletion requested'}
       </span>
       <p className="deletion-progress__note">
-        Still counts toward your environment limit until cleanup is confirmed.
+        {failed
+          ? 'Automatic cleanup stopped after repeated failures. Contact support with the Sandbox identifier.'
+          : delayed
+            ? 'The expected deletion time has passed. Check status for the latest cleanup progress.'
+            : 'Check status for cleanup progress.'}
       </p>
       <div className="deletion-progress__actions">
         <Button
@@ -86,7 +101,12 @@ export function DeletionProgressList({
   return (
     <details className="deletion-progress" data-navigation-footer={footer || undefined}>
       <summary>
-        {sandboxes.some((sandbox) => sandbox.unknown)
+        {sandboxes.some(
+          (sandbox) =>
+            sandbox.unknown ||
+            sandboxRetirementFailed(sandbox) ||
+            sandboxRetirementWaitExceeded(sandbox),
+        )
           ? `${sandboxes.length} deletions need checking`
           : `Cleaning up ${sandboxes.length} sandboxes`}
       </summary>

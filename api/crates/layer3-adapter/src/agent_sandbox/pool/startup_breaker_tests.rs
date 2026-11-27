@@ -5,6 +5,9 @@ use tokio::time::Instant;
 #[path = "startup_evidence_tests.rs"]
 mod evidence;
 
+#[path = "startup_recovery_tests.rs"]
+mod recovery;
+
 async fn fixture(enabled: bool) -> Bound {
     bound_config(
         false,
@@ -328,6 +331,7 @@ impl HostedControlTransport for Serving {
             agent_resource_preparation: false,
             agent_process_restart: false,
             exact_github_credential_route: false,
+            github_repository_scope: false,
             agent_processes: 0,
         }))
     }

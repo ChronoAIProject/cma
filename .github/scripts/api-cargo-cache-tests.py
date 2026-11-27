@@ -9,10 +9,13 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
 import unittest
 from unittest.mock import patch
+
+from api_cargo_cache_archive_cases import CacheArchiveCases
 
 
 SPEC = importlib.util.spec_from_file_location("api_cargo_cache", Path(__file__).with_name("api-cargo-cache.py"))
@@ -20,7 +23,9 @@ cache = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(cache)
 
 
-class CacheTests(unittest.TestCase):
+class CacheTests(CacheArchiveCases, unittest.TestCase):
+    cache = cache
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -31,6 +36,14 @@ class CacheTests(unittest.TestCase):
         self.event = {"repository": {"full_name": cache.REPOSITORY}, "number": 12,
                       "pull_request": {"head": {"repo": {"full_name": cache.REPOSITORY}},
                                        "base": {"repo": {"full_name": cache.REPOSITORY}, "ref": "develop"}}}
+        # Restores publish the build namespace as a step output.
+        outputs = tempfile.TemporaryDirectory()
+        self.addCleanup(outputs.cleanup)
+        self.output = Path(outputs.name) / "github-output"
+        self.output.touch()
+        environment = patch.dict(os.environ, {"GITHUB_OUTPUT": str(self.output)})
+        environment.start()
+        self.addCleanup(environment.stop)
 
     def bundle(self, member=None, link=None):
         self.root.mkdir(exist_ok=True)
@@ -135,99 +148,33 @@ class CacheTests(unittest.TestCase):
         self.assertNotEqual(prefix, cache.compatibility(self.root, now + datetime.timedelta(days=7)))
         self.assertLess(len(prefix) + 40, 512)
 
-    def test_valid_bundle_round_trips(self):
-        self.bundle()
-        self.assertEqual(cache.validate_bundle(self.root, self.prefix)["prefix"], self.prefix)
-        cache.seal(self.root, self.prefix)
-        cache.validate_bundle(self.root, self.prefix)
+    def test_ci_bounds_match_the_verified_staging_bundle(self):
+        # A 1.35 GB develop bundle exceeded the old 1 GiB bound, so CI never saved one.
+        import sys
+        sys.path.insert(0, str(Path(__file__).parent))
+        import staging_cd_cargo_artifact as staging
+        self.assertEqual(cache.MAX_ARCHIVE_BYTES, staging.MAX_BUNDLE_BYTES)
+        self.assertEqual(cache.MAX_CONTENT_BYTES, staging.MAX_EXPANDED_BYTES)
+        self.assertGreater(cache.MAX_ARCHIVE_BYTES, 1_350_000_000)
 
-    def test_corruption_and_incompatible_bundles_are_rejected(self):
-        self.bundle()
-        with self.assertRaises(ValueError):
-            cache.validate_bundle(self.root, "different-prefix-")
-        with (self.root / "target.tar.gz").open("ab") as output:
-            output.write(b"corruption")
-        with self.assertRaisesRegex(ValueError, "checksum"):
-            cache.validate_bundle(self.root, self.prefix)
-
-    def test_traversal_and_special_files_cannot_reach_cache_mounts(self):
-        for member, link in (("../escape", None), ("/absolute", None), ("./x/../../escape", None),
-                             ("./link", (tarfile.SYMTYPE, "target")), ("./link", (tarfile.LNKTYPE, "../escape")),
-                             ("./device", (tarfile.CHRTYPE, ""))):
-            self.bundle(member, link)
-            with self.subTest(member=member, link=link), self.assertRaises(ValueError):
-                cache.validate_bundle(self.root, self.prefix)
-
-    def test_regular_hardlinks_are_allowed(self):
-        self.bundle("./release/bin", (tarfile.LNKTYPE, "./release/deps/bin"))
-        cache.validate_bundle(self.root, self.prefix)
-
-    def test_empty_buildkit_mounts_are_not_saved_as_warm_caches(self):
-        self.bundle()
-        with tarfile.open(self.root / "target.tar.gz", "w:gz"):
-            pass
-        self.manifest()
-        with self.assertRaisesRegex(ValueError, "empty mount"):
-            cache.validate_bundle(self.root, self.prefix)
-
-    def test_expansion_archive_and_member_limits_are_enforced(self):
-        self.bundle()
-        for bound in ("MAX_CONTENT_BYTES", "MAX_ARCHIVE_BYTES", "MAX_MEMBERS"):
-            with self.subTest(bound=bound), patch.object(cache, bound, 1), self.assertRaises(ValueError):
-                cache.validate_bundle(self.root, self.prefix)
-        (self.root / "oversize").touch()
-        with self.assertRaises(ValueError):
-            cache.seal(self.root, self.prefix)
-
-    def test_caller_bound_replaces_only_the_compressed_archive_limit(self):
-        self.bundle()
-        size = sum((self.root / f"{name}.tar.gz").stat().st_size for name in cache.MOUNTS)
-        with patch.object(cache, "MAX_ARCHIVE_BYTES", size - 1):
-            with self.assertRaisesRegex(ValueError, "compressed cache exceeds"):
-                cache.validate_bundle(self.root, self.prefix)
-            cache.validate_bundle(self.root, self.prefix, max_archive=size)
-            with self.assertRaisesRegex(ValueError, "compressed cache exceeds"):
-                cache.seal(self.root, self.prefix)
-            cache.seal(self.root, self.prefix, max_archive=size)
-        for bound in ("MAX_CONTENT_BYTES", "MAX_MEMBERS"):
-            with self.subTest(bound=bound), patch.object(cache, bound, 1), self.assertRaises(ValueError):
-                cache.validate_bundle(self.root, self.prefix, max_archive=2 * size)
-        # The expanded bound is also the caller's to choose; the default stays 4 GiB.
-        with patch.object(cache, "MAX_CONTENT_BYTES", 1):
-            cache.validate_bundle(self.root, self.prefix, max_archive=2 * size, max_content=10 ** 9)
-        with self.assertRaisesRegex(ValueError, "expanded cache exceeds"):
-            cache.validate_bundle(self.root, self.prefix, max_content=1)
-        self.assertIn(f"-gt {4 * 1024 ** 2} ]", cache.dockerfile("extract"))
-        self.assertIn(f"-gt {6 * 1024 ** 2} ]", cache.dockerfile("extract", 6 * 1024 ** 3))
-        with patch.object(cache.subprocess, "run") as run:
-            cache.transfer("inject", self.root)
-            self.assertEqual(run.call_args.kwargs["timeout"], 150)
-            cache.transfer("extract", self.root, timeout=360, max_content=6 * 1024 ** 3)
-            self.assertEqual(run.call_args.kwargs["timeout"], 360)
-            self.assertIn(f"-gt {6 * 1024 ** 2} ]", run.call_args.kwargs["input"])
-
-    def test_am_compaction_keeps_the_cache_and_target_bounds(self):
-        bound = 6 * 1024 ** 3
-        ordinary = cache.dockerfile("extract", bound)
-        compact = cache.dockerfile("extract", bound, compact_registry=True)
-        self.assertNotIn("--exclude=./src", ordinary)
-        self.assertIn("--exclude=./src", compact)
-        self.assertIn(f"-gt {bound // 1024} ]", compact)
-        self.assertIn("tar -C /cache/registry -cf - $skip_src .", compact)
-        self.assertIn("tar -C /cache/target -cf - .", compact)
-        self.assertNotIn("rm -rf /cache", compact)
-
-    def test_archive_symlink_and_extra_files_are_rejected(self):
-        self.bundle()
-        (self.root / "unexpected").touch()
-        with self.assertRaises(ValueError):
-            cache.validate_bundle(self.root, self.prefix)
-        (self.root / "unexpected").unlink()
-        target = self.root / "target.tar.gz"
-        target.unlink()
-        target.symlink_to("registry.tar.gz")
-        with self.assertRaises(ValueError):
-            cache.validate_bundle(self.root, self.prefix)
+    def test_one_cache_key_per_compatible_prefix_and_utc_day(self):
+        # A per-commit key would store one 1-2 GB entry per develop push.
+        def prepared(sha, now):
+            with tempfile.TemporaryDirectory() as directory, \
+                    patch.dict(os.environ, {"GITHUB_SHA": sha, "GITHUB_OUTPUT": os.devnull}), \
+                    patch.object(cache, "compatibility", return_value="cma-api-cargo-v1-prefix-"), \
+                    patch.object(cache.datetime, "datetime", wraps=datetime.datetime) as clock:
+                clock.now.return_value = now
+                target = Path(directory) / "state"
+                cache.prepare(target)
+                return json.loads((target / "state.json").read_text())
+        day = datetime.datetime(2026, 11, 24, 3, 0, tzinfo=datetime.timezone.utc)
+        first = prepared("a" * 40, day)
+        self.assertEqual(first, {"prefix": "cma-api-cargo-v1-prefix-", "key": "cma-api-cargo-v1-prefix-20261124"})
+        self.assertEqual(prepared("b" * 40, day.replace(hour=23)), first)
+        self.assertEqual(prepared("a" * 40, day + datetime.timedelta(days=1))["key"],
+                         "cma-api-cargo-v1-prefix-20261125")
+        self.assertTrue(first["key"].startswith(first["prefix"]))
 
     def test_a_cache_miss_never_invokes_docker_or_skips_the_build(self):
         (self.root / "state.json").write_text(json.dumps({"prefix": self.prefix}))
@@ -246,14 +193,16 @@ class CacheTests(unittest.TestCase):
             manifest = json.loads(path.read_text())
             manifest["archives"] = archives
             path.write_text(json.dumps(manifest))
+            # The worker validates the bundle; a refusal stops it before any transfer.
             with self.subTest(archives=archives), \
-                    patch.object(cache.sys, "argv", ["cache", "inject"]), \
+                    patch.object(cache.sys, "argv", ["cache", "inject-worker"]), \
                     patch.object(cache, "context", return_value=directory), \
                     patch.object(cache, "transfer") as transfer, \
-                    contextlib.redirect_stdout(io.StringIO()) as output:
+                    contextlib.redirect_stdout(io.StringIO()) as output, self.assertRaises(SystemExit) as stopped:
                 cache.main()
+            self.assertEqual(stopped.exception.code, 1)
             transfer.assert_not_called()
-            self.assertIn("::warning::API Cargo cache inject unavailable (ValueError)", output.getvalue())
+            self.assertIn("API Cargo cache worker stopped (ValueError)", output.getvalue())
 
     def test_graph_fallback_excludes_unpackaged_and_unverified_registry_contents(self):
         # Either file might exist in the previous graph's registry archive.
@@ -267,12 +216,24 @@ class CacheTests(unittest.TestCase):
                 info.size = len(value)
                 tar.addfile(info, io.BytesIO(value))
         recipe = cache.dockerfile("inject-target")
-        self.assertIn("COPY target.tar.gz /restore/", recipe)
+        self.assertIn("--mount=type=bind,source=target.tar.gz,target=/restore/target.tar.gz", recipe)
+        self.assertNotIn("COPY", recipe)
         self.assertNotIn("registry", recipe)
         with patch("subprocess.run") as run:
             cache.transfer("inject-target", self.root, namespace="synthetic")
         self.assertIn("BUILDKIT_CACHE_MOUNT_NS=synthetic", run.call_args.args[0])
         self.assertEqual(run.call_args.kwargs["input"], recipe)
+
+    def test_full_restore_binds_each_archive_and_extracts_into_locked_cache_mounts(self):
+        recipe = cache.dockerfile("inject")
+        for name in cache.MOUNTS:
+            with self.subTest(mount=name):
+                self.assertIn(f"--mount=type=bind,source={name}.tar.gz,target=/restore/{name}.tar.gz", recipe)
+                self.assertIn(f"target=/cache/{name},sharing=locked", recipe)
+                self.assertIn(f"tar -xzpf /restore/{name}.tar.gz -C /cache/{name}", recipe)
+        self.assertIn("RUN --network=none", recipe)
+        self.assertNotIn("COPY", recipe)
+        self.assertNotIn(",rw", recipe)
 
     def test_bridge_mount_ids_match_the_real_api_dockerfile(self):
         definition = (cache.ROOT / "api/crates/cma/Dockerfile").read_text()
@@ -333,15 +294,160 @@ class CacheTests(unittest.TestCase):
                 self.assertNotIn("--push", command)
         self.assertNotEqual(nonces[0], nonces[1])
 
+    def namespaces(self):
+        return [line.split("=", 1)[1] for line in self.output.read_text().splitlines() if line.startswith("namespace=")]
+
+    def restorable(self):
+        directory = self.root / "work"
+        directory.mkdir()
+        (directory / "state.json").write_text(json.dumps({"prefix": self.prefix}))
+        (directory / "data").mkdir()
+        return directory
+
+    def test_builds_use_the_restored_namespace_only_after_extraction_succeeds(self):
+        directory = self.restorable()
+        with patch.object(cache, "validate_bundle"), patch.object(cache, "transfer") as transfer, \
+                contextlib.redirect_stdout(io.StringIO()):
+            cache.run("inject", directory)
+        candidate = transfer.call_args.kwargs["namespace"]
+        self.assertRegex(candidate, r"^[0-9a-f]{32}$")
+        self.assertEqual(self.namespaces(), [candidate])
+        self.assertEqual(json.loads((directory / "state.json").read_text())["build_namespace"], candidate)
+
+    def test_an_interrupted_restore_leaves_the_builds_on_a_clean_namespace(self):
+        # SA-07: a transfer that stops after writing part of the mounts must
+        # never become the namespace the image builds use.
+        directory = self.restorable()
+        with patch.object(cache, "validate_bundle"), \
+                patch.object(cache, "transfer", side_effect=subprocess.TimeoutExpired("docker", 150)) as transfer, \
+                self.assertRaises(subprocess.TimeoutExpired):
+            cache.run("inject", directory)
+        written = transfer.call_args.kwargs["namespace"]
+        self.assertNotIn("build_namespace", json.loads((directory / "state.json").read_text()))
+        self.assertEqual(self.namespaces(), [])
+        with patch.object(cache.sys, "argv", ["cache", "inject"]), patch.object(cache, "context", return_value=directory), \
+                patch.object(cache, "bounded", side_effect=ValueError("cache worker failed")), \
+                contextlib.redirect_stdout(io.StringIO()):
+            cache.main()
+        [selected] = self.namespaces()
+        self.assertNotEqual(selected, written)
+        self.assertEqual(json.loads((directory / "state.json").read_text())["build_namespace"], selected)
+
+    def test_a_blocked_worker_is_killed_inside_the_step_bound(self):
+        # SA-07: validation, transfer or sealing that never returns must not
+        # outlive the step; restore falls back to a clean namespace, export saves nothing.
+        import time as clock
+        for operation in ("inject", "extract"):
+            with self.subTest(operation=operation):
+                directory = self.restorable() if operation == "inject" else self.root / "export"
+                directory.mkdir(exist_ok=True)
+                (directory / "state.json").write_text(json.dumps({"prefix": self.prefix}))
+                self.output.write_text("")
+                pid_file = directory / "grandchild.pid"
+                blocked = [sys.executable, "-c",
+                           "import subprocess, sys, time; child = subprocess.Popen(['sleep', '60']); "
+                           f"open({str(pid_file)!r}, 'w').write(str(child.pid)); time.sleep(60)"]
+                started = clock.monotonic()
+                with patch.object(cache.sys, "argv", ["cache", operation]), patch.object(cache, "context", return_value=directory), \
+                        patch.object(cache, "worker_command", return_value=blocked), \
+                        patch.dict(cache.WORKER_SECONDS, {operation: 1.5}), contextlib.redirect_stdout(io.StringIO()):
+                    cache.main()
+                self.assertLess(clock.monotonic() - started, 10)
+                lines = self.output.read_text().splitlines()
+                if operation == "inject":
+                    [selected] = self.namespaces()
+                    self.assertEqual(json.loads((directory / "state.json").read_text())["build_namespace"], selected)
+                else:
+                    self.assertEqual(lines, ["ready=false"])
+                # The worker's whole process group is gone, including its children.
+                for _ in range(50):
+                    try:
+                        os.kill(int(pid_file.read_text()), 0)
+                    except ProcessLookupError:
+                        break
+                    clock.sleep(0.1)
+                else:
+                    self.fail("worker child outlived the bound")
+
+    def test_only_expected_worker_outputs_reach_the_step(self):
+        directory = self.restorable()
+        script = ("import os; open(os.environ['GITHUB_OUTPUT'], 'a').write("
+                  "'namespace=' + 'd' * 32 + '\\nready=true\\nother=1\\n')")
+        with patch.object(cache, "worker_command", return_value=[sys.executable, "-c", script]):
+            self.assertEqual(cache.bounded("inject", directory), ["namespace=" + "d" * 32])
+        with patch.object(cache, "worker_command", return_value=[sys.executable, "-c", "raise SystemExit(1)"]), \
+                self.assertRaisesRegex(ValueError, "cache worker failed"):
+            cache.bounded("extract", directory)
+
+    def test_a_slow_validation_falls_back_cold_inside_the_step_bound(self):
+        directory = self.restorable()
+        clock = iter([0.0, cache.INJECT_SECONDS - cache.MIN_TRANSFER_SECONDS + 1])
+        with patch.object(cache, "validate_bundle"), patch.object(cache.time, "monotonic", side_effect=lambda: next(clock)), \
+                patch.object(cache, "transfer") as transfer, self.assertRaisesRegex(ValueError, "budget exhausted"):
+            cache.run("inject", directory)
+        transfer.assert_not_called()
+        self.assertEqual(self.namespaces(), [])
+        # The transfer is bounded by what remains of the restore budget.
+        directory = self.root / "again"
+        directory.mkdir()
+        (directory / "state.json").write_text(json.dumps({"prefix": self.prefix}))
+        (directory / "data").mkdir()
+        clock = iter([0.0, cache.INJECT_SECONDS - 100])
+        with patch.object(cache, "validate_bundle"), patch.object(cache.time, "monotonic", side_effect=lambda: next(clock)), \
+                patch.object(cache, "transfer") as transfer, contextlib.redirect_stdout(io.StringIO()):
+            cache.run("inject", directory)
+        self.assertEqual(transfer.call_args.kwargs["timeout"], 100)
+
+    def test_a_cache_miss_publishes_an_unused_namespace(self):
+        directory = self.restorable()
+        (directory / "data").rmdir()
+        with patch.object(cache, "transfer") as transfer, contextlib.redirect_stdout(io.StringIO()):
+            cache.run("inject", directory)
+        transfer.assert_not_called()
+        self.assertEqual(len(self.namespaces()), 1)
+
+    def test_export_reads_the_namespace_the_builds_used(self):
+        directory = self.root / "work"
+        directory.mkdir()
+        (directory / "state.json").write_text(json.dumps({"prefix": self.prefix, "build_namespace": "c" * 32}))
+        with patch.object(cache, "transfer") as transfer, patch.object(cache, "seal"):
+            cache.run("extract", directory)
+        self.assertEqual(transfer.call_args.kwargs["namespace"], "c" * 32)
+        # Without a recorded build namespace nothing is exported or reported ready.
+        (directory / "state.json").write_text(json.dumps({"prefix": self.prefix}))
+        self.output.write_text("")
+        with patch.object(cache, "transfer") as transfer, self.assertRaises(KeyError):
+            cache.run("extract", directory)
+        transfer.assert_not_called()
+        self.assertEqual(self.output.read_text(), "")
+
     def test_cache_outage_cannot_report_a_saved_bundle(self):
         output = self.root / "output"
         output.touch()
         with patch.dict(os.environ, {"GITHUB_OUTPUT": str(output)}), patch.object(cache.sys, "argv", ["cache", "extract"]), \
                 patch.object(cache, "context", return_value=self.root), \
-                patch.object(cache, "run", side_effect=subprocess.TimeoutExpired("docker", 150)), \
+                patch.object(cache, "bounded", side_effect=subprocess.TimeoutExpired("docker", 150)), \
                 contextlib.redirect_stdout(io.StringIO()):
             cache.main()
         self.assertEqual(output.read_text(), "ready=false\n")
+
+    def test_background_extract_uses_the_build_namespace_without_publisher_credentials(self):
+        context = self.root / "context"
+        output = self.root / "candidate"
+        with patch.dict(os.environ, {"BUILDX_BUILDER": "fixture-builder", "GH_TOKEN": "fixture-token",
+                                     "ACTIONS_RUNTIME_TOKEN": "fixture-runtime"}, clear=True), \
+                patch.object(cache.subprocess, "Popen") as popen:
+            process = cache.start_extract(output, context, namespace="a" * 32, max_content=1024, max_archive=512)
+        self.assertIs(process, popen.return_value)
+        command = popen.call_args.args[0]
+        self.assertIn("BUILDKIT_CACHE_MOUNT_NS=" + "a" * 32, command)
+        self.assertIn(f"type=local,dest={output}", command)
+        self.assertEqual(command[command.index("--file") + 1], str(context / "Dockerfile"))
+        self.assertEqual(command[-1], str(context))
+        self.assertIn("max_compressed=512", (context / "Dockerfile").read_text())
+        self.assertEqual(popen.call_args.kwargs["env"], {"BUILDX_BUILDER": "fixture-builder"})
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+        self.assertIs(popen.call_args.kwargs["stderr"], subprocess.DEVNULL)
 
 
 if __name__ == "__main__":

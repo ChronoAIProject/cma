@@ -141,6 +141,8 @@ export async function stopMessage(page, origin, agentId, responseId) {
     const response = await observedApi(page, 'GET', path, () => page.request.get(`${origin}${path}`, { timeout: 10000, maxRedirects: 0 }));
     requireCheck(response.status() === 200, 'stop_status_failed', response.status());
     const command = await response.json();
+    requireCheck(command.receipt?.command_id === body.control.receipt.command_id &&
+      command.receipt?.agent_id === agentId, 'stop_command_mismatch');
     requireCheck(!['failed', 'cancelled'].includes(command.status), 'stop_delivery_failed');
     return command.status === 'completed';
   }, Boolean, { timeout: 30000, interval: 100 });
@@ -223,22 +225,31 @@ export class OwnedResources {
     const agent = await poll(async (remaining) => {
       const detail = await this.read(`/api/v1/agents/${this.record.agentId}`, remaining);
       requireCheck(detail.status === 200, 'agent_detail_failed', detail.status);
-      this.record.sandboxId = detail.body.sandbox?.id; await this.save();
+      this.bindAgentDetail(detail.body);
+      await this.save();
       return detail.body;
-    }, (detail) => agentReady(detail, desktop));
+    }, agentReady);
     requireCheck(agent.id === this.record.agentId && this.record.sandboxId, 'created_identity_mismatch');
+    requireCheck(agent.desktop === desktop, 'creation_variant_mismatch');
     this.record.state = 'ready'; await this.save();
-    return { operation_succeeded: true, agent_ready: true, sandbox_active: true, desktop_verified: desktop };
+    return { operation_succeeded: true, agent_ready: true, sandbox_active: true, desktop_verified: agent.desktop };
+  }
+  bindAgentDetail(agent) {
+    requireCheck(agent.id === this.record.agentId && /^sbx_[a-f0-9]{32}$/.test(agent.sandbox?.id ?? '') &&
+      (!this.record.sandboxId || this.record.sandboxId === agent.sandbox.id), 'created_identity_mismatch');
+    this.record.sandboxId = agent.sandbox.id;
   }
   async resolveOperation(timeout = 120000) {
     return poll(async (remaining) => {
       const observation = await this.read(`/api/v1/agent-lifecycle/${this.record.operationId}`, remaining);
       requireCheck(observation.status === 200, 'operation_read_failed', observation.status, observation.problemCode);
       const operation = observation.body;
+      requireCheck(operation.id === this.record.operationId, 'creation_operation_mismatch');
       if (/^[a-z_]{1,64}$/.test(operation.status)) this.record.lastOperationStatus = operation.status;
       if (/^[a-z_]{1,64}$/.test(operation.phase)) this.record.lastOperationPhase = operation.phase;
       if (operation.agent_id) {
-        requireCheck(/^agt_[a-f0-9]{32}$/.test(operation.agent_id), 'operation_agent_identity_invalid');
+        requireCheck(/^agt_[a-f0-9]{32}$/.test(operation.agent_id) &&
+          (!this.record.agentId || this.record.agentId === operation.agent_id), 'operation_agent_identity_invalid');
         this.record.agentId = operation.agent_id; await this.save();
       }
       requireCheck(!['failed', 'waiting_for_connection'].includes(operation.status), 'creation_terminal_failure');
@@ -252,8 +263,10 @@ export class OwnedResources {
     const operation = await poll(async (remaining) => {
       const current = await this.read(`/api/v1/agent-lifecycle/${this.record.operationId}`, remaining);
       requireCheck(current.status === 200, 'cleanup_operation_read_failed', current.status);
+      requireCheck(current.body.id === this.record.operationId, 'cleanup_operation_mismatch');
       if (current.body.agent_id) {
-        requireCheck(/^agt_[a-f0-9]{32}$/.test(current.body.agent_id), 'cleanup_agent_identity_invalid');
+        requireCheck(/^agt_[a-f0-9]{32}$/.test(current.body.agent_id) &&
+          (!this.record.agentId || this.record.agentId === current.body.agent_id), 'cleanup_agent_identity_invalid');
         this.record.agentId = current.body.agent_id;
         await this.save();
       }
@@ -261,7 +274,8 @@ export class OwnedResources {
     }, (value) => ['succeeded', 'failed'].includes(value.status), { timeout: 300000, interval: 1000 });
     requireCheck(operation.agent_id && this.record.agentId, 'cleanup_operation_unresolved');
     const detail = await this.read(`/api/v1/agents/${this.record.agentId}`);
-    if (detail.status === 200) this.record.sandboxId = detail.body.sandbox?.id;
+    if (detail.status === 200) this.bindAgentDetail(detail.body);
+    else requireCheck(detail.status === 404, 'cleanup_agent_read_failed', detail.status);
     requireCheck(/^sbx_[a-f0-9]{32}$/.test(this.record.sandboxId ?? ''), 'cleanup_sandbox_unknown');
     await this.save();
     // Match CMA's production E2E cleanup contract: stop active Agents first,

@@ -316,7 +316,7 @@ struct AdmissionIdentity<'a> {
     name: &'a SandboxAdmissionName,
     profile: &'a SandboxProfileSnapshot,
     reaches: &'a [crate::ids::ServiceId],
-    #[serde(skip_serializing_if = "crate::sandbox::SandboxCredentialSource::is_managed")]
+    #[serde(skip_serializing_if = "crate::sandbox::SandboxCredentialSource::is_default_managed")]
     credential_source: &'a crate::sandbox::SandboxCredentialSource,
     sign_in: AdmissionSignInMode,
     limits: SandboxLimits,

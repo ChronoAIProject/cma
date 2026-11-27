@@ -1,6 +1,7 @@
 """Freeze complete, verified public release sets before deployment admission."""
 import json
 
+from cd_target import PRODUCTION, STAGING
 from staging_cd_common import Refusal, matches, require
 from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_watermark import SUPERSEDED, eligible_receipts
@@ -15,6 +16,7 @@ from staging_cd_runtime_smoke import validate_smoke
 
 
 OVERTAKEN = "superseded_by_newer_final"
+ALREADY_VERIFIED = "already-verified"
 # A first staging attempt refused before any change for a transient cause; its
 # promotion re-admits and deploys once more, and that attempt's outcome counts.
 RETRY_PENDING = "retry-pending"
@@ -180,15 +182,22 @@ def verify_set(value, api, registry, *, automatic, inputs=None):
     return value
 
 
-def private_document(value):
+def private_document(value, *, target=STAGING):
     validate_set(value)
+    require(target in (STAGING, PRODUCTION), "Deployment target is invalid")
     from staging_cd_contract import GROUP, compatibility
     for component, receipt in value["receipts"].items():
         if component in GROUP:
             compatibility(receipt)
-    # Schema 2 is deliberately rejected by a controller lacking the deployed
-    # compatibility boundary. Old executors must never silently ignore it.
-    result = {"schema": 2 if GROUP & value["receipts"].keys() else 1, "components": {
+    # A controller must explicitly support each protected request schema.
+    continuity = value["receipts"].get("web", {}).get("asset_continuity") if target == STAGING else None
+    schema = 2 if GROUP & value["receipts"].keys() else 1
+    if continuity is not None:
+        # Automatic CD already promotes Web in its own lane. An explicit mixed
+        # set cannot interleave another component with the fenced Web phases.
+        require(set(value["receipts"]) == {"web"}, "Web continuity requires a standalone staging release")
+        schema = 3
+    result = {"schema": schema, "components": {
         component: {"image": receipt["repository"] + "@" + receipt["digest"],
                     "source_sha": receipt["source"], "version": receipt["identity"]["version"],
                     **({"publication": receipt} if component in GROUP else {}),
@@ -197,5 +206,7 @@ def private_document(value):
                                               "publication": sha256(receipt)}}
                        if component in RUNTIME_TARGETS else {})}
         for component, receipt in value["receipts"].items()}}
+    if continuity is not None:
+        result["components"]["web"]["asset_continuity"] = continuity
     require(len(canonical(result).encode()) <= 8192, "Private release input is oversized")
     return result

@@ -181,7 +181,7 @@ async fn other_replica_acceptance_revokes_fresh_request_stream_frame_and_command
         .await
         .unwrap();
     assert!(
-        observing.state.read().unwrap().hashes.is_empty(),
+        observing.fixture_hashes_empty(),
         "replica B has not refreshed"
     );
     assert_eq!(
@@ -213,9 +213,9 @@ async fn other_replica_acceptance_revokes_fresh_request_stream_frame_and_command
 }
 
 #[tokio::test]
-#[ignore = "requires CMA_IM_TEST_MONGODB_URI pointing at an authenticated replica set"]
+#[ignore = "requires CMA_AUTHENTICATED_TEST_MONGODB_URI pointing at an authenticated replica set"]
 async fn fresh_snapshot_cannot_mask_real_database_permission_failure() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let db = admin.database(&format!(
         "cma_standing_denied_{}",

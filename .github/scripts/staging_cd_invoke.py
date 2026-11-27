@@ -14,7 +14,8 @@ from ci_outcome import entry, error_site, report
 from staging_cd_admission import event_identity
 from staging_cd_applied import configured_group
 from staging_cd_checkout import checkout_path
-from staging_cd_clock import (CONTROLLER_TOTAL_ENV, TERMINATION_GRACE_SECONDS, controller_seconds, elapsed, remaining)
+from staging_cd_clock import (CONTROLLER_TOTAL_ENV, STAGING_AM_RELEASE_TOTAL_SECONDS,
+                              TERMINATION_GRACE_SECONDS, controller_seconds, elapsed, remaining)
 from staging_cd_common import Refusal, matches, require
 from staging_cd_policy import selected as deploy_selection
 from staging_cd_process import ProcessTimeout, run as run_process
@@ -29,11 +30,14 @@ from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_history import DevelopHistory
 from staging_cd_watermark import (SUPERSEDED, eligible_receipts, later_final_sources, record_withheld,
                                   require_current_versions, require_released_versions)
+from staging_cd_pointer_deploy import run as run_release
 from staging_cd_deploy_result import read as read_component_result, retain as retain_component_result
 
 IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
                  "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
 PROCESS_KEYS = ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP")
+RUNTIME_PROOF_KEYS = ("ACTIONS_ID_TOKEN_REQUEST_URL", "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+                      "CD_RUNTIME_POINTER_PROOF_PUBLIC_KEY")
 DISABLED = 100
 SUPERSEDED_BY_NEWER_FINAL = 60
 UNVERIFIED_COHORT = 51
@@ -101,11 +105,9 @@ def private_script(env, run_command=subprocess.run):
 
 
 
-def execute(script, release_file, mode, started, env, *, timeout=None, target=STAGING):
-    # Reserve the same absolute clock for the child. Older controllers ignore
-    # this timing input and retain their shorter deadline. Only a production
-    # release reserves the production total; staging's budgets are unchanged.
-    limit = controller_seconds(mode, target)
+def execute(script, release_file, mode, started, env, *, timeout=None, target=STAGING, limit=None):
+    if limit is None:
+        limit = controller_seconds(mode, target)
     child_env = {**env, CONTROLLER_TOTAL_ENV: str(limit)}
     left = remaining(started, limit)
     wait = min(left, timeout) if timeout is not None else left
@@ -191,6 +193,10 @@ def controller_receipts(receipts, transition, script, directory, started, env, c
     if not transition or not GROUP & current.keys():
         return current, 0
     require(GROUP <= current.keys(), "Deployment policy split the contract group")
+    if env.get("CD_RUNTIME_POINTER_PUBLICATION_ENABLED") == "true":
+        # The pointer path qualifies the currently active peers against the
+        # serving build. Bootstrap defaults do not establish that preimage.
+        return current, 0
 
     try:
         configured = configured_group(script, directory, current, started, child_env)
@@ -230,9 +236,6 @@ def deploy(env, masker, script_reader=private_script, runner=None,
                 "Bootstrap requires all components")
     target = target_name(env)
     limit = controller_seconds(mode, target)
-    if runner is None:
-        # The launcher's watchdog enforces the same target budget as this caller.
-        runner = partial(execute, target=target)
     credentials = {key: env.get(key) for key in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET")}
     for credential in credentials.values():
         masker(credential)
@@ -253,6 +256,7 @@ def deploy(env, masker, script_reader=private_script, runner=None,
     child_env = {key: env[key] for key in (*IDENTITY_KEYS, *PROCESS_KEYS) if key in env}
     child_env.update(tool_reader(env))
     child_env.update(credentials)
+    child_env.update({key: env[key] for key in RUNTIME_PROOF_KEYS if key in env})
     if on_private_refusal is not None or on_unverified is not None or on_rolled_back is not None:
         child_env["CD_REPORT_REFUSAL"] = "1"
     # A set has independent source SHAs; the file is the sole source authority.
@@ -275,14 +279,22 @@ def deploy(env, masker, script_reader=private_script, runner=None,
                     on_overtaken(selected_keys)
                 if not receipts:
                     return group_outcome
-            request = private_document(release_set(receipts))
+            # The immutable private checkout advertises support for the longer
+            # profile. A runtime pin rolls AM even without a new AM image.
+            if target == STAGING and mode == "release" and receipts.keys() & GROUP:
+                profile = script.with_name("am_rollout_budget.py")
+                if not profile.is_symlink() and profile.is_file():
+                    limit = STAGING_AM_RELEASE_TOTAL_SECONDS
+            request = private_document(release_set(receipts), target=target)
             with path.open("x", encoding="utf-8") as stream:
                 os.chmod(path, 0o600)
                 stream.write(canonical(request))
         with precondition("budget"):
             remaining(started, mode=mode)
+        if runner is None:
+            runner = partial(execute, limit=limit)
         try:
-            code = runner(script, path, mode, started, child_env)
+            code = run_release(runner, script, path, request, receipts, started, mode, target, env, child_env, limit, masker)
             if code == 20 and on_unverified is not None:
                 verification = read_verification(path.with_name("verification-code"), request)
             if code == 10 and on_rolled_back is not None:
@@ -487,7 +499,6 @@ def main():
         # The artifact was reconstructed from validated request-bound fields;
         # only fixed component/reason tokens are reflected into the public log.
         value = document((Path(os.environ["RUNNER_TEMP"]) / "public-deployment/deployment.json").read_text())
-        from staging_cd_contract import GROUP
         for component in sorted(GROUP):
             if value.get("components", {}).get(component, {}).get("state") == "withheld":
                 report("deploy-component", "deployed-compatibility-unqualified", subject="deploy", component=component)

@@ -16,9 +16,7 @@ import { createCreationClient } from './api/creation';
 import { createOperatorClient } from './operator/client';
 import { createTriggerPublisherClient } from './trigger-publisher/client';
 import { createPublicClient } from './public/client';
-import { clearAgentTransport } from './agent/transport/journal';
 import { prepareHistoryDocument } from './routing/historyDocument';
-import { ImageManagerRetirement } from './services/ImageManagerRetirement';
 
 /*
  * Before the first render, so the page never paints in the wrong theme and
@@ -39,13 +37,6 @@ if (!container) {
  */
 if (prepareHistoryDocument()) {
   const identityProvider = createNyxidAuthProvider();
-  const authProvider = {
-    ...identityProvider,
-    async signOut() {
-      await identityProvider.signOut();
-      clearAgentTransport(sessionStorage);
-    },
-  };
   const sdk = createClient();
   const client = createRestWebClient(sdk, {
     storage: sessionStorage,
@@ -69,7 +60,7 @@ if (prepareHistoryDocument()) {
     },
   }).render(
     <StrictMode>
-      <AuthContextProvider provider={authProvider}>
+      <AuthContextProvider provider={identityProvider}>
         <CmaClientProvider
           client={client}
           profiles={profiles}
@@ -78,9 +69,7 @@ if (prepareHistoryDocument()) {
           publisher={publisher}
           publicClient={publicClient}
         >
-          <ImageManagerRetirement>
-            <App />
-          </ImageManagerRetirement>
+          <App />
         </CmaClientProvider>
       </AuthContextProvider>
     </StrictMode>,

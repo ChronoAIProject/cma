@@ -181,6 +181,18 @@ pub(super) async fn assemble(
     evidence.extend(
         super::output::plan(store, scope, captured, &before, &plan.head, input.logs).await?,
     );
+    let active_proof = if store.active_log_proofs {
+        Some(super::super::active_proof::ActiveProof::successor(
+            &before,
+            current.revision,
+            next.revision,
+            &plan,
+            captured.active_leaf_digests(),
+            batch.rows(),
+        )?)
+    } else {
+        None
+    };
     Ok(PreparedPublication {
         transaction,
         database: store.agents.namespace().db,
@@ -190,6 +202,7 @@ pub(super) async fn assemble(
         before,
         batch,
         plan,
+        active_proof,
         delta,
         evidence,
         receipt,

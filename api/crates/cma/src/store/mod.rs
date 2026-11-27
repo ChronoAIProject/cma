@@ -52,6 +52,7 @@ mod agent_title_retry;
 mod agent_title_state;
 mod agent_title_writes;
 mod agent_titles;
+mod agent_tool_open;
 mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
@@ -77,6 +78,9 @@ pub(crate) mod bots;
 #[cfg(test)]
 mod bots_mongo_integration_tests;
 mod budget;
+pub(crate) use budget::inventory as turn_budget_inventory;
+#[cfg(test)]
+pub(crate) mod budget_test_fixture;
 mod channel_storage_retention;
 mod checkpoint_capture;
 mod checkpoint_objects;
@@ -95,6 +99,7 @@ mod encryption;
 mod execution_sections;
 pub(crate) mod legal_consents;
 mod media_uploads;
+mod online_backfill;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
 mod retained_consents;
@@ -102,6 +107,19 @@ mod segment_response;
 mod transaction_scope;
 pub(crate) mod transaction_terminal;
 pub(crate) use segment_response::emit as emit_response_reads;
+
+pub(crate) async fn backfill_progress_command(
+    arguments: &[String],
+) -> Option<Result<serde_json::Value, &'static str>> {
+    if online_backfill::is_command(arguments) {
+        Some(online_backfill::command(arguments).await)
+    } else if provenance_progress::is_command(arguments) {
+        Some(provenance_progress::command(arguments).await)
+    } else {
+        None
+    }
+}
+
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
 #[cfg(test)]
@@ -141,6 +159,7 @@ pub(crate) mod pending_launch_homes;
 pub(crate) mod test_visibility;
 #[cfg(test)]
 pub(crate) use mongo_diagnostics::attach_readiness_fixture;
+mod managed_machine_origin;
 pub(crate) mod mongo_latency;
 pub(crate) mod mongo_read_telemetry;
 pub(crate) mod native_prepared;
@@ -240,7 +259,8 @@ pub(crate) use agent_lifecycle_operations::canary_key;
 pub(crate) use agent_lifecycle_operations::LifecycleRecord;
 pub(crate) use agent_lifecycle_operations::{
     CanaryProfiles, CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput,
-    LifecycleLease, MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
+    LifecycleLease, MongoAgentLifecycleStore, PublicRepositoryPin, RepositoryAccessPin,
+    DISCOVERY_BATCH, HEARTBEAT,
 };
 pub use auth::MongoAuthStore;
 pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};

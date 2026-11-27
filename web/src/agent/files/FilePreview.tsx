@@ -1,5 +1,6 @@
 import {
   PREVIEW_BYTES,
+  MAX_FILE_BYTES,
   fileBytes,
   type AgentFileContent,
   type AgentFileEntry,
@@ -7,6 +8,7 @@ import {
 import { Button } from '../../ui/Button';
 import { IconDownloadOutline16, IconTrashOutline16 } from '../../ui/icons';
 import { SelectedFilePath } from './FilePaths';
+import { ImagePreview } from './ImagePreview';
 
 export function textContent(content: AgentFileContent): string | undefined {
   try {
@@ -30,21 +32,10 @@ export function imageType(name: string): string | undefined {
     } as Record<string, string>
   )[extension ?? ''];
 }
-function ImagePreview({
-  content,
-  name,
-}: {
-  readonly content: AgentFileContent;
-  readonly name: string;
-}) {
-  return (
-    <img
-      className="agent-files__image"
-      src={`data:${imageType(name)};base64,${content.content_base64}`}
-      alt={name}
-    />
-  );
+export function canPreviewFile(file: AgentFileEntry): boolean {
+  return file.size_bytes <= (imageType(file.name) ? MAX_FILE_BYTES : PREVIEW_BYTES);
 }
+
 export function FilePreview({
   file,
   content,
@@ -52,6 +43,9 @@ export function FilePreview({
   loading,
   busy,
   readOnly,
+  imageSource,
+  focusExpandImage,
+  onExpandImage,
   onDraft,
   onSave,
   onReload,
@@ -65,6 +59,9 @@ export function FilePreview({
   readonly loading: boolean;
   readonly busy: boolean;
   readonly readOnly: boolean;
+  readonly imageSource?: string | Blob;
+  readonly focusExpandImage?: boolean;
+  readonly onExpandImage?: () => void;
   readonly onDraft: (value: string) => void;
   readonly onSave: () => void;
   readonly onReload: () => void;
@@ -72,10 +69,15 @@ export function FilePreview({
   readonly onDelete: () => void;
   readonly hideHeader?: boolean;
 }) {
-  const original = content ? textContent(content) : undefined;
+  const original = content && draft !== undefined ? textContent(content) : undefined;
   const dirty = draft !== undefined && draft !== original;
   return (
-    <section className="agent-files__preview" aria-label="File preview" aria-busy={loading}>
+    <section
+      className="agent-files__preview"
+      data-file-selected={file !== undefined}
+      aria-label="File preview"
+      aria-busy={loading}
+    >
       {!file ? (
         <p className="agent-files__empty">Select a file to preview it.</p>
       ) : (
@@ -109,8 +111,14 @@ export function FilePreview({
           {!hideHeader ? <SelectedFilePath key={file.path} path={file.path} /> : null}
           {loading ? (
             <p role="status">Opening file…</p>
-          ) : content && imageType(file.name) ? (
-            <ImagePreview content={content} name={file.name} />
+          ) : imageSource && onExpandImage ? (
+            <ImagePreview
+              key={`image:${file.path}`}
+              source={imageSource}
+              name={file.name}
+              initialFocus={focusExpandImage}
+              onToggle={onExpandImage}
+            />
           ) : draft !== undefined ? (
             <>
               <textarea
@@ -138,7 +146,7 @@ export function FilePreview({
                 </div>
               ) : null}
             </>
-          ) : !content && file.size_bytes <= PREVIEW_BYTES ? (
+          ) : !content && canPreviewFile(file) ? (
             <div role="status">
               <p>File preview unavailable.</p>
               <Button size="sm" disabled={busy} onClick={onReload}>
@@ -146,7 +154,9 @@ export function FilePreview({
               </Button>
             </div>
           ) : (
-            <p className="agent-files__empty">Download this file to view its contents.</p>
+            <p className="agent-files__empty" role="status">
+              Preview unavailable. Download this file to view its contents.
+            </p>
           )}
         </>
       )}

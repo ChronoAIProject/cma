@@ -1,4 +1,5 @@
 //! Versioned segmented log readers and gated atomic publication.
+pub(in crate::store) mod active_proof;
 pub(in crate::store) mod admission;
 pub(in crate::store) mod audit;
 pub(in crate::store) mod audit_command;
@@ -38,7 +39,9 @@ pub(in crate::store) mod writer_reconcile;
 pub(in crate::store) use codec::{Head, Seal};
 pub(in crate::store) use envelope::{read_format, require_agent_version, validate_identity};
 use layer2_core::sandbox::store::SandboxStoreError;
-pub(in crate::store) use reads::{read_head, retained_turn, visit_range, LogRange};
+pub(in crate::store) use reads::{
+    read_head, retained_turn, verify_terminal_seal, visit_range, LogRange,
+};
 
 pub(in crate::store) const HEADS: &str = "agent_log_heads";
 pub(in crate::store) const SEGMENTS: &str = "agent_log_segments";

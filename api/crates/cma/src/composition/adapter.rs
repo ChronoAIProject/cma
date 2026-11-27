@@ -54,10 +54,11 @@ pub(super) async fn production_adapter(
     crate::store::isolation::verify_with_authority(&runtime_database, config.mongodb_authority)
         .await
         .map_err(|error| format!("runtime database authority is not usable: {error}"))?;
-    let routing = crate::store::runtime_routing::MongoRuntimeRouting::open(
+    let routing = crate::store::runtime_routing::MongoRuntimeRouting::open_with_default_pool_holds(
         &runtime_database,
         &config.deployment_id,
         config.runtime.allocate_agent_sandbox,
+        store.default_pool_holds.clone(),
     )
     .await?;
     let mut backends = layer3_adapter::hosted::RuntimeBackends {
@@ -186,6 +187,13 @@ pub(super) async fn production_adapter(
                     .map_err(|error| error.to_string())?
             }
             _ => transport,
+        };
+        let transport = match &config.runtime.open_reply_loss_sandbox {
+            Some(sandbox_id) => transport.with_open_reply_loss(
+                sandbox_id.clone(),
+                Arc::new(store.open_reply_loss_claim(sandbox_id.clone())),
+            ),
+            None => transport,
         };
         let transport = register_owner_control(config, "native", transport, &mut owner_controls);
         backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(

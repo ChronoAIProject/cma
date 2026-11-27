@@ -12,9 +12,10 @@ export function updateTool(
   state: ConversationState,
   item: ToolCall,
   start = false,
+  reportedAt?: string,
 ): ConversationState {
   const current = state.toolCalls.find((tool) => tool.id === item.id);
-  const tool =
+  const next =
     start && current !== undefined
       ? current.startedAt || !item.startedAt
         ? current
@@ -28,6 +29,15 @@ export function updateTool(
               ? current.status
               : item.status,
         };
+  const recordedProgress =
+    reportedAt !== undefined &&
+    (current === undefined ||
+      next.title !== current.title ||
+      next.status !== current.status ||
+      next.detail !== current.detail ||
+      next.output?.text !== current.output?.text ||
+      next.output?.truncated !== current.output?.truncated);
+  const tool = recordedProgress ? { ...next, progressAt: reportedAt } : next;
   return {
     ...state,
     toolCalls:
@@ -62,20 +72,25 @@ export function liveTool(state: ConversationState, event: AgentLiveEvent): Conve
     event.type === 'TOOL_CALL_ARGS' && update !== undefined
       ? `${current?.detail ?? ''}${update}`
       : (text(event.result) ?? update ?? current?.detail);
-  return updateTool(state, {
-    id,
-    runId: event.runId,
-    title: text(event.toolCallName) ?? current?.title ?? 'Tool call',
-    ...current,
-    status:
-      text(event['cma:status']) ??
-      (event.type === 'TOOL_CALL_END' ? 'completed' : (current?.status ?? 'running')),
-    detail,
-    finishedAt:
-      current?.finishedAt ?? (event.type === 'TOOL_CALL_END' ? event.timestamp : undefined),
-    output:
-      typeof output?.text === 'string' && typeof output.truncated === 'boolean'
-        ? { text: output.text, truncated: output.truncated }
-        : current?.output,
-  });
+  return updateTool(
+    state,
+    {
+      id,
+      runId: event.runId,
+      title: text(event.toolCallName) ?? current?.title ?? 'Tool call',
+      ...current,
+      status:
+        text(event['cma:status']) ??
+        (event.type === 'TOOL_CALL_END' ? 'completed' : (current?.status ?? 'running')),
+      detail,
+      finishedAt:
+        current?.finishedAt ?? (event.type === 'TOOL_CALL_END' ? event.timestamp : undefined),
+      output:
+        typeof output?.text === 'string' && typeof output.truncated === 'boolean'
+          ? { text: output.text, truncated: output.truncated }
+          : current?.output,
+    },
+    false,
+    event.timestamp,
+  );
 }

@@ -14,6 +14,8 @@ mod home_backup_tests;
 #[cfg(test)]
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;
+mod machine_updates;
+pub(crate) use machine_updates::ManagedMachineUpdates;
 #[cfg(test)]
 mod native_close_lane_tests;
 #[cfg(test)]
@@ -30,9 +32,13 @@ mod stale_turn_tests;
 mod strict_inactivity_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
-    pub image_manager_retirement: bool,
     pub session_guidance_v4: bool,
+    pub session_guidance_v5: bool,
+    pub session_guidance_v6: bool,
+    pub session_guidance_v7: bool,
+    pub session_guidance_v8: bool,
     pub am_startup_health_serving: bool,
+    pub am_empty_warm_pool_startup: bool,
     pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
     pub usage_snapshot_cursors_enabled: bool,
@@ -55,6 +61,7 @@ pub(crate) struct FeatureFlags {
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
+    pub native_retirement_capture_enabled: bool,
     pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
@@ -78,6 +85,7 @@ pub(crate) struct FeatureFlags {
     pub startup_sibling_hold_enabled: bool,
     pub retained_reopen_enabled: bool,
     pub runtime_image_origin_enabled: bool,
+    pub managed_machine_updates: ManagedMachineUpdates,
     pub retained_suspended_reopen_enabled: bool,
     pub retained_repeat_reopen_enabled: bool,
     pub agent_skill_upgrade_enabled: bool,
@@ -105,6 +113,7 @@ pub(crate) struct FeatureFlags {
     pub sandbox_detail_timings: bool,
     pub agent_file_read_timings: bool,
     pub bounded_response_reads: bool,
+    pub active_log_proofs: bool,
     pub bounded_transcript_reads: bool,
     pub privacy_export_enabled: bool,
     pub bounded_usage_reads: bool,
@@ -114,6 +123,7 @@ pub(crate) struct FeatureFlags {
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub github_repository_preflight: bool,
+    pub github_connection_approval: bool,
     pub github_connection_recovery: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
@@ -125,6 +135,8 @@ pub(crate) struct FeatureFlags {
     pub document_quotas: bool,
     pub document_source_commits: bool,
     pub document_object_deletion: bool,
+    pub document_deletion: bool,
+    pub document_reclamation: bool,
     pub bounded_approval_reads: bool,
     pub bounded_close_retries: bool,
     pub retry_single_marker_enabled: bool,
@@ -155,8 +167,12 @@ impl FeatureFlags {
         let flags = Self {
             binding_diagnostics: flag(lookup, "CHRONO_BINDING_DIAGNOSTICS_ENABLED")?,
             session_guidance_v4: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED")?,
-            image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
+            session_guidance_v5: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED")?,
+            session_guidance_v6: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V6_ENABLED")?,
+            session_guidance_v7: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V7_ENABLED")?,
+            session_guidance_v8: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V8_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
+            am_empty_warm_pool_startup: flag(lookup, "CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED")?,
             pending_home_reconciliation: flag(
                 lookup,
                 "CHRONO_PENDING_HOME_RECONCILIATION_ENABLED",
@@ -197,6 +213,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
+            native_retirement_capture_enabled: flag(lookup, gates::RETIREMENT_CAPTURE)?,
             reviewed_sandbox_retirement_enabled: flag(
                 lookup,
                 "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",
@@ -233,6 +250,7 @@ impl FeatureFlags {
             )?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
             runtime_image_origin_enabled: flag(lookup, "CHRONO_RUNTIME_IMAGE_ORIGIN_ENABLED")?,
+            managed_machine_updates: ManagedMachineUpdates::read(lookup)?,
             retained_suspended_reopen_enabled: flag(
                 lookup,
                 "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED",
@@ -264,6 +282,8 @@ impl FeatureFlags {
             document_quotas: flag(lookup, "CHRONO_DOCUMENT_QUOTAS_ENABLED")?,
             document_source_commits: flag(lookup, "CHRONO_DOCUMENT_SOURCE_COMMITS_ENABLED")?,
             document_object_deletion: flag(lookup, "CHRONO_DOCUMENT_OBJECT_DELETION_ENABLED")?,
+            document_deletion: flag(lookup, "CHRONO_DOCUMENT_DELETION_ENABLED")?,
+            document_reclamation: flag(lookup, "CHRONO_DOCUMENT_RECLAIM_ENABLED")?,
             shared_runtime_output: flag(lookup, "CHRONO_RUNTIME_SHARED_OUTPUT_ENABLED")?,
             bounded_close_retries: flag(lookup, "CHRONO_AGENT_CLOSE_RETRY_BOUNDED_ENABLED")?,
             retry_single_marker_enabled: flag(lookup, "CHRONO_AGENT_RETRY_SINGLE_MARKER_ENABLED")?,
@@ -349,6 +369,7 @@ impl FeatureFlags {
             )?,
             bounded_title_reads: flag(lookup, "CHRONO_AGENT_TITLE_BOUNDED_READS_ENABLED")?,
             bounded_response_reads: flag(lookup, "CHRONO_AGENT_RESPONSE_BOUNDED_READS_ENABLED")?,
+            active_log_proofs: flag(lookup, "CHRONO_AGENT_LOG_ACTIVE_PROOFS_ENABLED")?,
             bounded_transcript_reads: flag(
                 lookup,
                 "CHRONO_AGENT_TRANSCRIPT_BOUNDED_READS_ENABLED",
@@ -361,6 +382,7 @@ impl FeatureFlags {
             v2_ui_transport: tail.v2_ui_transport,
             trigger_command_admission: tail.trigger_command_admission,
             github_repository_preflight: tail.github_repository_preflight,
+            github_connection_approval: tail.github_connection_approval,
             github_connection_recovery: tail.github_connection_recovery,
             nyxid_resource_request: tail.nyxid_resource_request,
             nyxid_proxy: tail.nyxid_proxy,
@@ -387,6 +409,9 @@ impl FeatureFlags {
         if flags.am_startup_health_serving && flags.am_failure_containment_enabled {
             return Err("CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED cannot be combined with CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED".into());
         }
+        if flags.am_empty_warm_pool_startup && !flags.am_startup_health_serving {
+            return Err("CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED requires CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED".into());
+        }
         Ok(flags)
     }
 }
@@ -407,12 +432,10 @@ mod document_maintenance_tests;
 #[cfg(test)]
 mod live_buffer_tests;
 #[cfg(test)]
-#[path = "features/native_create_retry_tests.rs"]
 mod native_create_retry_tests;
 #[cfg(test)]
 mod observation_tests;
 #[cfg(test)]
-#[path = "features/ownership_retry_hint_tests.rs"]
 mod ownership_retry_hint_tests;
 #[cfg(test)]
 mod paged_event_tests;

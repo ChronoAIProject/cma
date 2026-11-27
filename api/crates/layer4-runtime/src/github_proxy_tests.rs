@@ -230,6 +230,7 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
         github_route: Some(layer3_adapter::GithubCredentialRoute {
             service_id: "repository-connection".into(),
             catalog_id: "github-catalog".into(),
+            repository_scope: None,
             other_services: vec![layer3_adapter::PlatformServiceRoute {
                 service_id: "skill-connection".into(),
                 slug: "ornn-api".into(),
@@ -340,6 +341,147 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
         );
     }
     assert!(received.try_recv().is_err());
+    upstream.abort();
+    let _ = upstream.await;
+}
+
+#[tokio::test]
+async fn github_writes_expose_the_upstream_decision_and_do_not_retry_a_lost_response() {
+    use axum::http::Method;
+    use std::time::Duration;
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let fixture = Fixture::new(&format!("http://{}", listener.local_addr().unwrap()));
+    let (events, mut received) = mpsc::unbounded_channel();
+    let upstream = tokio::spawn(async move {
+        let app = axum::Router::new().fallback(any(move |request: axum::extract::Request| {
+            let events = events.clone();
+            async move {
+                let (parts, body) = request.into_parts();
+                let body = axum::body::to_bytes(body, 1024).await.unwrap();
+                let outcome = match parts.uri.path().rsplit('/').next().unwrap() {
+                    "user" => StatusCode::OK,
+                    "blobs" => StatusCode::CREATED,
+                    "1" => StatusCode::FORBIDDEN,
+                    _ => StatusCode::GATEWAY_TIMEOUT,
+                };
+                events.send((parts, body)).unwrap();
+                if outcome == StatusCode::GATEWAY_TIMEOUT {
+                    // Leave the request unresolved after observing its payload.
+                    std::future::pending::<()>().await;
+                }
+                (
+                    outcome,
+                    [("x-oauth-scopes", "public_repo, read:user")],
+                    axum::Json(serde_json::json!({"message": "fixture decision"})),
+                )
+            }
+        }));
+        axum::serve(listener, app).await.unwrap();
+    });
+    let holder = CredentialHolder::new();
+    holder
+        .install(&CredentialFrame {
+            operation_id: "github-write-contract".into(),
+            value: "github-write-fixture-key".into(),
+            custody_generation: Some(1),
+            github_route: Some(layer3_adapter::GithubCredentialRoute {
+                service_id: "repository-connection".into(),
+                catalog_id: "github-catalog".into(),
+                repository_scope: None,
+                other_services: vec![],
+            }),
+        })
+        .await
+        .unwrap();
+    PreparedGithubProxy::bind(&fixture.config)
+        .await
+        .unwrap()
+        .start(holder);
+    let client = reqwest::Client::builder()
+        .unix_socket(fixture.config.socket())
+        .timeout(Duration::from_secs(610))
+        .build()
+        .unwrap();
+    let payload = serde_json::json!({"content": "fixture-write"});
+    for (method, path, status) in [
+        (Method::GET, "/user", StatusCode::OK),
+        (
+            Method::POST,
+            "/repos/example/project/git/blobs",
+            StatusCode::CREATED,
+        ),
+        (
+            Method::PATCH,
+            "/repos/example/project/pulls/1",
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let mut request = client.request(method.clone(), format!("http://api.github.com{path}"));
+        if method != Method::GET {
+            request = request.json(&payload);
+        }
+        let response = request.send().await.unwrap();
+        assert_eq!(response.status(), status);
+        assert_eq!(
+            response.headers()["x-oauth-scopes"],
+            "public_repo, read:user"
+        );
+        assert_eq!(
+            response.json::<serde_json::Value>().await.unwrap()["message"],
+            "fixture decision"
+        );
+        let (parts, body) = received.recv().await.unwrap();
+        assert_eq!(parts.method, method);
+        let approval_wait = parts.headers.get("x-nyxid-approval-wait-seconds");
+        assert_eq!(approval_wait.is_none(), method == Method::GET);
+        if let Some(wait) = approval_wait {
+            assert_eq!(wait, "80");
+        }
+        assert!(!parts.headers.contains_key("x-nyxid-approval-mode"));
+        assert_eq!(
+            parts.uri.to_string(),
+            format!("/api/v1/proxy/github-catalog{path}?_nyxid_via=repository-connection")
+        );
+        if method != Method::GET {
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+                payload
+            );
+        }
+    }
+
+    let delayed = tokio::spawn(async move {
+        client
+            .patch("http://api.github.com/repos/example/project/pulls/2")
+            .json(&payload)
+            .send()
+            .await
+            .unwrap()
+    });
+    let (parts, body) = tokio::time::timeout(Duration::from_secs(5), received.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(parts.method, Method::PATCH);
+    assert!(!body.is_empty());
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(100)).await;
+    tokio::time::resume();
+    let response = tokio::time::timeout(Duration::from_secs(5), delayed)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+    let problem: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(problem["code"], "github_proxy_deadline");
+    assert_eq!(problem["retryable"], false);
+    assert_eq!(problem["connection_id"], "repository-connection");
+    assert_eq!(problem["credential_generation"], 1);
+    assert!(
+        received.try_recv().is_err(),
+        "the uncertain write must only reach the fixture once"
+    );
     upstream.abort();
     let _ = upstream.await;
 }

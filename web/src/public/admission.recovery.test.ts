@@ -23,7 +23,7 @@ it.each([0, 1, -30 * 60 * 1000])(
     vi.spyOn(Date, 'now').mockReturnValue(original.expiresAt + offset);
     expect(readIntent(path)).toEqual(submitted);
     await expect(admit(client, submitted, owner)).resolves.toEqual(PUBLIC_RECORD);
-    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+    expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
     expect(() => writeIntent(original)).toThrow('earlier request');
     expect(readIntent(path)).toEqual(submitted);
   },
@@ -45,7 +45,7 @@ it.each(['owner', 'id', 'publicId', 'path', 'body'] as const)(
     await expect(
       admit(client, altered, field === 'owner' ? 'other-owner' : owner),
     ).rejects.toThrow();
-    expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+    expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
     expect(readIntent(path)).toEqual(submitted);
   },
 );
@@ -57,13 +57,13 @@ it('does not dispatch an expired packet after reload loses its in-memory result'
   const retained = sessionStorage.getItem('cma:public-intent');
   vi.spyOn(Date, 'now').mockReturnValue(original.expiresAt);
   await expect(admit(client, original, owner)).rejects.toThrow('Your original request is saved');
-  expect(client.requests.createOrResume).not.toHaveBeenCalled();
+  expect(client.requests.createOrResumeBound).not.toHaveBeenCalled();
   expect(sessionStorage.getItem('cma:public-intent')).toBe(retained);
 });
 
 it('keeps an expired packet when capacity eviction removes its unresolved result', async () => {
   const client = publicClient();
-  vi.mocked(client.requests.createOrResume).mockReturnValueOnce(new Promise<Launch>(() => {}));
+  vi.mocked(client.requests.createOrResumeBound).mockReturnValueOnce(new Promise<Launch>(() => {}));
   const original = createIntent(route);
   void admit(client, original, owner);
   const submitted = readIntent(path)!;
@@ -77,18 +77,20 @@ it('keeps an expired packet when capacity eviction removes its unresolved result
   writeIntent(submitted);
   vi.spyOn(Date, 'now').mockReturnValue(original.expiresAt + 1);
   await expect(admit(client, submitted, owner)).rejects.toThrow('Your original request is saved');
-  expect(client.requests.createOrResume).toHaveBeenCalledTimes(51);
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledTimes(51);
   expect(readIntent(path)).toEqual(submitted);
 });
 
 it('preserves an unknown result past expiry without resending its command', async () => {
   const client = publicClient();
-  vi.mocked(client.requests.createOrResume).mockRejectedValueOnce(new Error('connection lost'));
+  vi.mocked(client.requests.createOrResumeBound).mockRejectedValueOnce(
+    new Error('connection lost'),
+  );
   const original = createIntent(route);
   await expect(admit(client, original, owner)).rejects.toThrow('connection lost');
   const submitted = readIntent(path)!;
   vi.spyOn(Date, 'now').mockReturnValue(original.expiresAt + 1);
   await expect(admit(client, submitted, owner)).rejects.toThrow('Your original request is saved');
-  expect(client.requests.createOrResume).toHaveBeenCalledOnce();
+  expect(client.requests.createOrResumeBound).toHaveBeenCalledOnce();
   expect(readIntent(path)).toEqual(submitted);
 });

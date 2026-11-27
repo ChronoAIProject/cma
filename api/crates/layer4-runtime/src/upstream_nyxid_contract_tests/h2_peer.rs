@@ -64,6 +64,7 @@ impl H2Peer {
                 .unwrap(),
             credential,
             client: proxy_client(builder.http2_prior_knowledge()),
+            github_client: None,
             allowed_host: None,
             model_proxy: true,
             model_credit_required,

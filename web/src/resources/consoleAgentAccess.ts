@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import { useAgentAccess } from './agentAccess';
 import { useOwnerViews } from './retainedOwnerViews';
@@ -14,6 +14,40 @@ export function useConsoleAgentAccess(
   const ownerViews = useOwnerViews();
   const authority = useMemo(() => ({ client, authEpoch }), [client, authEpoch]);
   const agentAccess = useAgentAccess(client.resourceViews, agentId, viewerId, authority);
+  const downloadScope = useMemo(
+    () => ({ authority, agentId, viewerId }),
+    [authority, agentId, viewerId],
+  );
+  const [downloadNotice, setDownloadNotice] = useState<{
+    scope: typeof downloadScope;
+    attempt?: object;
+    message?: string;
+  }>({ scope: downloadScope });
+  if (downloadNotice.scope !== downloadScope) setDownloadNotice({ scope: downloadScope });
+  const beginDownload = useCallback(() => {
+    const attempt = {};
+    setDownloadNotice((current) =>
+      current.scope === downloadScope ? { scope: downloadScope, attempt } : current,
+    );
+    return (message: string) => {
+      setDownloadNotice((current) =>
+        current.scope === downloadScope && current.attempt === attempt
+          ? { scope: downloadScope, message }
+          : current,
+      );
+    };
+  }, [downloadScope]);
+  const reload = agentAccess.reload;
+  const onFileAccessChanged = useCallback(
+    (message?: string) => {
+      if (message)
+        setDownloadNotice((current) =>
+          current.scope === downloadScope ? { scope: downloadScope, message } : current,
+        );
+      reload();
+    },
+    [downloadScope, reload],
+  );
   // A returning personal view already owns a transport. Its reopen path checks
   // identity itself; preparing another selection would add competing reads.
   const [opening, setOpening] = useState({
@@ -54,5 +88,13 @@ export function useConsoleAgentAccess(
       retired,
     agentAccess.personalLineage,
   );
-  return { agentAccess, accessUncertain, shared, personalAgentId };
+  const fileDownload = {
+    message: downloadNotice.scope === downloadScope ? downloadNotice.message : undefined,
+    dismiss: () =>
+      setDownloadNotice((current) =>
+        current === downloadNotice ? { scope: downloadScope } : current,
+      ),
+    sidePanel: { beginFileDownload: beginDownload, onAccessChanged: onFileAccessChanged },
+  };
+  return { agentAccess, accessUncertain, shared, personalAgentId, fileDownload };
 }

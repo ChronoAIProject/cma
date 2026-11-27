@@ -4,8 +4,10 @@ use std::time::Duration;
 use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
+pub(in crate::store) mod activity_audit_index;
 mod activity_indexes;
 mod activity_page_index;
+pub(in crate::store) mod agent_log_active_proofs;
 mod agent_log_segments;
 pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
@@ -17,11 +19,14 @@ pub(in crate::store) mod home_backup_catalog;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
+pub(in crate::store) mod measured_batches;
 pub(in crate::store) mod measured_custody;
+pub(in crate::store) mod measured_index;
 pub(in crate::store) mod opening_index;
 mod sandbox_usage_capture;
 mod steps;
 mod turn_policy_index;
+pub(in crate::store) mod usage_projections;
 use steps::Step;
 mod authority;
 mod ledger;
@@ -70,6 +75,10 @@ pub(in crate::store) async fn require_command_cohort_index(
         return Err("Command cohort index is missing");
     }
     Ok(uuid.clone())
+}
+
+pub(in crate::store) async fn measured_batches_ready(database: &mongodb::Database) -> Result<bool> {
+    Ok(measured_batches::inspect(database).await?.is_empty())
 }
 
 pub(in crate::store) async fn measured_custody_ready(database: &mongodb::Database) -> Result<bool> {
@@ -188,7 +197,7 @@ async fn execute(arguments: &[String]) -> Result<Value> {
     } else {
         Ok(json!({"migration":step.id(),"checksum":step.checksum(),
             "prerequisites":[],"phase":"expand","missing_indexes":indexes.len(),
-            "effects":"add nonunique query indexes only","writes":false}))
+            "effects":if step == Step::UsageProjections { "add a projection collection and indexes" } else { "add nonunique query indexes only" },"writes":false}))
     }
 }
 
@@ -201,7 +210,15 @@ async fn apply_indexes(
     super::sandbox_mongo::require_transaction_topology(database)
         .await
         .map_err(|_| "migration requires a supported replica set or mongos")?;
-    if matches!(step, Step::BindingIndexes | Step::MeasuredCustody) {
+    if matches!(
+        step,
+        Step::BindingIndexes
+            | Step::MeasuredCustody
+            | Step::MeasuredBatches
+            | Step::MeasuredIndex
+            | Step::AgentLogActiveProofs
+            | Step::UsageProjections
+    ) {
         step.inspect(database).await?;
     }
     ledger.initialize().await?;
@@ -274,6 +291,10 @@ pub(in crate::store) fn missing_activity_indexes(
     existing: &[mongodb::bson::Document],
 ) -> Result<Vec<mongodb::bson::Document>> {
     activity_indexes::missing(existing)
+}
+
+pub(in crate::store) fn activity_page_index_ready(existing: &[mongodb::bson::Document]) -> bool {
+    activity_page_index::missing(existing).is_ok_and(|pending| pending.is_empty())
 }
 
 #[cfg(test)]

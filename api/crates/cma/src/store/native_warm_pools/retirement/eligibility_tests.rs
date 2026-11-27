@@ -118,6 +118,41 @@ fn settled_old_or_failed_home_allows_spare_drain_without_definition_retirement()
 }
 
 #[test]
+fn same_image_desktop_retirement_distinguishes_selected_and_unresolved_homes() {
+    let (mut sandbox, mut original, _) = upgraded();
+    original.machine = true;
+    let image = original.plan.spec.image.uri.clone();
+    sandbox.runtime.as_mut().unwrap().runtime_version = image.clone();
+    let mut obsolete = original.clone();
+    obsolete.plan.config_sha256 = "b".repeat(64);
+    let binding = obsolete.binding.as_mut().unwrap();
+    binding.config_sha256 = obsolete.plan.config_sha256.clone();
+    binding.uid = "obsolete-pool-uid".into();
+    binding.name = "obsolete-pool".into();
+    assert!(matches!(
+        owned_home(&sandbox, &obsolete, &image).unwrap(),
+        Owned::Unrelated
+    ));
+    assert!(matches!(
+        owned_home(&sandbox, &original, &image).unwrap(),
+        Owned::Blocked
+    ));
+
+    obsolete.binding.as_mut().unwrap().uid = original.binding.as_ref().unwrap().uid.clone();
+    assert!(matches!(
+        owned_home(&sandbox, &obsolete, &image),
+        Err(WarmPoolError::Conflict)
+    ));
+
+    sandbox.status = SandboxStatus::Provisioning;
+    sandbox.lifecycle.home = None;
+    assert!(matches!(
+        owned_home(&sandbox, &obsolete, &image).unwrap(),
+        Owned::Blocked
+    ));
+}
+
+#[test]
 fn drain_requires_completed_original_attachment_not_a_claim_reservation() {
     let (sandbox, target, _) = upgraded();
     for status in [

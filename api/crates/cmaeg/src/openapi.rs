@@ -55,10 +55,14 @@ use utoipa::OpenApi;
         http::management::list_channels,
         http::management::permission_catalog,
         http::creation::recover_channel,
+        http::creation::cancel_create_capability,
+        http::creation::cancel_create,
         http::record_management::read,
         http::record_management::retire,
         http::management::get_channel,
         http::partitions::inspect,
+        http::profile_revisions::baseline,
+        http::profile_revisions::publish,
         http::partition_resets::reset,
         http::management::update_channel,
         http::management::delete_channel,
@@ -94,6 +98,8 @@ use utoipa::OpenApi;
         http::media::download_media,
         http::reply_targets::create_reply_target,
         http::reply_targets::reply_to_target,
+        http::reply_targets::reply_accepted_answer,
+        http::reply_targets::read_accepted_answer_receipt,
     )
 )]
 pub struct ApiDoc;

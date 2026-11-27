@@ -14,7 +14,7 @@ use std::{io, net::SocketAddr, panic::AssertUnwindSafe, process::Stdio};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     process::{Child, Command},
-    time::timeout,
+    time::{sleep, timeout, timeout_at, Instant},
 };
 
 #[path = "sw04_cancel_tests/child.rs"]
@@ -27,6 +27,7 @@ const PROCESS_HEADER: &str = "x-sw04-serving-process";
 const SOURCE_KEY: &str = "sw04-source";
 const CANCEL_KEY: &str = "sw04-cancel";
 const LIMIT: Duration = Duration::from_secs(10);
+const DATABASE_CLEANUP_LIMIT: Duration = Duration::from_secs(30);
 
 fn hash(value: &str) -> String {
     format!("{:x}", Sha256::digest(value))
@@ -104,18 +105,7 @@ async fn sw04_cancel_admitted_by_non_owner_executes_once() {
             stopped = false;
         }
     }
-    let removed = stopped
-        && match timeout(LIMIT, database.drop()).await {
-            Ok(Ok(())) => true,
-            Ok(Err(error)) => {
-                eprintln!("SW04 fixture database drop failed: {error}");
-                false
-            }
-            Err(_) => {
-                eprintln!("SW04 fixture database drop timed out");
-                false
-            }
-        };
+    let removed = stopped && drop_owned_database(&mongo, &database).await;
     if !removed {
         eprintln!(
             "SW04 fixture cleanup failed: children_reaped={stopped} database_removed={removed}"
@@ -127,6 +117,34 @@ async fn sw04_cancel_admitted_by_non_owner_executes_once() {
     };
     assert!(removed, "SW04 fixture cleanup incomplete");
     println!("SW04_CANCEL_OBSERVATION={observation}");
+}
+
+async fn drop_owned_database(mongo: &Client, database: &mongodb::Database) -> bool {
+    // A drop can still be running after both replicas have exited. Give the
+    // disposable database its own deadline and reserve time for exact readback.
+    let deadline = Instant::now() + DATABASE_CLEANUP_LIMIT;
+    // A lost or failed acknowledgement does not establish whether the drop ran.
+    match timeout_at(deadline - Duration::from_secs(1), database.drop()).await {
+        Ok(Ok(())) => return true,
+        Ok(Err(error)) => eprintln!("SW04 fixture database drop failed: {error}"),
+        Err(_) => eprintln!("SW04 fixture database drop timed out"),
+    }
+    let filter = doc! {"name": database.name()};
+    timeout_at(deadline, async {
+        loop {
+            if mongo
+                .list_database_names()
+                .filter(filter.clone())
+                .await
+                .is_ok_and(|names| names.is_empty())
+            {
+                return true;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .unwrap_or(false)
 }
 
 async fn reap(process: &mut Child) -> io::Result<()> {

@@ -9,6 +9,7 @@ use tokio::sync::Notify;
 pub(super) struct Store {
     pub inner: Arc<MongoAgentOwnership>,
     pub hold_acquire: AtomicBool,
+    pub lose_acquire: AtomicBool,
     pub hold_renew: AtomicBool,
     pub lose_release: AtomicBool,
     pub entered: Notify,
@@ -24,6 +25,7 @@ impl Store {
         Arc::new(Self {
             inner: Arc::new(MongoAgentOwnership::open(&client, &name).await.unwrap()),
             hold_acquire: AtomicBool::new(false),
+            lose_acquire: AtomicBool::new(false),
             hold_renew: AtomicBool::new(false),
             lose_release: AtomicBool::new(false),
             entered: Notify::new(),
@@ -71,7 +73,19 @@ impl OwnershipStore for Store {
             self.entered.notify_one();
             self.resume.notified().await;
         }
+        if self.lose_acquire.swap(false, Ordering::AcqRel) && matches!(result, Ok(Some(_))) {
+            return Err(OwnershipError::Unavailable(
+                "synthetic lost acquisition reply".into(),
+            ));
+        }
         result
+    }
+    async fn reconcile_acquisition(
+        &self,
+        id: &AgentId,
+        instance: &str,
+    ) -> Result<Option<OwnershipToken>, OwnershipError> {
+        self.inner.reconcile_acquisition(id, instance).await
     }
     async fn renew(&self, token: &OwnershipToken) -> Result<OwnershipLease, OwnershipError> {
         if self.hold_renew.load(Ordering::Acquire) {

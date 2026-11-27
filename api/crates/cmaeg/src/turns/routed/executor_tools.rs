@@ -41,6 +41,7 @@ impl RoutedTargetExecutor {
         lease: &mut Lease,
         frame: &crate::providers::RecoveryEvent,
         effect: super::super::ReplayEffect,
+        primary: bool,
     ) -> Result<FrameDelivery, ExecutionError> {
         loop {
             let result = self
@@ -63,7 +64,9 @@ impl RoutedTargetExecutor {
             if status != ToolReplyStatus::Pending {
                 return result;
             }
-            if self.wait_for_tool(work, journal, lease).await? == ToolReplyStatus::Unknown {
+            if self.wait_for_tool(work, journal, lease).await? == ToolReplyStatus::Unknown
+                && !primary
+            {
                 return Ok(FrameDelivery::Unknown);
             }
             // Retry the same retained effect. The shared guard suppresses it if

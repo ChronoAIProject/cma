@@ -53,6 +53,7 @@ def summarize(raw, dockerfile=None):
             vertices.setdefault(hashlib.sha256(key.encode()).hexdigest(), {}).update(row)
     intervals = {name: [] for name in CATEGORIES}
     cached = 0
+    cached_steps = cached_dependency_steps = local_imports = 0
     failed = []
     export_errors = set()
     for row in vertices.values():
@@ -68,6 +69,13 @@ def summarize(raw, dockerfile=None):
             failed.append((str(row.get("completed") or ""), failed_step(name), row.get("digest")))
         if row.get("cached") is True:
             cached += 1
+            step = STEP.match(name)
+            if step and row.get("completed") and not row.get("error") and name[step.end():].startswith(("RUN ", "COPY ", "ADD ")):
+                cached_steps += 1
+                if re.search(r"\bcargo\s+chef\s+cook\b", name):
+                    cached_dependency_steps += 1
+        if name.startswith("importing cache manifest from local:") and row.get("completed") and not row.get("error"):
+            local_imports += 1
         try:
             start, end = (datetime.datetime.fromisoformat(row[key].replace("Z", "+00:00")).timestamp()
                           for key in ("started", "completed"))
@@ -106,7 +114,8 @@ def summarize(raw, dockerfile=None):
     complete = bool(vertices) and any(row.get("completed") for row in vertices.values())
     complete = complete and all(not row.get("started") or row.get("completed") for row in vertices.values())
     result = {"complete": bool(complete), "vertices": len(vertices), "cached_vertices": cached,
-              "category_seconds": durations}
+              "category_seconds": durations, "cached_build_steps": cached_steps,
+              "cached_dependency_steps": cached_dependency_steps, "local_cache_imports": local_imports}
     if failed:
         # Name where the build stopped so its owner can open that Dockerfile
         # step; never the instruction text, its arguments or the error message.

@@ -1,7 +1,11 @@
 use super::*;
 use crate::auth::desktop_test_support::DesktopAuthFixture;
 
+#[path = "audit.rs"]
+mod audit;
+
 pub(super) struct Fixture {
+    audit: audit::Audit,
     pub(super) resources: Services,
     pub(super) auth: DesktopAuthFixture,
     pub(super) ingresses: [Ingress; 2],
@@ -12,9 +16,11 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub(super) async fn new(replicas: bool) -> Self {
+        let mut audit = audit::Audit::start().await;
         let resources = Services::new(replicas).await;
         let auth = DesktopAuthFixture::new(resources.caller.subject.clone()).await;
         assert_eq!(auth.provider_snapshot(), Default::default());
+        audit.bind(resources.stores.db.name(), auth.database_name());
         let root = child::ReceiverRoot::new();
         let sandbox = resources.stores.request.sandbox_id.as_str();
         let child = child::ReceiverChild::start(&root, sandbox).await;
@@ -42,6 +48,7 @@ impl Fixture {
             ingresses.push(Ingress::start(app).await);
         }
         Self {
+            audit,
             resources,
             auth,
             ingresses: ingresses.try_into().ok().unwrap(),
@@ -132,10 +139,12 @@ impl Fixture {
         }
         self.proxy.stop().await;
         self.child.take().unwrap().stop(&self.root).await;
+        let identity = self.root.identity().to_owned();
         self.root.cleanup();
         // The modeled receiver retained for older component tests was never used.
         assert_eq!(self.resources.receiver.frames(), 0);
         self.resources.stores.db.drop().await.unwrap();
         self.auth.cleanup().await;
+        self.audit.finish(&identity).await;
     }
 }

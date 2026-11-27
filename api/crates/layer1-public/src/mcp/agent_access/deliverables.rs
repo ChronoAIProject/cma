@@ -20,7 +20,9 @@ pub(super) async fn invoke(
     };
     let resource: DeliverableResource = match serde_json::from_value(arguments) {
         Ok(resource) => resource,
-        Err(_) => return rpc_error(id, -32602, "Invalid deliverable arguments"),
+        // The MCP envelope identifies a known tool. Keep its input refusal in
+        // the tool result so the runtime can preserve the typed diagnostic.
+        Err(_) => return result(id, failure(DeliverableError::Invalid)),
     };
     match service
         .describe_for_agent(state.auth.as_ref(), capability, resource)
@@ -60,7 +62,7 @@ pub(super) fn failure(error: DeliverableError) -> Value {
         ),
         // Invalid file requests also include runtime permission refusals.
         DeliverableError::NotFound
-        | DeliverableError::File(AgentFileError::NotFound | AgentFileError::Invalid)
+        | DeliverableError::File(AgentFileError::NotFound | AgentFileError::Invalid | AgentFileError::NameTooLong)
         | DeliverableError::Answer(AgentReadError::NotFound | AgentReadError::Forbidden)
         | DeliverableError::Document(DocumentError::NotFound) => NOT_ACCESSIBLE,
         DeliverableError::File(AgentFileError::TooLarge) => (

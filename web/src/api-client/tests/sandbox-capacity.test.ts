@@ -19,6 +19,19 @@ it('reads the authenticated owner quota including retained and retiring parents'
   expect(test.calls[0]!.url).toBe('https://cma.example.test/api/v1/sandboxes/capacity');
 });
 
+it('reports settled retirements without charging them as live', async () => {
+  const test = transport();
+  const capacity = {
+    ...full,
+    live: 2,
+    available: 1,
+    counts_by_status: { active: 1, retiring: 1 },
+    retiring_released: 2,
+  };
+  test.answer(capacity);
+  expect(await test.client.sandboxes.capacity()).toEqual(capacity);
+});
+
 it.each([
   { live: 4 },
   { available: 1 },
@@ -32,19 +45,25 @@ it.each([
   await expect(test.client.sandboxes.capacity()).rejects.toBeInstanceOf(ProtocolError);
 });
 
-it.each([undefined, { code: 'sandbox_limit_reached', limit: 10, live: 10 }])(
-  'reads old lifecycle errors and optional structured failures: %j',
-  async (failure) => {
-    const test = transport();
-    const operation = {
-      id: 'quota-operation',
-      status: 'failed',
-      phase: 'failed',
-      error: 'Limit reached',
-      events: [],
-      ...(failure ? { failure } : {}),
-    };
-    test.answer(operation);
-    expect(await test.client.agents.readLifecycle('quota-operation')).toEqual(operation);
+it.each([
+  undefined,
+  { code: 'sandbox_limit_reached', limit: 10, live: 10 },
+  {
+    code: 'sandbox_limit_reached',
+    limit: 10,
+    live: 10,
+    quota_usage: { active: 7, retiring_charged: 3, retiring_released: 1 },
   },
-);
+])('reads old lifecycle errors and optional structured failures: %j', async (failure) => {
+  const test = transport();
+  const operation = {
+    id: 'quota-operation',
+    status: 'failed',
+    phase: 'failed',
+    error: 'Limit reached',
+    events: [],
+    ...(failure ? { failure } : {}),
+  };
+  test.answer(operation);
+  expect(await test.client.agents.readLifecycle('quota-operation')).toEqual(operation);
+});

@@ -6,7 +6,7 @@ use std::time::Duration;
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn uncertain_discord_rename_replays_after_gateway_restart_without_another_write() {
-    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let name = format!("cma_rename_contract_{}", uuid::Uuid::new_v4().simple());
     let database = admin.database(&name);

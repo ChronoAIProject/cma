@@ -1,15 +1,28 @@
 //! Shared deployment runtime authority for pool admission and owner updates.
 use std::sync::Arc;
 
-use crate::{config::Config, store::MongoStores, warm_pools::NativeWarmPools};
+use crate::{
+    agent_lifecycle::guidance, config::Config, store::MongoStores, warm_pools::NativeWarmPools,
+};
 
-pub(super) fn image_manager_resolver(
+pub(super) fn configure_inline_lifecycle(
     config: &Config,
-) -> Result<Arc<crate::agent_lifecycle::ImageManagerResolver>, String> {
-    crate::agent_lifecycle::ImageManagerResolver::new(
-        config.image_manager_base_url.clone(),
-        config.features.image_manager_retirement,
-    )
+    stores: &MongoStores,
+    lifecycle: Arc<crate::agent_lifecycle::InlineAgentLifecycle>,
+    broker: Arc<crate::trigger::CmaServiceConnectionBroker>,
+) -> Arc<crate::agent_lifecycle::InlineAgentLifecycle> {
+    lifecycle
+        .with_released_runtime(stores.released_runtime.clone())
+        .with_task_experience(config.task_experience.clone())
+        .with_admission_guidance(guidance::configured_admission_instructions(
+            &config.features,
+        ))
+        .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
+        .with_repository_preflight_config(config, broker)
+        .with_public_repository_images(
+            config.public_repository_verified_runtime_images.clone(),
+            config.public_repository_snapshot_enabled,
+        )
 }
 
 pub(super) fn worker_observations(
@@ -69,6 +82,8 @@ impl RuntimeServices {
                 .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
         )
         .with_target_fencing(config.agent_manager_replicas.is_some())
+        .with_default_pool_holds(stores.sandbox_model.default_pool_holds.clone())
+        .with_empty_pool_startup(config.features.am_empty_warm_pool_startup)
         .with_released_runtime(stores.released_runtime.clone());
         let pointer = crate::runtime_pointer::RuntimePointerController::compose(
             config,
@@ -140,6 +155,7 @@ pub(super) fn lifecycle_config(
         ownership,
         runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
         native_retirement_finality_enabled: config.features.native_retirement_finality_enabled,
+        native_retirement_capture_enabled: config.features.native_retirement_capture_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
         startup_sibling_hold_enabled: config.features.startup_sibling_hold_enabled,
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,

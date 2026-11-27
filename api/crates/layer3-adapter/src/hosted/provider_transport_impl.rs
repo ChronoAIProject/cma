@@ -110,7 +110,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             socket,
             &request.target.agent_id,
             proof.cwd,
-            (settings, None, true),
+            (settings, None, (true, None)),
             Some(request.target.conversation_id.clone()),
             match &proof.confirmation.native_state {
                 crate::agent_capacity_recovery::ConfirmedAgentState::Idle => None,
@@ -306,11 +306,20 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         };
         self.pin_output_policy(&mut settings);
         let recovered_prompt = settings.recovered_prompt.take();
+        let open_reply_loss = if resume_conversation.is_none() && recovered_prompt.is_none() {
+            self.open_reply_loss_for(handle).await
+        } else {
+            None
+        };
         let opened = Bridge::open_with_relay_policy(
             socket,
             launch.request.agent_id.as_str(),
             launch.request.cwd.clone(),
-            (settings, subscription, self.bounded_update_relay),
+            (
+                settings,
+                subscription,
+                (self.bounded_update_relay, open_reply_loss),
+            ),
             resume_conversation,
             recovered_prompt,
             updates,

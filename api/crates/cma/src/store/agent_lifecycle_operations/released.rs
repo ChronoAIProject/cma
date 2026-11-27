@@ -1,14 +1,16 @@
+use futures_util::TryStreamExt;
 use layer1_public::rest::AgentLifecycleCreateRequest;
 use layer2_core::released_runtime::ReleasedLane;
 use layer2_core::sandbox::{store::SandboxStoreError, Sandbox, SandboxOrigin};
 use layer3_adapter::ReleasedRuntime;
 use mongodb::{bson::Document, Database};
 
-use super::{doc, majority_collection, schema, LifecycleRecord, COLLECTION};
+use super::{doc, majority_collection, schema, LifecycleBehavior, LifecycleRecord, COLLECTION};
 use crate::store::released_runtimes::MongoReleasedRuntimes;
 
 pub(crate) fn managed_lifecycle_release_lane(
     request: &AgentLifecycleCreateRequest,
+    behavior: LifecycleBehavior,
 ) -> Option<ReleasedLane> {
     if request.image.is_some() || request.workspace_id.is_some() || request.sandbox_id.is_some() {
         return None;
@@ -16,7 +18,12 @@ pub(crate) fn managed_lifecycle_release_lane(
     if request.machine_included {
         Some(ReleasedLane::Machine)
     } else {
-        request.desktop.then_some(ReleasedLane::Agent)
+        (request.desktop
+            || matches!(
+                behavior,
+                LifecycleBehavior::RepositoryChoice | LifecycleBehavior::PublicRepository
+            ))
+        .then_some(ReleasedLane::Agent)
     }
 }
 
@@ -42,7 +49,7 @@ pub(in crate::store) async fn admitted_release(
     if operation.canary_admission.is_some() || super::canary_key::is_reserved(&operation.key) {
         return Ok(None);
     }
-    let lane = managed_lifecycle_release_lane(&operation.input.request)
+    let lane = managed_lifecycle_release_lane(&operation.input.request, operation.input.behavior)
         .filter(|_| operation.input.resolved_image.as_ref() == Some(image));
     let lane = match (operation.released_lane, lane) {
         (Some(recorded), Some(lane))
@@ -84,6 +91,7 @@ pub(in crate::store) async fn protects_pool(
     database: &Database,
     machine: bool,
     image: &str,
+    capacity: Option<layer3_adapter::SandboxCapacity>,
 ) -> mongodb::error::Result<bool> {
     // Include old admissions made before the durable lane marker existed.
     let mut filter = doc! {
@@ -98,7 +106,36 @@ pub(in crate::store) async fn protects_pool(
         filter.insert("input.request.machine_included", true);
     } else {
         filter.insert("input.request.machine_included", doc! { "$ne": true });
-        filter.insert("input.request.desktop", true);
+        filter.insert(
+            "$or",
+            [
+                doc! {"input.request.desktop": true},
+                doc! {"input.behavior": {"$in": ["repository_choice", "public_repository"]}},
+            ],
+        );
+    }
+    if let Some(capacity) = capacity {
+        // The admitted capacity is immutable. A differently sized operation
+        // on the same released Desktop image cannot select this exact pool.
+        // Legacy records without a pin must still defer retirement.
+        const MAX_ADMISSIONS: i64 = 10_000;
+        let mut rows = majority_collection::<LifecycleRecord>(database, COLLECTION)
+            .find(filter)
+            .limit(MAX_ADMISSIONS + 1)
+            .await?;
+        let mut count = 0;
+        while let Some(row) = rows.try_next().await? {
+            count += 1;
+            if count > MAX_ADMISSIONS
+                || row
+                    .input
+                    .capacity
+                    .is_none_or(|pin| pin == capacity || pin.cpu_millis == 0 || pin.memory_mib == 0)
+            {
+                return Ok(true);
+            }
+        }
+        return Ok(false);
     }
     Ok(majority_collection::<Document>(database, COLLECTION)
         .find_one(filter)

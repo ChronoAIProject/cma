@@ -31,6 +31,8 @@ pub(super) async fn retire_claimed(
     mut target: PoolTarget,
 ) -> Result<bool, WarmPoolError> {
     let result = tokio::time::timeout(Duration::from_secs(30), async {
+        // A saved pool request can still need its first Claim. A permanent
+        // marker would refuse that admitted operation before it can resume.
         if store
             .retirement_drain_homes(&target, image)
             .await?
@@ -40,14 +42,21 @@ pub(super) async fn retire_claimed(
         }
         target = store.begin_retirement(&target).await?;
         if target.binding.is_none() {
-            // Recover an uncertain configure acknowledgement before marking
-            // the original definitions. Never create positive old capacity.
-            let status = provider
-                .configure_planned(&target.plan, 0)
+            // Recover an unacknowledged binding without changing provider replicas.
+            let binding = provider
+                .inventory()
                 .await
-                .map_err(|_| WarmPoolError::Unavailable)?;
-            store.bind(&target, &status.binding).await?;
-            target.binding = Some(status.binding);
+                .map_err(|_| WarmPoolError::Unavailable)?
+                .into_iter()
+                .map(|status| status.binding)
+                .find(|binding| {
+                    binding.config_sha256 == target.plan.config_sha256
+                        && binding.spec == target.plan.spec
+                        && binding.pod_policy == target.plan.pod_policy
+                })
+                .ok_or(WarmPoolError::Unavailable)?;
+            store.bind(&target, &binding).await?;
+            target.binding = Some(binding);
         }
         let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
         provider
@@ -55,7 +64,7 @@ pub(super) async fn retire_claimed(
             .await
             .map_err(|_| WarmPoolError::Unavailable)?;
         let retirement_homes = store.retirement_homes(&target, image).await?;
-        let Some(drain_homes) = store.retirement_drain_homes(&target, image).await? else {
+        let Some(drain) = store.retirement_drain_homes(&target, image).await? else {
             return Err(WarmPoolError::Unavailable);
         };
         // retire_pool handles absent definitions idempotently, and only
@@ -73,8 +82,10 @@ pub(super) async fn retire_claimed(
         // Settled retained homes can prevent definition deletion without
         // keeping spare capacity alive. Admission is fenced and all durable
         // allocation sources have been rechecked after the provider marker.
+        // Both lanes use the UID-bound request. A provider that does not
+        // implement guarded member deletion leaves the drain pending.
         provider
-            .drain_pool(binding, &drain_homes)
+            .request_spare_drain(binding, &drain)
             .await
             .map_err(|_| WarmPoolError::Unavailable)?;
         Ok::<bool, WarmPoolError>(false)

@@ -56,8 +56,7 @@ impl MongoAgentAccessToolSource {
             || snapshot.resource.lineage.sandbox.status != SandboxStatus::Active
             || !validation::valid_conversation(conversation)
             || agent.conversation.conversation_id.as_deref() != Some(conversation)
-            || !(0..=self.retained_origins.len())
-                .any(|i| self.authority(i).is_ok_and(|(known, _)| known == target))
+            || !self.records.recognizes_origin(&target)
             || requested_origin.is_some_and(|origin| {
                 url::Url::parse(origin)
                     .map(|u| u.to_string())

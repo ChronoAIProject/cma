@@ -18,10 +18,14 @@ use super::{durability::majority_collection, sandbox_mongo as transaction, schem
 use crate::{config::CreationOutcomesConfig, store::transaction_terminal::GuardedTerminal};
 
 mod coverage;
+mod expiry;
 mod legacy;
 mod publication;
 mod reads;
-pub(super) use publication::{link_operation, publish_sandbox, refuse_with_operation};
+pub(super) use publication::{
+    cancel_with_operation, cancellation_committed, link_operation, publish_sandbox,
+    refuse_with_operation,
+};
 
 pub(super) const COLLECTION: &str = "sandbox_creation_proofs";
 const VERSION: i64 = schema::DOCUMENT_SCHEMA_VERSION;
@@ -82,12 +86,29 @@ impl CreationOutcomes {
             )
             .await
             .map_err(driver)?;
+        records
+            .create_index(
+                IndexModel::builder()
+                    .keys(doc! {"epoch":1,"state.kind":1,"lease_until":1})
+                    .options(
+                        IndexOptions::builder()
+                            .name("creation_proof_pending_lease".to_owned())
+                            .build(),
+                    )
+                    .build(),
+            )
+            .await
+            .map_err(driver)?;
         let store = Self {
             database,
             config,
             records,
         };
         store.initialize_coverage().await?;
+        tracing::info!(
+            terminal_settlement_enabled = store.config.terminal_settlement,
+            "Sandbox creation outcome coverage initialized"
+        );
         Ok(store)
     }
 
@@ -208,7 +229,18 @@ impl Backend for CreationOutcomes {
     ) -> Result<Outcome, StatusCode> {
         let start = std::time::Instant::now();
         let result = self.resolve(identity, query).await;
-        tracing::debug!(operation = ?identity.operation, outcome = reads::outcome_name(&result), elapsed_ms = start.elapsed().as_millis(), "Sandbox creation lookup");
+        let unknown_reason = match &result {
+            Ok(Outcome::Unknown { reason }) => Some(reason),
+            _ => None,
+        };
+        tracing::debug!(
+            creation_proof = %record_id(identity),
+            operation = ?identity.operation,
+            outcome = reads::outcome_name(&result),
+            ?unknown_reason,
+            elapsed_ms = start.elapsed().as_millis(),
+            "Sandbox creation lookup"
+        );
         result
     }
 

@@ -186,6 +186,21 @@
   min-height: 0;
   overflow: auto;
 }
+/* The available navigation height also depends on the sidebar controls. */
+.sidebar__navigation:has(> .manager-navigation[data-navigation-view='sandbox']) {
+  overflow-y: auto;
+}
+.manager-navigation[data-navigation-view='sandbox'],
+.manager-navigation[data-navigation-view='sandbox'] > .manager-navigation__list {
+  flex: none;
+}
+.manager-navigation[data-navigation-view='sandbox'] > .manager-navigation__list,
+.manager-navigation[data-navigation-view='sandbox'] > [data-navigation-footer] {
+  overflow: visible;
+}
+.manager-navigation[data-navigation-view='sandbox'] > [data-navigation-footer] {
+  max-height: none;
+}
 .sidebar__account {
   min-width: 0;
   flex: none;
@@ -425,6 +440,17 @@
 .runtime-attention li {
   display: grid;
   min-width: 0;
+}
+
+.runtime-attention > ul > li > .button {
+  display: block;
+  min-width: 0;
+  height: auto;
+  min-height: 32px;
+  padding: 0;
+  font: inherit;
+  text-align: start;
+  overflow-wrap: anywhere;
 }
 
 .runtime-attention code {

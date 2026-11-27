@@ -4,7 +4,7 @@
 # graph reviewable here: extra steps can compete with timing probes, override
 # environment, or bypass the extracted build just as missing steps can weaken it.
 module CIContract
-  BACKEND_NEEDS = %w[backend-lint backend-test-build backend-tests backend-timing backend-mongo backend-image-manager].freeze
+  BACKEND_NEEDS = %w[backend-lint backend-test-build backend-tests backend-timing backend-mongo backend-authenticated-mongo].freeze
   NEXTEST = "bash ../.github/scripts/backend-nextest.sh"
   BACKEND_RESULTS = <<~'SH'
     python3 - <<'PYTHON'
@@ -12,7 +12,7 @@ module CIContract
     import os
     import sys
     results = json.loads(os.environ["NEEDS"])
-    expected = ["backend-lint", "backend-test-build", "backend-tests", "backend-timing", "backend-mongo", "backend-image-manager"]
+    expected = ["backend-lint", "backend-test-build", "backend-tests", "backend-timing", "backend-mongo", "backend-authenticated-mongo"]
     failed = {job: results.get(job, {}).get("result", "missing") for job in expected if results.get(job, {}).get("result") != "success"}
     for job, result in failed.items():
         print(f"::error::{job}: {result}")
@@ -93,12 +93,12 @@ module CIContract
         "steps" => consumers + [backend_step("Disposable real Mongo persistence contracts",
           "bash ../.github/scripts/mongo-contract-tests.sh", "timeout-minutes" => 75)],
       },
-      "backend-image-manager" => {
-        "name" => "Backend Image Manager Mongo isolation", "timeout-minutes" => 30,
+      "backend-authenticated-mongo" => {
+        "name" => "Backend authenticated Mongo contracts", "timeout-minutes" => 30,
         "steps" => consumers + [{ "uses" => "actions/setup-node@v6", "with" => { "node-version" => "24.15.0" } },
           backend_step("Prepare compiled gateway browser contract", "npm ci --prefix web\nnpm run build --prefix web\n", "working-directory" => "."),
           backend_step("Install gateway contract browser", "node --test ../.github/scripts/install-contract-browser.test.mjs\nnode ../.github/scripts/install-contract-browser.mjs\n", "timeout-minutes" => 10, "working-directory" => "web"),
-          backend_step("Image Manager authenticated Mongo isolation", "bash ../.github/scripts/image-manager-mongo-contract.sh", "timeout-minutes" => 15)],
+          backend_step("Run authenticated Mongo contracts", "bash ../.github/scripts/authenticated-mongo-contract.sh", "timeout-minutes" => 15)],
       },
       "cmaeg-latency" => {
         "name" => "CMAEG latency budget", "timeout-minutes" => 15,

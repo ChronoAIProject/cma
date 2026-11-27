@@ -458,8 +458,8 @@ export function Composer({
             {steering && onSteeringModeChange !== undefined ? (
               <SteeringModePicker value={steeringMode} onChange={onSteeringModeChange} />
             ) : null}
-            <div className="agent-composer__actions">
-              {!running || (messageContent !== '' && queueWhileRunning) ? (
+            {!running || (messageContent !== '' && queueWhileRunning) ? (
+              <div className="agent-composer__actions">
                 <Button
                   placement="agent-composer__submit"
                   variant="primary"
@@ -481,16 +481,13 @@ export function Composer({
                   }
                   aria-describedby={hasNotice ? noticeId : undefined}
                 />
-              ) : null}
-              {running && (messageContent === '' || !queueWhileRunning) ? (
-                <ResponseStop
-                  control={stopControl}
-                  shortcut={
-                    stopControl.enabled && inputFocused && !inputComposing && !commands.open
-                  }
-                />
-              ) : null}
-            </div>
+              </div>
+            ) : (
+              <ResponseStop
+                control={stopControl}
+                shortcut={stopControl.enabled && inputFocused && !inputComposing && !commands.open}
+              />
+            )}
           </div>
         </div>
       </form>

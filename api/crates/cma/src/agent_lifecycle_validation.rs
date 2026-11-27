@@ -1,4 +1,4 @@
-use crate::store::{LifecycleBehavior, LifecycleLease};
+use crate::store::LifecycleBehavior;
 use layer1_public::rest::{
     AgentLifecycleCreateRequest, AgentLifecyclePermissions, AgentLifecycleProfile,
     AgentLifecycleProvisioningError,
@@ -8,6 +8,14 @@ use layer2_core::profiles::{
 };
 use layer2_core::sandbox::{AgentServiceError, SandboxServiceError, WorkspaceServiceError};
 use url::Url;
+
+#[path = "agent_lifecycle_validation/setup.rs"]
+mod setup;
+#[cfg(test)]
+pub(super) use setup::first_message;
+pub(super) use setup::{
+    admitted_first_message, first_message_purpose, public_repository_setup_message, setup_message,
+};
 
 pub(super) fn initial_title(request: &AgentLifecycleCreateRequest) -> Option<String> {
     match request.title_mode {
@@ -78,6 +86,17 @@ pub(super) fn validate_request(
         }
     }
     if let Some(repository) = &request.repository {
+        if repository.connection_id.as_ref().is_some_and(|id| {
+            id.is_empty()
+                || id.len() > 128
+                || !id
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+        }) {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "GitHub connection id is invalid".into(),
+            ));
+        }
         let parsed = Url::parse(&repository.url).map_err(|_| {
             AgentLifecycleProvisioningError::Invalid("repository URL is invalid".into())
         })?;
@@ -235,14 +254,36 @@ pub(super) fn services_for(
 pub(super) fn repository_location(
     request: &AgentLifecycleCreateRequest,
     behavior: LifecycleBehavior,
+    operation_id: &str,
 ) -> Result<WorkspaceLocation, AgentLifecycleProvisioningError> {
-    if request.initial_message.is_some() {
-        if let Some(repository) = &request.repository {
-            return Ok(WorkspaceLocation::RepositorySnapshot {
-                url: repository.url.clone(),
-                reference: repository.reference.clone(),
-            });
+    if behavior == LifecycleBehavior::PublicRepository {
+        let repository = request
+            .repository
+            .as_ref()
+            .ok_or(AgentLifecycleProvisioningError::Unavailable)?;
+        let commit = repository
+            .reference
+            .clone()
+            .ok_or(AgentLifecycleProvisioningError::Unavailable)?;
+        if layer3_adapter::public_repository_archive_url(&repository.url, &commit).is_none() {
+            return Err(AgentLifecycleProvisioningError::Unavailable);
         }
+        return Ok(WorkspaceLocation::PublicRepositorySnapshot {
+            url: repository.url.clone(),
+            commit,
+            operation_id: operation_id.into(),
+        });
+    }
+    if let Some(repository) = request
+        .repository
+        .as_ref()
+        .filter(|repository| request.initial_message.is_some() || repository.operation.is_some())
+    {
+        return Ok(WorkspaceLocation::RepositorySnapshot {
+            url: repository.url.clone(),
+            reference: repository.reference.clone(),
+            connection_id: repository.connection_id.clone(),
+        });
     }
     if behavior == LifecycleBehavior::Legacy {
         if let Some(repository) = &request.repository {
@@ -257,65 +298,14 @@ pub(super) fn repository_location(
     })
 }
 
-pub(super) fn setup_message(request: &AgentLifecycleCreateRequest) -> String {
-    let mut message = if request.repository.is_some() {
-        first_message(request)
-    } else {
-        "You are running in a CMA workspace. Preserve existing files and changes. This is local workspace readiness only; no repository or external-service task has been requested. Do not probe GitHub or other optional services, or request access merely for readiness. Briefly report readiness and wait for the user's next task. For a later user task, request access only when that task requires it.".into()
-    };
-    if request.machine_included {
-        message.push_str(" This Sandbox also includes a shared Linux desktop on DISPLAY=:99 with Chromium already open. The owner sees and controls that same display in CMA. For requested desktop tasks, use your existing shell tools with xdotool for pointer/keyboard input and scrot plus your image-viewing tool to inspect screenshots. Preserve the existing browser profile and use the visible Chromium window. X11 window searches may not find native Wayland browser windows. Run /usr/local/bin/cma-desktop-session --browser to reopen or focus it; this command waits for a visible browser window and returns while the desktop keeps the browser open. Check its exit status before continuing; a nonzero status means startup or readiness failed. Report only observed desktop results; wait for a user task before interacting with the desktop.");
-    }
-    message
-}
-
-pub(super) fn admitted_first_message(input: &crate::store::LifecycleInput) -> Option<String> {
-    if let Some(message) = &input.request.initial_message {
-        return Some(message.clone());
-    }
-    (input.behavior == LifecycleBehavior::PromptRepository).then(|| {
-        input
-            .setup_message
-            .clone()
-            .unwrap_or_else(|| first_message(&input.request))
-    })
-}
-
-pub(super) fn first_message_purpose(
-    request: &AgentLifecycleCreateRequest,
-) -> layer2_core::sandbox::FirstMessagePurpose {
-    if request.initial_message.is_some() {
-        layer2_core::sandbox::FirstMessagePurpose::Task
-    } else {
-        layer2_core::sandbox::FirstMessagePurpose::Setup
-    }
-}
-
-// Freeze these bytes for operations admitted before setup messages were captured.
-pub(super) fn first_message(request: &AgentLifecycleCreateRequest) -> String {
-    let mut message =
-        "You are running in a CMA workspace. Preserve existing files and changes. ".to_string();
-    message.push_str("For GitHub tasks, use gh api through CMA's api-github (GitHub OAuth) service. Use API source checkout instead of gh repo clone. ");
-    if let Some(repository) = &request.repository {
-        // JSON quotation keeps user supplied URL/ref data distinct from instructions.
-        let repository = serde_json::to_string(repository).expect("repository is serializable");
-        message.push_str(&format!("The user selected this GitHub repository: {repository}. Prepare its source in your current workspace. "));
-        message.push_str("Honor the requested ref; when absent, read default_branch from GET /repos/{owner}/{repo}. Resolve the ref through the commits API and pin the returned commit SHA. Download /repos/{owner}/{repo}/tarball/{sha} with gh api and safely stage its source; preserve existing files, local changes and .git metadata. Initialize a local Git repository only if the destination is not already in one. Report the source commit and readiness. ");
-    } else {
-        message.push_str("Keep this workspace ready for the user's next task. ");
-    }
-    message.push_str("When the user asks to create a repository, use POST /user/repos or /orgs/{org}/repos with the intended owner and visibility; do not create one during this readiness step. Use Contents or Git Data APIs for requested publication, updating refs without force. ");
-    message.push_str("If GitHub access is missing, request api-github through agent_key_scope_revision; use the same MCP tool for other missing NyxID services. Do not ask the user to paste a secret. Wait for CMA's confirmed update before retrying; no Sandbox restart is needed. Briefly report readiness or the required access.");
-    message
-}
-
 pub(super) fn sandbox_error(error: SandboxServiceError) -> AgentLifecycleProvisioningError {
     match error {
         SandboxServiceError::Forbidden => AgentLifecycleProvisioningError::Forbidden,
-        SandboxServiceError::SandboxLimitReached { limit, live } => {
+        SandboxServiceError::SandboxLimitReached { limit, live, usage } => {
             AgentLifecycleProvisioningError::SandboxLimitReached {
                 limit,
                 live: u64::from(live),
+                quota_usage: Some(usage),
             }
         }
         SandboxServiceError::NameConflict
@@ -420,64 +410,6 @@ pub(super) fn operation_error(error: layer2_core::StoreError) -> AgentLifecycleP
     }
 }
 
-pub(super) async fn create_sandbox_with_fence(
-    service: &layer2_core::sandbox::SandboxService,
-    caller: &layer2_core::Caller,
-    profile: layer2_core::profiles::SandboxProfileRef,
-    agent_name: &str,
-    lease: &LifecycleLease,
-    creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
-) -> Result<layer2_core::sandbox::Sandbox, SandboxServiceError> {
-    let mut request = layer2_core::sandbox::CreateSandbox {
-        profile,
-        name: Some(sandbox_name(agent_name, &lease.id)),
-        confirmed_digest: None,
-        origin: layer2_core::sandbox::SandboxOrigin::Lifecycle {
-            operation_id: lease.id.clone(),
-        },
-    };
-    match service
-        .create_for_lifecycle_with_lease(
-            caller,
-            request.clone(),
-            &lease.token,
-            creation_fence.clone(),
-        )
-        .await
-    {
-        // A pre-update worker may have committed the old name, then lost the
-        // response before persisting its child ID. Replay still verifies the
-        // exact owner, operation, profile and historical name in the service.
-        Err(SandboxServiceError::SandboxOriginConflict) => {
-            request.name = Some(legacy_sandbox_name(agent_name));
-            service
-                .create_for_lifecycle_with_lease(caller, request, &lease.token, creation_fence)
-                .await
-        }
-        result => result,
-    }
-}
-
-fn legacy_sandbox_name(agent_name: &str) -> String {
-    let mut end = agent_name.len().min(56);
-    while !agent_name.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{} sandbox", &agent_name[..end])
-}
-
-fn sandbox_name(agent_name: &str, operation_id: &str) -> String {
-    // The durable operation's full UUID keeps repeated titles distinct and a
-    // lost admission response replayable. Reserve its bytes before truncating
-    // the display prefix to the Sandbox's 64-byte name limit.
-    let suffix = format!(" sandbox {operation_id}");
-    let mut end = agent_name.len().min(64_usize.saturating_sub(suffix.len()));
-    while !agent_name.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}{suffix}", &agent_name[..end])
-}
-
 pub(super) fn profile_error(
     error: layer2_core::profiles::ProfileCreationError,
 ) -> AgentLifecycleProvisioningError {
@@ -493,7 +425,3 @@ pub(super) fn profile_error(
         _ => AgentLifecycleProvisioningError::Invalid(error.to_string()),
     }
 }
-
-#[cfg(test)]
-#[path = "agent_lifecycle_sandbox_name_tests.rs"]
-mod sandbox_name_tests;

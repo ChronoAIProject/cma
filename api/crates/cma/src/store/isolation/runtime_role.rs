@@ -8,7 +8,12 @@ pub(super) fn role_with_index_operation(
 ) -> Document {
     let mut grants: Vec<_> = COLLECTIONS
         .iter()
-        .filter(|name| ![retained_consents::COLLECTION, MEASURED_CUSTODY].contains(name))
+        .filter(|name| {
+            !MEASURED_APPEND_ONLY.contains(name)
+                && **name != retained_consents::COLLECTION
+                && **name != MEASURED_MANIFESTS
+                && **name != USAGE_PROJECTIONS
+        })
         .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
         .map(|name| {
             let mut actions = ACTIONS.to_vec();
@@ -27,10 +32,14 @@ pub(super) fn role_with_index_operation(
         );
     }
     if include_optional {
+        grants.push(doc! {"resource":{"db":database,"collection":USAGE_PROJECTIONS},"actions":USAGE_PROJECTION_ACTIONS});
         // Detached legal receipts have no account or Sandbox selector. Their
         // writer can create the namespace and append receipts only.
         grants.push(doc! {"resource":{"db":database,"collection":retained_consents::COLLECTION},"actions":retained_consents::ACTIONS});
-        grants.push(doc! {"resource":{"db": database,"collection": MEASURED_CUSTODY},"actions": MEASURED_CUSTODY_ACTIONS});
+        grants.push(doc! {"resource":{"db":database,"collection":MEASURED_MANIFESTS},"actions":MEASURED_MANIFEST_ACTIONS});
+        for &collection in MEASURED_APPEND_ONLY {
+            grants.push(doc! {"resource":{"db": database,"collection": collection},"actions": MEASURED_CUSTODY_ACTIONS});
+        }
     }
     grants.push(doc! {"resource":{"db":database,"collection":""},"actions":["listCollections"]});
     doc! {"createRole":"cma_am_runtime","privileges":grants,"roles":[]}

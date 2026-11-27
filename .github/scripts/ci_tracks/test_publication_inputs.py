@@ -5,7 +5,7 @@ import unittest
 
 import batch_selection
 from image_inputs import changed_input_maps
-from publication_inputs import CONTRACT_FILES, CONTRACT_IMAGES
+from publication_inputs import CONTRACT_FILES, CONTRACT_IMAGES, RECIPE, contract_images
 from selection_cache import SelectionCache
 import selection
 import test_batch_selection
@@ -31,6 +31,7 @@ PUBLISHER_PATHS = (
     '.github/scripts/staging_cd_publication_diagnostics.py',
     '.github/scripts/staging_cd_build.py',
     '.github/scripts/staging_cd_build_cache.py',
+    '.github/scripts/staging_cd_cache_compaction.py',
     '.github/scripts/staging_cd_registry.py',
     '.github/scripts/staging_cd_contract.py',
     '.github/scripts/staging_cd_compatibility.py',
@@ -66,6 +67,16 @@ class PublicationInputsTests(unittest.TestCase):
                          sorted(CONTRACT_IMAGES | {'cma-web'}))
         self.assertEqual(len(CONTRACT_FILES), 2)
 
+    def test_snapshot_exemption_requires_one_global_default_and_an_identical_recipe(self):
+        old = 'ARG DEBIAN_SNAPSHOT=20261123T154646Z\n'
+        new = 'ARG DEBIAN_SNAPSHOT=20261124T215723Z\n'
+        stage = 'FROM scratch\n'
+        for before, after in ((stage + old, stage + new),
+                              (old + old + stage, new + old + stage),
+                              (old + stage, new + stage + 'RUN true\n')):
+            with self.subTest(before=before, after=after):
+                self.assertEqual(contract_images([RECIPE], lambda: (before, after)), CONTRACT_IMAGES)
+
     def test_unrelated_ci_tests_docs_and_similar_paths_do_not_publish(self):
         self.assertEqual(self.selected(
             '.github/workflows/ci.yml', '.github/workflows/ci-images.yml',
@@ -73,7 +84,7 @@ class PublicationInputsTests(unittest.TestCase):
             '.github/scripts/image-scanner-policy-tests.py',
             '.github/scripts/staging_cd_publication_cache_tests.py',
             '.github/scripts/image_secret_gate_tests.py',
-            '.github/scripts/image-manager-mongo-contract.py',
+            '.github/scripts/authenticated-mongo-contract.sh',
             '.github/workflows/staging-release.yml.notes',
             'api/crates/layer3-adapter/runtime-versions.json.notes',
             'README.md'), [])
@@ -92,6 +103,49 @@ class PublicationHistoryTests(unittest.TestCase):
     pin_recipes = test_batch_selection.BatchTests.pin_recipes
     git = test_batch_selection.BatchTests.git
     commit = test_batch_selection.BatchTests.commit
+
+    def test_runtime_packaging_changes_do_not_force_an_am_publication(self):
+        seed = (self.root / RECIPE).read_text()
+        labels = ('LABEL dev.chrono.cma.runtime-contract=3 '
+                  'dev.chrono.cma.runtime-bootstrap=1 dev.chrono.cma.home-layout=2\n')
+        seed = seed.replace('FROM runtime AS omarchy\n', 'FROM scratch AS omarchy\n' + labels)
+        seed = seed.replace('FROM runtime AS default-runtime\n', 'FROM runtime AS default-runtime\n' + labels)
+        previous_snapshot = 'ARG DEBIAN_SNAPSHOT=20261123T154646Z\n'
+        current_snapshot = 'ARG DEBIAN_SNAPSHOT=20261124T215723Z\n'
+        self.write('.dockerignore', RECIPE + '\n')
+        self.write(RECIPE, previous_snapshot + seed)
+        self.pin_recipes()
+        baseline = self.commit()
+
+        recipe = current_snapshot + seed
+        self.write(RECIPE, recipe)
+        self.pin_recipes()
+        packaging = self.commit()
+        # The Standard target still declares the label after Omarchy loses it.
+        self.write(RECIPE, recipe.replace('dev.chrono.cma.runtime-bootstrap=1 ', '', 1))
+        self.pin_recipes()
+        missing_target_label = self.commit()
+        self.write(RECIPE, recipe.replace('runtime-contract=3', 'runtime-contract=4'))
+        self.pin_recipes()
+        transition = self.commit()
+        self.write(RECIPE, recipe + 'LABEL dev.chrono.cma.runtime-contract=5\n')
+        self.pin_recipes()
+        ambiguous = self.commit()
+
+        revisions = [packaging, missing_target_label, transition, ambiguous]
+        expected = [sorted(CONTRACT_IMAGES - {'cma-agent-manager'}),
+                    sorted(CONTRACT_IMAGES), sorted(CONTRACT_IMAGES), sorted(CONTRACT_IMAGES)]
+        cache = SelectionCache(self.root / 'cache', 'e' * 64)
+        batch = batch_selection.determine_many(self.root, revisions, cache)
+        for head, actual, deployables in zip(revisions, batch, expected):
+            push = selection.determine(self.root, {'after': head}, 'push')
+            event = {'pull_request': {'base': {'sha': baseline}, 'head': {'sha': head}}}
+            pull = selection.determine(self.root, event, 'pull_request')
+            self.assertEqual(push, actual)
+            self.assertEqual(pull['deployables'], deployables)
+            self.assertEqual(actual['deployables'], deployables)
+            baseline = head
+        self.assertEqual(batch_selection.determine_many(self.root, revisions, cache), batch)
 
     def test_add_rename_delete_policy_agrees_for_pr_push_batch_and_warm_cache(self):
         base = self.third

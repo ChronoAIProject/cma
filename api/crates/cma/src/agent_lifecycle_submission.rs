@@ -57,6 +57,16 @@ impl InlineAgentLifecycle {
             return Err(AgentLifecycleProvisioningError::Unavailable);
         }
         self.require_task_experience(caller, &request)?;
+        if request.repository.as_ref().is_some_and(|repository| {
+            repository.operation.is_some() || repository.connection_id.is_some()
+        }) && (self.managed_repository_preflight.get() != Some(&true)
+            || request.sandbox_id.is_some()
+            || request.workspace_id.is_some())
+        {
+            return Err(AgentLifecycleProvisioningError::Invalid(
+                "A selected GitHub connection or operation requires managed repository setup in a new Sandbox.".into(),
+            ));
+        }
         if request.sandbox_id.is_some() {
             self.contextual_sandbox(caller, context.map(|context| &context.actor), &request)
                 .await?;
@@ -66,9 +76,11 @@ impl InlineAgentLifecycle {
                 .await?;
         }
         let profile = request.profile.clone().unwrap_or_default();
-        let instructions = guidance::admission_instructions(
-            self.session_guidance_v4.get().copied().unwrap_or_default(),
-        );
+        let instructions = self
+            .session_guidance
+            .get()
+            .copied()
+            .unwrap_or_else(guidance::managed_v3);
         agent_content(&guidance::profile_with_instructions(
             profile.clone(),
             Some(instructions),

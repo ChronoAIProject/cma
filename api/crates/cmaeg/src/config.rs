@@ -34,7 +34,10 @@ pub use cache::*;
 pub use console::*;
 pub use delivery::*;
 pub use ingress::*;
-pub(crate) use management::{channel_mutation_custody_enabled, cma_record_origin_aliases};
+pub(crate) use management::{
+    channel_cancel_create_enabled, channel_create_fence_required, channel_mutation_custody_enabled,
+    cma_record_origin_aliases,
+};
 pub use media::{
     MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
     CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,
@@ -168,6 +171,7 @@ pub struct Config {
     /// Allows new thread contracts only after every reader supports them.
     pub thread_contract_writes_enabled: bool,
     pub multi_consumer_writes_enabled: bool,
+    pub profile_revisions_enabled: bool,
     pub dynamic_sources_writes_enabled: bool,
     pub relay_raw_verification_writes_enabled: bool,
     pub lark_resource_writes_enabled: bool,
@@ -296,6 +300,9 @@ impl Config {
             )?,
             thread_contract_writes_enabled: routing::write_flag(
                 "CMAEG_THREAD_CONTRACT_WRITES_ENABLED",
+            )?,
+            profile_revisions_enabled: routing::write_flag(
+                "CMAEG_CHANNEL_PROFILE_REVISIONS_ENABLED",
             )?,
             multi_consumer_writes_enabled: routing::write_flag(
                 "CMAEG_MULTI_CONSUMER_WRITES_ENABLED",

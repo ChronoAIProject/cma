@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use layer1_public::rest::admin::warm_pools::{ResizeWarmPoolBody, WarmPoolError};
 use layer2_core::StoreError;
-use layer3_adapter::agent_sandbox::NativePoolBinding;
+use layer3_adapter::agent_sandbox::{NativePoolBinding, NativePoolConfiguration, NativePoolDrain};
 use mongodb::{
     bson::{doc, DateTime, Document},
     options::{IndexOptions, ReturnDocument},
@@ -75,6 +75,8 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         || target.revision < 1
         || target.applied_revision < 0
         || target.applied_revision > target.revision
+        || (target.machine_plan_activated_at.is_some()
+            && (!target.machine || target.activated_at.is_none()))
         || (target.retired && !target.retiring)
         || (target.retiring && target.target_replicas != 0)
         || target.target_replicas > 1000
@@ -132,6 +134,44 @@ impl PoolTargetStore for MongoNativeWarmPools {
     async fn activate(&self, id: &str) -> Result<(), WarmPoolError> {
         retirement::activate(self, id).await
     }
+    async fn default_pin_conflicts(
+        &self,
+        plan: &NativePoolConfiguration,
+        machine: bool,
+    ) -> Result<bool, WarmPoolError> {
+        let mut scope = self.scope();
+        scope.insert("plan.config_sha256", &plan.config_sha256);
+        let exact = self
+            .targets
+            .find_one(scope)
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        if let Some(exact) = exact.map(validate).transpose()? {
+            if exact.machine != machine || exact.retiring || exact.retired {
+                return Ok(true);
+            }
+            if machine && exact.activated_at.is_some() {
+                let mut scope = retirement::release_scope(self, true);
+                scope.insert("activated_at", doc! {"$type": "date"});
+                let latest = self
+                    .targets
+                    .find_one(scope)
+                    .sort(retirement::release_order(true))
+                    .await
+                    .map_err(|_| WarmPoolError::Unavailable)?;
+                if latest.is_some_and(|row| {
+                    row.machine_plan_activated_at.is_some() && row.id != exact.id
+                }) {
+                    return Ok(true);
+                }
+            }
+        }
+        match self.verify_bootstrap(machine, &plan.spec.image.uri).await {
+            Ok(()) => Ok(false),
+            Err(WarmPoolError::Conflict) => Ok(true),
+            Err(error) => Err(error),
+        }
+    }
     async fn retirement_homes(
         &self,
         target: &PoolTarget,
@@ -144,7 +184,7 @@ impl PoolTargetStore for MongoNativeWarmPools {
         &self,
         target: &PoolTarget,
         image: &str,
-    ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
         let durable = self.current_retirement_image(target, image).await?;
         retirement::drain_homes(self, target, &durable).await
     }

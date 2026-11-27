@@ -18,6 +18,9 @@ on:
       release_set:
         required: true
         type: string
+      pointer_evidence:
+        required: false
+        type: string
       infra_ref:
         required: true
         type: string
@@ -44,6 +47,7 @@ jobs:
     # reproduction, checkout and cleanup.
     timeout-minutes: 75
     permissions:
+      id-token: write
       contents: read
       actions: read
     outputs:
@@ -71,13 +75,21 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_RELEASE_SET: ${{ inputs.release_set }}
+          CD_APPROVED_POINTER_EVIDENCE: ${{ inputs.pointer_evidence }}
+          CD_RUNTIME_POINTER_PUBLICATION_ENABLED: ${{ vars.CMA_PRODUCTION_RUNTIME_POINTER_PUBLICATION_ENABLED }}
+          CD_RUNTIME_POINTER_STAGING_QUALIFICATION: ${{ vars.CMA_RUNTIME_POINTER_STAGING_QUALIFICATION }}
         run: python3 -B .github/scripts/prod_cd_select.py
       - name: Restore public tool download cache
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        id: public-tools-cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        continue-on-error: true
         timeout-minutes: 1
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
           key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+      - name: Discard an incomplete public tool cache restore
+        if: steps.public-tools-cache.outcome != 'success' || steps.public-tools-cache.outputs.cache-hit != 'true'
+        run: rm -rf -- "${RUNNER_TEMP:?}/cma-public-tool-cache"
       - name: Prepare isolated deployment tools
         env:
           CD_STARTED_AT: ${{ steps.release.outputs.started_at }}
@@ -86,7 +98,7 @@ jobs:
       - name: Create restricted infrastructure reader token
         id: infra-token
         continue-on-error: true
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
           private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
@@ -96,7 +108,7 @@ jobs:
       - name: Retry restricted infrastructure reader token
         id: infra-token-retry
         if: steps.infra-token.outcome == 'failure'
-        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        uses: actions/create-github-app-token@f418cff399f7aef4c2f0ad47e25ca7a6abbdd6fc
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
           private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
@@ -143,6 +155,10 @@ jobs:
           CD_INFRA_REF: ${{ steps.private.outputs.revision }}
           CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
           CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+          CD_RUNTIME_POINTER_PUBLICATION_ENABLED: ${{ vars.CMA_PRODUCTION_RUNTIME_POINTER_PUBLICATION_ENABLED }}
+          CD_RUNTIME_POINTER_PROOF_PUBLIC_KEY: ${{ vars.CMA_PRODUCTION_RUNTIME_POINTER_PROOF_PUBLIC_KEY }}
+          CD_RUNTIME_POINTER_READ_TOKEN: ${{ github.token }}
+          CD_RUNTIME_POINTER_TOKEN: ${{ secrets.CD_RUNTIME_POINTER_TOKEN }}
         run: '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_invoke.py'
       - name: Verified production receipts ${{ steps.coordinate.outputs.controller_proof }}
         if: always() && !cancelled() && steps.coordinate.outputs.controller_proof != ''
@@ -174,7 +190,7 @@ jobs:
       - name: Retain sanitized component deployment outcomes
         id: evidence
         continue-on-error: true
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: prod-deployment-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/public-deployment/deployment.json
@@ -183,7 +199,7 @@ jobs:
           overwrite: true
       - name: Retry retaining sanitized component deployment outcomes
         if: steps.evidence.outcome == 'failure'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: prod-deployment-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/public-deployment/deployment.json

@@ -17,8 +17,11 @@ impl SandboxWorker {
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         if let Some(failure) = self.prepare_retirement_cleanup(&mut sandbox, now).await? {
+            self.suspend_credential_blocked_retirement(&mut sandbox, &failure)
+                .await?;
             return self.retry_failure(sandbox, failure, now).await;
         }
+        let funding_completion = sandbox.clone();
         let timing = TeardownTiming::new(&sandbox.id, sandbox.work.attempts);
         // Suspension may have reached Kubernetes before its database acknowledgement.
         // Native deletion proves CRD and Pod absence without a running process.
@@ -116,7 +119,7 @@ impl SandboxWorker {
         if let Err(error) = timing
             .observe(
                 Phase::Funding,
-                self.funding.settle(&sandbox, now),
+                self.funding.settle(&funding_completion, now),
                 funding_outcome,
             )
             .await

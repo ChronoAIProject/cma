@@ -3,7 +3,11 @@ use super::{
     definition::{build_definition, channel_pointer, ChannelCreateRequest},
     management::*,
 };
-use crate::{auth::Creator, providers::BindingResponse, records::RecordError};
+use crate::{
+    auth::Creator,
+    providers::BindingResponse,
+    records::{CreateConnectionClaim, RecordError},
+};
 use cmaeg_core::{
     channel::{ChannelCreation, ChannelDefinition, ChannelMutationKind, ConformanceLevel},
     ids::{BindingId, RecordId},
@@ -25,11 +29,12 @@ pub(super) fn require_ready(definition: &ChannelDefinition) -> Result<(), Manage
     Ok(())
 }
 
-pub async fn create(
+pub(super) async fn create(
     state: &ManagementState,
     creator: &Creator,
     request: ChannelCreateRequest,
     record_id: RecordId,
+    claim: Option<&CreateConnectionClaim>,
 ) -> Result<CreatedChannel, ManagementError> {
     custom_attachments_allowed(state, &request.sources)?;
     let uuid = uuid::Uuid::parse_str(record_id.as_str()).map_err(|_| {
@@ -87,7 +92,7 @@ pub async fn create(
             let blob = seal_definition(&state.master_keys, &definition)?;
             match state
                 .records
-                .put(&record_id, &creator.subject, &blob, None)
+                .reserve_channel(&record_id, creator, &blob, claim)
                 .await
             {
                 Ok(version) => {
@@ -122,7 +127,14 @@ pub async fn create(
         });
     }
     if creation.ready {
-        return Ok(completed(current));
+        return if current.create_replayable() {
+            Ok(completed(current))
+        } else {
+            Err(ManagementError::Conflict {
+                expected: 0,
+                actual: Some(current.record.version),
+            })
+        };
     }
     super::github_sources::validate(state, None, &current.definition).await?;
     super::custom_execution::validate_providers(&state.providers, &current.definition)?;
@@ -232,11 +244,12 @@ pub async fn create(
                 // conflict with a provider outage or prove creation succeeded.
                 return Err(error);
             };
-            if retained
-                .definition
-                .creation
-                .as_ref()
-                .is_some_and(|value| value.ready && value.fingerprint == fingerprint)
+            if retained.create_replayable()
+                && retained
+                    .definition
+                    .creation
+                    .as_ref()
+                    .is_some_and(|value| value.fingerprint == fingerprint)
             {
                 return Ok(completed(retained));
             }

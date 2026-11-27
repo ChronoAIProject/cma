@@ -42,6 +42,7 @@ export function AgentSidePanel({
   panel,
   onClose,
   onAccessChanged,
+  beginFileDownload,
   onOpenSandbox,
   pending,
   historyLoading,
@@ -63,14 +64,15 @@ export function AgentSidePanel({
   readonly detail?: AgentDetail;
   readonly panel: AgentPanel;
   readonly onClose: () => void;
-  readonly onAccessChanged: () => void;
+  readonly onAccessChanged: (downloadMessage?: string) => void;
+  readonly beginFileDownload?: () => (message: string) => void;
   readonly onOpenSandbox?: () => void;
   readonly pending?: AgentCommand;
   readonly historyLoading?: boolean;
   readonly controlReady?: boolean;
   readonly publicationScope: ArtifactPublicationScope;
   readonly conversation?: ConversationState;
-  readonly onSelect?: (panel: AgentPanel) => void;
+  readonly onSelect?: (panel: AgentPanel, expected?: AgentPanel) => void;
   readonly observation?: AgentComputerObservation;
   readonly viewerId?: string;
 }) {
@@ -148,7 +150,8 @@ export function AgentSidePanel({
   const historyLoaded =
     !historyLoading && (conversation !== undefined || observed?.historyLoaded === true);
   useEffect(() => {
-    if (historyLoaded && panel === 'activity' && !terminalAvailable) onSelect?.('browser');
+    if (historyLoaded && panel === 'activity' && !terminalAvailable)
+      onSelect?.('browser', 'activity');
   }, [historyLoaded, panel, terminalAvailable, onSelect]);
   const lastScreen = [...(operations?.toolCalls ?? [])]
     .reverse()
@@ -165,10 +168,13 @@ export function AgentSidePanel({
   );
   const authorized = access.state.status === 'ready' ? access.state.value.access : undefined;
   const reloadAccess = access.reload;
-  const accessChanged = useCallback(() => {
-    reloadAccess();
-    onAccessChanged();
-  }, [reloadAccess, onAccessChanged]);
+  const accessChanged = useCallback(
+    (downloadMessage?: string) => {
+      reloadAccess();
+      onAccessChanged(downloadMessage);
+    },
+    [reloadAccess, onAccessChanged],
+  );
   const mayRead =
     computerOpen &&
     !lifecycleHeld &&
@@ -348,8 +354,9 @@ export function AgentSidePanel({
           {visited && mayRetain && client.files ? (
             <FileExplorer
               initialDirectory={homeFilePath(workingDirectory ?? '')}
+              navigationMemory={currentObservation?.fileNavigation}
               changes={changedFiles(operations?.toolCalls, workingDirectory)}
-              key={`${agentId}:${shared}:${subject}:${visitedScope?.generation}`}
+              key={`${agentId}:${shared}:${subject}:${currentObservation?.scope.authEpoch}:${visitedScope?.generation}`}
               panel
               embedded
               active={mayRead}
@@ -358,6 +365,7 @@ export function AgentSidePanel({
               readOnly={!mayWrite}
               onClose={onClose}
               onAccessChanged={accessChanged}
+              beginDownload={shared ? beginFileDownload : undefined}
             />
           ) : filesOpen ? (
             <aside className="agent-files-panel" aria-label="Agent files">

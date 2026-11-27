@@ -12,6 +12,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod access_migration;
 mod access_origins;
+pub(crate) use access_origins::retained as parse_agent_access_retained_origins;
 mod access_snapshot;
 mod activity;
 mod lifecycle_failure;
@@ -31,7 +32,7 @@ mod global_admission;
 mod http_connections;
 mod provider_tool_relay;
 mod public_owner_sandbox_limit;
-pub(crate) use access_migration::AgentAccessMigration;
+pub(crate) use access_migration::{parse as parse_agent_access_migration, AgentAccessMigration};
 #[cfg(test)]
 pub(crate) use anonymous_public::AnonymousPublicConfig;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
@@ -47,23 +48,25 @@ mod public_streams;
 mod rate_default_lease;
 mod rate_limits;
 pub use rate_limits::RateLimitConfig;
+mod open_reply_loss;
 mod relay_capacity;
 mod runtime;
+pub(crate) use runtime::deployment_id_from_lookup;
 mod runtime_capacity;
 mod runtime_migration;
 mod shell_settings;
 pub(crate) use relay_capacity::RelayCapacityConfig;
 pub(crate) use shell_settings::BackendFreeConfig;
 
+mod feature_switches;
 mod features;
 mod quiet_output;
 pub(crate) mod task_audit;
 mod task_experience;
+pub(crate) use cma_am_auth::service_config::ServiceAuthorizationConfig;
 pub(crate) use features::home_backup::HomeBackupConfig;
-pub(crate) use features::FeatureFlags;
-mod service_authorization;
+pub(crate) use features::{FeatureFlags, ManagedMachineUpdates};
 pub(crate) use gateway::GatewayConfig;
-pub(crate) use service_authorization::ServiceAuthorizationConfig;
 mod bot_father;
 mod browser_session;
 mod documents;
@@ -174,9 +177,6 @@ pub struct Config {
     pub agent_access_retained_origins: Vec<String>,
     pub(crate) agent_access_transport_migration: Option<AgentAccessMigration>,
     pub(crate) provider_tool_relay: Option<ProviderToolRelay>,
-    /// Base URL for the independently deployed Image Manager service.  CMA
-    /// only uses it with the request's delegated user credential.
-    pub image_manager_base_url: String,
     pub nyxid_public_url: Option<String>,
     pub nyxid_service_id: Option<String>,
     pub nyxid_oauth_api_resource: Option<String>,
@@ -205,6 +205,8 @@ pub struct Config {
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
+    pub(crate) public_repository_verified_runtime_images: BTreeSet<String>,
+    pub(crate) public_repository_snapshot_enabled: bool,
     pub auth_mode: AuthMode,
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
@@ -235,8 +237,9 @@ impl StartupConfig {
     }
 
     pub(crate) fn from_lookup(
-        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        lookup: impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
+        let mut lookup = feature_switches::with_bundle(lookup)?;
         match runtime::RuntimeMode::from_lookup(&mut lookup)? {
             runtime::RuntimeMode::Execution(provider) => Config::with_provider(lookup, provider)
                 .map(|config| Self::Execution(Box::new(config))),
@@ -244,6 +247,22 @@ impl StartupConfig {
                 .map(|config| Self::BackendFree(Box::new(config))),
         }
     }
+}
+
+fn parse_public_repository_images(raw: Option<String>) -> Result<BTreeSet<String>, String> {
+    let mut images = BTreeSet::new();
+    for image in raw
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .into_iter()
+        .flat_map(|value| value.split(','))
+    {
+        if !crate::agent_lifecycle::valid_immutable_image(image) || !images.insert(image.to_owned())
+        {
+            return Err("CHRONO_PUBLIC_REPOSITORY_VERIFIED_RUNTIME_IMAGES requires unique immutable image references".into());
+        }
+    }
+    Ok(images)
 }
 
 impl Config {
@@ -255,14 +274,14 @@ impl Config {
 
     #[cfg(test)]
     fn from_lookup(
-        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        lookup: impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
-        let runtime::RuntimeMode::Execution(provider) =
-            runtime::RuntimeMode::from_lookup(&mut lookup)?
-        else {
-            return Err("an execution backend is required for runtime configuration".into());
-        };
-        Self::with_provider(lookup, provider)
+        match StartupConfig::from_lookup(lookup)? {
+            StartupConfig::Execution(config) => Ok(*config),
+            StartupConfig::BackendFree(_) => {
+                Err("an execution backend is required for runtime configuration".into())
+            }
+        }
     }
 
     fn with_provider(
@@ -286,14 +305,6 @@ impl Config {
         {
             return Err("CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION origin must match CHRONO_SERVER_PUBLIC_URL".into());
         }
-        let image_manager_base_url = parse_service_base_url(
-            "CHRONO_IMAGE_MANAGER_BASE_URL",
-            &value_or(
-                &mut lookup,
-                "CHRONO_IMAGE_MANAGER_BASE_URL",
-                &format!("{}/api/image-manager", public_url.trim_end_matches('/')),
-            )?,
-        )?;
         let features = FeatureFlags::from_lookup(&mut lookup)?;
         if features.home_backup_expiry_enabled {
             return Err("CHRONO_HOME_BACKUP_EXPIRY_ENABLED requires a qualified deletion provider; retention preparation cannot be enabled".into());
@@ -377,7 +388,6 @@ impl Config {
             agent_access_retained_origins,
             agent_access_transport_migration,
             provider_tool_relay,
-            image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
             nyxid_oauth_api_resource: oauth_resource::parse(lookup(
@@ -407,6 +417,13 @@ impl Config {
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?
                 .filter(|value| !value.is_empty()),
+            public_repository_snapshot_enabled: features::flag(
+                &mut lookup,
+                "CHRONO_PUBLIC_REPOSITORY_SNAPSHOT_ENABLED",
+            )?,
+            public_repository_verified_runtime_images: parse_public_repository_images(lookup(
+                "CHRONO_PUBLIC_REPOSITORY_VERIFIED_RUNTIME_IMAGES",
+            )?)?,
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
@@ -432,9 +449,9 @@ impl Config {
 #[path = "config_validation.rs"]
 mod validation;
 use validation::{
-    parse_canonical_https_origin, parse_networks, parse_service_base_url, parse_service_ids,
-    parse_u64, parse_usize, positive_u32, required, strict_env, validate_cloudflare_networks,
-    validate_mongodb_uri, validate_origin, value_or,
+    parse_canonical_https_origin, parse_networks, parse_service_ids, parse_u64, parse_usize,
+    positive_u32, required, strict_env, validate_cloudflare_networks, validate_mongodb_uri,
+    validate_origin, value_or,
 };
 
 #[cfg(test)]

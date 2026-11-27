@@ -8,6 +8,7 @@ use std::{
 };
 use tokio::time::Instant;
 
+mod acquisition_custody;
 mod durable;
 mod support;
 use support::{assigned, close, manager, Receiver, Store};

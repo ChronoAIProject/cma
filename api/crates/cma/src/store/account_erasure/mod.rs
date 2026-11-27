@@ -12,6 +12,7 @@ mod batches;
 pub(crate) mod catalog;
 mod context;
 mod drain_qualification;
+pub(in crate::store) mod erase_source_log;
 mod guards;
 mod identity_activity;
 mod identity_refs;
@@ -192,6 +193,7 @@ pub(crate) struct Cursor {
     // A rescan marker only: authorization always requires a fresh receipt.
     allocation_absent: Option<bool>,
     observer_absent: Option<bool>,
+    usage_projections_absent: Option<bool>,
     drain_until: Option<mongodb::bson::DateTime>,
     drain_complete: bool,
     #[cfg(test)]

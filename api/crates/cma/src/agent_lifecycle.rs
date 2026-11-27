@@ -70,7 +70,7 @@ mod repository_preflight;
 pub(crate) mod runtime_canary;
 #[path = "agent_lifecycle_policy.rs"]
 mod task_policy;
-pub(crate) use image::{valid_immutable_image, ImageManagerResolver, ImageResolver};
+pub(crate) use image::{valid_immutable_image, ImageResolver, RetiredImageResolver};
 #[path = "agent_lifecycle_validation.rs"]
 pub(crate) mod validation;
 use validation::{
@@ -98,10 +98,16 @@ pub(crate) struct InlineAgentLifecycle {
     desktop: Option<Arc<layer2_core::sandbox::desktop_creation::DesktopCreationService>>,
     self_ref: OnceLock<Weak<Self>>,
     task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
-    session_guidance_v4: OnceLock<bool>,
+    session_guidance: OnceLock<&'static str>,
     failure_metadata_enabled: OnceLock<bool>,
     repository_preflight: OnceLock<Arc<dyn repository_preflight::RepositoryReadiness>>,
     managed_repository_preflight: OnceLock<bool>,
+    managed_repository_broker: OnceLock<Arc<crate::trigger::CmaServiceConnectionBroker>>,
+    managed_repository_runtime_images: OnceLock<(String, Vec<String>)>,
+    public_repository_images: OnceLock<std::collections::BTreeSet<String>>,
+    public_repository_writer: OnceLock<bool>,
+    #[cfg(test)]
+    public_repository_probe: OnceLock<Arc<dyn repository_preflight::PublicRepositoryReadiness>>,
     worker_slots: Arc<tokio::sync::Semaphore>,
     tasks: LifecycleDrain,
 }
@@ -121,6 +127,7 @@ struct ProvisionInput {
     existing_agent_id: Option<String>,
     actor: Option<layer2_core::resource_access::ResourceActor>,
     canary_profiles: Option<crate::store::CanaryProfiles>,
+    repository_access_pin: Option<crate::store::RepositoryAccessPin>,
 }
 
 impl InlineAgentLifecycle {
@@ -158,10 +165,16 @@ impl InlineAgentLifecycle {
             desktop,
             self_ref: OnceLock::new(),
             task_experience: OnceLock::new(),
-            session_guidance_v4: OnceLock::new(),
+            session_guidance: OnceLock::new(),
             failure_metadata_enabled: OnceLock::new(),
             repository_preflight: OnceLock::new(),
             managed_repository_preflight: OnceLock::new(),
+            managed_repository_broker: OnceLock::new(),
+            managed_repository_runtime_images: OnceLock::new(),
+            public_repository_images: OnceLock::new(),
+            public_repository_writer: OnceLock::new(),
+            #[cfg(test)]
+            public_repository_probe: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
             tasks: LifecycleDrain::new(crate::store::DISCOVERY_BATCH + 1),
         });
@@ -169,9 +182,17 @@ impl InlineAgentLifecycle {
         instance
     }
 
-    pub(crate) fn with_session_guidance_v4(self: Arc<Self>, enabled: bool) -> Arc<Self> {
-        self.session_guidance_v4
-            .set(enabled)
+    #[cfg(test)]
+    pub(crate) fn with_session_guidance(self: Arc<Self>, v4: bool, v5: bool) -> Arc<Self> {
+        self.with_admission_guidance(guidance::admission_instructions(v4, v5))
+    }
+
+    pub(crate) fn with_admission_guidance(
+        self: Arc<Self>,
+        instructions: &'static str,
+    ) -> Arc<Self> {
+        self.session_guidance
+            .set(instructions)
             .expect("session guidance writer is configured once before use");
         self
     }
@@ -202,6 +223,7 @@ impl InlineAgentLifecycle {
             existing_agent_id,
             actor,
             canary_profiles,
+            repository_access_pin,
         } = input;
         let profile_started = tokio::time::Instant::now();
         let profile_result = profiles::create_profiles(
@@ -214,6 +236,7 @@ impl InlineAgentLifecycle {
             limits,
             behavior,
             sandbox_availability,
+            &lease.id,
         )
         .await;
         tracing::info!(
@@ -246,13 +269,14 @@ impl InlineAgentLifecycle {
             SandboxId(id)
         } else {
             let admission_started = tokio::time::Instant::now();
-            let admission_result = validation::create_sandbox_with_fence(
+            let admission_result = admission::create_sandbox_with_fence(
                 self.sandbox.as_ref(),
                 caller,
                 sandbox_profile.clone(),
                 &request.name,
                 &lease,
                 creation_fence,
+                repository_access_pin.map(|pin| pin.connection),
             )
             .await;
             tracing::info!(
@@ -280,8 +304,7 @@ impl InlineAgentLifecycle {
         };
         // Prepared sessions are adopted only after owner credentials and parent readiness.
         // WaitForWorkspace remains effect-free for ordinary cold admission.
-        let early_admission =
-            behavior == LifecycleBehavior::PromptRepository && !has_prepared_hierarchy;
+        let early_admission = behavior.uses_repository_profile() && !has_prepared_hierarchy;
         let workspace_id = if early_admission {
             self.reserve_bootstrap_workspace(
                 caller,

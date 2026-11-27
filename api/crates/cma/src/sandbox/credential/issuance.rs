@@ -1,5 +1,6 @@
 //! Durable no-resend custody for a managed credential obligation.
 use super::*;
+use layer2_core::ServiceId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -107,11 +108,9 @@ impl ManagedSandboxCredentials {
         // All safe preparation failures occur before any durable intent. A
         // successor may repeat preparation, but cannot repeat a possible POST.
         let services = sandbox.credential.effective_reaches();
-        let selection = sandbox
-            .credential
-            .service_scope
-            .as_ref()
-            .and_then(|scope| scope.connection.as_ref());
+        let selection = sandbox.credential.selected_connection();
+        let initial = sandbox.credential.selected_repository_connection();
+        let requirement = initial.map(|connection| connection.requirement);
         let (prepared, github_route) = if let Some(selection) = selection {
             if selection.service.as_str() != crate::trigger::GITHUB_SERVICE {
                 return Err(CredentialError::Security(
@@ -121,29 +120,88 @@ impl ManagedSandboxCredentials {
             let broker = self.exact_connections.as_ref().ok_or_else(|| {
                 CredentialError::Unavailable("selected connection issuance is unavailable".into())
             })?;
-            let proof = broker
-                .verify_github_repo_token(&token, &selection.connection_id)
-                .await
-                .map_err(|error| match error {
-                    layer2_core::trigger_domain::ServiceConnectionError::Refused
-                    | layer2_core::trigger_domain::ServiceConnectionError::NotFound => {
-                        CredentialError::ServiceNotGranted(selection.service.clone())
-                    }
-                    _ => CredentialError::Unavailable(
-                        "selected GitHub connection could not be verified".into(),
-                    ),
-                })?;
-            let (prepared, route) = self
+            use crate::trigger::GitHubRepositoryNeed;
+            use layer2_core::sandbox::RepositoryCredentialRequirement;
+            let proof = match requirement {
+                Some(requirement) => {
+                    let need = match requirement {
+                        RepositoryCredentialRequirement::PublicRepositoryWrite => {
+                            GitHubRepositoryNeed::PublicRepositoryWrite
+                        }
+                        RepositoryCredentialRequirement::PrivateRepositoryRead => {
+                            GitHubRepositoryNeed::PrivateRepositoryRead
+                        }
+                    };
+                    broker
+                        .verify_github_token_for(&token, &selection.connection_id, need)
+                        .await
+                }
+                None => {
+                    broker
+                        .verify_github_repo_token(&token, &selection.connection_id)
+                        .await
+                }
+            }
+            .map_err(|error| match error {
+                layer2_core::trigger_domain::ServiceConnectionError::Refused
+                | layer2_core::trigger_domain::ServiceConnectionError::NotFound => {
+                    CredentialError::ServiceNotGranted(selection.service.clone())
+                }
+                _ => CredentialError::Unavailable(
+                    "selected GitHub connection could not be verified".into(),
+                ),
+            })?;
+            let (prepared, mut route) = self
                 .issuer
-                .prepare_github_mint(
+                .prepare_mint_with_connection(
                     &operation_id,
                     &sandbox.owner,
                     token.expose(),
                     &services,
-                    &proof,
+                    (&ServiceId::new(crate::trigger::GITHUB_SERVICE), proof.id()),
+                    |other_services| {
+                        let route = layer3_adapter::GithubCredentialRoute {
+                            service_id: proof.id().into(),
+                            catalog_id: proof.catalog_id().into(),
+                            repository_scope: None,
+                            other_services: other_services
+                                .into_iter()
+                                .map(|service| layer3_adapter::PlatformServiceRoute {
+                                    service_id: service.id,
+                                    slug: service.slug,
+                                    catalog_id: service.catalog_id,
+                                })
+                                .collect(),
+                        };
+                        route
+                            .is_valid()
+                            .then_some(route)
+                            .ok_or(KeyIssuerError::UnexpectedAuthority)
+                    },
                 )
                 .await
                 .map_err(classify_issuer)?;
+            if let (Some(requirement), Some(initial)) =
+                (requirement, sandbox.credential.source.initial_connection())
+            {
+                route.repository_scope = Some(layer3_adapter::GithubRepositoryScope {
+                    repository: initial.repository.clone(),
+                    required_scope: match requirement {
+                        RepositoryCredentialRequirement::PublicRepositoryWrite => {
+                            layer3_adapter::GithubRepositoryScopeNeed::PublicRepo
+                        }
+                        RepositoryCredentialRequirement::PrivateRepositoryRead => {
+                            layer3_adapter::GithubRepositoryScopeNeed::Repo
+                        }
+                    },
+                    manage_url: proof.manage_url,
+                });
+                if !route.is_valid() {
+                    return Err(CredentialError::Security(
+                        "GitHub repository scope authority is invalid".into(),
+                    ));
+                }
+            }
             (prepared, Some(route))
         } else {
             let prepared = self
@@ -184,7 +242,7 @@ impl ManagedSandboxCredentials {
             CredentialError::Uncertain
         })?;
         let material = CredentialMaterial {
-            source: Default::default(),
+            source: sandbox.credential.source.clone(),
             github_route,
             sandbox_id: sandbox.id.clone(),
             owner: sandbox.owner.clone(),

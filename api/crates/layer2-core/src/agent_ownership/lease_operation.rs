@@ -13,6 +13,7 @@ pub(super) enum WriteOutcome {
         now_ms: i64,
         lease: Option<OwnershipLease>,
     },
+    ReconciledAcquisition(Option<OwnershipToken>),
     Renewed(OwnershipLease),
     RenewalRefused(OwnershipError),
     NotIssued(OwnershipError),
@@ -60,7 +61,8 @@ impl LeaseWrite {
                     now_ms: membership.now_ms,
                     lease,
                 },
-                Ok(Err(error)) => WriteOutcome::Uncertain(error),
+                Ok(Err(error @ OwnershipError::Unavailable(_))) => WriteOutcome::Uncertain(error),
+                Ok(Err(error)) => WriteOutcome::NotIssued(error),
                 Err(_) => WriteOutcome::Uncertain(unresolved()),
             }
         })

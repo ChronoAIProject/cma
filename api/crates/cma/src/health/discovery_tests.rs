@@ -101,7 +101,13 @@ async fn verify_slow_dependencies(diagnostics: Option<Arc<Recorder>>) {
     );
     // A successful ping just inside the unchanged deadline leaves little slack.
     let probe = Arc::new(DelayedProbe(AtomicUsize::new(1900)));
-    let app = monitored(probe.clone(), Some(workers.clone()), false, diagnostics);
+    let app = monitored(
+        probe.clone(),
+        Some(workers.clone()),
+        false,
+        diagnostics,
+        None,
+    );
     for _ in 0..21 {
         advance().await;
     }

@@ -117,7 +117,7 @@ mod gateway_reset_tests {
                     if request.headers().get("authorization").is_none_or(|v| v != "Bearer manager-fixture") {
                         return StatusCode::UNAUTHORIZED.into_response();
                     }
-                    let reset = request.uri().path().ends_with("/resets");
+                    let reset = request.uri().path().ends_with("/resets") || request.uri().path().ends_with("/profile-transfers");
                     request.extensions_mut().insert(layer1_public::AuthenticatedSubject(manager));
                     request.extensions_mut().insert(Authorization::new([Capability::ManageGatewayRecords, Capability::ManageProviderBindings]));
                     let app = apps.read().await[usize::from(gate.load(Ordering::SeqCst))].clone();
@@ -167,8 +167,8 @@ mod gateway_reset_tests {
                 "roles":[{"role":"cma_eg_runtime","db":database.name()}]})
                 .await
                 .unwrap();
-            let uri = std::env::var("CMA_IM_TEST_MONGODB_URI")
-                .expect("run image-manager-mongo-contract.sh am for authenticated Mongo");
+            let uri = std::env::var("CMA_AUTHENTICATED_TEST_MONGODB_URI")
+                .expect("run authenticated-mongo-contract.sh am for authenticated Mongo");
             let mut uri = reqwest::Url::parse(&uri).expect("valid authenticated Mongo fixture URI");
             uri.set_username("runtime").unwrap();
             uri.set_password(Some(&password)).unwrap();
@@ -331,7 +331,7 @@ mod gateway_reset_tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires image-manager-mongo-contract.sh am and the compiled gateway"]
+    #[ignore = "requires authenticated-mongo-contract.sh am and the compiled gateway"]
     async fn configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors() {
         let (client, database, store, binding, old) = super::fixture().await;
         let mut scope = binding.clone();
@@ -494,4 +494,5 @@ mod gateway_reset_tests {
         gateway_db.drop().await.unwrap();
         client.database(&database).drop().await.unwrap();
     }
+    include!("gateway_profile_transfer_tests.rs");
 }

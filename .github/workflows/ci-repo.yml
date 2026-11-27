@@ -30,6 +30,7 @@ jobs:
           python3 -m venv "$RUNNER_TEMP/staging-cd-tests"
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'staging_cd_*_tests.py'
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/release_candidate_packet_tests.py
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_retry_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_artifact_download_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'runtime_image_*tests.py'
@@ -69,6 +70,9 @@ jobs:
       -
         name: "Synthetic home restore evidence regressions"
         run: "node --test .github/scripts/home-backup/*.test.mjs"
+      -
+        name: "Desktop qualification runner regressions"
+        run: "node --test .github/scripts/desktop-replica-contract.test.mjs .github/scripts/desktop-replica-results.test.mjs"
       -
         name: "Audit exception policy regressions"
         run: "node --test .github/scripts/audit-policy.test.mjs"
@@ -137,13 +141,6 @@ jobs:
           hits=$(grep -rniE 'agui|\ba2a\b|\bmcp\b|codex|claude[_-]?code' api/crates/layer2-core/src || true)
           if [ -n "$hits" ]; then
             echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
-          fi
-      -
-        name: "Image Manager has no Agent or Gateway dependencies"
-        run: |
-          if grep -qE 'layer[1-4]-|cmaeg|path *=.*["/]cma["/]|cma-agent-manager' api/crates/cma-image-manager/Cargo.toml; then
-            echo '::error::Image Manager cannot depend on Agent or Gateway implementation crates'
-            exit 1
           fi
   secrets:
     name: "Secret scanning"

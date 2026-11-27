@@ -11,6 +11,7 @@ import type { AgentResourceState } from './controllerTypes';
 import { transientReadFailure, type AgentLoadLineage } from './loadAgent';
 import { reopenAgent } from './reopenAgent';
 import { agentReadRetryAt } from './controllerError';
+import { WorkspaceReadUnavailable } from '../api/rest/workspaceRead';
 import { rateLimitDelay } from './transport/readRetry';
 
 interface Options {
@@ -70,7 +71,12 @@ export function useAgentDetailRefresh({
           )
             return current;
           metadataVersion.current += 1;
-          return { ...current, detail: next.detail, workspace: next.workspace };
+          return {
+            ...current,
+            detail: next.detail,
+            workspace: next.workspace,
+            ...(current.workspaceUnavailable ? { workspaceUnavailable: false } : {}),
+          };
         });
       } catch (error: unknown) {
         if (!active || controller.signal.aborted) return;
@@ -79,6 +85,20 @@ export function useAgentDetailRefresh({
         queued = false;
         if (onIdentityChange(error)) return;
         if (transientReadFailure(error)) {
+          if (error instanceof WorkspaceReadUnavailable) {
+            setState((current) => {
+              if (
+                current.status !== 'ready' ||
+                current.detail.id !== agentId ||
+                current.workspace.id !== retained.workspace.id ||
+                current.v2 !== retained.v2 ||
+                current.workspaceUnavailable
+              )
+                return current;
+              metadataVersion.current += 1;
+              return { ...current, workspaceUnavailable: true };
+            });
+          }
           const delay = rateLimitDelay(error, 5000);
           // Keep the server floor even after the single automatic retry is exhausted.
           retryAt = Date.now() + delay;

@@ -4,8 +4,9 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { useAgentController } from './controller';
 import { AGENT_DETAIL, agentClient } from '../test/agent';
 import { workspaceFixture } from '../test/hierarchy';
+import { WorkspaceReadUnavailable } from '../api/rest/workspaceRead';
 import type { AgentDetail } from '../api/types';
-import { harness } from './transport/controller.fixture';
+import { binding, harness } from './transport/controller.fixture';
 import { IdentityChangedError } from './transport/identity';
 
 function deferred<T>() {
@@ -29,6 +30,11 @@ it('coalesces five refreshes into two authorized reads without replacing v2 hist
   const readWorkspace = vi.spyOn(h.client, 'readWorkspace');
   const view = renderHook(() => useAgentController(h.client, 'agt_1'));
   await waitFor(() => expect(h.streaming).toBe(true));
+  // Consume a live frame after the stream's approval projection has been applied.
+  await act(async () => h.durable(1, { type: 'turn_started', turn_sequence: 1 }, binding));
+  await waitFor(() =>
+    expect(view.result.current.state).toMatchObject({ conversation: { activeRunId: '1' } }),
+  );
   const before = view.result.current.state;
   expect(before.status).toBe('ready');
   if (before.status !== 'ready') throw new Error('Expected ready fixture');
@@ -69,6 +75,26 @@ it('coalesces five refreshes into two authorized reads without replacing v2 hist
   expect(h.head).toHaveBeenCalledTimes(heads);
   expect(h.client.readAgentTranscript).toHaveBeenCalledTimes(transcripts);
   expect(h.cancel).not.toHaveBeenCalled();
+  view.unmount();
+});
+
+it('reports a Workspace read outage while preserving the live conversation and clears it on recovery', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const readWorkspace = vi.fn().mockResolvedValue(workspaceFixture());
+  const client = agentClient({ readWorkspace });
+  const replayAgent = vi.spyOn(client, 'replayAgent');
+  const view = renderHook(() => useAgentController(client, 'agt_1'));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  const before = view.result.current.state;
+  if (before.status !== 'ready') throw new Error('Expected retained view');
+  readWorkspace.mockRejectedValueOnce(new WorkspaceReadUnavailable(new ApiError(503, 'Busy')));
+  await act(async () => view.result.current.refreshDetail());
+  expect(view.result.current.state).toMatchObject({ status: 'ready', workspaceUnavailable: true });
+  expect(view.result.current.state).toMatchObject({ conversation: before.conversation });
+  await act(() => vi.advanceTimersByTimeAsync(5000));
+  expect(view.result.current.state).toMatchObject({ status: 'ready', workspaceUnavailable: false });
+  expect(replayAgent).toHaveBeenCalledOnce();
   view.unmount();
 });
 

@@ -4,6 +4,7 @@ import { ApiError } from '@cma/client';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { approvalBaselineMessage } from './transport/approvalBaseline';
 import { readableError } from '../vocabulary/errors';
+import { WorkspaceReadUnavailable } from '../api/rest/workspaceRead';
 import { currentAgentStatus } from './status';
 import {
   RESTART_AVAILABLE_MESSAGE,
@@ -11,10 +12,21 @@ import {
   STOP_RESPONSE_GUIDANCE,
 } from './stopAgentCopy';
 
+export const WORKSPACE_READ_RECONNECTING =
+  'Workspace status is temporarily unavailable (HTTP 503). Reconnecting.';
+
+export function agentHistoryIssue(
+  state: Extract<AgentResourceState, { status: 'ready' }>,
+): string | undefined {
+  if (state.historyLoading) return 'Loading conversation activity.';
+  if (state.historyUnavailable) return 'Earlier activity could not be loaded. Retrying…';
+}
+
 export function errorMessage(error: unknown): string {
   const approval = approvalBaselineMessage(error);
   if (approval !== undefined) return approval;
   if (isIdentityChanged(error)) return new IdentityChangedError().message;
+  if (error instanceof WorkspaceReadUnavailable) return `${error.message} Check again shortly.`;
   if (error instanceof ApiError && error.code === 'sandbox_checkpoint_in_progress')
     return 'Progress is being saved. Your input was not accepted. Try again after saving finishes.';
   return readableError(error, 'The Agent operation did not complete.');
@@ -74,7 +86,12 @@ export function retainHistoryOnFailure(
   agentId: string,
 ): AgentResourceState | undefined {
   return transientReadFailure(error) && current.status === 'ready' && current.detail.id === agentId
-    ? { ...current, historyLoading: false, historyUnavailable: true }
+    ? {
+        ...current,
+        historyLoading: false,
+        historyUnavailable: true,
+        ...(error instanceof WorkspaceReadUnavailable ? { workspaceUnavailable: true } : {}),
+      }
     : undefined;
 }
 

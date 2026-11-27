@@ -217,6 +217,11 @@ impl SandboxStore for InMemorySandboxStore {
         self.managed_runtime_version.clone()
     }
 
+    #[cfg(test)]
+    fn machine_runtime_target_is_qualified(&self, _id: &SandboxId, target: &str) -> bool {
+        self.managed_machine_runtime_version.as_deref() == Some(target)
+    }
+
     async fn unpublished_runtime_recovery_snapshot(
         &self,
         id: &SandboxId,

@@ -186,3 +186,45 @@ test('LOCAL authoring retains drafts, warns on reload, validates before sending 
   await expect(page.getByRole('alert')).toHaveCount(0);
   expect(writes).toHaveLength(1);
 });
+
+test('LOCAL browser refresh restores the owner’s New channel draft without retaining credentials', async ({
+  page,
+  baseURL,
+}) => {
+  const writes = await fixture(page, baseURL!);
+  await page.goto('/event-gateway');
+  await page.getByRole('button', { name: 'New channel', exact: true }).first().click();
+  const name = page.getByLabel('Channel name', { exact: true });
+  const issuer = page.getByLabel('NyxID issuer', { exact: true });
+  const routeId = page.getByLabel('Route IDs 1', { exact: true });
+  const key = page.getByLabel('Provider agent key', { exact: true });
+  await name.fill('Retain this channel');
+  await issuer.fill('https://relay.example.test');
+  await routeId.fill('draft-route');
+  await key.fill('synthetic-provider-reload-value');
+
+  // Accept any unload warning. Reload must restore the draft either way.
+  page.once('dialog', (dialog) => void dialog.accept());
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'New channel', exact: true })).toBeVisible();
+  await expect(name).toHaveValue('Retain this channel');
+  await expect(issuer).toHaveValue('https://relay.example.test');
+  await expect(routeId).toHaveValue('draft-route');
+  await expect(key).toHaveValue('');
+  await expect(page.getByText(/Draft restored\. Re-enter/)).toBeVisible();
+  expect(
+    await page.evaluate(() => JSON.stringify({ ...localStorage, ...sessionStorage })),
+  ).not.toContain('synthetic-provider-reload-value');
+  expect(writes).toEqual([]);
+
+  const otherTab = await page.context().newPage();
+  try {
+    const newTabWrites = await fixture(otherTab, baseURL!);
+    await otherTab.goto('/event-gateway');
+    await otherTab.getByRole('button', { name: 'New channel', exact: true }).first().click();
+    await expect(otherTab.getByLabel('Channel name', { exact: true })).toHaveValue('');
+    expect(newTabWrites).toEqual([]);
+  } finally {
+    await otherTab.close();
+  }
+});

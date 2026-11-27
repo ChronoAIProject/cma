@@ -63,6 +63,9 @@ export function SandboxCapacityPanel({
             <IconWarningOutline16 />
             <div>
               <strong>Environment limit reached</strong>
+              {(value.counts_by_status.retiring ?? 0) > 0 ? (
+                <p>Deletions still using slots: {value.counts_by_status.retiring}</p>
+              ) : null}
             </div>
           </div>
         )}
@@ -122,7 +125,12 @@ export function SandboxCapacityPanel({
               {value.counts_by_status.retiring === 1
                 ? 'environment is being deleted and still uses a slot.'
                 : 'environments are being deleted and still use slots.'}{' '}
-              Slots become available when deletion is confirmed.
+              Slots become available after runtime and credential cleanup is confirmed.
+            </p>
+          ) : null}
+          {(value.retiring_released ?? 0) > 0 ? (
+            <p className="notice__detail">
+              Deletions that have released their slots: {value.retiring_released}
             </p>
           ) : null}
         </>
@@ -200,7 +208,9 @@ function EnvironmentInventory({
               </TableCell>
               <TableCell>
                 {sandbox.status === 'retiring'
-                  ? 'Deleting — still uses one Sandbox slot'
+                  ? sandbox.lifecycle?.result?.ownerSlotReleased
+                    ? 'Deleting · Sandbox slot released'
+                    : 'Deleting · Sandbox slot in use'
                   : sandboxLifecycleLabel(sandbox)}
               </TableCell>
             </tr>

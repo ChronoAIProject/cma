@@ -19,9 +19,43 @@ RULES = frozenset({"path.key-or-certificate", "gitleaks.image-secret-assignment"
                   "path.cargo-credentials"})
 
 
+# The pinned scanner owns these generic diagnostics. Other fixed scanner error
+# identifiers receive an opaque fingerprint for correlation by its reviewers.
+DIAGNOSTIC_CLASSES = frozenset({"scan_operation_failed", "classification_failed",
+                                "scanner_reported_error", "diagnostic_unavailable"})
+ERROR_IDENTIFIER = re.compile(r"[a-z][a-z0-9-]{0,127}")
+
+
+def incomplete_diagnostic(report):
+    if report.get("schema") == "image-scan-failure-v1":
+        diagnostic = report.get("diagnostic")
+        if isinstance(diagnostic, dict):
+            kind = diagnostic.get("kind")
+            fingerprint = diagnostic.get("sha256")
+            if isinstance(kind, str) and kind in DIAGNOSTIC_CLASSES:
+                result = {"kind": kind}
+                if isinstance(fingerprint, str) and DIGEST.fullmatch(fingerprint):
+                    result["sha256"] = fingerprint
+                return result
+    if (report.get("schema") == "image-secret-scan-v1" and report.get("status") == "ERROR"
+            and report.get("complete") is False and type(report.get("exit_code")) is int
+            and report["exit_code"] == 2):
+        # The scanner report emits only fixed identifiers for failures. Keep a
+        # bounded fingerprint, never the original identifier or exception text.
+        code = report.get("error")
+        if isinstance(code, str) and ERROR_IDENTIFIER.fullmatch(code):
+            kind = {"scanner-operation-failed": "scan_operation_failed",
+                    "classification-operation-failed": "classification_failed"}.get(
+                        code, "scanner_reported_error")
+            return {"kind": kind, "sha256": hashlib.sha256(code.encode("ascii")).hexdigest()}
+    return {"kind": "diagnostic_unavailable"}
+
+
 def project(report, outcome):
     result = {"schema": "image-scan-failure-v1", "outcome": outcome if isinstance(outcome, str) and outcome in OUTCOMES else "scan_refused",
               "complete": report.get("complete") is True}
+    if result["outcome"] == "scanner_error" and not result["complete"]:
+        result["diagnostic"] = incomplete_diagnostic(report)
     for field in ("archive_sha256",):
         value = report.get(field)
         if isinstance(value, str) and DIGEST.fullmatch(value):

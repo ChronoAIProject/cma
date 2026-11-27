@@ -17,9 +17,12 @@ use super::sandbox_mongo::{
 use super::transaction_terminal::GuardedTerminal;
 
 pub(crate) mod command;
+mod indexed;
+pub(crate) mod ledger;
 mod preview;
 const SCHEMA_VERSION: i64 = 1;
 const ATTEMPTS: usize = 3;
+const INDEXED_ATTEMPTS: usize = 32;
 const DEADLINE: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +61,7 @@ impl From<mongodb::error::Error> for TransactionError {
 pub(crate) struct MeasuredCapture {
     client: Client,
     rows: Collection<Document>,
+    indexed: Option<indexed::IndexedCustody>,
 }
 
 impl MeasuredCapture {
@@ -65,7 +69,13 @@ impl MeasuredCapture {
         Self {
             client: database.client().clone(),
             rows: majority_collection(database, COLLECTION),
+            indexed: None,
         }
+    }
+
+    fn with_indexed(mut self, indexed: indexed::IndexedCustody) -> Self {
+        self.indexed = Some(indexed);
+        self
     }
 
     pub(crate) async fn capture(
@@ -88,7 +98,17 @@ impl MeasuredCapture {
         payload: &str,
     ) -> Result<Capture, CaptureError> {
         let physical = observation.physical_sample_id();
-        for _ in 0..ATTEMPTS {
+        // Indexed writers may compete on a shard or capacity record. Retry
+        // confirmed aborted transactions only, within the capture deadline.
+        let attempts = if self.indexed.is_some() {
+            INDEXED_ATTEMPTS
+        } else {
+            ATTEMPTS
+        };
+        for attempt in 0..attempts {
+            if self.indexed.is_some() {
+                super::contention::backoff(attempt).await;
+            }
             let mut session = self
                 .client
                 .start_session()
@@ -142,12 +162,23 @@ impl MeasuredCapture {
             let expected = encode(&id, physical, "sample", digest, payload);
             self.rows
                 .insert_one(expected.clone())
-                .session(session)
+                .session(&mut *session)
                 .await?;
+            if let Some(indexed) = &self.indexed {
+                indexed.append(&expected, true, session).await?;
+            }
             return Ok((Capture::Inserted, expected));
         };
         let initial = decode(&primary, physical, false)?;
-        let dispute = self.first_conflict(physical, &initial, session).await?;
+        if let Some(indexed) = &self.indexed {
+            indexed.append(&primary, false, session).await?;
+        }
+        let dispute = self
+            .first_conflict(physical, &initial, session, false)
+            .await?;
+        if let (Some(indexed), Some(dispute)) = (&self.indexed, &dispute) {
+            indexed.append(dispute, false, session).await?;
+        }
         match initial.verify_replay(observation) {
             Ok(()) => {
                 Ok(dispute.map_or((Capture::Replay, primary), |row| (Capture::Disputed, row)))
@@ -166,13 +197,19 @@ impl MeasuredCapture {
                     decode(&current, physical, true)?
                         .verify_replay(observation)
                         .map_err(|_| CaptureError::Corrupt)?;
+                    if let Some(indexed) = &self.indexed {
+                        indexed.append(&current, false, session).await?;
+                    }
                     return Ok((Capture::Disputed, current));
                 }
                 let record = encode(&id, physical, "conflict", digest, payload);
                 self.rows
                     .insert_one(record.clone())
-                    .session(session)
+                    .session(&mut *session)
                     .await?;
+                if let Some(indexed) = &self.indexed {
+                    indexed.append(&record, true, session).await?;
+                }
                 Ok((Capture::Disputed, record))
             }
             Err(_) => Err(CaptureError::Corrupt.into()),
@@ -184,13 +221,16 @@ impl MeasuredCapture {
         physical: &str,
         initial: &RetainedObservation,
         session: &mut ClientSession,
+        snapshot: bool,
     ) -> Result<Option<Document>, TransactionError> {
-        let conflict = self
+        let mut query = self
             .rows
             .find_one(doc! {"physical_sample_id": physical, "kind": "conflict"})
-            .sort(doc! {"_id": 1})
-            .session(session)
-            .await?;
+            .sort(doc! {"_id": 1});
+        if snapshot {
+            query = query.read_concern(mongodb::options::ReadConcern::snapshot());
+        }
+        let conflict = query.session(session).await?;
         if let Some(row) = conflict.as_ref() {
             let evidence = decode(row, physical, true)?;
             if initial.verify_retained_replay(&evidence)
@@ -220,28 +260,39 @@ impl MeasuredCapture {
         let stored = self
             .rows
             .find_one(doc! {"_id": id})
+            .read_concern(mongodb::options::ReadConcern::snapshot())
             .session(&mut session)
             .await
             .map_err(|_| CaptureError::Unavailable)?;
         if stored.as_ref() != Some(expected) {
             return Err(CaptureError::Unavailable);
         }
+        if let Some(indexed) = &self.indexed {
+            indexed.verify_reconciled(expected, &mut session).await?;
+        }
         let primary = self
             .rows
             .find_one(doc! {"_id": sample_id(physical)})
+            .read_concern(mongodb::options::ReadConcern::snapshot())
             .session(&mut session)
             .await
             .map_err(|_| CaptureError::Unavailable)?
             .ok_or(CaptureError::Corrupt)?;
         let initial = decode(&primary, physical, false)?;
+        if let Some(indexed) = &self.indexed {
+            indexed.verify_reconciled(&primary, &mut session).await?;
+        }
         let conflict = self
-            .first_conflict(physical, &initial, &mut session)
+            .first_conflict(physical, &initial, &mut session, true)
             .await
             .map_err(|error| match error {
                 TransactionError::Store(error) => error,
                 TransactionError::Driver(_) => CaptureError::Unavailable,
             })?;
-        if conflict.is_some() {
+        if let Some(conflict) = conflict {
+            if let Some(indexed) = &self.indexed {
+                indexed.verify_reconciled(&conflict, &mut session).await?;
+            }
             return Ok(Capture::Disputed);
         }
         if expected_result == Capture::Disputed {

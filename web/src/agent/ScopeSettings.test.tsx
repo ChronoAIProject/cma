@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
@@ -107,6 +107,52 @@ it('completes external connections before enabling final Save', async () => {
     expect.any(AbortSignal),
   );
 });
+
+it.each(['manual check', 'returning to the page'])(
+  'enables Save after the selected service becomes connected by %s',
+  async (refresh) => {
+    const replace = vi.spyOn(accessRequests, 'replace').mockResolvedValue(request);
+    const service = {
+      service: 'github',
+      display_name: 'GitHub',
+      kind: 'nyxid',
+      connection_mode: 'hosted',
+    } as const;
+    const report = { owner: 'owner', checked_at: '2026-10-15T00:00:00Z' };
+    vi.mocked(connectionClient.check)
+      .mockResolvedValueOnce({
+        ...report,
+        ready: false,
+        services: [{ ...service, state: 'missing' }],
+      })
+      .mockResolvedValue({
+        ...report,
+        ready: true,
+        services: [{ ...service, state: 'satisfied' }],
+      });
+    show();
+    const github = await screen.findByRole('checkbox', { name: 'GitHub' });
+    await userEvent.click(github);
+    expect(await screen.findByText('Verify connections for GitHub before saving.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Save scope' })).toBeDisabled();
+    expect(replace).not.toHaveBeenCalled();
+
+    if (refresh === 'returning to the page') fireEvent.focus(window);
+    else await userEvent.click(screen.getByRole('button', { name: 'Check connections again' }));
+    const save = screen.getByRole('button', { name: 'Save scope' });
+    await waitFor(() => expect(save).toBeEnabled());
+    expect(github).toBeChecked();
+    expect(replace).not.toHaveBeenCalled();
+    await userEvent.click(save);
+    expect(replace).toHaveBeenCalledExactlyOnceWith(
+      'agt_1',
+      [...baseline, 'storage', 'github'],
+      [...baseline, 'storage'],
+      expect.any(String),
+      expect.any(AbortSignal),
+    );
+  },
+);
 it('does not use a connection report for a different account', async () => {
   vi.mocked(connectionClient.check).mockResolvedValue({
     owner: 'other',

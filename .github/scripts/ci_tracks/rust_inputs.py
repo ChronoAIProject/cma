@@ -6,6 +6,72 @@ from syntax import RUST, descendants, parse, string_value
 
 # Keep the reuse inside one selector process and bound retained source bytes.
 MAX_CACHED_SOURCE_BYTES = 64 * 1024
+INCLUDE_MACROS = {b'include', b'include_str', b'include_bytes'}
+COMMENTS = {'line_comment', 'block_comment'}
+LINT_ATTRIBUTES = {b'allow', b'expect', b'warn', b'deny', b'forbid'}
+
+
+def tokens(node):
+    return [child for child in node.children if child.type not in COMMENTS]
+
+
+def arguments(tree):
+    if tree.type != 'token_tree':
+        raise ValueError('expected Rust macro arguments')
+    args = tokens(tree)[1:-1]
+    if args and args[-1].type == ',':
+        args.pop()
+    return args
+
+
+def include_path(tree):
+    args = arguments(tree)
+    if len(args) == 1:
+        return 'source', string_value(args[0])
+    if len(args) == 3 and args[0].text == b'concat' and args[1].type == '!':
+        expr = arguments(args[2])
+        if len(expr) == 5 and expr[0].text == b'env' and expr[1].type == '!' and expr[3].type == ',':
+            env = arguments(expr[2])
+            if len(env) == 1 and string_value(env[0]) == 'CARGO_MANIFEST_DIR':
+                suffix = string_value(expr[4])
+                if suffix.startswith('/') and len(suffix) > 1:
+                    return 'manifest', suffix[1:]
+    raise ValueError('computed include path is unsupported')
+
+
+def included_files(data):
+    if b'include' not in data:
+        return ()
+    result = []
+    for node in descendants(parse(data, RUST)):
+        if node.type == 'macro_invocation':
+            macro = tokens(node)[0].text.rsplit(b'::', 1)[-1].strip()
+            if macro in INCLUDE_MACROS:
+                result.append((macro, *include_path(tokens(node)[-1])))
+        if node.type == 'token_tree':
+            # Rust's syntax tree leaves nested macro bodies as tokens.
+            items = tokens(node)
+            for name, bang, tree in zip(items, items[1:], items[2:]):
+                if name.type == 'identifier' and name.text in INCLUDE_MACROS and bang.type == '!':
+                    ancestor = node.parent
+                    while ancestor:
+                        if ancestor.type == 'macro_definition':
+                            raise ValueError('include from a macro definition is unsupported')
+                        ancestor = ancestor.parent
+                    result.append((name.text, *include_path(tree)))
+    return result
+
+
+def conditional_lint_only(attr):
+    tree = attr.child_by_field_name('arguments')
+    if tree is None:
+        return False
+    args = arguments(tree)
+    # A single built-in lint attribute cannot gate or redirect a module.
+    return (len(args) >= 4 and args[-3].type == ','
+            and sum(item.type == ',' for item in args) == 1
+            and args[-2].type == 'identifier' and args[-2].text in LINT_ATTRIBUTES
+            and args[-1].type == 'token_tree' and args[-1].children[0].type == '(')
 
 
 def attributes(items):
@@ -23,7 +89,7 @@ def attributes(items):
                 path = string_value(attr.named_children[-1])
             except ValueError:
                 ambiguous = True
-        elif name == 'cfg_attr':
+        elif name == 'cfg_attr' and not conditional_lint_only(attr):
             ambiguous = True
     return gated and not ambiguous, path, ambiguous
 
@@ -31,7 +97,7 @@ def attributes(items):
 def module_declarations(container, directory=(), inherited=False):
     attrs = []
     for item in container.named_children:
-        if item.type in {'line_comment', 'block_comment'}:
+        if item.type in COMMENTS:
             continue
         if item.type == 'attribute_item':
             attrs.append(item)

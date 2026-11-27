@@ -180,7 +180,7 @@ async fn drain_latches_before_late_initialization_success_and_joins_its_effect()
         held.await.unwrap();
         settled.fetch_add(1, Ordering::Relaxed);
         assert!(!admission.open());
-        Ok(())
+        Ok(Initialization::Initialized)
     };
     let owner = until_stopping(
         &admission,
@@ -219,4 +219,18 @@ async fn failure_closes_admission_and_returns_the_initialization_error() {
     );
     assert!(admission.is_draining());
     assert!(!admission.open());
+}
+
+#[tokio::test]
+async fn stopped_initialization_never_opens_admission() {
+    let admission = Admission::new();
+    let result = until_stopping(
+        &admission,
+        async { Ok(Initialization::Stopping) },
+        std::future::pending(),
+        Instant::now(),
+    )
+    .await;
+    assert_eq!(result, Ok(()));
+    assert!(!admission.serving().await);
 }

@@ -67,21 +67,9 @@ impl BrowserAuth {
         let url = url::Url::parse(origin).map_err(|_| AuthError::Configuration)?;
         if url.scheme() != "https"
             || url.origin().ascii_serialization() != origin
-            || !["/api/event-gateway", "/api/image-manager"].contains(&prefix)
-            || !["/event-gateway", "/image-manager"].contains(&landing)
-            || !["eg_auth_sessions", "im_auth_sessions"].contains(&collection)
+            || (collection, prefix, landing)
+                != ("eg_auth_sessions", "/api/event-gateway", "/event-gateway")
         {
-            return Err(AuthError::Configuration);
-        }
-        let expected = match auth.service {
-            crate::Service::EventGateway => {
-                ("eg_auth_sessions", "/api/event-gateway", "/event-gateway")
-            }
-            crate::Service::ImageManager => {
-                ("im_auth_sessions", "/api/image-manager", "/image-manager")
-            }
-        };
-        if (collection, prefix, landing) != expected {
             return Err(AuthError::Configuration);
         }
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, encryption_key)
@@ -441,14 +429,15 @@ pub fn validator() -> Document {
     doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","kind","payload","expires_at"],"properties":{"_id":{"bsonType":"string"},"kind":{"enum":["transaction","session"]},"payload":{"bsonType":"binData"},"expires_at":{"bsonType":"date"}}}}
 }
 pub async fn migrate(db: &Database, collection: &str) -> Result<(), mongodb::error::Error> {
-    match db.run_command(doc!{"create":collection,"validator":validator(),"validationLevel":"strict","validationAction":"error"}).await {Ok(_)=>{},Err(e) if matches!(e.kind.as_ref(),mongodb::error::ErrorKind::Command(c) if c.code==48)=>{db.run_command(doc!{"collMod":collection,"validator":validator(),"validationLevel":"strict","validationAction":"error"}).await?;},Err(e)=>return Err(e)}
-    db.collection::<Document>(collection)
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! {"expires_at":1})
-                .options(IndexOptions::builder().expire_after(Duration::ZERO).build())
-                .build(),
-        )
-        .await?;
+    cma_service_migrations::collection(db, collection, validator(), true).await?;
+    cma_service_migrations::indexes(
+        db,
+        collection,
+        vec![IndexModel::builder()
+            .keys(doc! {"expires_at":1})
+            .options(IndexOptions::builder().expire_after(Duration::ZERO).build())
+            .build()],
+    )
+    .await?;
     Ok(())
 }

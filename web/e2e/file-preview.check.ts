@@ -1,6 +1,310 @@
 import { expect, test } from '@playwright/test';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
 import { cursor, LocalAgentV2 } from './agent-v2.fixture';
+
+for (const [colorScheme, width] of [
+  ['light', 1440],
+  ['dark', 390],
+] as const) {
+  test(`LOCAL pans a full-resolution file preview in ${colorScheme} at ${width}px`, async ({
+    page,
+    baseURL,
+    context,
+  }) => {
+    const fixture = new LocalAgentV2();
+    const name = 'contact-sheet.jpg';
+    const bytes = Buffer.from(
+      await page.evaluate(() => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1600;
+        canvas.height = 1200;
+        const drawing = canvas.getContext('2d')!;
+        const paper = drawing.createImageData(canvas.width, canvas.height);
+        // A deterministic fine texture exercises files above the inline JSON limit.
+        let seed = 57;
+        for (let index = 0; index < paper.data.length; index += 4) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          paper.data.set([seed >>> 24, (seed >>> 16) & 255, (seed >>> 8) & 255, 255], index);
+        }
+        drawing.putImageData(paper, 0, 0);
+        drawing.font = '32px sans-serif';
+        for (let index = 0; index < 6; index += 1) {
+          const x = 24 + (index % 3) * 530;
+          const y = 20 + Math.floor(index / 3) * 600;
+          drawing.fillStyle = 'white';
+          drawing.fillRect(x, y, 490, 76);
+          drawing.fillStyle = 'black';
+          drawing.fillText(`Contact sheet page ${index + 1}`, x + 12, y + 50);
+        }
+        return canvas.toDataURL('image/jpeg', 0.96).split(',')[1]!;
+      }),
+      'base64',
+    );
+    expect(bytes.length).toBeGreaterThan(1024 * 1024);
+    let reads = 0;
+    try {
+      await page.setViewportSize({ width, height: 900 });
+      await fixture.route(page, baseURL!);
+      await page.route('**/api/v1/agents/agt_contract/files/tree**', (route) => {
+        const path = new URL(route.request().url()).searchParams.get('path')!;
+        return route.fulfill({
+          json: {
+            path,
+            entries: [
+              {
+                name,
+                path: path ? `${path}/${name}` : name,
+                kind: 'file',
+                size_bytes: bytes.length,
+                hidden: false,
+              },
+            ],
+          },
+        });
+      });
+      await page.route('**/api/v1/agents/agt_contract/files/download**', (route) => {
+        reads += 1;
+        return route.fulfill({ body: bytes, contentType: 'application/octet-stream' });
+      });
+      await page.goto('/agents/agt_contract');
+      await page.evaluate(
+        (dark) => document.body.toggleAttribute('data-ds-dark-theme', dark),
+        colorScheme === 'dark',
+      );
+      await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+      const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
+      await computer.getByRole('tab', { name: 'Files', exact: true }).click();
+      await computer.getByRole('button', { name, exact: true }).click();
+      const preview = computer.getByRole('region', { name: 'File preview' });
+      const image = preview.getByRole('img', { name });
+      const viewport = preview.getByRole('region', { name: 'Image viewport' });
+      const fit = preview.getByRole('button', { name: 'Fit', exact: true });
+      const zoom = preview.getByLabel('Image zoom', { exact: true });
+      await expect(image).toBeVisible();
+      const dimensions = () =>
+        viewport.evaluate((element) => ({
+          width: element.clientWidth,
+          height: element.clientHeight,
+        }));
+      const originalFrame = await dimensions();
+      const fits = () =>
+        viewport.evaluate(
+          (element) =>
+            element.scrollWidth === element.clientWidth &&
+            element.scrollHeight === element.clientHeight,
+        );
+      await expect.poll(fits).toBe(true);
+      const fitLabel = await zoom.innerText();
+
+      await viewport.scrollIntoViewIfNeeded();
+      const box = (await viewport.boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      if (width === 390) {
+        const cdp = await context.newCDPSession(page);
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [
+            { x: x - 20, y, id: 1 },
+            { x: x + 20, y, id: 2 },
+          ],
+        });
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [
+            { x: x - 62, y, id: 1 },
+            { x: x + 62, y, id: 2 },
+          ],
+        });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await cdp.detach();
+      } else {
+        await page.mouse.move(x, y);
+        await page.keyboard.down('Control');
+        try {
+          await page.mouse.wheel(0, -120);
+        } finally {
+          await page.keyboard.up('Control');
+        }
+      }
+      await expect(zoom).not.toHaveText(fitLabel);
+      await preview.getByRole('button', { name: '100%', exact: true }).click();
+      await expect(zoom).toHaveText('100%');
+      await expect(image).toHaveAttribute('width', '1600');
+      await viewport.focus();
+      await viewport.press('-');
+      await expect(zoom).toHaveText('71%');
+      await viewport.press('+');
+      await expect(zoom).toHaveText('100%');
+      for (let step = 0; step < 5 && (await zoom.innerText()) !== '400%'; step += 1)
+        await preview.getByRole('button', { name: 'Zoom in', exact: true }).click();
+      await expect(zoom).toHaveText('400%');
+      await expect(image).toHaveAttribute('width', '6400');
+      expect(await dimensions()).toEqual(originalFrame);
+      await viewport.scrollIntoViewIfNeeded();
+      const zoomed = (await viewport.boundingBox())!;
+      const pan = () => viewport.evaluate((element) => [element.scrollLeft, element.scrollTop]);
+      const [left, top] = await pan();
+      await page.mouse.move(zoomed.x + 80, zoomed.y + 80);
+      await page.mouse.down();
+      await page.mouse.move(zoomed.x + 30, zoomed.y + 32, { steps: 4 });
+      await page.mouse.up();
+      await expect.poll(async () => (await pan())[0]).toBeGreaterThan(left!);
+      await expect.poll(async () => (await pan())[1]).toBeGreaterThan(top!);
+      await fit.click();
+      await expect(zoom).toHaveText(fitLabel);
+      await expect.poll(fits).toBe(true);
+      expect(await dimensions()).toEqual(originalFrame);
+
+      const open = preview.getByRole('button', { name: 'Open full-screen image' });
+      await open.focus();
+      await open.press('Enter');
+      const dialog = page.getByRole('dialog', { name });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole('img', { name })).toBeVisible();
+      const fullViewport = dialog.getByRole('region', { name: 'Image viewport' });
+      expect((await fullViewport.boundingBox())!.height).toBeGreaterThan(originalFrame.height);
+      await dialog.getByRole('button', { name: '100%', exact: true }).click();
+      await expect(dialog.getByLabel('Image zoom', { exact: true })).toHaveText('100%');
+      await fullViewport.press('0');
+      await expect(dialog.getByRole('button', { name: 'Fit', exact: true })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      await fullViewport.press('Escape');
+      await expect(dialog).toBeHidden();
+      await expect(open).toBeFocused();
+      expect(reads).toBe(1);
+      expect(fixture.writes).toEqual([]);
+      expect(fixture.boundary.unexpected).toEqual([]);
+    } finally {
+      await fixture.close(page);
+    }
+  });
+}
+
+// Minimal synthetic OOXML package with content types, a root relationship and a document.
+const docx = Buffer.from(
+  'UEsDBBQAAAAIAGKieV10JJxTuwAAAD4BAAATAAAAW0NvbnRlbnRfVHlwZXNdLnhtbJWQuQ7CMAyGX6XKiqgRAwNquwArMPACVuq2EbkUuxxvT8o1sDHa//FZrk73SFzcnPVcq0EkrgFYD+SQyxDJZ6ULyaHkMfUQUZ+xJ1guFivQwQt5mcvUoZpqSx2OVordLa/ZBF+rRJZVsXkZJ1atMEZrNErW4eLbH8r8TShz8unhwUSeZYOCpjpcKCXTUnHEJHt0uQ6uIbXQBj26jCgn41+80HVG0zc/tcUUNDEb3ztbfhWHxn/ugOfbmgdQSwMEFAAAAAgAYqJ5XWF7L0OJAAAA8gAAAAsAAABfcmVscy8ucmVsc43POw4CIRAG4KsQDrCzWlgYoLLZ1ngBAsMjLo8MGPX2UlisxsJy5p98f0accdU9ltxCrI090pqb5KH3egRoJmDSbSoV80hcoaT7GMlD1eaqPcJ+ng9AW4MrsTXZYiWnxe44uzwr/mMX56LBUzG3hLn/qPi6GLImj13yeyEL9r2eBstBCfh4Ub0AUEsDBBQAAAAIAGKieV0vI3/JegAAAKIAAAARAAAAd29yZC9kb2N1bWVudC54bWxFzsENwyAMBdBVogxQRz30gChLdAIKbkCKMTKuaLZvSA+9vC/b+pJtN5HDm7Do9KGtNNPvc1KtBqCFhOTbhSuW4/ZiIa/HKCt0lliFA7aWy0obXJflBuRzmZ3t5slxH1kHMlD32Ism1BwmwcqiFsZ2KKf19NeE/1fuC1BLAQIUAxQAAAAIAGKieV10JJxTuwAAAD4BAAATAAAAAAAAAAAAAACAAQAAAABbQ29udGVudF9UeXBlc10ueG1sUEsBAhQDFAAAAAgAYqJ5XWF7L0OJAAAA8gAAAAsAAAAAAAAAAAAAAIAB7AAAAF9yZWxzLy5yZWxzUEsBAhQDFAAAAAgAYqJ5XS8jf8l6AAAAogAAABEAAAAAAAAAAAAAAIABngEAAHdvcmQvZG9jdW1lbnQueG1sUEsFBgAAAAADAAMAuQAAAEcCAAAAAA==',
+  'base64',
+);
+
+test('LOCAL keeps the selected file actions visible when an inline preview is unavailable', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalAgentV2();
+  const files = new Map([
+    [
+      'picture.png',
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    ],
+    ['report.docx', docx],
+    ['table.xlsx', Buffer.from([0x50, 0x4b, 3, 4, 0])],
+    ['archive.zip', Buffer.from([0x50, 0x4b, 5, 6, 0])],
+    ['print.pdf', Buffer.from('%PDF-1.7\n%\xe2\xe3\xcf\xd3\n', 'latin1')],
+    ['unknown.bin', Buffer.from([0, 0xff, 1])],
+    ['notes.txt', Buffer.from('Synthetic notes')],
+  ]);
+  let finishDocx!: () => void;
+  const pendingDocx = new Promise<void>((resolve) => {
+    finishDocx = resolve;
+  });
+  const downloads: string[] = [];
+  try {
+    await page.setViewportSize({ width: 1600, height: 1000 });
+    await fixture.route(page, baseURL!);
+    await page.route('**/api/v1/agents/agt_contract/files/tree**', (route) => {
+      const path = new URL(route.request().url()).searchParams.get('path')!;
+      return route.fulfill({
+        json: {
+          path,
+          entries: [...files].map(([name, bytes]) => ({
+            path: path ? `${path}/${name}` : name,
+            name,
+            kind: 'file',
+            size_bytes: bytes.length,
+            hidden: false,
+          })),
+        },
+      });
+    });
+    await page.route('**/api/v1/agents/agt_contract/files/content**', async (route) => {
+      const path = new URL(route.request().url()).searchParams.get('path')!;
+      const name = path.split('/').at(-1)!;
+      if (name === 'report.docx') await pendingDocx;
+      if (name === 'notes.txt')
+        return route.fulfill({ status: 500, json: { code: 'store_failed' } });
+      const bytes = files.get(name)!;
+      await route.fulfill({
+        json: {
+          path,
+          size_bytes: bytes.length,
+          sha256: createHash('sha256').update(bytes).digest('hex'),
+          content_base64: bytes.toString('base64'),
+        },
+      });
+    });
+    await page.route('**/api/v1/agents/agt_contract/files/download**', (route) => {
+      const path = new URL(route.request().url()).searchParams.get('path')!;
+      downloads.push(path);
+      return route.fulfill({
+        body: files.get(path.split('/').at(-1)!)!,
+        contentType: 'application/octet-stream',
+      });
+    });
+    await page.goto('/agents/agt_contract');
+    await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+    const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
+    await computer.getByRole('tab', { name: 'Files', exact: true }).click();
+    const preview = computer.getByRole('region', { name: 'File preview' });
+    const fileRow = (name: string) => computer.getByRole('button', { name, exact: true });
+    const download = preview.getByRole('button', { name: 'Download file' });
+    await expect(preview).toBeHidden();
+    await fileRow('picture.png').click();
+    await expect(preview.getByRole('img', { name: 'picture.png' })).toBeVisible();
+    await expect(download).toBeEnabled();
+
+    await fileRow('report.docx').click();
+    await expect(preview.getByText('Opening file…')).toBeVisible();
+    await expect(download).toBeEnabled();
+    finishDocx();
+    await expect(preview.getByText('Opening file…')).toBeHidden();
+    for (const name of ['report.docx', 'table.xlsx', 'archive.zip', 'print.pdf', 'unknown.bin']) {
+      if (name !== 'report.docx') await fileRow(name).click();
+      await expect(fileRow(name)).toHaveAttribute('aria-current', 'true');
+      await expect(preview.getByLabel('Selected file')).toHaveText(new RegExp(`/home/.*${name}$`));
+      await expect(
+        preview.getByText('Preview unavailable. Download this file to view its contents.'),
+      ).toBeVisible();
+      await expect(preview.getByRole('button', { name: 'Delete file' })).toBeEnabled();
+      await expect(download).toBeEnabled();
+      if (name === 'report.docx') {
+        expect(downloads).toEqual([]);
+        const saving = page.waitForEvent('download');
+        await download.click();
+        const saved = await saving;
+        expect(saved.suggestedFilename()).toBe(name);
+        expect(await readFile((await saved.path())!)).toEqual(docx);
+      }
+    }
+    await fileRow('notes.txt').click();
+    await expect(preview.getByRole('button', { name: 'Retry preview' })).toBeVisible();
+    await expect(download).toBeEnabled();
+    expect(downloads).toHaveLength(1);
+    expect(downloads[0]).toMatch(/(?:^|\/)report\.docx$/);
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.boundary.unexpected).toEqual([]);
+  } finally {
+    finishDocx();
+    await fixture.close(page);
+  }
+});
 
 for (const stalled of ['headers', 'body'])
   test(`LOCAL stalled ${stalled} preview preserves input and offers a bounded retry`, async ({

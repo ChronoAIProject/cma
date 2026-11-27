@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createProcessFixture } from "./p1-browser-process-fixture.mjs";
+import "./p1-browser-workflow-cases.mjs";
 import { execFileSync, spawn } from "node:child_process";
 import { mkdir, mkdtemp, readFile, writeFile, cp, symlink, rm, readdir } from "node:fs/promises";
 import { createServer } from "node:http";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -21,9 +21,6 @@ import {
 } from "./p1-browser-ci.mjs";
 
 const root = fileURLToPath(new URL("../..", import.meta.url));
-const require = createRequire(new URL("../../web/package.json", import.meta.url));
-const yaml = require("js-yaml");
-const workflow = yaml.load(await readFile(new URL("../workflows/ci-web.yml", import.meta.url), "utf8"));
 const env = Object.fromEntries(
   Object.entries(process.env).filter(([key]) => !/^(CMA_|PW_|PLAYWRIGHT_|NODE_OPTIONS|RUNNER_TEMP)/.test(key)),
 );
@@ -206,54 +203,6 @@ test("only exactly discovered and successfully executed cases qualify", () => {
     const result = report(true);
     mutate(result);
     assert.throws(() => verifyResults(report(false), result));
-  }
-});
-
-function verifyWorkflow(job) {
-  assert.equal(job.defaults.run["working-directory"], "web");
-  assert.equal(job["continue-on-error"], undefined);
-  const steps = job.steps;
-  const mechanics = steps.filter((step) => step.name === "Design, shell and auth gate mechanics");
-  assert.equal(mechanics.length, 1);
-  assert.equal(mechanics[0].run, "node --test ../.github/scripts/p1-browser-ci.test.mjs");
-  // Every suite needs its own bounded step; a split suite cannot silently stop running.
-  for (const suite of Object.keys(suites)) {
-    const selected = steps.filter((step) => step.id === `p1_${suite}`);
-    assert.equal(selected.length, 1);
-    const step = selected[0];
-    assert.equal(step.run, `node ../.github/scripts/p1-browser-ci.mjs ${suite}`);
-    assert.ok(steps.indexOf(mechanics[0]) < steps.indexOf(step));
-    assert.ok(steps.indexOf(step) < steps.findIndex((s) => s.id === "agent_v2"));
-    assert.ok(steps.indexOf(step) > steps.findIndex((s) => s.name === "New agent request failure evidence"));
-    for (const checked of [step, mechanics[0]]) {
-      for (const key of ["if", "continue-on-error", "env", "working-directory"])
-        assert.equal(checked[key], undefined);
-      assert.ok(checked["timeout-minutes"] > 0 && checked["timeout-minutes"] <= 10);
-    }
-    const artifact = steps[steps.indexOf(step) + 1];
-    assert.equal(artifact.if, `failure() && steps.p1_${suite}.outcome == 'failure'`);
-    assert.equal(artifact.uses, "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02");
-    assert.equal(artifact.with.path, "${{ runner.temp }}/cma-p1-browser/" + suite);
-    assert.equal(artifact.with["if-no-files-found"], "error");
-    assert.equal(artifact.with["retention-days"], 1);
-  }
-}
-test("workflow executes the guard and all suites, fails closed and uploads matching evidence", () => {
-  verifyWorkflow(workflow.jobs.web);
-  for (const mutate of [
-    (j) => (j.steps = j.steps.filter((s) => s.id !== "p1_shell")),
-    (j) => (j.steps = j.steps.filter((s) => s.id !== "p1_palette")),
-    (j) => (j.steps.find((s) => s.id === "p1_palette").run = "node ../.github/scripts/p1-browser-ci.mjs design"),
-    (j) => (j.steps.find((s) => s.name === "Design, shell and auth gate mechanics").run = "true"),
-    (j) => (j.steps.find((s) => s.id === "p1_design").run += " --list"),
-    (j) => (j.steps.find((s) => s.id === "p1_design")["continue-on-error"] = true),
-    (j) => (j.steps.find((s) => s.id === "p1_design").if = "false"),
-    (j) => (j.steps.find((s) => s.name === "Design browser failure evidence").with.path = "wrong"),
-    (j) => delete j.steps.find((s) => s.name === "Design browser failure evidence").with["if-no-files-found"],
-  ]) {
-    const job = structuredClone(workflow.jobs.web);
-    mutate(job);
-    assert.throws(() => verifyWorkflow(job));
   }
 });
 

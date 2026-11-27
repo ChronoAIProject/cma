@@ -281,7 +281,12 @@ export function registerDeletionStatusCases() {
             { theme, zoom },
           );
           await expect(dialog.getByText('Deleting', { exact: true })).toBeVisible();
-          await expect(dialog.getByText(/still uses one Sandbox slot/)).toBeVisible();
+          await expect(
+            dialog.getByText(
+              'Check Environments for your current Sandbox capacity while deletion finishes.',
+              { exact: true },
+            ),
+          ).toBeVisible();
           await captureDeletion(page, dialog, info, '12-delete-progress', theme, width, zoom);
           await dialog.getByRole('button', { name: 'Copy reference', exact: true }).click();
           await expect(dialog.getByText('Reference copied.', { exact: true })).toBeVisible();

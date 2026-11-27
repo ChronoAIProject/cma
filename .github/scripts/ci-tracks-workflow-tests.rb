@@ -1,6 +1,7 @@
 #!/usr/bin/env ruby
 require 'yaml'
 require_relative 'ci-track-validation'
+require_relative 'workflow-yaml'
 root = File.expand_path('../..', __dir__)
 
 # Every artifact download ends within a bound. Composite steps accept no
@@ -99,14 +100,16 @@ def check_artifact_downloads(workflows, actions)
   require_check(unbounded == UNBOUNDED_DOWNLOADS, 'every new artifact download must be bounded; update the follow-up count when one is fixed')
 end
 
-documents = Dir.glob(File.join(root, '.github/workflows/ci*.yml')).to_h { |file| [File.basename(file, '.yml'), YAML.load_file(file)] }
+documents = Dir.glob(File.join(root, '.github/workflows/ci*.yml')).to_h do |file|
+  [File.basename(file, '.yml'), WorkflowYAML.load_file(file)]
+end
 actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h do |file|
   ["./#{File.dirname(file).delete_prefix(root + '/')}", YAML.load_file(file)]
 end
 validate(documents, actions)
 check_repo_secret_gate(root)
 workflows = Dir.glob(File.join(root, '.github/workflows/*.{yml,yaml}')).to_h do |file|
-  [File.basename(file, File.extname(file)), YAML.load_file(file)]
+  [File.basename(file, File.extname(file)), WorkflowYAML.load_file(file)]
 end
 check_merge_group_triggers(workflows)
 [->(w) { w['staging-cd'][true]['merge_group'] = nil },
@@ -234,6 +237,10 @@ mutations = [
   ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['run'].sub!('--test-threads 1', '--test-threads 2') },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'Enforce Gateway latency budgets' }['run'] += ' || true' },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'Enforce Gateway latency budgets' }['continue-on-error'] = true },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'Gateway latency runner regressions' } },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s.dig('with', 'name').to_s.start_with?('cmaeg-latency-') }['with']['path'] = 'api/target/cmaeg-latency.txt' },
   ->(d) { d['ci'][true].delete('merge_group') },
   ->(d) { d['ci'][true]['merge_group']['types'] = ['destroyed'] },
   ->(d) { d['ci'][true]['merge_group']['branches'] = ['main'] },
@@ -247,9 +254,24 @@ mutations = [
   ->(d) { d['ci-repo']['jobs']['structure']['steps'].reject! { |s| s['name'] == 'Synthetic authority and observer regressions' } },
   ->(d) { d['ci-repo']['jobs']['structure']['if'] = 'false' },
   ->(d) { d['ci-repo']['jobs']['structure']['continue-on-error'] = true },
-  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!("|| ''", "|| 'type=gha'") },
-  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!('ignore-error=true,', '') },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-from') }['with']['cache-to'] = 'type=gha,mode=max' },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-from') }['with']['cache-from'].sub!("steps.layer-validate.outcome == 'success'", 'true') },
   ->(d) { d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'].find { |s| s.fetch('uses', '').start_with?('actions/setup-node@') }['with']['cache'] = 'npm' },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'].delete_at(4) },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['continue-on-error'] = true },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['timeout-minutes'] = 120 },
+  ->(d) { d['ci-web']['jobs'].delete('web-conversation'); d['ci-web']['jobs']['web-result']['needs'].delete('web-conversation') },
+  ->(d) { d['ci-web']['jobs']['web-result']['needs'].delete('web-design') },
+  ->(d) { d['ci-web']['jobs']['web-result']['if'] = 'success()' },
+  ->(d) { d['ci-web']['jobs'].delete('web-result') },
+  ->(d) { d['ci-web']['jobs']['web-result']['continue-on-error'] = true },
+  ->(d) { d['ci-web']['jobs']['web-result']['steps'].last['run'] = 'true' },
+  ->(d) { d['ci-web']['jobs']['web-result']['steps'].last['if'] = 'false' },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'].reject! { |s| s['name'] == 'Install pinned local browser' } },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'] << d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Tests and critical Agent browser coverage' }.dup },
+  ->(d) { d['ci-web']['jobs']['web-conversation']['steps'].find { |s| s['name'] == 'Production build' }['env'].delete('CHRONO_BUILD_ARTIFACT') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Restore Trivy databases' }['with'].delete('restore-keys') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },
   ->(d) { d['ci'][true].delete('push') },
@@ -276,6 +298,8 @@ mutations = [
   ->(d) { d['ci']['concurrency']['cancel-in-progress'] = true },
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
+  ->(d) { d['ci']['jobs']['gate-repo']['if'] = 'always()' },
+  ->(d) { d['ci']['jobs']['version-label']['if'] = '${{ !cancelled() }}' },
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
   ->(d) { d['ci']['jobs']['version-label']['if'] = 'always()' },
   ->(d) { d['ci']['jobs']['version-label']['if'] = 'success()' },
@@ -311,8 +335,8 @@ mutations = [
   ->(d) { d['ci-rust']['jobs']['mongo-shards']['steps'].first['uses'] = 'actions/checkout@v5' },
   ->(d) { d['ci-rust']['jobs']['mongo-eg']['steps'].last['run'] = 'true' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image' }['with'].delete('cache') },
-  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].last['if'] = "success() && (#{OmarchyCIContract::CACHE_MISS})" },
-  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['cache-to'].sub!(OmarchyCIContract::CACHE_WRITE, OmarchyCIContract::CACHE_MISS) },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'] << {'uses' => 'actions/cache/save@caa296126883cff596d87d8935842f9db880ef25'} },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['cache-to'] = 'type=local,mode=min,dest=/tmp/omarchy' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['outputs'] = 'type=docker' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('SOURCE_DATE_EPOCH=0', 'SOURCE_DATE_EPOCH=1') },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-cache-restore' }['if'] = "github.event_name == 'push'" },
@@ -429,7 +453,7 @@ mutations.concat([
   ->(d) { repo_jobs.call(d)['result']['needs'].delete('scanner-tests') },
   ->(d) { repo_jobs.call(d)['result']['steps'].last['run'] = 'true' }
 ])
-mutations.each do |mutate|
+(mutations + KeyProviderCIContract.mutations).each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)
   begin

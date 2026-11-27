@@ -16,6 +16,43 @@ const advance = (milliseconds: number) => act(() => vi.advanceTimersByTime(milli
 const notice = () => screen.queryByText(/No new activity observed here/);
 afterEach(() => vi.useRealTimers());
 
+it('shows the phase and recorded progress without treating reconnects as activity', () => {
+  const phaseStarted = '2026-11-01T00:01:00Z';
+  const toolOutput = '2026-11-01T00:02:00Z';
+  const control = (name: string) => screen.getByText(name).nextElementSibling;
+  let state = start();
+  const view = render(<ActiveThinking conversation={state} />);
+  fireEvent.click(screen.getByRole('button', { name: 'View activity' }));
+  expect(control('Current phase')).toHaveTextContent('Waiting for a response');
+  expect(control('Phase started')?.querySelector('time')).toHaveAttribute('datetime', at);
+  expect(control('Last recorded progress')).toHaveTextContent('Unavailable');
+
+  state = foldAgentEvent(state, {
+    seq: 2,
+    appendedAt: phaseStarted,
+    kind: { type: 'tool_call_started', call_id: 'tool', title: 'Read file', status: 'running' },
+  });
+  view.rerender(<ActiveThinking conversation={state} />);
+  expect(control('Current phase')).toHaveTextContent('Running a tool');
+  expect(control('Phase started')?.querySelector('time')).toHaveAttribute('datetime', phaseStarted);
+
+  state = foldAgentEvent(state, {
+    seq: 3,
+    appendedAt: toolOutput,
+    kind: {
+      type: 'tool_output_reported',
+      call_id: 'tool',
+      output: { text: 'data', truncated: false },
+    },
+  });
+  view.rerender(<ActiveThinking conversation={{ ...state, agentCursor: 'reconnected' }} />);
+  expect(control('Phase started')?.querySelector('time')).toHaveAttribute('datetime', phaseStarted);
+  expect(control('Last recorded progress')?.querySelector('time')).toHaveAttribute(
+    'datetime',
+    toolOutput,
+  );
+});
+
 it('reports prolonged observed silence without changing accepted work or its tools', () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date(at));

@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-require "yaml"
+require_relative "workflow-yaml"
 require_relative "backend-ci-contract"
 require_relative "ledger-ci-contract"
 
@@ -14,7 +14,7 @@ module CIContract
 
   def self.load_inputs
     Dir.glob(File.join(ROOT, ".github/workflows/*.{yml,yaml}")).to_h do |path|
-      [File.basename(path, File.extname(path)), YAML.safe_load(File.read(path), aliases: false)]
+      [File.basename(path, File.extname(path)), WorkflowYAML.load_file(path)]
     end
   end
 
@@ -41,7 +41,7 @@ module CIContract
 
   def self.artifact(job, condition, prefix)
     upload = step(job, "Retain runtime image evidence", nil, condition)
-    expected = prefix.start_with?("release-") ? "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" : "actions/upload-artifact@v4"
+    expected = prefix.start_with?("release-") ? "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" : "actions/upload-artifact@v4"
     require!(upload["uses"] == expected, "runtime evidence uploader changed")
     require!(upload["with"] == {
       "name" => "#{prefix}-${{ github.run_id }}-${{ github.run_attempt }}",
@@ -87,7 +87,7 @@ module CIContract
       "github.event_name == 'push' && github.ref == 'refs/heads/develop' && #{base} && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'")
     require!(extract["id"] == "api-cargo-cache-export", "API cache extraction output changed")
     require!([inject, extract].all? { |row| row["timeout-minutes"] == 3 }, "API cache transfers must be bounded")
-    revision = "0057852bfaa89a56745cba8c7296529d2fc39830"
+    revision = "caa296126883cff596d87d8935842f9db880ef25"
     shared = { "path" => "${{ runner.temp }}/cma-api-cargo-cache/data",
       "key" => "${{ steps.api-cargo-cache.outputs.key }}", "enableCrossOsArchive" => false }
     expected = [
@@ -178,7 +178,7 @@ module CIContract
       "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
       "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
       "docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130",
-      "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+      "docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e",
       "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
       "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
       "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
@@ -202,7 +202,9 @@ module CIContract
       end
     end
     publications = %w[web am eg runtime runtime_omarchy].map { |component| "release_#{component}" }
-    allowed = %w[publish:images staging-release:publish omarchy-package-bundle:bundle] + publications.map { |id| "staging-cd:#{id}" }
+    allowed = %w[publish:images staging-release:publish omarchy-package-bundle:bundle staging-cd:protected_web
+      staging-web-continuity:protected staging-web-continuity-epoch:release staging-cd:release_journey_probe] +
+      publications.map { |id| "staging-cd:#{id}" }
     require!(grants.sort == allowed.sort,
       "only the reviewed release entry points may grant package write")
     omarchy_package_bundle_authority(inputs.fetch("omarchy-package-bundle"))
@@ -214,10 +216,48 @@ module CIContract
       require!(staging.dig("jobs", id, "uses") == "./.github/workflows/staging-release.yml",
         "staging package authority must delegate to the reviewed publisher")
     end
+    check_journey_publication_authority(staging.fetch("jobs").fetch("release_journey_probe"))
+    check_web_publication_authority(inputs)
     writer = inputs.fetch("staging-release").fetch("jobs").fetch("publish")
     require!(writer["permissions"] == { "contents" => "read", "pull-requests" => "read", "actions" => "read", "packages" => "write" } &&
       writer["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'",
       "staging publisher authority changed")
+  end
+
+  def self.check_journey_publication_authority(job)
+    require!(job["permissions"] == { "contents" => "read", "packages" => "write" } &&
+      job["if"] == "github.repository == 'ChronoAIProject/cma' && github.event_name == 'push' && github.ref == 'refs/heads/develop'" &&
+      !job.key?("uses") && !job.key?("env") && !job.key?("environment") && !job.key?("secrets"),
+      "journey publisher authority changed")
+    steps = job.fetch("steps")
+    publication = steps.find { |row| row["id"] == "publish" }
+    require!(publication && publication["env"] == { "GH_TOKEN" => "${{ github.token }}" } &&
+      publication["run"] == "python3 -B .github/scripts/staging_cd_journey_probe.py publish" &&
+      publication["if"] == "steps.select.outputs.changed == 'true'" &&
+      !publication.key?("continue-on-error") &&
+      steps.none? { |row| row != publication && row["env"].to_s.include?("github.token") },
+      "journey registry credential must go only to the reviewed publisher")
+  end
+
+  def self.check_web_publication_authority(inputs)
+    staging = inputs.fetch("staging-cd").fetch("jobs")
+    entry = staging.fetch("protected_web")
+    wrapper = inputs.fetch("staging-web-continuity")
+    epoch = inputs.fetch("staging-web-continuity-epoch")
+    [wrapper, epoch].each do |workflow|
+      require!((workflow["on"] || workflow[true]).keys == ["workflow_call"], "protected Web cannot run directly")
+    end
+    parent = wrapper.dig("jobs", "protected")
+    release = epoch.dig("jobs", "release")
+    require!(entry["uses"] == "./.github/workflows/staging-web-continuity.yml" && entry["name"] == "Publish protected Web" &&
+      entry["if"].start_with?("vars.CMA_STAGING_WEB_CONTINUITY == 'true' && ") && !entry.key?("concurrency") &&
+      %w[release_web promote_web].all? { |id| staging[id]["if"].start_with?("vars.CMA_STAGING_WEB_CONTINUITY != 'true' && ") } &&
+      parent["uses"] == "./.github/workflows/staging-web-continuity-epoch.yml" &&
+      parent["concurrency"] == { "group" => "cma-staging-deploy-set", "queue" => "max", "cancel-in-progress" => false } &&
+      parent["needs"] == "raw" && release["needs"] == "observe" &&
+      release["uses"] == "./.github/workflows/staging-release.yml" &&
+      release.dig("with", "component") == "web" && release.dig("with", "protected_web") == true &&
+      !release.key?("secrets"), "protected Web package authority must delegate inside its writer lock")
   end
 
   BUNDLE_ABSENT = 'python3 -B .github/scripts/omarchy-package-bundle.py absent --repository "$REPOSITORY" --tag "$TAG"'
@@ -307,7 +347,7 @@ module CIContract
       "Provider contract mutation regressions" => "ruby .github/scripts/ci-contract-tests.rb provider",
       "Backend capacity preparation regressions" => "python3 .github/scripts/backend-capacity-tests.py",
       "Staging authority and evidence regressions" => "node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs .github/scripts/mongo-contract-tests.test.mjs",
-      "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/image-manager-mongo-contract.test.mjs",
+      "Authenticated Mongo startup regressions" => "node --test .github/scripts/authenticated-mongo-readiness.test.mjs .github/scripts/authenticated-mongo-contract.test.mjs",
       "Typecheck every harness entry point" => "npm run e2e:typecheck",
       "Exact remote campaign inventory remains mandatory" => "node .github/scripts/staging-authority.mjs inventory",
       "Fail-closed fixtures and cleanup mechanics" => "npm run test -- e2e/environment.test.ts e2e/owner-mechanics.test.ts",

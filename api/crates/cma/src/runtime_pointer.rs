@@ -4,6 +4,7 @@ mod controller;
 pub(crate) mod operator;
 mod registry;
 pub(crate) use controller::RuntimePointerController;
+pub(crate) use registry::valid_digest;
 pub(crate) use registry::{RegistryRuntimePointers, RuntimePointerConfig};
 
 use async_trait::async_trait;

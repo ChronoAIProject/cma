@@ -27,6 +27,8 @@ export interface QueuedInputsControl {
   readonly edit: (item: QueuedInputRow, input: string) => Promise<void>;
   readonly remove: (item: QueuedInputRow) => Promise<void>;
   readonly recover: (item: QueuedInputRow) => Promise<void>;
+  readonly unappliedEdits?: readonly { key: string; text: string }[];
+  readonly dismissUnappliedEdit?: (key: string) => void;
   readonly refresh: () => void;
 }
 
@@ -156,9 +158,11 @@ export function useQueuedInputs(
   }, [session, eventRevision, activeTurn, requestRevision]);
 
   let intents: readonly QueuedInputIntent[] = [];
+  let unappliedEdits: readonly QueuedInputIntent[] = [];
   let storageError: string | undefined;
   try {
     intents = session?.journal.queuedInputs.read() ?? [];
+    unappliedEdits = session?.journal.queuedInputs.unappliedEdits() ?? [];
     session?.journal.queuedInputs.managedCommands();
     const legacy = session?.journal.queuedCancellation.read();
     if (legacy?.commandId === null) {
@@ -182,6 +186,7 @@ export function useQueuedInputs(
     storageError = 'Queue recovery is unavailable. Refresh status.';
   }
   const items = [...(current?.items ?? [])];
+  const unappliedByResponse = new Map(unappliedEdits.map((intent) => [intent.responseId, intent]));
   for (const intent of intents)
     if (!items.some((item) => item.responseId === intent.responseId))
       items.push({
@@ -260,21 +265,40 @@ export function useQueuedInputs(
     managedCommandIds: enabled ? (current?.managedCommandIds ?? new Set()) : new Set(),
     outcomes: enabled ? (current?.outcomes ?? []) : [],
     items: enabled
-      ? items.map((item) => ({
-          ...item,
-          busy: item.busy || local?.busy.has(item.responseId),
-          needsRecovery: intents.some((intent) => intent.responseId === item.responseId),
-          pendingEdit: storageError
-            ? undefined
-            : intents.find(
-                (intent) =>
-                  intent.action === 'edit' &&
-                  intent.responseId === item.responseId &&
-                  intent.commandId === item.commandId,
-              )?.text,
-          error: local?.errors.get(item.responseId),
-        }))
+      ? items.map((item) => {
+          const stale = unappliedByResponse.get(item.responseId);
+          return {
+            ...item,
+            busy:
+              item.busy ||
+              local?.busy.has(item.responseId) ||
+              (stale?.commandId === item.commandId && item.revision <= stale.revision),
+            needsRecovery: intents.some((intent) => intent.responseId === item.responseId),
+            pendingEdit: storageError
+              ? undefined
+              : intents.find(
+                  (intent) =>
+                    intent.action === 'edit' &&
+                    intent.responseId === item.responseId &&
+                    intent.commandId === item.commandId,
+                )?.text,
+            error: local?.errors.get(item.responseId),
+          };
+        })
       : [],
+    unappliedEdits:
+      enabled && !storageError
+        ? unappliedEdits.flatMap(({ key, text }) =>
+            text !== undefined && !intents.some((intent) => intent.key === key)
+              ? [{ key, text }]
+              : [],
+          )
+        : [],
+    dismissUnappliedEdit: (key) => {
+      if (!enabled || !session) return;
+      session.journal.queuedInputs.dismissUnappliedEdit(key);
+      bump();
+    },
     error: enabled ? (storageError ?? current?.error) : undefined,
     edit: (item, input) => mutate(item, 'edit', input),
     remove: (item) => mutate(item, 'remove'),

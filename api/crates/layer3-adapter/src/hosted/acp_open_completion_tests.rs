@@ -327,3 +327,93 @@ async fn an_open_still_in_flight_is_retried_never_duplicated() {
     serving.await.unwrap();
     assert!(matches!(opened, Err(crate::AdapterError::Unavailable(_))));
 }
+
+#[derive(Default)]
+struct OneShot(std::sync::atomic::AtomicUsize);
+
+#[async_trait::async_trait]
+impl crate::hosted::HostedOpenReplyLoss for OneShot {
+    async fn claim(&self) -> bool {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed) == 0
+    }
+}
+
+async fn fresh_with_reply_loss(
+    claim: Option<&dyn crate::hosted::HostedOpenReplyLoss>,
+    proof: &'static str,
+    drop_reply: bool,
+) {
+    let config = configured("access");
+    let expected = digest(&config);
+    let (client, mut server) = socket_pair().await;
+    send_ready(&mut server, "agent-1").await;
+    let should_probe = claim.is_some();
+    let serving = tokio::spawn(async move {
+        let initialize = receive_json(&mut server).await;
+        assert_eq!(initialize["method"], "initialize");
+        respond(
+            &mut server,
+            &initialize,
+            serde_json::json!({"agentCapabilities":{"mcpCapabilities":{"http":true}}}),
+        )
+        .await;
+        let open = receive_json(&mut server).await;
+        assert_eq!(open["method"], "session/new");
+        respond(
+            &mut server,
+            &open,
+            serde_json::json!({"sessionId":"held-conversation"}),
+        )
+        .await;
+        if should_probe {
+            completion(&mut server, &expected, proof).await;
+        }
+        if !drop_reply {
+            settings_only(&mut server, "access").await;
+        }
+        while let Some(Ok(frame)) = server.next().await {
+            assert!(!matches!(frame, Message::Binary(_)), "unexpected {frame:?}");
+        }
+    });
+    let (updates, _receiver) = mpsc::channel(8);
+    let opened = Bridge::open_with_relay_policy(
+        client,
+        "agent-1",
+        "/workspace".into(),
+        (config, None, (false, claim)),
+        None,
+        None,
+        updates,
+    )
+    .await;
+    if drop_reply {
+        assert!(matches!(opened, Err(crate::AdapterError::Unavailable(_))));
+    } else {
+        let opened = opened.unwrap();
+        assert_eq!(
+            opened.channel.conversation_id.as_deref(),
+            Some("held-conversation")
+        );
+        stop(opened).await;
+    }
+    serving.await.unwrap();
+}
+
+#[tokio::test]
+async fn open_reply_loss_requires_proof_and_preserves_adoption_and_other_opens() {
+    let claim = OneShot::default();
+    fresh_with_reply_loss(None, "", false).await;
+    fresh_with_reply_loss(Some(&claim), "complete", false).await;
+    assert_eq!(claim.0.load(std::sync::atomic::Ordering::Relaxed), 0);
+    fresh_with_reply_loss(Some(&claim), "", true).await;
+    let (recovered, serving) = interrupted("access", "", "").await;
+    let recovered = recovered.unwrap();
+    assert_eq!(
+        recovered.channel.conversation_id.as_deref(),
+        Some("held-conversation")
+    );
+    stop(recovered).await;
+    serving.await.unwrap();
+    fresh_with_reply_loss(Some(&claim), "", false).await;
+    assert_eq!(claim.0.load(std::sync::atomic::Ordering::Relaxed), 2);
+}

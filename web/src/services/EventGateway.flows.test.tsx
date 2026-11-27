@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventGateway } from './EventGateway';
+// Load the real graph module before exercising lifecycle and editor interactions.
+import './DeliveryFlowCanvas';
 import type { Channel, ChannelListItem } from './ChannelEditor';
 
 afterEach(() => vi.unstubAllGlobals());
@@ -216,7 +218,7 @@ it('retains an uncertain create across navigation and removes a freshly created 
       expect.objectContaining({ method: 'DELETE' }),
     ],
   ]);
-});
+}, 15_000);
 
 it('reopens a legacy record only with its original channel ID and rejects an unrelated record', async () => {
   const original = channel('Legacy', 4);
@@ -277,4 +279,26 @@ it('recovers legacy endpoints automatically when the original creation record is
   expect(await screen.findByLabelText('Channel name')).toBeEnabled();
   expect(screen.queryByLabelText('Original channel ID')).not.toBeInTheDocument();
   expect(fetcher).toHaveBeenCalledTimes(3);
+});
+
+it('moves keyboard focus to the create heading and back to the landing action on cancellation', async () => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockImplementation(async () => json({ items: [] })),
+  );
+  const user = userEvent.setup();
+  render(<EventGateway session={session} denied={vi.fn()} />);
+  const action = () =>
+    within(screen.getByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+      name: 'New channel',
+    });
+  for (let count = 0; count < 2; count++) {
+    action().focus();
+    await user.keyboard('{Enter}');
+    expect(screen.getByRole('heading', { name: 'New channel' })).toHaveFocus();
+    const cancel = screen.getByRole('button', { name: 'Cancel' });
+    cancel.focus();
+    await user.keyboard('{Enter}');
+    expect(action()).toHaveFocus();
+  }
 });

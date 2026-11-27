@@ -9,6 +9,9 @@ use crate::ids::{ServiceId, SubjectId};
 pub enum SandboxCredentialSource {
     #[default]
     Managed,
+    ManagedConnection {
+        initial: InitialServiceConnection,
+    },
     Provided {
         key_sha256: String,
     },
@@ -23,12 +26,23 @@ pub enum SandboxCredentialSource {
 
 impl SandboxCredentialSource {
     pub fn is_managed(&self) -> bool {
+        matches!(self, Self::Managed | Self::ManagedConnection { .. })
+    }
+
+    pub fn is_default_managed(&self) -> bool {
         matches!(self, Self::Managed)
+    }
+
+    pub fn initial_connection(&self) -> Option<&InitialServiceConnection> {
+        match self {
+            Self::ManagedConnection { initial } => Some(initial),
+            _ => None,
+        }
     }
 
     pub fn validate(&self) -> bool {
         match self {
-            Self::Managed => true,
+            Self::Managed | Self::ManagedConnection { .. } => true,
             Self::Binding {
                 binding_id,
                 tool_endpoint,
@@ -49,7 +63,7 @@ impl SandboxCredentialSource {
 
     pub fn accepts(&self, authority: &SandboxCredentialAuthority) -> bool {
         match self {
-            Self::Managed => !authority.expires_at.is_empty(),
+            Self::Managed | Self::ManagedConnection { .. } => !authority.expires_at.is_empty(),
             Self::Binding { .. } => {
                 self.validate()
                     && authority
@@ -105,6 +119,21 @@ impl ServiceConnectionSelection {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InitialServiceConnection {
+    pub selection: ServiceConnectionSelection,
+    pub requirement: RepositoryCredentialRequirement,
+    pub repository: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RepositoryCredentialRequirement {
+    PublicRepositoryWrite,
+    PrivateRepositoryRead,
+}
+
 /// The latest exact owner-approved scope, separate from immutable creation scope.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -158,7 +187,10 @@ pub enum SandboxSignInState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SandboxCredentialState {
-    #[serde(default, skip_serializing_if = "SandboxCredentialSource::is_managed")]
+    #[serde(
+        default,
+        skip_serializing_if = "SandboxCredentialSource::is_default_managed"
+    )]
     pub source: SandboxCredentialSource,
     #[serde(default)]
     pub reaches: Vec<ServiceId>,
@@ -179,6 +211,21 @@ pub struct SandboxCredentialState {
 }
 
 impl SandboxCredentialState {
+    pub fn selected_connection(&self) -> Option<&ServiceConnectionSelection> {
+        match &self.service_scope {
+            Some(scope) => scope.connection.as_ref(),
+            None => self
+                .source
+                .initial_connection()
+                .map(|initial| &initial.selection),
+        }
+    }
+
+    pub fn selected_repository_connection(&self) -> Option<&InitialServiceConnection> {
+        let initial = self.source.initial_connection()?;
+        (self.selected_connection() == Some(&initial.selection)).then_some(initial)
+    }
+
     pub fn service_access_generation_floor(&self) -> u64 {
         if let Some(scope) = &self.service_scope {
             return scope.credential_generation_floor;
@@ -228,6 +275,10 @@ impl SandboxCredentialState {
                     .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
         };
         self.source.validate()
+            && self
+                .source
+                .initial_connection()
+                .is_none_or(|initial| initial.selection.matches_scope(&self.reaches))
             && (self.source.is_managed()
                 || (self.service_grants.is_empty() && self.service_scope.is_none()))
             && self.current.as_ref().is_none_or(authority_valid)

@@ -27,17 +27,34 @@ impl CredentialMaterial {
     }
 
     pub(crate) fn matches_connection(&self, sandbox: &Sandbox) -> bool {
-        let expected = sandbox
-            .credential
-            .service_scope
-            .as_ref()
-            .and_then(|scope| scope.connection.as_ref());
+        let expected = sandbox.credential.selected_connection();
         match (expected, &self.github_route) {
             (None, None) => true,
             (Some(selection), Some(route)) => {
                 selection.service.as_str() == crate::trigger::GITHUB_SERVICE
                     && selection.connection_id == route.service_id
                     && route.is_valid()
+                    && match (
+                        sandbox.credential.selected_repository_connection(),
+                        &route.repository_scope,
+                    ) {
+                        (None, None) => true,
+                        (Some(initial), Some(scope)) => {
+                            use layer2_core::sandbox::RepositoryCredentialRequirement as Need;
+                            scope.repository == initial.repository
+                                && matches!(
+                                    (initial.requirement, scope.required_scope),
+                                    (
+                                        Need::PublicRepositoryWrite,
+                                        layer3_adapter::GithubRepositoryScopeNeed::PublicRepo
+                                    ) | (
+                                        Need::PrivateRepositoryRead,
+                                        layer3_adapter::GithubRepositoryScopeNeed::Repo
+                                    )
+                                )
+                        }
+                        _ => false,
+                    }
             }
             _ => false,
         }
@@ -52,7 +69,8 @@ impl CredentialMaterial {
                 .as_ref()
                 .is_none_or(|route| self.source.is_managed() && route.is_valid())
             && match &self.source {
-                SandboxCredentialSource::Managed => true,
+                SandboxCredentialSource::Managed
+                | SandboxCredentialSource::ManagedConnection { .. } => true,
                 SandboxCredentialSource::Binding { .. } => {
                     format!(
                         "provided-{:x}",

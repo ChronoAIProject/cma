@@ -26,6 +26,8 @@ use tokio::sync::Notify;
 use tracing::{instrument::WithSubscriber, Instrument};
 
 pub use crate::telemetry::names::RESTORE_DURATION as RESTORE_DURATION_METRIC;
+#[path = "resolver_current.rs"]
+mod current;
 
 #[derive(Debug, Clone)]
 pub struct ResolvedChannel {
@@ -129,6 +131,7 @@ struct Inner {
     // Invalidation and restore publication share a short synchronous critical section.
     publication: Mutex<()>,
     restores: std::sync::atomic::AtomicUsize,
+    profile_revision_writer: std::sync::atomic::AtomicBool,
 }
 impl ChannelResolver {
     pub fn new(
@@ -158,39 +161,20 @@ impl ChannelResolver {
                 limiter: RateLimiter::keyed(quota),
                 publication: Mutex::new(()),
                 restores: 0.into(),
+                profile_revision_writer: false.into(),
             }),
         }
+    }
+    pub(crate) fn require_current_profile_reads(&self, enabled: bool) {
+        self.inner
+            .profile_revision_writer
+            .store(enabled, std::sync::atomic::Ordering::Release);
     }
     pub fn cache_len(&self) -> usize {
         self.inner.cache.len()
     }
     pub(crate) fn record_client(&self) -> RecordClient {
         (*self.inner.records).clone()
-    }
-    /// Recheck live channel authority without accepting a cached definition.
-    pub async fn resolve_current(
-        &self,
-        raw_id: &str,
-    ) -> Result<Arc<ResolvedChannel>, ResolveError> {
-        let id = ChannelId::new(raw_id).map_err(|_| ResolveError::Invalid)?;
-        let pointer = id
-            .open(&self.inner.keys)
-            .map_err(|_| ResolveError::Tampered)?
-            .payload;
-        self.inner
-            .records
-            .record_url(pointer.record_id.as_str())
-            .map_err(|_| ResolveError::Invalid)?;
-        if !self
-            .inner
-            .records
-            .names_record(&pointer.record_url, pointer.record_id.as_str())
-        {
-            return Err(ResolveError::Tampered);
-        }
-        tokio::time::timeout(self.inner.config.restore_timeout, self.fetch(id, pointer))
-            .await
-            .unwrap_or(Err(ResolveError::Unavailable))
     }
     pub fn invalidate(&self, id: &str) {
         let _guard = self.inner.publication.lock().unwrap();
@@ -221,6 +205,13 @@ impl ChannelResolver {
         timing: Option<&crate::telemetry::timing::IngressTiming>,
     ) -> Result<Arc<ResolvedChannel>, ResolveError> {
         let _duration = timing.map(|timing| timing.restore());
+        if self
+            .inner
+            .profile_revision_writer
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            return self.resolve_current(raw_id).await;
+        }
         loop {
             let stale = match self.inner.cache.lookup(raw_id) {
                 Lookup::Fresh(channel) => return Ok(channel),
@@ -405,7 +396,7 @@ impl ChannelResolver {
 }
 
 /// The bytes of a validated `sha256:<64 lowercase hex>` key hash.
-fn decode_key_hash(hash: &str) -> Result<[u8; 32], ResolveError> {
+pub(super) fn decode_key_hash(hash: &str) -> Result<[u8; 32], ResolveError> {
     let mut bytes = [0; 32];
     for (index, byte) in bytes.iter_mut().enumerate() {
         *byte = hash

@@ -3,24 +3,29 @@ on:
   workflow_call: {}
 permissions:
   contents: "read"
+# Each job prepares its own checkout and dependencies. Jobs that run browser
+# contracts also repeat the production build and the pinned browser install
+# they consume; every other step runs exactly once, in exactly one job. The
+# caller's `web` result fails when any job fails, so `CI / Web` still gates on
+# all of them.
 jobs:
   web:
     name: "Web checks"
     runs-on: "ubuntu-latest"
-    defaults:
+    defaults: &web_defaults
       run:
         working-directory: "web"
     steps:
-      -
+      - &web_checkout
         uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
-      -
+      - &web_node
         uses: "actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38"
         with:
           node-version: "24.15.0"
           package-manager-cache: false
           cache: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'npm' || '' }}"
           cache-dependency-path: "web/package-lock.json"
-      -
+      - &web_locate_npm_cache
         name: "Locate npm download cache"
         if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
         id: npm-cache
@@ -28,15 +33,15 @@ jobs:
           directory=$(npm config get cache)
           architecture=$(node -p 'process.arch')
           printf 'directory=%s\narchitecture=%s\n' "$directory" "$architecture" >> "$GITHUB_OUTPUT"
-      -
+      - &web_restore_npm_cache
         # Match setup-node's cache path and lockfile key so existing entries remain usable.
         name: "Restore npm download cache"
         if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
-        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
         with:
           path: ${{ steps.npm-cache.outputs.directory }}
           key: node-cache-${{ runner.os }}-${{ steps.npm-cache.outputs.architecture }}-npm-${{ hashFiles('web/package-lock.json') }}
-      -
+      - &web_install
         name: "Install (lockfile integrity)"
         run: "npm ci"
       -
@@ -59,6 +64,31 @@ jobs:
         timeout-minutes: 5
         working-directory: "."
         run: "python3 web/scripts/readiness-proxy-tests.py"
+      -
+        name: "Dependency audit"
+        run: |
+          node --test ../.github/scripts/audit-policy.test.mjs
+          node ../.github/scripts/audit-dependencies.mjs
+      -
+        name: "Web artifact identity contract"
+        run: |
+          python3 .github/scripts/web-build-identity-tests.py
+          python3 .github/scripts/web-image-smoke-tests.py
+          python3 .github/scripts/web-image-processes-tests.py
+          python3 .github/scripts/web-image-evidence-tests.py
+          ruby .github/scripts/web-build-contract.rb
+        working-directory: "."
+    timeout-minutes: 60
+  web-journeys:
+    name: "Web browser: harness and journeys"
+    runs-on: "ubuntu-latest"
+    defaults: *web_defaults
+    steps:
+      - *web_checkout
+      - *web_node
+      - *web_locate_npm_cache
+      - *web_restore_npm_cache
+      - *web_install
       -
         name: "Production build"
         env:
@@ -84,6 +114,10 @@ jobs:
           node ../.github/scripts/install-contract-browser.mjs
           node --test ../.github/scripts/install-contract-video.test.mjs
           node ../.github/scripts/install-contract-video.mjs
+      -
+        name: "Owner timing browser fixtures"
+        timeout-minutes: 5
+        run: 'CMA_TEST_CHROME="${CMA_E2E_BROWSER_PATH:?}" npm run e2e:owner-timing:test'
       -
         name: "Local browser guard mechanics"
         working-directory: "web"
@@ -114,36 +148,6 @@ jobs:
           CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
         run: "npx playwright test --config e2e/desktop-conversation.config.ts"
       -
-        name: "Local Launch receipt recovery contracts"
-        id: receipt_recovery
-        timeout-minutes: 5
-        env:
-          CMA_RECEIPT_EVIDENCE_DIR: "${{ runner.temp }}/cma-receipt-recovery"
-        run: "node node_modules/playwright/cli.js test --config e2e/review-receipt-recovery-ci.config.ts"
-      -
-        name: "Launch receipt recovery failure evidence"
-        if: "failure() && steps.receipt_recovery.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-        with:
-          name: "receipt-recovery-failure"
-          path: "${{ runner.temp }}/cma-receipt-recovery"
-          retention-days: 1
-      -
-        name: "Local identity refresh recovery contracts"
-        id: auth_refresh
-        timeout-minutes: 5
-        env:
-          CMA_AUTH_REFRESH_EVIDENCE_DIR: "${{ runner.temp }}/cma-auth-refresh"
-        run: "node node_modules/playwright/cli.js test --config e2e/auth-refresh-followup.config.ts"
-      -
-        name: "Identity refresh failure evidence"
-        if: "failure() && steps.auth_refresh.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
-        with:
-          name: "auth-refresh-failure"
-          path: "${{ runner.temp }}/cma-auth-refresh"
-          retention-days: 1
-      -
         name: "Local row menu pointer and keyboard contracts"
         id: row_menu
         timeout-minutes: 5
@@ -153,7 +157,7 @@ jobs:
       -
         name: "Row menu failure evidence"
         if: "failure() && steps.row_menu.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "row-menu-failure"
           path: "${{ runner.temp }}/cma-row-menu"
@@ -168,7 +172,7 @@ jobs:
       -
         name: "Channel setup failure evidence"
         if: "failure() && steps.channel_setup.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "channel-setup-failure"
           path: "${{ runner.temp }}/cma-channel-setup"
@@ -186,7 +190,7 @@ jobs:
       -
         name: "Channel authoring failure evidence"
         if: "failure() && steps.channel_authoring.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "channel-authoring-failure"
           path: "${{ runner.temp }}/cma-channel-authoring"
@@ -201,15 +205,58 @@ jobs:
       -
         name: "Credential recovery failure evidence"
         if: "failure() && steps.credential_setup.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "credential-recovery-failure"
           path: "${{ runner.temp }}/cma-credential-setup"
           retention-days: 1
+    timeout-minutes: 60
+  web-lifecycle:
+    name: "Web browser: lifecycle and recovery"
+    runs-on: "ubuntu-latest"
+    defaults: *web_defaults
+    steps:
+      - *web_checkout
+      - *web_node
+      - *web_locate_npm_cache
+      - *web_restore_npm_cache
+      - *web_install
+      -
+        name: "Production build"
+        env:
+          CHRONO_BUILD_SHA: "${{ github.sha }}"
+          CHRONO_BUILD_ARTIFACT: "promotable"
+        run: "CHRONO_BUILD=\"git-${GITHUB_SHA:0:12}\" npm run build"
+      -
+        name: "Install pinned local browser"
+        timeout-minutes: 10
+        working-directory: "web"
+        env:
+          DEBUG: "pw:install"
+        run: |
+          node --test ../.github/scripts/install-contract-browser.test.mjs
+          node ../.github/scripts/install-contract-browser.mjs
+          node --test ../.github/scripts/install-contract-video.test.mjs
+          node ../.github/scripts/install-contract-video.mjs
+      -
+        name: "Local Launch receipt recovery contracts"
+        id: receipt_recovery
+        timeout-minutes: 5
+        env:
+          CMA_RECEIPT_EVIDENCE_DIR: "${{ runner.temp }}/cma-receipt-recovery"
+        run: "node node_modules/playwright/cli.js test --config e2e/review-receipt-recovery-ci.config.ts"
+      -
+        name: "Launch receipt recovery failure evidence"
+        if: "failure() && steps.receipt_recovery.outcome == 'failure'"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+        with:
+          name: "receipt-recovery-failure"
+          path: "${{ runner.temp }}/cma-receipt-recovery"
+          retention-days: 1
       -
         name: "Local resource lifecycle contracts"
         id: resource_lifecycle
-        timeout-minutes: 5
+        timeout-minutes: 8
         env:
           CMA_LIFECYCLE_EVIDENCE_DIR: "${{ runner.temp }}/cma-resource-lifecycle"
         run: |
@@ -218,7 +265,7 @@ jobs:
       -
         name: "Resource lifecycle failure evidence"
         if: "failure() && steps.resource_lifecycle.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "resource-lifecycle-failure"
           path: "${{ runner.temp }}/cma-resource-lifecycle"
@@ -235,7 +282,7 @@ jobs:
       -
         name: "Sandbox status filter failure evidence"
         if: "failure() && steps.sandbox_status_filter.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "sandbox-status-filter-failure"
           path: "${{ runner.temp }}/cma-sandbox-filter"
@@ -250,10 +297,53 @@ jobs:
       -
         name: "New agent request failure evidence"
         if: "failure() && steps.new_agent_request.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "new-agent-request-failure"
           path: "${{ runner.temp }}/cma-new-agent-request"
+          retention-days: 1
+    timeout-minutes: 60
+  web-design:
+    name: "Web browser: design, shell and auth"
+    runs-on: "ubuntu-latest"
+    defaults: *web_defaults
+    steps:
+      - *web_checkout
+      - *web_node
+      - *web_locate_npm_cache
+      - *web_restore_npm_cache
+      - *web_install
+      -
+        name: "Production build"
+        env:
+          CHRONO_BUILD_SHA: "${{ github.sha }}"
+          CHRONO_BUILD_ARTIFACT: "promotable"
+        run: "CHRONO_BUILD=\"git-${GITHUB_SHA:0:12}\" npm run build"
+      -
+        name: "Install pinned local browser"
+        timeout-minutes: 10
+        working-directory: "web"
+        env:
+          DEBUG: "pw:install"
+        run: |
+          node --test ../.github/scripts/install-contract-browser.test.mjs
+          node ../.github/scripts/install-contract-browser.mjs
+          node --test ../.github/scripts/install-contract-video.test.mjs
+          node ../.github/scripts/install-contract-video.mjs
+      -
+        name: "Local identity refresh recovery contracts"
+        id: auth_refresh
+        timeout-minutes: 5
+        env:
+          CMA_AUTH_REFRESH_EVIDENCE_DIR: "${{ runner.temp }}/cma-auth-refresh"
+        run: "node node_modules/playwright/cli.js test --config e2e/auth-refresh-followup.config.ts"
+      -
+        name: "Identity refresh failure evidence"
+        if: "failure() && steps.auth_refresh.outcome == 'failure'"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
+        with:
+          name: "auth-refresh-failure"
+          path: "${{ runner.temp }}/cma-auth-refresh"
           retention-days: 1
       -
         name: "Design, shell and auth gate mechanics"
@@ -267,7 +357,7 @@ jobs:
       -
         name: "Design browser failure evidence"
         if: "failure() && steps.p1_design.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "p1-design-failure"
           path: "${{ runner.temp }}/cma-p1-browser/design"
@@ -281,7 +371,7 @@ jobs:
       -
         name: "Design palette browser failure evidence"
         if: "failure() && steps.p1_palette.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "p1-palette-failure"
           path: "${{ runner.temp }}/cma-p1-browser/palette"
@@ -295,7 +385,7 @@ jobs:
       -
         name: "Shell browser failure evidence"
         if: "failure() && steps.p1_shell.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "p1-shell-failure"
           path: "${{ runner.temp }}/cma-p1-browser/shell"
@@ -309,16 +399,44 @@ jobs:
       -
         name: "Auth browser failure evidence"
         if: "failure() && steps.p1_auth.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "p1-auth-failure"
           path: "${{ runner.temp }}/cma-p1-browser/auth"
           retention-days: 1
           if-no-files-found: "error"
+    timeout-minutes: 60
+  web-conversation:
+    name: "Web browser: conversation and usage"
+    runs-on: "ubuntu-latest"
+    defaults: *web_defaults
+    steps:
+      - *web_checkout
+      - *web_node
+      - *web_locate_npm_cache
+      - *web_restore_npm_cache
+      - *web_install
+      -
+        name: "Production build"
+        env:
+          CHRONO_BUILD_SHA: "${{ github.sha }}"
+          CHRONO_BUILD_ARTIFACT: "promotable"
+        run: "CHRONO_BUILD=\"git-${GITHUB_SHA:0:12}\" npm run build"
+      -
+        name: "Install pinned local browser"
+        timeout-minutes: 10
+        working-directory: "web"
+        env:
+          DEBUG: "pw:install"
+        run: |
+          node --test ../.github/scripts/install-contract-browser.test.mjs
+          node ../.github/scripts/install-contract-browser.mjs
+          node --test ../.github/scripts/install-contract-video.test.mjs
+          node ../.github/scripts/install-contract-video.mjs
       -
         name: "Local Agent v2 contracts"
         id: agent_v2
-        timeout-minutes: 5
+        timeout-minutes: 8
         env:
           CMA_AGENT_V2_OUTPUT_DIR: "${{ runner.temp }}/cma-agent-v2"
         run: |
@@ -328,7 +446,7 @@ jobs:
       -
         name: "Agent v2 failure evidence"
         if: "failure() && steps.agent_v2.outcome == 'failure'"
-        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:
           name: "agent-v2-failure"
           path: "${{ runner.temp }}/cma-agent-v2"
@@ -338,28 +456,39 @@ jobs:
         timeout-minutes: 5
         env:
           CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
-        run: |
-          npx playwright test --config e2e/usage.config.ts
-          CMA_E2E_MEASURED_USAGE=true npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts
+        run: "npx playwright test --config e2e/usage.config.ts"
+      -
+        name: "Measured Usage browser layouts and states"
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
+          CMA_E2E_MEASURED_USAGE: "true"
+        run: "npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts"
       -
         name: "Document navigation and creation recovery"
         timeout-minutes: 5
         env:
           CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
         run: "npx playwright test --config e2e/documents.config.ts documents-unsaved.check.ts documents-legacy-history.check.ts documents-creation.check.ts"
-      -
-        name: "Dependency audit"
-        run: |
-          node --test ../.github/scripts/audit-policy.test.mjs
-          node ../.github/scripts/audit-dependencies.mjs
-      -
-        name: "Web artifact identity contract"
-        run: |
-          python3 .github/scripts/web-build-identity-tests.py
-          python3 .github/scripts/web-image-smoke-tests.py
-          python3 .github/scripts/web-image-processes-tests.py
-          python3 .github/scripts/web-image-evidence-tests.py
-          ruby .github/scripts/web-build-contract.rb
-        working-directory: "."
-    # Budget for the complete design, shell, auth and default-off lanes as well.
     timeout-minutes: 60
+  # CI / Web sees only this workflow's aggregate result. Require each named
+  # Web job here, so a skipped, cancelled or removed job cannot pass.
+  web-result:
+    name: "Web result"
+    if: "always()"
+    needs:
+      - "web"
+      - "web-journeys"
+      - "web-lifecycle"
+      - "web-design"
+      - "web-conversation"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09"
+      -
+        name: "Require every Web job to succeed"
+        env:
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/web_result.py"

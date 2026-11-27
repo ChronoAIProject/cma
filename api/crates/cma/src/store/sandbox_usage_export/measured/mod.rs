@@ -15,7 +15,7 @@ mod repair;
 mod replay;
 mod transaction;
 pub(crate) use bridge::retain_binding_bridge;
-pub(crate) use cli::command as repair_command;
+pub(crate) use cli::run_repair_command;
 pub(crate) use prepare::MeasuredInput;
 
 use super::records::{decode, encode, hash, number, Captured, ResourceSnapshot, Stream};

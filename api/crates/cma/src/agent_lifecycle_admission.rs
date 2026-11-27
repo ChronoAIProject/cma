@@ -76,6 +76,7 @@ impl InlineAgentLifecycle {
         Err(AgentLifecycleProvisioningError::SandboxLimitReached {
             limit: capacity.limit,
             live: capacity.live,
+            quota_usage: Some(capacity.quota_usage()),
         })
     }
 }
@@ -123,7 +124,24 @@ impl InlineAgentLifecycle {
             ),
             None => None,
         };
-        let lane = crate::store::managed_lifecycle_release_lane(&request);
+        let behavior = if self.managed_repository_preflight.get() == Some(&true)
+            && request.repository.is_some()
+            && request.sandbox_id.is_none()
+            && request.workspace_id.is_none()
+        {
+            if self.public_repository_writer.get() == Some(&true)
+                && request.repository.as_ref().is_some_and(|repository| {
+                    repository.operation.is_none() && repository.connection_id.is_none()
+                })
+            {
+                LifecycleBehavior::RepositoryChoice
+            } else {
+                LifecycleBehavior::ManagedRepository
+            }
+        } else {
+            LifecycleBehavior::PromptRepository
+        };
+        let lane = crate::store::managed_lifecycle_release_lane(&request, behavior);
         for attempt in 0..4 {
             let captured = lane
                 .and_then(|_| self.released.get())
@@ -152,9 +170,13 @@ impl InlineAgentLifecycle {
                 .resolve_desktop_image(caller, context, &request, image)
                 .await?;
             let input = LifecycleInput {
-                behavior: LifecycleBehavior::PromptRepository,
+                behavior,
                 managed_agent_instructions: Some(instructions.into()),
-                setup_message: Some(validation::setup_message(&request)),
+                setup_message: Some(if behavior == LifecycleBehavior::RepositoryChoice {
+                    validation::public_repository_setup_message(&request)
+                } else {
+                    validation::setup_message(&request)
+                }),
                 request: request.clone(),
                 resolved_image,
                 capacity: Some(self.capacity),
@@ -192,3 +214,73 @@ impl InlineAgentLifecycle {
 pub(super) fn connection_profile_target(profile: &SandboxProfileRef) -> serde_json::Value {
     json!({"type":"sandbox_profile", "profile":profile})
 }
+
+pub(super) async fn create_sandbox_with_fence(
+    service: &layer2_core::sandbox::SandboxService,
+    caller: &layer2_core::Caller,
+    profile: layer2_core::profiles::SandboxProfileRef,
+    agent_name: &str,
+    lease: &LifecycleLease,
+    creation_fence: Option<layer2_core::sandbox::store::CreationFence>,
+    connection: Option<layer2_core::sandbox::InitialServiceConnection>,
+) -> Result<layer2_core::sandbox::Sandbox, SandboxServiceError> {
+    let mut request = layer2_core::sandbox::CreateSandbox {
+        profile,
+        name: Some(sandbox_name(agent_name, &lease.id)),
+        confirmed_digest: None,
+        origin: layer2_core::sandbox::SandboxOrigin::Lifecycle {
+            operation_id: lease.id.clone(),
+        },
+    };
+    match service
+        .create_for_lifecycle_with_connection(
+            caller,
+            request.clone(),
+            &lease.token,
+            creation_fence.clone(),
+            connection.clone(),
+        )
+        .await
+    {
+        // A pre-update worker may have committed the old name, then lost the
+        // response before persisting its child ID. Replay still verifies the
+        // exact owner, operation, profile and historical name in the service.
+        Err(SandboxServiceError::SandboxOriginConflict) => {
+            request.name = Some(legacy_sandbox_name(agent_name));
+            service
+                .create_for_lifecycle_with_connection(
+                    caller,
+                    request,
+                    &lease.token,
+                    creation_fence,
+                    connection,
+                )
+                .await
+        }
+        result => result,
+    }
+}
+
+fn legacy_sandbox_name(agent_name: &str) -> String {
+    let mut end = agent_name.len().min(56);
+    while !agent_name.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{} sandbox", &agent_name[..end])
+}
+
+fn sandbox_name(agent_name: &str, operation_id: &str) -> String {
+    // The durable operation's full UUID keeps repeated titles distinct and a
+    // lost admission response replayable. Reserve its bytes before truncating
+    // the display prefix to the Sandbox's 64-byte name limit.
+    let suffix = format!(" sandbox {operation_id}");
+    let mut end = agent_name.len().min(64_usize.saturating_sub(suffix.len()));
+    while !agent_name.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{suffix}", &agent_name[..end])
+}
+
+#[cfg(test)]
+#[path = "agent_lifecycle_sandbox_name_tests.rs"]
+mod sandbox_name_tests;

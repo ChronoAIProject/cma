@@ -86,7 +86,10 @@ function publication(entry, proof, journal, visitor, managed) {
   owned(journal, proof.run, 'sandboxes', launch.sandboxId, visitor);
   owned(journal, proof.run, 'agents', launch.agentId, visitor);
   assert.equal(entry.commands.length, 1);
-  command(entry.commands[0], `/api/v1/triggers/public/${entry.publicId}/launches`);
+  const launchPath = entry.commands[0].path;
+  assert.ok(['v1', 'v2'].some((version) =>
+    launchPath === `/api/${version}/triggers/public/${entry.publicId}/launches`));
+  command(entry.commands[0], launchPath);
   const before = stats(entry.stats.before, entry.placementId);
   const after = stats(entry.stats.after, entry.placementId);
   for (let index = 0; index < before.length; index++)
@@ -111,7 +114,7 @@ export function validatePublicJourneyProof(title, proof, journal) {
   keys(proof, [...common, ...(title === currentJourneyCases.j5 ? ['visitor', 'publications'] : ['owner', 'bootstrap', 'sandboxId', 'workspaceId', 'agents', 'workspaceAgentIds', 'expectedManagedImageHash', 'before', 'after', 'retry', 'deletedAgentId', 'survivingAgentId'])]);
   assert.equal(proof.schema, 'cma-public-journey-v1');
   assert.equal(proof.execution, 'configured_remote_origin');
-  assert.equal(proof.scope, 'current_image_inline');
+  assert.ok(['current_image_inline', 'managed_default_inline'].includes(proof.scope));
   id(proof.run);
   if (title === currentJourneyCases.j5) {
     id(proof.visitor);
@@ -119,7 +122,7 @@ export function validatePublicJourneyProof(title, proof, journal) {
     distinct(proof.publications.map((entry) => entry.publisher));
     assert.ok(!proof.publications.some((entry) => entry.publisher === proof.visitor));
     assert.equal(new Set(proof.publications.map((entry) => entry.requestedTargetHash)).size, 2);
-    for (const entry of proof.publications) publication(entry, proof, journal, proof.visitor, false);
+    for (const entry of proof.publications) publication(entry, proof, journal, proof.visitor, proof.scope === 'managed_default_inline');
     for (const read of [
       (entry) => entry.triggerId, (entry) => entry.publicId,
       (entry) => entry.launch.id, (entry) => entry.launch.agentId, (entry) => entry.launch.sandboxId,

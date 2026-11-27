@@ -21,6 +21,7 @@ async fn fixture() -> (CreationOutcomes, CreationOutcomes, i64) {
         epoch: "e".repeat(32),
         first_day: today - 3,
         legacy_custody: true,
+        terminal_settlement: true,
     };
     let id = format!("coverage:{}:{}", config.deployment, config.epoch);
     database.collection::<Document>(COLLECTION).insert_one(doc! {
@@ -501,10 +502,90 @@ async fn lifecycle_links_original_wire_and_fences_a_stale_worker() {
     admission.creation_fence = Some(fence.clone());
     sandbox_store.admit_sandbox(admission).await.unwrap();
     assert!(!operations
-        .fail_fenced_creation(&owner, &lease, &fence, "synthetic refusal", None)
+        .fail_fenced_creation(
+            &owner,
+            &lease,
+            &fence,
+            "synthetic refusal",
+            None,
+            RefusalCode::SandboxLimitReached
+        )
         .await
         .unwrap());
     assert!(matches!(right.lookup(&original, &query).await.unwrap(),
         Outcome::Created { sandbox_id, operation_id:Some(operation), .. } if sandbox_id == "sbx_lifecycle_proof" && operation == id));
     left.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
+async fn expired_covered_submission_publishes_stable_terminal_evidence() {
+    let (store, other, today) = fixture().await;
+    let owner = SubjectId::new("fixture-owner");
+    let request = query(
+        &store,
+        &owner,
+        Operation::AgentBootstrap,
+        today,
+        &"9".repeat(32),
+    );
+    let identity = identity(&store, &owner, &request);
+    let Begin::Acquired(fence) = store.begin(&identity).await.unwrap() else {
+        panic!("fixture admission missing")
+    };
+    store
+        .records
+        .update_one(
+            doc! {"_id":&fence.record_id},
+            doc! {"$set":{"lease_until":DateTime::from_millis(0)}},
+        )
+        .await
+        .unwrap();
+    for i in 0..32 {
+        store
+            .records
+            .insert_one(doc! {
+                "_id":format!("malformed-{i}"), "document_schema_version":VERSION,
+                "deployment":&store.config.deployment,"epoch":&store.config.epoch,
+                "operation":"agent_bootstrap","owner":"fixture-owner","identity":"invalid",
+                "generation":"invalid","state":{"kind":"pending"},
+                "lease_until":DateTime::from_millis(-1000)
+            })
+            .await
+            .unwrap();
+    }
+    for _ in 0..32 {
+        store
+            .records
+            .insert_one(doc! {
+                "_id":mongodb::bson::oid::ObjectId::new(), "document_schema_version":VERSION,
+                "deployment":&store.config.deployment,"epoch":&store.config.epoch,
+                "operation":"agent_bootstrap","owner":"fixture-owner","identity":"a".repeat(64),
+                "generation":"b".repeat(32),"state":{"kind":"pending"},
+                "lease_until":DateTime::from_millis(-2000)
+            })
+            .await
+            .unwrap();
+    }
+    let (left, right) = tokio::join!(
+        store.settle_expired_unlinked(),
+        other.settle_expired_unlinked()
+    );
+    left.unwrap();
+    right.unwrap();
+    let proof = other.lookup(&identity, &request).await.unwrap();
+    assert!(matches!(
+        proof,
+        Outcome::Refused {
+            code: RefusalCode::CreationExpired,
+            operation_id: None,
+            ..
+        }
+    ));
+    assert_eq!(proof, store.lookup(&identity, &request).await.unwrap());
+    assert!(matches!(
+        store.begin(&identity).await.unwrap(),
+        Begin::Existing { .. }
+    ));
+    store.database.drop().await.unwrap();
 }

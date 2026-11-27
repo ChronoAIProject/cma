@@ -34,6 +34,8 @@ pub(super) async fn response(
     status.exact_github_credential_route =
         accepts(layer3_adapter::wire::GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE)
             && supervisor.supports_exact_github_credential_route();
+    status.github_repository_scope = status.exact_github_credential_route
+        && accepts(layer3_adapter::wire::GITHUB_REPOSITORY_SCOPE_STATUS_MEDIA_TYPE);
     if accepts(RUNTIME_LEDGER_STATUS_MEDIA_TYPE) {
         return match supervisor.ledger_observation(status).await {
             Ok(observation) => (

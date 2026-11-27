@@ -12,6 +12,7 @@ fn status() -> RuntimeStatus {
         agent_resource_preparation: false,
         agent_process_restart: false,
         exact_github_credential_route: false,
+        github_repository_scope: false,
         sandbox_id: "sandbox".into(),
         generation: 3,
         home_identity: "a".repeat(43),

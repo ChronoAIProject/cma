@@ -73,7 +73,7 @@ test('J5 independent image and inline publishers bind visitor embeds, revisions 
       }).toPass({ timeout: 20_000 });
       const commands = workCommands(h.commands.slice(commandsBefore));
       expect(commands).toHaveLength(1);
-      expect(commands[0]?.path).toBe(`/api/v1/triggers/public/${document.public_id}/launches`);
+      expect(commands[0]?.path).toBe(`/api/v2/triggers/public/${document.public_id}/launches`);
       proofs.push(publicationProof(published, launch, sandbox, commands, before, after));
       await h.capture(landing, `j5-${role}-visitor-ready`);
     } finally {

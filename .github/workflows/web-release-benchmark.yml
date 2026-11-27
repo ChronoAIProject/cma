@@ -22,7 +22,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
       - name: Install archive transport
         run: sudo apt-get update -qq && sudo apt-get install -y -qq skopeo
       - name: Install pinned detector
@@ -36,7 +36,7 @@ jobs:
         run: python3 -B .github/scripts/web_image_release_benchmark.py --variant "$VARIANT" --baseline "$BASELINE" --output "$RUNNER_TEMP/web-release-result"
       - name: Retain sanitized measurements only
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: web-release-${{ matrix.variant }}-${{ github.run_id }}
           path: ${{ runner.temp }}/web-release-result/RESULT.json

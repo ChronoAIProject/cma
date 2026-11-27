@@ -6,6 +6,8 @@ use std::os::unix::fs::PermissionsExt;
 mod cli;
 #[path = "format_tests.rs"]
 mod formats;
+#[path = "installation_tests.rs"]
+mod installation;
 #[path = "io_tests.rs"]
 mod io_contracts;
 

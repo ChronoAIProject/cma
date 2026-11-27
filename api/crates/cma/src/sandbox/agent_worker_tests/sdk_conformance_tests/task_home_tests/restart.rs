@@ -2,14 +2,19 @@ use super::*;
 use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;
 use layer3_adapter::wire::{
-    AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame,
+    AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame, WireFailure,
 };
 use layer3_adapter::{AgentLaunch, ContentBlock, ConversationChannel, RuntimeObservation};
+use std::sync::atomic::AtomicBool;
 
 struct RuntimeBoundary {
     backend: InMemoryHostedBackend,
     prompts: Arc<Mutex<Vec<Vec<ContentBlock>>>>,
     lose_prompt_response: bool,
+    close_proofs: Option<Arc<AtomicUsize>>,
+    restart_supported: Arc<AtomicBool>,
+    close_refusal: Arc<Mutex<Option<&'static str>>>,
+    replay_restart_history: bool,
 }
 
 #[async_trait::async_trait]
@@ -34,7 +39,48 @@ impl HostedBackend for RuntimeBoundary {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> layer3_adapter::Result<ResponseFrame> {
-        self.backend.exchange(handle, request).await
+        if let (Some(observations), RequestFrame::ProveAgentProcessClosed(proof)) =
+            (&self.close_proofs, &request)
+        {
+            if let Some(code) = *self.close_refusal.lock().unwrap() {
+                return Ok(ResponseFrame::Failure(WireFailure {
+                    operation: request.operation(),
+                    code: code.into(),
+                    detail: "fixture could not verify the predecessor Close".into(),
+                    retryable: false,
+                }));
+            }
+            let response = self
+                .backend
+                .exchange(
+                    handle,
+                    RequestFrame::RuntimeStatus(proof.runtime.runtime.clone()),
+                )
+                .await?;
+            let ResponseFrame::RuntimeStatus(status) = response else {
+                panic!("expected bound runtime status");
+            };
+            assert!(!status.agent_process_restart);
+            assert_eq!(status.agent_processes, 0);
+            assert_eq!(status.boot_id, proof.runtime.boot_id);
+            let requests = self.backend.requests().await;
+            assert!(requests.iter().any(|(runtime, request)| runtime == handle
+                && matches!(request, RequestFrame::OpenAgent(open)
+                    if open.request.agent_id == proof.close.agent_id
+                    && open.request.request_sha256 == proof.open_request_sha256
+                    && open.request.cwd == proof.worktree_path)));
+            assert!(requests.iter().any(|(runtime, request)| runtime == handle
+                && matches!(request, RequestFrame::CloseAgent(close) if close.request == proof.close)));
+            observations.fetch_add(1, Ordering::SeqCst);
+            return Ok(ResponseFrame::ProveAgentProcessClosed(proof.clone()));
+        }
+        match self.backend.exchange(handle, request).await? {
+            ResponseFrame::RuntimeStatus(mut status) => {
+                status.agent_process_restart = self.restart_supported.load(Ordering::SeqCst);
+                Ok(ResponseFrame::RuntimeStatus(status))
+            }
+            response => Ok(response),
+        }
     }
 
     async fn open_agent(
@@ -45,10 +91,18 @@ impl HostedBackend for RuntimeBoundary {
         settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        let replay_history = self.replay_restart_history && launch.restart_runtime.is_some();
         let (channel, receipt) = self
             .backend
-            .open_agent(handle, launch, resume, settings, updates)
+            .open_agent(handle, launch, resume, settings, updates.clone())
             .await?;
+        if replay_history {
+            owner_stop::replay_retained_history(
+                channel.conversation_id.as_deref().unwrap(),
+                &updates,
+            )
+            .await?;
+        }
         let prompts = self.prompts.clone();
         let lose_response = self.lose_prompt_response;
         let input = ConversationInputSender::spawn(1, move |input| {
@@ -130,6 +184,10 @@ async fn exercise_restart(phase: &str) {
             backend: harness.backend.clone(),
             prompts: prompts.clone(),
             lose_prompt_response: phase == "uncertain",
+            close_proofs: None,
+            restart_supported: Arc::new(AtomicBool::new(false)),
+            close_refusal: Arc::new(Mutex::new(None)),
+            replay_restart_history: false,
         }),
         CodexSandboxSpec::default(),
     ));
@@ -223,3 +281,5 @@ async fn initial_task_public_worker_restart_after_dispatch_does_not_resend() {
 async fn initial_task_public_uncertain_runtime_write_requires_recovery_without_resend() {
     exercise_restart("uncertain").await;
 }
+
+mod owner_stop;

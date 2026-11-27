@@ -119,6 +119,12 @@ it('requires an allowed sender in a new direct Lark channel, including after rem
   enter('Provider agent key', 'fixture-agent-key');
   fireEvent.click(screen.getByRole('button', { name: 'Producer 1 connection type' }));
   fireEvent.click(screen.getByRole('menuitemradio', { name: 'Direct Lark / Feishu app' }));
+  const senders = within(screen.getByRole('group', { name: 'Allowed sender IDs' }));
+  const add = senders.getByRole('button', { name: 'Add Allowed sender IDs' });
+  const missingSender = 'Add at least one allowed sender ID.';
+  expect(senders.getByText(missingSender)).toBeVisible();
+  expect(add).toHaveAccessibleDescription(missingSender);
+
   enter('App ID', identity.app_id);
   enter('Tenant key', identity.tenant_key);
   enter('Bot open ID', identity.bot_open_id);
@@ -126,22 +132,24 @@ it('requires an allowed sender in a new direct Lark channel, including after rem
   enterBundle();
 
   const create = screen.getByRole('button', { name: 'Create channel' });
-  const senders = within(screen.getByRole('group', { name: 'Allowed sender IDs' }));
-  const add = senders.getByRole('button', { name: 'Add Allowed sender IDs' });
   fireEvent.click(create);
-  expect(senders.getByText('Add at least one allowed sender ID.')).toBeVisible();
+  expect(senders.getByText(missingSender)).toBeVisible();
   expect(add).toHaveFocus();
   expect(fetcher).not.toHaveBeenCalled();
 
   fireEvent.click(add);
   enter('Allowed sender IDs 1', '   ');
+  expect(senders.getByText(missingSender)).toBeVisible();
   fireEvent.click(create);
   expect(senders.getByLabelText('Allowed sender IDs 1')).toHaveFocus();
   expect(senders.getByText('Enter a sender ID.')).toBeVisible();
   expect(fetcher).not.toHaveBeenCalled();
 
   enter('Allowed sender IDs 1', 'ou_fixture_sender');
+  expect(senders.queryByText(missingSender)).not.toBeInTheDocument();
   fireEvent.click(senders.getByRole('button', { name: 'Remove Allowed sender IDs 1' }));
+  expect(senders.getByText(missingSender)).toBeVisible();
+  expect(add).toHaveAccessibleDescription(missingSender);
   fireEvent.click(create);
   expect(add).toHaveFocus();
   expect(fetcher).not.toHaveBeenCalled();

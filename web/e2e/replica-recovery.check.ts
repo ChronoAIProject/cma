@@ -31,8 +31,13 @@ test('serving artifact binds activation to immutable build input', async ({ requ
 });
 
 for (let sample = 1; sample <= samples; sample += 1) {
-  for (const refusal of [undefined, 429, 503]) {
-    test(`LOCAL stream mid-frame loss sample ${sample} refusal ${refusal ?? 'none'}`, async ({
+  for (const { refusal, cut } of [
+    { refusal: undefined, cut: 'frame' },
+    { refusal: 429, cut: 'frame' },
+    { refusal: 503, cut: 'frame' },
+    { refusal: undefined, cut: 'comment' },
+  ] as const) {
+    test(`LOCAL stream mid-${cut} loss sample ${sample} refusal ${refusal ?? 'none'}`, async ({
       page,
       baseURL,
     }, info) => {
@@ -46,7 +51,7 @@ for (let sample = 1; sample <= samples; sample += 1) {
         await expect.poll(() => fixture.streams.size).toBe(1);
         await expect(page.locator('.message--user')).toContainText('Retained request');
         if (refusal !== undefined) fixture.tailRefusals.push(refusal);
-        await fixture.cutMidFrame();
+        await fixture.cutMidFrame(cut);
         fixture.append({ type: 'message', role: 'assistant', content: 'Final durable message' });
         fixture.append({ type: 'turn_completed', turn_sequence: 1 });
         await expect(page.locator('.message--assistant')).toContainText([
@@ -84,6 +89,7 @@ for (let sample = 1; sample <= samples; sample += 1) {
               ...provenance,
               sample,
               refusal: refusal ?? null,
+              cut,
               recoveryMs: recoveredAt - fixture.faultAt,
               completeDurableEvents: 5,
               userEchoes: 1,

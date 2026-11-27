@@ -50,7 +50,6 @@ application services:
 |---|---|
 | `cma-agent-manager` | Agents, messages, turns, approvals, workspaces, runtime bindings, persistent homes and recovery. |
 | `cma-event-gateway` | Channels, sealed credentials, incoming event normalization, routing and reply delivery. |
-| `cma-image-manager` | Image catalog, builds, immutable versions, sharing and image lifecycle. |
 
 Each service owns its permissions, records and migrations. Agent Manager uses
 the infrastructure-owned Kubernetes `agent-sandbox` controller to provision
@@ -120,7 +119,7 @@ it is not a blanket statement of current API availability.
 | Path | Contents |
 |---|---|
 | `api/` | Rust workspace: four layers, service implementations and production composition. |
-| `web/` | React/TypeScript client: Agent Manager, Event Gateway, Image Manager, Trigger journeys and Operations. |
+| `web/` | React/TypeScript client: Agent Manager, Event Gateway, Trigger journeys and Operations. |
 
 The backend uses Axum/Tokio and MongoDB; the frontend uses React, TypeScript and
 Vite. Dockerfiles live beside their owning components. Deployment configuration and internal documentation are maintained outside this repository.

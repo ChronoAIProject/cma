@@ -18,7 +18,7 @@ pub mod binding_diagnostics;
 mod browser;
 mod browser_control;
 pub mod file_read_diagnostics;
-pub mod file_read_retry;
+pub mod file_receiver_retry;
 pub mod permanent_custody;
 pub mod stale_turn;
 pub use browser::{
@@ -55,6 +55,7 @@ mod runtime_startup;
 pub use inspection_admission::{InspectionAdmission, InspectionRelease};
 mod inventory_cursor;
 pub use inventory_cursor::InventoryCursor;
+mod github_repository_scope;
 pub mod ingress_budget;
 mod prompt_identity;
 mod provider_finality;
@@ -73,6 +74,7 @@ mod runtime_output_update;
 mod runtime_recovery;
 mod runtime_startup_policy;
 mod runtime_status;
+pub use github_repository_scope::{GithubRepositoryScope, GithubRepositoryScopeNeed};
 pub mod runtime_versions;
 mod tool_proxy;
 mod workspace;
@@ -128,7 +130,7 @@ pub use checkpoint::{
     RestoreBootstrapRequest, RestoreRequest, WriterState,
 };
 pub use conversation::{
-    has_reported_file_changes, reported_tool_call_text, reported_tool_text, AvailableCommand,
+    has_reported_initial_output, reported_tool_call_text, reported_tool_text, AvailableCommand,
     AvailableCommandsUpdate, ContentBlock, ContentChunk, ConversationChannel, ConversationId,
     ConversationInput, ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
     ConversationSettingsSupport, ConversationUpdate, MessageId, PermissionDecision,
@@ -204,9 +206,9 @@ pub use runtime_status::{
 };
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{
-    SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt, WorkspaceRemoveRequest,
-    WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource, WorktreeReceipt, WorktreeRef,
-    WorktreeRemoveReceipt, WorktreeRequest,
+    public_repository_archive_url, SetupReceipt, WorkspaceReceipt, WorkspaceRemoveReceipt,
+    WorkspaceRemoveRequest, WorkspaceRequest, WorkspaceSetupRequest, WorkspaceSource,
+    WorktreeReceipt, WorktreeRef, WorktreeRemoveReceipt, WorktreeRequest,
 };
 pub use workspace_prepare_recovery::{
     WorkspacePrepareRecoveryFrame, WorkspacePrepareRecoveryReceipt, WorkspacePrepareRecoveryRequest,

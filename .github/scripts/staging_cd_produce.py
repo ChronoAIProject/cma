@@ -34,7 +34,8 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
     if len(pending) != 1:
         return "no-single-reservation"
     reservation = pending[0]
-    if reservation["source"] != env["GITHUB_SHA"]:
+    historical_web = reservation["component"] == "web" and env.get("CD_WEB_CONTINUITY_RAW") == "true"
+    if reservation["source"] != env["GITHUB_SHA"] and not historical_web:
         return "historical-reservation"
 
     token = env.get("GH_TOKEN")
@@ -71,7 +72,10 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
             _, release = build(root, reservation, directory, source=source, cache=cache, progress=progress)
         if layer_exports is not None and cache is not None and cache.exports_layers():
             layer_exports.append(started)
-        seal(directory, release, cache.namespace if cache and cache.key is not None else None)
+        if cache is not None and cache.key is not None:
+            seal(directory, release, cache.namespace, cache.cache_day)
+        else:
+            seal(directory, release)
         # The destination is allocated exclusively and the manifest is the
         # final commit marker. A partial handoff cannot authorize publication.
         destination.mkdir(mode=0o700, exist_ok=False)

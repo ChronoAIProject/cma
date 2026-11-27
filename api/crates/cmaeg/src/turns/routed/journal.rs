@@ -12,6 +12,8 @@ use std::{
 
 #[derive(Clone)]
 pub struct Journal {
+    pub(crate) accepted_answer_receipts: bool,
+    pub(super) start_measurement: Option<crate::telemetry::provider_start::Measurement>,
     pub(super) partitions: Option<crate::replicas::partition::Partitions>,
     pub(super) activity: Option<Arc<crate::activity::ActivityStore>>,
     pub(super) execution_verifiers: Arc<ExecutionVerifiers>,
@@ -37,7 +39,9 @@ impl Journal {
 
     pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
         Self {
+            accepted_answer_receipts: false,
             partitions: None,
+            start_measurement: None,
             activity: None,
             execution_verifiers: Arc::default(),
             records: records.interactions(),
@@ -292,7 +296,11 @@ impl Journal {
                 durable_cursor: *durable_cursor,
             },
         )
-        .await
+        .await?;
+        if let Some(measurement) = &self.start_measurement {
+            measurement.completed(&lease.state.root);
+        }
+        Ok(())
     }
 }
 

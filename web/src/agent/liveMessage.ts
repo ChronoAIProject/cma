@@ -91,7 +91,7 @@ export function liveMessage(state: ConversationState, event: AgentLiveEvent): Co
     );
   }
   if (event.type === 'TEXT_MESSAGE_CONTENT') {
-    if (typeof event.delta !== 'string') return state;
+    if (typeof event.delta !== 'string' || event.delta === '') return state;
     const message =
       current ??
       (event['cma:live'] === true
@@ -111,6 +111,10 @@ export function liveMessage(state: ConversationState, event: AgentLiveEvent): Co
       : put(state, {
           ...message,
           at: message.at ?? event.timestamp,
+          progressAt:
+            event.delta.trim() === ''
+              ? message.progressAt
+              : (event.timestamp ?? message.progressAt),
           content: `${message.content}${event.delta}`,
         });
   }

@@ -7,8 +7,8 @@ impl ControlPlaneComposition {
         let activity = ActivityService::new(stores.activity.clone());
         let documents::DocumentComposition {
             service: documents,
-            maintenance: document_blob_maintenance,
-        } = documents::compose(config, &stores, standing.clone())?;
+            reclaimer: document_reclaimer,
+        } = documents::compose(config, &stores, standing.clone()).await?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -90,10 +90,7 @@ impl ControlPlaneComposition {
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
-        let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
-            config.image_manager_base_url.clone(),
-            config.features.image_manager_retirement,
-        )?;
+        let image_resolver = Arc::new(crate::agent_lifecycle::RetiredImageResolver);
         let inline_lifecycle = crate::agent_lifecycle::InlineAgentLifecycle::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),
@@ -109,12 +106,8 @@ impl ControlPlaneComposition {
             stores.agent_lifecycle.clone(),
             Some(stores.sandbox_model.clone()),
             Some(adapter::desktop_creation(config, adapter.clone(), &stores)?),
-        )
-        .with_released_runtime(stores.released_runtime.clone())
-        .with_task_experience(config.task_experience.clone())
-        .with_session_guidance_v4(config.features.session_guidance_v4)
-        .with_failure_metadata(config.lifecycle_failure_metadata_enabled)
-        .with_managed_repository_preflight(config.features.github_repository_preflight);
+        );
+        let inline_lifecycle = runtime::configure_inline_lifecycle(config, &stores, inline_lifecycle, broker.clone());
         let lifecycle_drain = inline_lifecycle.drain_handle();
         if let Some(manager) = &agent_manager {
             manager.register_lifecycle(lifecycle_drain.clone())?;
@@ -301,6 +294,8 @@ impl ControlPlaneComposition {
                 deliverables: deliverables.clone(),
                 public_origin: config.public_url.clone(),
                 task_experience: config.task_experience.clone(),
+                github_connection_approval: config.features.github_connection_approval,
+                runtime_adapter: adapter.clone(),
             },
         );
         let projections = projections.with_commands(agent_access.commands.clone());
@@ -419,7 +414,7 @@ impl ControlPlaneComposition {
             recorder,
             (limits, config),
             (
-                crate::health::router_with_workers(stores.clone(), workers.clone()),
+                routes::health(&stores, &workers, config)?,
                 tool_routes.merge(service_portal::router(
                     auth.clone(),
                     config.gateway.as_ref(),
@@ -431,7 +426,7 @@ impl ControlPlaneComposition {
         Ok(Self {
             activity_worker,
             workers,
-            document_blob_maintenance,
+            document_reclaimer,
             worker_observations,
             router: binding_diagnostics::router(binding_diagnostics, router),
             agent_manager,

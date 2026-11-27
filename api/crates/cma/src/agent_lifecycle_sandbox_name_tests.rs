@@ -1,4 +1,5 @@
-use super::{create_sandbox_with_fence, sandbox_error, sandbox_name, validate_request};
+use super::{create_sandbox_with_fence, sandbox_name};
+use crate::agent_lifecycle::validation::{sandbox_error, validate_request};
 use crate::agent_lifecycle::*;
 use layer2_core::profiles::InMemoryProfileStore;
 use layer2_core::sandbox::store::{InMemorySandboxStore, SandboxEventStore, SandboxStore};
@@ -31,6 +32,7 @@ async fn admission(
         },
         LifecycleBehavior::PromptRepository,
         Default::default(),
+        "",
     )
     .await
     .unwrap();
@@ -100,12 +102,20 @@ async fn full_sandbox_quota_is_a_typed_terminal_failure_without_another_admissio
     .unwrap_err();
     assert_eq!(
         error,
-        SandboxServiceError::SandboxLimitReached { limit: 1, live: 1 }
+        SandboxServiceError::SandboxLimitReached {
+            limit: 1,
+            live: 1,
+            usage: Default::default()
+        }
     );
     // Only Unavailable is automatically retried by the lifecycle worker.
     assert!(matches!(
         sandbox_error(error),
-        AgentLifecycleProvisioningError::SandboxLimitReached { limit: 1, live: 1 }
+        AgentLifecycleProvisioningError::SandboxLimitReached {
+            limit: 1,
+            live: 1,
+            ..
+        }
     ));
     assert_eq!(
         store
@@ -361,5 +371,5 @@ async fn create_sandbox(
     agent_name: &str,
     lease: &LifecycleLease,
 ) -> Result<layer2_core::sandbox::Sandbox, SandboxServiceError> {
-    create_sandbox_with_fence(service, caller, profile, agent_name, lease, None).await
+    create_sandbox_with_fence(service, caller, profile, agent_name, lease, None, None).await
 }

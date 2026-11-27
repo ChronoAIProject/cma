@@ -17,10 +17,10 @@ pub(crate) async fn collect_fixture(
         return Err(MetricsError::Busy);
     }
     let worker = MetricsWorkers {
+        measured: None,
         store: store.clone(),
         source: Some(source),
         native: None,
-        measured: None,
         cluster: "fixture".into(),
         enabled: true,
     };

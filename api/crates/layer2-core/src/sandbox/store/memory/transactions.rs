@@ -39,7 +39,8 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                         &event_at,
                         &event,
                         released_runtime.as_ref().and_then(|release| {
-                            self.managed_runtime_target(&sandbox, &release.agent)
+                            self.managed_runtime_for_release(&sandbox, release)
+                                .map(|(_, target)| target)
                         }),
                     )?;
                 }

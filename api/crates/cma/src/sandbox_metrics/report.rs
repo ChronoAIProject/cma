@@ -98,6 +98,8 @@ impl MetricsWorkers {
         lease: &ReportLease,
         trace: &mut ReportTrace,
     ) -> Result<Report> {
+        let overall_deadline =
+            std::time::Instant::now() + Duration::from_secs(self.store.budgets.report_seconds);
         let mut report = lease.report.clone();
         let mut snapshot = trace.stage(Stage::Inventory, self.store.snapshot()).await?;
         if self.enabled {
@@ -119,6 +121,13 @@ impl MetricsWorkers {
         let mut watermark = Sha256::new();
         let mut after = None;
         let mut source_complete = self.enabled;
+        let mut totals = self.store.projections_allowed(&report).then(|| {
+            cma_am_reporting::TotalProjection::new(
+                &report.report_id,
+                lease.generation,
+                &lease.holder,
+            )
+        });
         loop {
             let page = trace
                 .stage(
@@ -323,6 +332,9 @@ impl MetricsWorkers {
                     .remove(item.state.sandbox_id.as_str())
                     .ok_or(MetricsError::Unavailable)?;
                 let row = a.row(item, live.get(item.state.sandbox_id.as_str()), &report);
+                if let Some(totals) = &mut totals {
+                    totals.add_member(&report, &row.sandbox_id, &a.buckets, &a.expectations)?;
+                }
                 let mut charts = Vec::new();
                 for metric in [Metric::Cpu, Metric::Memory, Metric::Disk] {
                     charts.extend(chart_documents(
@@ -348,6 +360,9 @@ impl MetricsWorkers {
                             ),
                         )
                         .await?;
+                    if let Some(totals) = &mut totals {
+                        totals.acknowledge_source(pending_rows.len())?;
+                    }
                     pending_rows.clear();
                 }
             }
@@ -362,6 +377,9 @@ impl MetricsWorkers {
                         ),
                     )
                     .await?;
+                if let Some(totals) = &mut totals {
+                    totals.acknowledge_source(pending_rows.len())?;
+                }
             }
         }
         summary.measured = Some(aggregate.measured(report.as_of, summary.running_count > 0));
@@ -413,6 +431,13 @@ impl MetricsWorkers {
             memory_covered=aggregate.totals[1].covered_seconds,disk_covered=aggregate.totals[2].covered_seconds,
             "sandbox report coverage");
         report.summary = Some(summary);
+        trace
+            .stage(
+                Stage::Write,
+                self.store
+                    .prepare_aggregate_projections(lease, &report, totals, overall_deadline),
+            )
+            .await?;
         trace
             .stage(Stage::Authority, self.store.reauthorize(&report))
             .await?;

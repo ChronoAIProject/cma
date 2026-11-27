@@ -34,8 +34,15 @@ describe('channel record management', () => {
     },
     { ...valid, creation: 'legacy', address: { state: 'not_recorded' }, retirement: null },
     { ...valid, creation: 'incomplete', address: { state: 'unverifiable' } },
+    {
+      ...valid,
+      creation: 'incomplete',
+      pending_operation: 'delete',
+      retirement_expected_version: 6,
+    },
+    { ...valid, retirement_expected_version: null },
     { ...valid, pending_operation: null },
-    ...['create', 'update', 'delete', 'audit_routing', 'audit_attachments'].map(
+    ...['create', 'update', 'profile_revision', 'delete', 'audit_routing', 'audit_attachments'].map(
       (pending_operation) => ({ ...valid, pending_operation }),
     ),
     { state: 'invalid' },

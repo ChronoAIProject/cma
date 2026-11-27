@@ -37,6 +37,7 @@ async fn capacity_counts_all_own_non_retired_parents_without_agents() {
     assert_eq!(body["limit"], 3);
     assert_eq!(body["live"], 5);
     assert_eq!(body["available"], 0);
+    assert_eq!(body["retiring_released"], 0);
     assert_eq!(
         body["counts_by_status"],
         json!({"active":1,"paused":1,"failed":1,"rotating":1,"retiring":1})
@@ -89,6 +90,11 @@ async fn lifecycle_quota_refusal_reuses_the_sandbox_problem_shape() {
     let response = crate::rest::AgentLifecycleProvisioningError::SandboxLimitReached {
         limit: 10,
         live: 12,
+        quota_usage: Some(layer2_core::sandbox::SandboxQuotaUsage {
+            active: 8,
+            retiring_charged: 4,
+            retiring_released: 1,
+        }),
     }
     .into_response();
     assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
@@ -97,4 +103,8 @@ async fn lifecycle_quota_refusal_reuses_the_sandbox_problem_shape() {
     assert_eq!(body["code"], "sandbox_limit_reached");
     assert_eq!(body["limit"], 10);
     assert_eq!(body["live"], 12);
+    assert_eq!(
+        body["quota_usage"],
+        json!({"active":8,"retiring_charged":4,"retiring_released":1})
+    );
 }

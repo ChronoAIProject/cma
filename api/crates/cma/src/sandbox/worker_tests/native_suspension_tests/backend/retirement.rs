@@ -7,6 +7,28 @@ pub(in super::super) struct RetirementProbePause {
 }
 
 impl NativeBackend {
+    pub(super) fn retirement_exchange(
+        &self,
+        handle: &RuntimeHandle,
+        request: &RequestFrame,
+    ) -> Option<(
+        Arc<layer3_adapter::hosted::ProviderHostedControlTransport>,
+        RuntimeHandle,
+    )> {
+        match request {
+            RequestFrame::RuntimeStatus(_) => {
+                let transport = self.inspection_transport.lock().unwrap().clone()?;
+                Some((transport, handle.clone()))
+            }
+            RequestFrame::CloseAgent(_) => {
+                let transport = self.close_transport.lock().unwrap().clone()?;
+                self.calls.push("receiver-close-attempt");
+                Some((transport, RuntimeHandle::new("local-runtime")))
+            }
+            _ => None,
+        }
+    }
+
     pub(super) fn check_retirement_fixture_pod(
         &self,
         pod: &layer3_adapter::RetirementPod,
@@ -28,6 +50,15 @@ impl NativeBackend {
         receiver: &layer3_adapter::receiver_failure::RetirementReceiver,
     ) -> layer3_adapter::Result<bool> {
         self.check_retirement_fixture_pod(&receiver.pod)?;
+        if self
+            .row
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(|row| row.observation.lifecycle.state == "suspended")
+        {
+            return Err(absent());
+        }
         if &receiver.runtime != handle || self.request().await.metadata != request.metadata {
             return Err(layer3_adapter::AdapterError::Rejected(
                 "runtime changed".into(),
@@ -68,7 +99,22 @@ impl NativeBackend {
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &layer3_adapter::HomeVolumeAttachment,
+        pod: Option<&layer3_adapter::RetirementPod>,
     ) -> layer3_adapter::Result<()> {
+        if let Some(pod) = pod {
+            self.check_retirement_fixture_pod(pod)?;
+        } else {
+            if self
+                .row
+                .lock()
+                .await
+                .as_ref()
+                .is_none_or(|row| row.observation.lifecycle.state != "suspended")
+            {
+                return Err(absent());
+            }
+            self.calls.push("retire-suspended");
+        }
         self.calls.push("retire-alternative");
         let homes = self
             .retirement_home

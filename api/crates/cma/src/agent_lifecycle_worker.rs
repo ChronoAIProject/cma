@@ -1,6 +1,8 @@
 //! Periodic bounded discovery and cancellable, renewable worker claims.
 use super::*;
 use crate::store::HEARTBEAT;
+use layer1_public::rest::{creation_outcomes::RefusalCode, AgentLifecycleFailure};
+use layer2_core::sandbox::store::CreationFence;
 
 pub(super) const PREPARATION_FAILED: &str = "Agent runtime preparation failed";
 
@@ -15,6 +17,33 @@ pub(super) fn readiness_delay(started: tokio::time::Instant) -> Duration {
 }
 
 impl InlineAgentLifecycle {
+    async fn record_terminal_failure(
+        &self,
+        owner: &SubjectId,
+        lease: &LifecycleLease,
+        fence: Option<&CreationFence>,
+        message: &str,
+        failure: Option<AgentLifecycleFailure>,
+        code: RefusalCode,
+    ) -> Result<(), layer2_core::StoreError> {
+        if let Some(fence) = fence {
+            if (code == RefusalCode::SandboxLimitReached
+                || self.operations.creation_terminal_settlement_enabled())
+                && self
+                    .operations
+                    .fail_fenced_creation(owner, lease, fence, message, failure.clone(), code)
+                    .await?
+            {
+                return Ok(());
+            }
+        }
+        // A created association is already authoritative. A failure after
+        // allocation must update the operation without rewriting that proof.
+        self.operations
+            .fail_with_metadata(lease, message, failure)
+            .await
+    }
+
     pub(crate) fn drain_handle(&self) -> LifecycleDrain {
         self.tasks.clone()
     }
@@ -122,11 +151,23 @@ impl InlineAgentLifecycle {
             Ok(profiles) => profiles,
             Err(error) => {
                 return self
-                    .operations
-                    .fail_with_metadata(&lease, &error.to_string(), None)
+                    .record_terminal_failure(
+                        &SubjectId::new(record.owner),
+                        &lease,
+                        creation_fence.as_ref(),
+                        &error.to_string(),
+                        None,
+                        RefusalCode::CreationFailed,
+                    )
                     .await;
             }
         };
+        let quota_refusals = record.sandbox_quota_refusals;
+        let fresh_sandbox = record.input.request.sandbox_id.is_none()
+            && record.input.request.workspace_id.is_none()
+            && record.sandbox_id.is_none()
+            && record.agent_id.is_none()
+            && canary_profiles.is_none();
         let capacity = record.input.captured_capacity(self.bounds);
         let limits = record.input.captured_limits();
         let first_message = validation::admitted_first_message(&record.input);
@@ -154,9 +195,15 @@ impl InlineAgentLifecycle {
                 existing_agent_id: record.agent_id,
                 actor: record.input.actor,
                 canary_profiles,
+                repository_access_pin: record.repository_access_pin,
             };
-            self.preflight_repository(&caller, &mut input, record.repository_commit.as_deref())
-                .await?;
+            self.preflight_repository(
+                &caller,
+                &mut input,
+                record.repository_commit.as_deref(),
+                record.public_repository.as_ref(),
+            )
+            .await?;
             self.provision(&caller, input).await
         };
         tokio::pin!(work);
@@ -191,55 +238,69 @@ impl InlineAgentLifecycle {
             Err(AgentLifecycleProvisioningError::RepositoryAccessRequired {
                 connection_target,
                 reason,
+                repair,
             }) => {
                 self.operations
-                    .wait_for_connection(
+                    .wait_for_repository_access(
                         &lease,
-                        vec![crate::trigger::GITHUB_SERVICE.into()],
                         connection_target,
-                        Some(reason),
+                        reason,
+                        repair.map(|detail| *detail),
                     )
                     .await
             }
             Err(error) => {
+                // The serialized Sandbox admission can refuse a slot seen at
+                // HTTP preflight. Requeue only that confirmed quota refusal.
+                if fresh_sandbox
+                    && matches!(
+                        &error,
+                        AgentLifecycleProvisioningError::SandboxLimitReached { .. }
+                    )
+                    && self
+                        .operations
+                        .retry_sandbox_quota(&lease, quota_refusals)
+                        .await?
+                {
+                    return Ok(());
+                }
                 let failure = self
                     .failure_metadata_enabled
                     .get()
                     .copied()
                     .unwrap_or(false)
                     .then_some(match &error {
-                        AgentLifecycleProvisioningError::SandboxLimitReached { limit, live } => {
-                            Some(
-                                layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached {
-                                    limit: *limit,
-                                    live: *live,
-                                },
-                            )
-                        }
+                        AgentLifecycleProvisioningError::SandboxLimitReached {
+                            limit,
+                            live,
+                            quota_usage,
+                        } => Some(
+                            layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached {
+                                limit: *limit,
+                                live: *live,
+                                quota_usage: *quota_usage,
+                            },
+                        ),
                         _ => None,
                     })
                     .flatten();
-                let message = error.to_string();
-                if let (Some(fence), AgentLifecycleProvisioningError::SandboxLimitReached { .. }) =
-                    (&creation_fence, &error)
-                {
-                    if self
-                        .operations
-                        .fail_fenced_creation(
-                            &caller.subject,
-                            &lease,
-                            fence,
-                            &message,
-                            failure.clone(),
-                        )
-                        .await?
-                    {
-                        return Ok(());
-                    }
-                }
-                self.operations
-                    .fail_with_metadata(&lease, &message, failure)
-                    .await
+                let code = if matches!(
+                    error,
+                    AgentLifecycleProvisioningError::SandboxLimitReached { .. }
+                ) {
+                    RefusalCode::SandboxLimitReached
+                } else {
+                    RefusalCode::CreationFailed
+                };
+                self.record_terminal_failure(
+                    &caller.subject,
+                    &lease,
+                    creation_fence.as_ref(),
+                    &error.to_string(),
+                    failure,
+                    code,
+                )
+                .await
             }
         }
     }

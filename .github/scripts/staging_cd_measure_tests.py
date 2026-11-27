@@ -15,7 +15,7 @@ def args(**changes):
     values = dict(revision='a' * 40, workload='b' * 64, contract='c' * 64,
                   runner='local', cache='warm', component='shared', phase='plan', task_count=1,
                   repeats=3, timeout=1, cwd=str(Path(__file__).parent),
-                  command=[sys.executable, '-B', '-c', 'pass'])
+                  command=[sys.executable, '-B', '-c', 'pass'], timer_stage=None)
     return argparse.Namespace(**(values | changes))
 
 
@@ -138,6 +138,36 @@ class Contracts(unittest.TestCase):
         a.task_count = 2
         with patch.object(m.subprocess, 'run', side_effect=[auth, logs]), patch.object(m, 'gh_json', return_value=job):
             self.assertFalse(m.ci(a)['successful'])
+
+    def test_ci_rejects_step_metric_with_sibling_publication_timer(self):
+        selected = {'name': 'Plan', 'status': 'completed', 'conclusion': 'success',
+                    'started_at': '2026-11-19T00:00:00Z', 'completed_at': '2026-11-19T00:00:03Z'}
+        sibling = {'name': 'Publish', 'status': 'completed', 'conclusion': 'success',
+                   'started_at': '2026-11-19T00:00:03Z', 'completed_at': '2026-11-19T00:00:10Z'}
+        job = {'head_sha': 'a' * 40, 'labels': ['ubuntu-24.04'], 'run_id': 1,
+               'name': 'Release', 'status': 'completed', 'conclusion': 'success',
+               'started_at': selected['started_at'], 'completed_at': sibling['completed_at'],
+               'steps': [selected, sibling]}
+        auth = argparse.Namespace(returncode=0, stdout=b'account chronoai-shining ', stderr=b'')
+        timer = json.dumps({'event': 'publication-stage', 'stage': 'build',
+                            'seconds': 6, 'result': 'success'})
+        logs = argparse.Namespace(returncode=0, stderr=b'', stdout=(
+            '2026-11-19T00:00:01Z Planning complete\n2026-11-19T00:00:09Z ' + timer).encode())
+        options = dict(runner='github-free', repo='ChronoAIProject/cma', job=1, logs=True)
+        with patch.object(m.subprocess, 'run', side_effect=[auth, logs]) as run, \
+                patch.object(m, 'gh_json', return_value=job) as get_job:
+            with self.assertRaisesRegex(ValueError, '--step and --timer-stage cannot be combined'):
+                m.ci(args(**options, step='Plan', timer_stage='build'))
+            run.assert_not_called()
+            get_job.assert_not_called()
+            planned = m.ci(args(**options, step='Plan'))
+        self.assertEqual(planned['metric'], 'step wall seconds')
+        self.assertEqual(planned['metric_seconds'], 3)
+        self.assertEqual(planned['phases']['stage_seconds'], {'build': 6})
+        with patch.object(m.subprocess, 'run', side_effect=[auth, logs]), \
+                patch.object(m, 'gh_json', return_value=job):
+            publication = m.ci(args(**options, step=None, timer_stage='build'))
+        self.assertEqual(publication['metric_seconds'], 6)
 
     def test_cli_does_not_overwrite_evidence(self):
         with tempfile.TemporaryDirectory(dir=Path(__file__).parent) as directory:

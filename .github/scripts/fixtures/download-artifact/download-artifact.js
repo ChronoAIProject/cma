@@ -1,5 +1,5 @@
 /*
-Pinned actions/download-artifact logic; type annotations/imports/entrypoint removed only.
+Pinned actions/download-artifact logic; type annotations/imports/exports/entrypoint removed only.
 
 The MIT License (MIT)
 
@@ -24,7 +24,6 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 */
 
-
 const PARALLEL_DOWNLOADS = 5
 
 const chunk =    (arr     , n        )        =>
@@ -45,7 +44,20 @@ async function run()                {
     mergeMultiple: core.getBooleanInput(Inputs.MergeMultiple, {
       required: false
     }),
-    artifactIds: core.getInput(Inputs.ArtifactIds, {required: false})
+    artifactIds: core.getInput(Inputs.ArtifactIds, {required: false}),
+    skipDecompress: core.getBooleanInput(Inputs.SkipDecompress, {
+      required: false
+    }),
+    digestMismatch: (core.getInput(Inputs.DigestMismatch, {required: false}) ||
+      DigestMismatchBehavior.Error)
+  }
+
+  // Validate digest-mismatch input
+  const validBehaviors = Object.values(DigestMismatchBehavior)
+  if (!validBehaviors.includes(inputs.digestMismatch)) {
+    throw new Error(
+      `Invalid value for 'digest-mismatch': '${inputs.digestMismatch}'. Valid options are: ${validBehaviors.join(', ')}`
+    )
   }
 
   if (!inputs.path) {
@@ -193,14 +205,19 @@ async function run()                {
     promise: artifactClient.downloadArtifact(artifact.id, {
       ...options,
       path:
-        isSingleArtifactDownload || inputs.mergeMultiple
+        isSingleArtifactDownload ||
+        inputs.mergeMultiple ||
+        artifacts.length === 1
           ? resolvedPath
           : path.join(resolvedPath, artifact.name),
-      expectedHash: artifact.digest
+      expectedHash: artifact.digest,
+      skipDecompress: inputs.skipDecompress
     })
   }))
 
   const chunkedPromises = chunk(downloadPromises, PARALLEL_DOWNLOADS)
+  const digestMismatches           = []
+
   for (const chunk of chunkedPromises) {
     const chunkPromises = chunk.map(item => item.promise)
     const results = await Promise.all(chunkPromises)
@@ -210,12 +227,38 @@ async function run()                {
       const artifactName = chunk[i].name
 
       if (outcome.digestMismatch) {
-        core.warning(
-          `Artifact '${artifactName}' digest validation failed. Please verify the integrity of the artifact.`
-        )
+        digestMismatches.push(artifactName)
+        const message = `Artifact '${artifactName}' digest validation failed. Please verify the integrity of the artifact.`
+
+        switch (inputs.digestMismatch) {
+          case DigestMismatchBehavior.Ignore:
+            // Do nothing
+            break
+          case DigestMismatchBehavior.Info:
+            core.info(message)
+            break
+          case DigestMismatchBehavior.Warn:
+            core.warning(message)
+            break
+          case DigestMismatchBehavior.Error:
+            // Collect all errors and fail at the end
+            break
+        }
       }
     }
   }
+
+  // If there were digest mismatches and behavior is 'error', fail the action
+  if (
+    digestMismatches.length > 0 &&
+    inputs.digestMismatch === DigestMismatchBehavior.Error
+  ) {
+    throw new Error(
+      `Digest validation failed for artifact(s): ${digestMismatches.join(', ')}. ` +
+        `Use 'digest-mismatch: warn' to continue on mismatch.`
+    )
+  }
+
   core.info(`Total of ${artifacts.length} artifact(s) downloaded`)
   core.setOutput(Outputs.DownloadPath, resolvedPath)
   core.info('Download artifact has finished successfully')

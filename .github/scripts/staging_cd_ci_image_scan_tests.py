@@ -118,6 +118,29 @@ class CIImageScanTests(unittest.TestCase):
         self.assertIn("::error title=Image secret scan refused am::scanner_findings", output)
         self.assertIn("Image secret scan refused `am`", self.summary.read_text())
 
+    def test_incomplete_scan_reports_failure_without_printing_partial_matches(self):
+        raw_report = {"schema": "image-secret-scan-v1", "status": "ERROR", "complete": False,
+                      "exit_code": 2, "error": "classification-operation-failed",
+                      "findings": [{"rule": "gitleaks.generic-api-key", "path": "private-path",
+                                    "candidate_sha256": digest("synthetic-value")}],
+                      "omitted_findings": 2}
+
+        def refuse():
+            error = ScanRefusal("private error text", "scanner_error")
+            error.evidence = project(raw_report, error.outcome)
+            raise error
+
+        status, output, _ = self.run_main(scanner=refuse)
+        self.assertEqual(status, 1)
+        self.assertIn("Scan incomplete; partial detections=3", output)
+        self.assertIn("diagnostic=classification_failed", output)
+        self.assertIn("diagnostic_sha256=" + digest(raw_report["error"]), output)
+        self.assertNotIn("candidate_sha256=", output)
+        self.assertNotIn("private error text", output)
+        self.assertNotIn("private-path", output)
+        self.assertNotIn(raw_report["error"], output)
+        self.assertIn("diagnostic=classification_failed", self.summary.read_text())
+
     def test_every_scanner_outcome_has_owner_facing_advice(self):
         for outcome in ("scanner_timeout", "scanner_error", "scanner_unavailable", "receipt_invalid",
                         "content_refused", "scan_refused", "unlisted"):

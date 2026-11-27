@@ -6,7 +6,11 @@ use axum::{
     Extension, Router,
 };
 use layer1_public::rest::AgentLifecycleFailure;
-use layer2_core::sandbox::{store::SandboxStoreError, SandboxOrigin};
+use layer2_core::sandbox::{
+    store::{SandboxStore, SandboxStoreError},
+    SandboxOrigin, SandboxStatus,
+};
+use layer2_core::SandboxId;
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -26,6 +30,7 @@ async fn routes(
         .await
         .unwrap();
     operations.creation_writer_epoch = Some(store.config.epoch.clone());
+    operations.creation_terminal_settlement_enabled = store.config.terminal_settlement;
     let operations = Arc::new(operations);
     let (routes, slots) =
         crate::agent_lifecycle::creation_test_router(&store.database, operations.clone()).await;
@@ -144,6 +149,14 @@ async fn original_create_replay_resumes_a_waiting_operation_without_allocating_a
         read_operation(&app, id).await["status"],
         "waiting_for_connection"
     );
+    call(
+        &app,
+        Request::post(format!("/api/v1/agent-lifecycle/{id}/cancel"))
+            .body(Body::empty())
+            .unwrap(),
+        StatusCode::CONFLICT,
+    )
+    .await;
     assert_eq!(submit(&app, &request).await, first);
     assert_eq!(read_operation(&app, id).await["status"], "queued");
     assert_eq!(
@@ -153,6 +166,38 @@ async fn original_create_replay_resumes_a_waiting_operation_without_allocating_a
             .await
             .unwrap(),
         1
+    );
+    assert!(
+        matches!(reader.lookup(&identity(&store, &owner, &request), &request).await.unwrap(),
+        Outcome::Created { sandbox_id, operation_id: Some(operation_id), .. }
+        if sandbox_id == "sbx_replay_fixture" && operation_id == id)
+    );
+    // Later retirement must preserve the exact created association, including
+    // the original operation from which a consumer can reconcile retirement.
+    let sandbox_id = SandboxId("sbx_replay_fixture".into());
+    let mut retired = sandboxes.get_sandbox(&sandbox_id).await.unwrap().unwrap();
+    retired.status = SandboxStatus::Retiring;
+    retired.revision += 1;
+    retired.updated_at = layer2_core::now_rfc3339();
+    sandboxes
+        .save_sandbox(retired.revision - 1, retired.clone())
+        .await
+        .unwrap();
+    retired.status = SandboxStatus::Retired;
+    retired.retired_at = Some(layer2_core::now_rfc3339());
+    retired.revision += 1;
+    sandboxes
+        .save_sandbox(retired.revision - 1, retired)
+        .await
+        .unwrap();
+    assert_eq!(
+        sandboxes
+            .get_sandbox(&sandbox_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        SandboxStatus::Retired
     );
     assert!(
         matches!(reader.lookup(&identity(&store, &owner, &request), &request).await.unwrap(),
@@ -190,15 +235,23 @@ async fn fenced_worker_quota_refusal_preserves_flagged_lifecycle_failure_metadat
         );
         effect.creation_fence = Some(fence.clone());
         let error = sandboxes.admit_sandbox(effect.clone()).await.unwrap_err();
-        let SandboxStoreError::LimitReached { limit, live } = error else {
+        let SandboxStoreError::LimitReached { limit, live, usage } = error else {
             panic!("expected typed quota refusal, got {error:?}")
         };
         let failure = enabled.then_some(AgentLifecycleFailure::SandboxLimitReached {
             limit,
             live: u64::from(live),
+            quota_usage: Some(usage),
         });
         assert!(operations
-            .fail_fenced_creation(&owner, &lease, &fence, &error.to_string(), failure)
+            .fail_fenced_creation(
+                &owner,
+                &lease,
+                &fence,
+                &error.to_string(),
+                failure,
+                RefusalCode::SandboxLimitReached
+            )
             .await
             .unwrap());
         let view = read_operation(&app, id).await;
@@ -206,7 +259,7 @@ async fn fenced_worker_quota_refusal_preserves_flagged_lifecycle_failure_metadat
         assert_eq!(
             view["failure"],
             if enabled {
-                serde_json::json!({"code":"sandbox_limit_reached","limit":limit,"live":live})
+                serde_json::json!({"code":"sandbox_limit_reached","limit":limit,"live":live,"quota_usage":usage})
             } else {
                 Value::Null
             }
@@ -225,6 +278,223 @@ async fn fenced_worker_quota_refusal_preserves_flagged_lifecycle_failure_metadat
             .await
             .unwrap(),
         1
+    );
+    store.database.drop().await.unwrap();
+}
+
+async fn cancel(app: &Router, id: &str, expected: StatusCode) -> Value {
+    call(
+        app,
+        Request::post(format!("/api/v1/agent-lifecycle/{id}/cancel"))
+            .body(Body::empty())
+            .unwrap(),
+        expected,
+    )
+    .await
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
+async fn covered_connection_wait_cancellation_is_terminal_and_replayable() {
+    let (store, reader, today) = fixture().await;
+    let owner = SubjectId::new("owner");
+    let (app, operations, _slots) = routes(&store).await;
+    let request = lifecycle_query(&store, &owner, today, &"a".repeat(32));
+    let receipt = submit(&app, &request).await;
+    let id = receipt["id"].as_str().unwrap();
+    let lease = operations
+        .claim(id)
+        .await
+        .unwrap()
+        .unwrap()
+        .lease()
+        .unwrap();
+    operations
+        .wait_for_connection(
+            &lease,
+            vec!["fixture-service".into()],
+            serde_json::json!({}),
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        reader
+            .lookup(&identity(&store, &owner, &request), &request)
+            .await
+            .unwrap(),
+        Outcome::InProgress { .. }
+    ));
+    let (cancelled, resumed) = tokio::join!(
+        cancel(&app, id, StatusCode::OK),
+        operations.resume_connection(&owner, id)
+    );
+    resumed.unwrap();
+    assert_eq!(cancelled["status"], "failed");
+    assert_eq!(cancel(&app, id, StatusCode::OK).await["status"], "failed");
+    assert_eq!(submit(&app, &request).await, receipt);
+    assert!(operations.claim(id).await.unwrap().is_none());
+    assert!(
+        matches!(reader.lookup(&identity(&store, &owner, &request), &request).await.unwrap(), Outcome::Refused { code: RefusalCode::CreationCancelled, operation_id: Some(operation_id), .. } if operation_id==id)
+    );
+    assert_eq!(
+        store
+            .database
+            .collection::<Document>("sandboxes")
+            .count_documents(doc! {"owner":owner.as_str()})
+            .await
+            .unwrap(),
+        0
+    );
+    store.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
+async fn covered_cancellation_and_allocation_have_one_authoritative_outcome() {
+    let (store, reader, today) = fixture().await;
+    let owner = SubjectId::new("owner");
+    let (app, operations, _slots) = routes(&store).await;
+    let sandboxes = sandbox_store(&store).await;
+    let request = lifecycle_query(&store, &owner, today, &"b".repeat(32));
+    let receipt = submit(&app, &request).await;
+    let id = receipt["id"].as_str().unwrap();
+    let operation = operations.claim(id).await.unwrap().unwrap();
+    let lease = operation.lease().unwrap();
+    let mut fence = operation.creation_fence.clone().unwrap();
+    fence.lifecycle_lease = Some((id.to_owned(), lease.token.clone()));
+    let mut effect = admission(
+        "sbx_cancel_race",
+        SandboxOrigin::Lifecycle {
+            operation_id: id.into(),
+        },
+        10,
+    );
+    effect.creation_fence = Some(fence);
+    let (allocated, cancelled) = tokio::join!(
+        sandboxes.admit_sandbox(effect),
+        operations.cancel_fenced_creation(&owner, &operation)
+    );
+    let proof = reader
+        .lookup(&identity(&store, &owner, &request), &request)
+        .await
+        .unwrap();
+    match (allocated.is_ok(), cancelled.unwrap(), proof) {
+        (true, false, Outcome::Created { sandbox_id, .. }) => {
+            assert_eq!(sandbox_id, "sbx_cancel_race")
+        }
+        (
+            false,
+            true,
+            Outcome::Refused {
+                code: RefusalCode::CreationCancelled,
+                ..
+            },
+        ) => assert!(operations.claim(id).await.unwrap().is_none()),
+        _ => panic!("allocation and cancellation must have one committed outcome"),
+    }
+    store.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
+async fn covered_nonquota_failure_emits_terminal_no_allocation_proof() {
+    let (store, reader, today) = fixture().await;
+    let owner = SubjectId::new("owner");
+    let (app, operations, _slots) = routes(&store).await;
+    let request = lifecycle_query(&store, &owner, today, &"f".repeat(32));
+    let receipt = submit(&app, &request).await;
+    let id = receipt["id"].as_str().unwrap();
+    let operation = operations.claim(id).await.unwrap().unwrap();
+    let lease = operation.lease().unwrap();
+    let fence = operation.creation_fence.unwrap();
+    assert!(operations
+        .fail_fenced_creation(
+            &owner,
+            &lease,
+            &fence,
+            "Fixture terminal failure",
+            None,
+            RefusalCode::CreationFailed
+        )
+        .await
+        .unwrap());
+    assert_eq!(read_operation(&app, id).await["status"], "failed");
+    assert!(
+        matches!(reader.lookup(&identity(&store,&owner,&request),&request).await.unwrap(),Outcome::Refused { code:RefusalCode::CreationFailed, operation_id:Some(operation_id),.. } if operation_id==id)
+    );
+    // Treat the first successful write as an acknowledgement the caller lost.
+    // A retry must neither allocate nor replace the durable refusal.
+    assert!(!operations
+        .fail_fenced_creation(
+            &owner,
+            &lease,
+            &fence,
+            "Repeated failure",
+            None,
+            RefusalCode::CreationFailed
+        )
+        .await
+        .unwrap());
+    assert_eq!(submit(&app, &request).await, receipt);
+    assert!(operations.claim(id).await.unwrap().is_none());
+    assert!(
+        matches!(reader.lookup(&identity(&store,&owner,&request),&request).await.unwrap(),
+        Outcome::Refused { code:RefusalCode::CreationFailed, operation_id:Some(operation_id),.. } if operation_id==id)
+    );
+    store.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
+async fn covered_terminal_failure_from_previous_writer_is_reconciled() {
+    let (store, reader, today) = fixture().await;
+    let owner = SubjectId::new("owner");
+    let (app, operations, _slots) = routes(&store).await;
+    let request = lifecycle_query(&store, &owner, today, &"e".repeat(32));
+    let receipt = submit(&app, &request).await;
+    let id = receipt["id"].as_str().unwrap();
+    let operation = operations.claim(id).await.unwrap().unwrap();
+    // Waiting operations are excluded by the Failed-state index before pagination.
+    for i in 0..40 {
+        let waiting = lifecycle_query(&store, &owner, today, &format!("{i:032x}"));
+        let waiting_receipt = submit(&app, &waiting).await;
+        let waiting_id = waiting_receipt["id"].as_str().unwrap();
+        let waiting_lease = operations
+            .claim(waiting_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .lease()
+            .unwrap();
+        operations
+            .wait_for_connection(
+                &waiting_lease,
+                vec!["fixture-service".into()],
+                serde_json::json!({}),
+                None,
+            )
+            .await
+            .unwrap();
+    }
+    operations
+        .fail(&operation.lease().unwrap(), "Previous writer failure")
+        .await
+        .unwrap();
+    assert!(matches!(
+        reader
+            .lookup(&identity(&store, &owner, &request), &request)
+            .await
+            .unwrap(),
+        Outcome::Unknown { .. }
+    ));
+    store.settle_failed_linked(&mut None).await.unwrap();
+    assert!(
+        matches!(reader.lookup(&identity(&store,&owner,&request),&request).await.unwrap(),Outcome::Refused { code:RefusalCode::CreationFailed, operation_id:Some(operation_id),.. } if operation_id==id)
+    );
+    assert_eq!(
+        read_operation(&app, id).await["error"],
+        "Previous writer failure"
     );
     store.database.drop().await.unwrap();
 }

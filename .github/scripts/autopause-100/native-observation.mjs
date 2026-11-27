@@ -136,7 +136,8 @@ export function podEvidence(page, binding, limit) {
   const names = new Set(); const ids = new Set(); const pods = [];
   for (const pod of page.items) {
     const meta = pod?.metadata;
-    check(pod?.kind === 'Pod' && pod.apiVersion === 'v1' && dns(meta?.name) && dns(meta.uid)
+    check((pod?.kind === undefined || pod.kind === 'Pod')
+      && (pod?.apiVersion === undefined || pod.apiVersion === 'v1') && dns(meta?.name) && dns(meta.uid)
       && meta.namespace === binding.namespace.name && text(meta.resourceVersion)
       && !names.has(meta.name) && !ids.has(meta.uid), 'native_pod_page_invalid');
     names.add(meta.name); ids.add(meta.uid);

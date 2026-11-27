@@ -156,16 +156,7 @@ impl BindingService {
         if let Some(environment) = &mut plan.environment {
             // Pin the effective floor once. Replays keep the original reservation
             // even when the deployment policy changes between attempts.
-            let services = &mut environment.sandbox.nyxid_services;
-            let routes = environment.sandbox.agent_provider.connection_services();
-            services.extend(
-                policy
-                    .baseline_services
-                    .into_iter()
-                    .filter(|service| !routes.contains(service.as_str())),
-            );
-            services.sort();
-            services.dedup();
+            environment.include_baseline_services(policy.baseline_services);
         }
         for _ in 0..8 {
             let current = self.store.binding(id).await?;
@@ -247,6 +238,11 @@ impl BindingService {
                     }
                 }
                 None => {
+                    if plan.environment.is_none() {
+                        return Err(BindingError::InvalidRequest(
+                            "environment is required for a profile-managed binding".into(),
+                        ));
+                    }
                     let next = ProviderBinding::new_with_tool_endpoint(
                         id.into(),
                         caller.subject.clone(),

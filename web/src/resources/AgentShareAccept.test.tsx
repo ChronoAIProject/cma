@@ -86,3 +86,15 @@ it('rejects expired or another link’s retained token and generates 32 random b
   expect(retainAgentShareToken('share-one')).toBeUndefined();
   clearAgentShareToken('share-one');
 });
+
+it('leaves the original fragment available when sign-in cannot write session storage', () => {
+  const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+    throw new DOMException('Storage is unavailable', 'SecurityError');
+  });
+  expect(() => retainAgentShareForSignIn('share-one')).toThrow('Allow session storage');
+  expect(window.location.hash).toBe(`#${token}`);
+  write.mockRestore();
+  retainAgentShareForSignIn('share-one');
+  expect(window.location.hash).toBe('');
+  expect(retainAgentShareToken('share-one')).toBe(token);
+});

@@ -26,9 +26,18 @@ struct WorkspaceAdvance {
     transaction: usize,
 }
 
+struct RecoveryRead {
+    workspace_reads_remaining: usize,
+    claim_expires_at: SystemTime,
+}
+
 #[derive(Default)]
 struct Trace {
     workspace_advance: Mutex<Option<WorkspaceAdvance>>,
+    publish_ready_workspace: Mutex<Option<Workspace>>,
+    deliver_initial_credential: Mutex<Option<layer2_core::SandboxId>>,
+    recovery_read: Mutex<Option<RecoveryRead>>,
+    expire_recovery_publication: Mutex<Option<SystemTime>>,
     repair_after_abort: Mutex<Option<AgentId>>,
     intervention: Mutex<Option<Intervention>>,
     replace_before_failure: Mutex<Option<(AgentId, layer3_adapter::hosted::InMemoryHostedBackend)>>,
@@ -63,6 +72,22 @@ impl Fixture {
         options.app_name = Some(app.clone());
         options.command_event_handler = Some(EventHandler::callback(move |event| match event {
             CommandEvent::Started(event) => {
+                if event.command.get_str("find").ok() == Some("workspaces")
+                    && !event.command.contains_key("autocommit")
+                    && callback.bodies.load(Ordering::SeqCst) != 0
+                {
+                    let hold = callback.recovery_read.lock().unwrap().take_if(|read| {
+                        read.workspace_reads_remaining -= 1;
+                        read.workspace_reads_remaining == 0
+                    });
+                    if let Some(hold) = hold {
+                        let remaining = hold
+                            .claim_expires_at
+                            .duration_since(SystemTime::now())
+                            .expect("the recovery read must start with the original lease live");
+                        std::thread::sleep(remaining + Duration::from_millis(100));
+                    }
+                }
                 if event.command.get_str("find").ok() == Some("worktrees") {
                     let replacement = callback.replace_before_failure.lock().unwrap().clone();
                     if let Some((agent, backend)) = replacement {
@@ -96,23 +121,7 @@ impl Fixture {
                     }
                 }
                 if event.command.get_bool("startTransaction").ok() == Some(true) {
-                    let transaction = callback.bodies.fetch_add(1, Ordering::SeqCst) + 1;
-                    let advance = {
-                        let mut pending = callback.workspace_advance.lock().unwrap();
-                        pending.take_if(|advance| advance.transaction == transaction)
-                    };
-                    if let Some(advance) = advance {
-                        tokio::task::block_in_place(|| {
-                            tokio::runtime::Handle::current().block_on(async {
-                                let mut workspace =
-                                    observer.get_workspace(&advance.id).await.unwrap().unwrap();
-                                let revision = workspace.revision;
-                                workspace.revision += 1;
-                                workspace.next_worktree_number += 1;
-                                observer.save_workspace(revision, workspace).await.unwrap();
-                            });
-                        });
-                    }
+                    parent_interleaving::advance(&callback, &observer);
                 }
                 if event.command_name == "commitTransaction" {
                     callback.commits.fetch_add(1, Ordering::SeqCst);
@@ -171,6 +180,10 @@ impl Fixture {
     }
 
     async fn claim(&self, id: &AgentId) -> (Agent, SystemTime) {
+        self.claim_for(id, Duration::from_secs(60)).await
+    }
+
+    async fn claim_for(&self, id: &AgentId, lease: Duration) -> (Agent, SystemTime) {
         let now = SystemTime::now();
         let agent = self
             .bootstrap
@@ -180,7 +193,7 @@ impl Fixture {
                 id,
                 "bootstrap-worker",
                 rfc3339_at(now),
-                rfc3339_at(now + Duration::from_secs(60)),
+                rfc3339_at(now + lease),
             )
             .await
             .unwrap()
@@ -450,6 +463,9 @@ async fn failure_publication_uses_one_native_result_after_abort_or_unknown_ack()
 
 #[path = "lifecycle_publication/native_failure_tests.rs"]
 mod native_failure;
+
+#[path = "lifecycle_publication/parent_interleaving.rs"]
+mod parent_interleaving;
 
 #[path = "lifecycle_publication/workspace_binding.rs"]
 mod workspace_binding;

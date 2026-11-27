@@ -44,6 +44,32 @@ async fn expiry_wins_when_blocked_publication_becomes_ready_after_its_deadline()
     assert!(publication.await.is_err());
 }
 
+#[tokio::test(start_paused = true)]
+async fn pending_publication_uses_the_deadline_of_a_confirmed_renewal() {
+    let (validity, mut state) = state();
+    let (ready, waiting) = oneshot::channel();
+    let mut publication = Box::pin(state.while_authorized(waiting));
+    assert!(futures_util::poll!(&mut publication).is_pending());
+    validity.send_replace(Some(Instant::now() + Duration::from_secs(5)));
+    tokio::time::advance(Duration::from_secs(2)).await;
+    ready.send(42).unwrap();
+    assert_eq!(publication.await.unwrap().unwrap(), 42);
+}
+
+#[tokio::test(start_paused = true)]
+async fn pending_publication_stops_on_revocation_after_a_renewal() {
+    let (validity, mut state) = state();
+    let (ready, waiting) = oneshot::channel();
+    let mut publication = Box::pin(state.while_authorized(waiting));
+    assert!(futures_util::poll!(&mut publication).is_pending());
+    validity.send_replace(Some(Instant::now() + Duration::from_secs(5)));
+    tokio::time::advance(Duration::from_secs(2)).await;
+    assert!(futures_util::poll!(&mut publication).is_pending());
+    validity.send_replace(None);
+    ready.send(()).unwrap();
+    assert!(publication.await.is_err());
+}
+
 struct Frames(oneshot::Receiver<()>);
 #[async_trait::async_trait]
 impl layer3_adapter::DesktopConnection for Frames {
@@ -67,6 +93,22 @@ async fn expiry_wins_when_a_runtime_frame_arrives_after_its_deadline() {
     tokio::time::advance(Duration::from_secs(2)).await;
     ready.send(()).unwrap();
     assert!(receive.await.is_err());
+}
+
+#[tokio::test(start_paused = true)]
+async fn pending_runtime_read_survives_the_previous_deadline_after_renewal() {
+    let (validity, mut state) = state();
+    let (ready, waiting) = oneshot::channel();
+    let mut frames: DesktopConnectionHandle = Box::new(Frames(waiting));
+    let mut receive = Box::pin(state.recv(&mut frames));
+    assert!(futures_util::poll!(&mut receive).is_pending());
+    validity.send_replace(Some(Instant::now() + Duration::from_secs(5)));
+    tokio::time::advance(Duration::from_secs(2)).await;
+    ready.send(()).unwrap();
+    assert!(matches!(
+        receive.await.unwrap(),
+        Some(DesktopFrame::Binary(bytes)) if bytes == [1]
+    ));
 }
 
 #[tokio::test(start_paused = true)]

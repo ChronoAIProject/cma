@@ -819,6 +819,9 @@ thirty-minute run.
 An optional `Idempotency-Key` header of 1–256 ASCII bytes replays an identical
 create for the same creator on the same replica for ten minutes. Different
 content under the same key returns 409. It is not durable or cross-replica.
+When the request supplies a record UUID, cached success also requires the
+matching ready channel to remain present and free of an admitted deletion.
+A stale cache entry returns 409.
 
 A creator may additionally reserve a canonical UUID in the optional `record_id`
 create field. CMAEG stores an encrypted pending definition at that identity before
@@ -838,6 +841,23 @@ allocating another. A provider that is not allowlisted is refused with 400
 `invalid_request` before any reservation is written. This is management recovery, not durable event delivery.
 Deletion releases the reservation; callers must never reuse a retired record UUID
 or race cleanup against an outstanding create attempt.
+
+`GET /v1/channel-records/cancel-create-capability` returns `{"contract_version":1}`
+to an authenticated creator with Channel delete permission when the Gateway can
+enforce cancellation on every writer. Availability can change, so callers must
+confirm the cancellation result.
+
+`POST /v1/channel-records/{record_id}/cancel-create` uses the original Gateway
+destination, creator bearer and canonical UUID v4. It takes no body. A 200 reply
+with `status: "creation_fenced_absent"` means any future create for that
+creator and record identity is permanently fenced. The version 1 receipt
+includes the original UUID, the authenticated issuer, human subject and kind,
+and the NyxBot binding derived from that UUID. A repeat returns the same
+receipt. An owned record returns 409 and remains eligible for exact-version
+deletion. An unresolved managed Connection claim also returns 409.
+A record owned by someone else has the same visibility as an absent
+record for the caller. An unavailable capability or an ambiguous response
+provides no receipt.
 
 
 `GET /v1/channel-records/{record_id}/management` inspects a retained record,
@@ -910,6 +930,8 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels` | Optional `after` opaque cursor; no body | 200 `{items:[...],next_cursor}` with up to 50 owner-scoped channel responses | 401 unauthenticated; 503 record store unavailable |
 | `POST /v1/channels` | Complete create body; optional idempotency header and reserved record UUID | 201 channel response | 409 reused key with different content; 503 cache capacity |
 | `GET /v1/channel-records/{record_id}` | No body | 200 recovered channel response | 404 absent, unreserved, or other owner |
+| `GET /v1/channel-records/cancel-create-capability` | No body | 200 cancellation contract version | 503 when cancellation is unavailable |
+| `POST /v1/channel-records/{record_id}/cancel-create` | No body | 200 creator-scoped cancellation receipt | 409 when the creator still owns a record |
 | `GET /v1/channel-records/{record_id}/management` | No body | 200 tagged retained-record summary | 400 malformed UUID; 404 absent or other owner; 500 unreadable record; 503 store unavailable |
 | `DELETE /v1/channel-records/{record_id}/management` | Query `expected_version` | 204 legacy channel retired | 400 invalid record or missing version; 404 absent or other owner; 409 stale version or cleanup unconfirmed; 503 store unavailable |
 | `GET /v1/channels/{channel_id}` | No body | 200 channel response | 404 absent or other owner |
@@ -919,6 +941,8 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | Required detail `cursor`; opaque history event ID | 200 sealed-generation detail parts and optional `next_cursor` | 400 invalid cursor; 404 absent or other owner; 410 expired export; 503 unavailable |
 | `GET /v1/channels/{channel_id}/partition` | Required `partition_key`; optional `consumer_id` (default `default`) | 200 retained CMA conversation mapping and current Agent status | 400 unsupported affinity; 404 absent/hidden channel or mapping |
 | `POST /v1/channels/{channel_id}/partition/resets` | Required `Idempotency-Key` and owner reset body below | 200 reserved successor receipt; no-store | 409 disabled, ineligible target, changed mapping or reused key; uncertain failures require exact retry |
+| `POST /v1/channels/{channel_id}/profile-revisions/baseline` | Channel owner's `expected_version` | 200 profile revision receipt; no-store | Stale version or incomplete baseline evidence is refused |
+| `PUT /v1/channels/{channel_id}/profile-revisions` | Channel owner's `expected_version`, complete `profile` and `agent_key` | 200 profile revision receipt; no-store | Stale version or unqualified profile publication is refused |
 | `PUT /v1/channels/{channel_id}` | Complete create policy plus required `expected_version`; optional credential patch | 200 channel response with incremented version | 409 stale version |
 | `DELETE /v1/channels/{channel_id}?expected_version=N` | Required unsigned version query; no body | 204, empty body | 400 missing/unknown/invalid query; 409 stale version; 409 `provider_rejected` when the provider refuses to release the binding |
 | `POST /v1/channels/{channel_id}/test` | No body | 200 `{"accepted_after_ms":42,"first_text":"...","level":"l1"}` | Provider refusal, timeout or no usable result |
@@ -1246,6 +1270,12 @@ and one of that relay's UUID `route_id`s) or `sinks` (the channel's result
 webhooks). `agent_events` limits hand-offs: `max_hops` (default 2),
 `per_consumer_per_minute` (default 10) and `per_channel_per_minute`
 (default 30).
+
+A Telegram relay callback with an unknown explicit `/to` target receives
+the `target_unknown` refusal and creates no Consumer turn. If
+`addressing.unknown_target_notice` is enabled, the gateway attempts a short
+notice in the originating conversation using the callback's single-use reply
+token. Channel Activity records the refusal against the original event.
 
 | Limit | Value |
 | --- | --- |
@@ -2350,6 +2380,47 @@ channel without routing) and `Content-Type: application/json`:
 | --- | --- | --- |
 | `createReplyTarget` | POST `/v1/events/{event_ref}/reply-target`, body `{}` | `{reply_target_ref,expires_at}`; expiry is Unix seconds, at most 24 hours after issuance |
 | `replyToTarget` | POST `/v1/reply-targets/{reply_target_ref}/messages`, required `Idempotency-Key` header, body `OutboundMessage` | The ordinary `{message_ref?,rendering,delivery}` receipt |
+| `replyAcceptedAnswerToTarget` | POST `/v1/reply-targets/{reply_target_ref}/accepted-answer`, body `{response_id,item_id,message}` | The ordinary delivery receipt for the accepted primary answer |
+| `readAcceptedAnswerReceipt` | POST `/v1/accepted-answer-receipts/lookup`, body `{channel_id,binding_id,event_id,response_id,item_id}` | `{answer,result}` with the exact lookup tuple and terminal delivery metadata |
+
+The `accepted_answer_delivery_receipts_v1` source feature enables the
+accepted-answer operations for durable routed replies to the original event
+destination. Mark the committed assistant message on its
+`response.output_item.done` frame with `item.cmaeg_delivery: "primary_v1"`.
+Keep its accepted response ID, item ID and message identical in the live
+stream, recovered output and delayed reply request. Deltas may precede the
+committed item. Emit the primary commitment only through the marked
+`response.output_item.done` frame, and submit late primary delivery only
+through `replyAcceptedAnswerToTarget`. Use the existing tools for working
+acknowledgements, actions, media and supplemental messages.
+
+The original routed target has one opaque primary-answer delivery ID.
+The first admission binds its accepted response, committed item and outbound
+message to that ID.
+An exact repeat reconciles the existing operation. A changed item or payload
+returns an idempotency conflict. A pending delayed submission returns
+`409 routed_reply_in_progress` with `Retry-After`. Retain the original sealed
+reply target and request body when retrying.
+
+The lookup rechecks the consumer bearer and current provider binding against
+the retained event. It returns `404 answer_receipt_absent` while the operation
+has no terminal receipt or the retained record is absent, `409
+answer_receipt_conflict` for a conflicting item in the same authorized
+operation, `410 answer_receipt_expired` when the retained record proves expiry,
+and `403 answer_receipt_revoked` after a binding or key change. An unavailable
+authoritative read returns `503 answer_receipt_unavailable`.
+
+The metadata remains available through the original retained response window.
+The result contains the opaque `delivery_id`, `settled_at` in Unix seconds,
+`dispatch`, `outcome` and `reason`. Complete platform acceptance yields
+`confirmed / platform_confirmed`. A definitive refusal yields
+`rejected / refused_before_dispatch` or `rejected / platform_refused`.
+A partially accepted message yields `unknown / partial_delivery`. Other
+unconfirmed effects yield `unknown / delivery_unconfirmed`. Dispatch evidence
+is `not_dispatched`, `attempted` or `indeterminate`. Use repeated lookup for
+metadata reconciliation after an acknowledgement is lost. Lookup carries no
+authority to send a message. Keep raw platform details, message content,
+delivery IDs and sealed references outside provider Health and logs.
 
 The sealed `cmaeg1.rt` capability derives only from the original authenticated
 event with verified retained activity. Native Discord, native WhatsApp private,
@@ -3892,12 +3963,16 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `GET /v1/channels` | `listChannels` |
 | `POST /v1/channels` | `createChannel` |
 | `GET /v1/channel-records/{record_id}` | `recoverChannel` |
+| `GET /v1/channel-records/cancel-create-capability` | `cancelCreateCapability` |
+| `POST /v1/channel-records/{record_id}/cancel-create` | `cancelChannelCreate` |
 | `GET /v1/channel-records/{record_id}/management` | `getChannelRecordManagement` |
 | `DELETE /v1/channel-records/{record_id}/management` | `retireLegacyChannelRecord` |
 | `DELETE /v1/channels/{channel_id}` | `deleteChannel` |
 | `GET /v1/channels/{channel_id}` | `getChannel` |
 | `GET /v1/channels/{channel_id}/partition` | `inspectChannelPartition` |
 | `POST /v1/channels/{channel_id}/partition/resets` | `resetChannelPartition` |
+| `POST /v1/channels/{channel_id}/profile-revisions/baseline` | `baselineChannelProfileRevisions` |
+| `PUT /v1/channels/{channel_id}/profile-revisions` | `publishChannelProfileRevision` |
 | `GET /v1/channels/{channel_id}/activity` | `getChannelActivity` |
 | `GET /v1/channels/{channel_id}/activity/history` | `getChannelActivityHistory` |
 | `GET /v1/channels/{channel_id}/activity/history/events/{event_id}/details` | `getChannelActivityHistoryDetails` |
@@ -3925,6 +4000,8 @@ Generated from the reviewed OpenAPI snapshot; effective paths include its server
 | `POST /v1/events/{event_ref}/context` | `verifyEventContext` |
 | `POST /v1/events/{event_ref}/reply-target` | `createReplyTarget` |
 | `POST /v1/reply-targets/{reply_target_ref}/messages` | `replyToTarget` |
+| `POST /v1/reply-targets/{reply_target_ref}/accepted-answer` | `replyAcceptedAnswerToTarget` |
+| `POST /v1/accepted-answer-receipts/lookup` | `readAcceptedAnswerReceipt` |
 | `POST /v1/events/{event_ref}/replies` | `replyToEvent` |
 | `GET /v1/events/{event_ref}/side-messages` | `getSideMessageCapability` |
 | `POST /v1/events/{event_ref}/side-messages` | `sendSideMessage` |

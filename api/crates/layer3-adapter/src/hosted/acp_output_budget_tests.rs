@@ -101,7 +101,7 @@ pub(super) async fn open_with_coordinator(
         client,
         "agent-1",
         "/workspace".into(),
-        (configured, None, permissions),
+        (configured, None, (permissions, None)),
         None,
         None,
         sender,

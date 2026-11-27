@@ -54,17 +54,10 @@ pub(super) async fn apply(
         .validate_retirement_archive_successor(sandbox)
         .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?;
     channel_reuse::require(store, &current, sandbox, session).await?;
-    if revival.0.is_none()
-        && current.has_managed_runtime_image()
-        && current.runtime_update_request() != sandbox.runtime_update_request()
-    {
-        if let Some(release) = revival.1 {
+    if revival.0.is_none() && current.runtime_update_request() != sandbox.runtime_update_request() {
+        if let (Some(release), Some(lane)) = (revival.1, current.managed_runtime_lane()) {
             store
-                .fence_released_admission(
-                    release,
-                    layer2_core::released_runtime::ReleasedLane::Agent,
-                    session,
-                )
+                .fence_released_admission(release, lane, session)
                 .await
                 .map_err(ApplyError::Domain)?;
         }

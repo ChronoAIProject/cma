@@ -30,6 +30,8 @@ pub const AGENT_PROCESS_RESTART_STATUS_MEDIA_TYPE: &str =
     "application/vnd.chrono.cma.agent-process-restart-status.v1+json";
 pub const GITHUB_CREDENTIAL_ROUTE_STATUS_MEDIA_TYPE: &str =
     "application/vnd.chrono.cma.github-credential-route-status.v1+json";
+pub const GITHUB_REPOSITORY_SCOPE_STATUS_MEDIA_TYPE: &str =
+    "application/vnd.chrono.cma.github-repository-scope-status.v1+json";
 
 /// A stable reference to one agent slot.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

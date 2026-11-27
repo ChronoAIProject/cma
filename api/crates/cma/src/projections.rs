@@ -290,12 +290,15 @@ impl AgentHistoryExporter for AdapterAgentHistoryExporter {
                     AdapterError::Unsupported(_) => AgentHistoryExportError::Unsupported,
                     AdapterError::InputAuthorityUnavailable(_)
                     | AdapterError::PromptNotWritten(_)
+                    | AdapterError::NativePoolDefinitionAbsent { .. }
                     | AdapterError::NativeClaimNotReady(_)
                     | AdapterError::RuntimeStartupHold(_)
                     | AdapterError::Unavailable(_)
                     | AdapterError::RuntimeLedgerHold(_)
                     | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
                     AdapterError::Rejected(_)
+                    | AdapterError::AdmittedSandboxSpecDrift
+                    | AdapterError::NativePoolConfigurationDrift
                     | AdapterError::DesktopFailed
                     | AdapterError::AccessRevoked
                     | AdapterError::SkillUpgradeRefused(_)
@@ -361,6 +364,8 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
             "the runtime does not support resource readings".into(),
         ),
         AdapterError::Rejected(_)
+        | AdapterError::AdmittedSandboxSpecDrift
+        | AdapterError::NativePoolConfigurationDrift
         | AdapterError::DesktopFailed
         | AdapterError::AccessRevoked
         | AdapterError::SkillUpgradeRefused(_)
@@ -370,6 +375,7 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
         ),
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
+        | AdapterError::NativePoolDefinitionAbsent { .. }
         | AdapterError::NativeClaimNotReady(_)
         | AdapterError::RuntimeStartupHold(_)
         | AdapterError::Unavailable(_)

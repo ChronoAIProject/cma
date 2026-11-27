@@ -63,6 +63,7 @@ async fn publish_with(
     };
     owner_stop::fence_live_lease(&mut filter, mutation);
     restart_ready::fence_live_lease(&mut filter, current);
+    persistence::fence_workspace_wait_lease(&mut filter, current);
     let input = PublicationInput {
         operation: &operation,
         current,

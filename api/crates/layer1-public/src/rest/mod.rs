@@ -50,7 +50,7 @@ mod agent_artifacts_tests;
 mod agent_channel_usage;
 pub(crate) mod sandbox_metrics;
 mod sandbox_usage;
-pub use sandbox_metrics::sandbox_metrics_router;
+pub use sandbox_metrics::{sandbox_metrics_router, UsageReportViewDisabled};
 pub use sandbox_usage::sandbox_usage_router;
 mod agent_provider_associations;
 pub use agent_provider_associations::agent_provider_associations_router;
@@ -182,6 +182,7 @@ pub(crate) mod instances_problem;
 mod instances_tests;
 mod launch_events;
 mod launch_quota;
+mod launch_subject;
 mod launches;
 mod public_names;
 mod sandbox_always_on;
@@ -213,7 +214,7 @@ pub use agent_lifecycle::{
     AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
-    AgentLifecycleTitleMode, RepositoryAccessRefusal,
+    AgentLifecycleTitleMode, GitHubRepositoryNeed, RepositoryAccessRefusal, RepositoryScopeRepair,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{
