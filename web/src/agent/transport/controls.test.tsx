@@ -14,6 +14,37 @@ function activeHarness() {
   return h;
 }
 
+it('retries a busy Stop response with the original target, body and key', async () => {
+  const h = activeHarness();
+  h.control.mockResolvedValueOnce(
+    json(
+      {
+        error: {
+          type: 'server_error',
+          code: 'response_control_busy',
+          message: 'Busy',
+          param: null,
+        },
+      },
+      503,
+    ),
+  );
+  const { result, unmount } = renderHook(() => useAgentController(h.client, 'agt_1'));
+  await waitFor(() => expect(result.current.inputAvailability.allowed).toBe(true));
+  await act(() => result.current.interrupt());
+  expect(h.control).toHaveBeenCalledTimes(2);
+  const [originalTarget, original] = h.control.mock.calls[0]!;
+  const [retryTarget, retry] = h.control.mock.calls[1]!;
+  expect(retryTarget).toBe(originalTarget);
+  expect(retry?.body).toBe(original?.body);
+  expect(new Headers(retry?.headers).get('idempotency-key')).toBe(
+    new Headers(original?.headers).get('idempotency-key'),
+  );
+  expect(h.observe).toHaveBeenCalledOnce();
+  expect(result.current.pendingControl).toBe(false);
+  unmount();
+});
+
 it.each(['cancel', 'approval'] as const)(
   'recovers unknown %s on its original response, revision, turn, body and key after reload',
   async (kind) => {

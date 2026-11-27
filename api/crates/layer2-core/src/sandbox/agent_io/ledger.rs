@@ -110,6 +110,8 @@ pub enum CommandLedgerError {
     IdempotencyConflict,
     #[error("Agent admission observation is stale")]
     Conflict,
+    #[error("response control reservation is temporarily busy")]
+    ControlBusy,
     /// The reservation transaction was explicitly aborted and its abort was
     /// acknowledged before any commit could be sent. Callers may refresh the
     /// observation within the original request's retry budget.
@@ -137,6 +139,7 @@ impl CommandLedgerError {
             Self::NotFound => "agent_not_found",
             Self::IdempotencyConflict => "agent_command_key_conflict",
             Self::Conflict => "agent_command_admission_conflict",
+            Self::ControlBusy => "response_control_busy",
             Self::KnownAborted => "agent_command_admission_conflict",
             Self::StaleClaim => "agent_command_claim_stale",
             Self::NotAdmissible => "agent_command_not_admissible",

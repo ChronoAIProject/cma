@@ -241,7 +241,9 @@ fn admission_problem(error: CommandAdmissionError) -> Response {
             | CommandLedgerError::StaleClaim,
         ) => InstanceProblem::OperationInFlight.into_response(),
         CommandAdmissionError::Ledger(
-            CommandLedgerError::Corrupt | CommandLedgerError::Unavailable,
+            CommandLedgerError::Corrupt
+            | CommandLedgerError::Unavailable
+            | CommandLedgerError::ControlBusy,
         )
         | CommandAdmissionError::Authority(CommandAuthorizationError::Unavailable) => {
             InstanceProblem::Unavailable.into_response()

@@ -211,7 +211,11 @@ fn admission_refused(
             })
         }
         Ok(CommandReservationResult::Created(_))
-        | Err(CommandLedgerError::Corrupt | CommandLedgerError::Unavailable) => false,
+        | Err(
+            CommandLedgerError::Corrupt
+            | CommandLedgerError::Unavailable
+            | CommandLedgerError::ControlBusy,
+        ) => false,
         Err(
             CommandLedgerError::Budget(_)
             | CommandLedgerError::AdmissionPaused
