@@ -4,7 +4,8 @@ from urllib.parse import urlsplit
 from common import utc, write
 
 
-def login(client, am_origin, public_host='native-am.local.test', *, mark_stage):
+def login(client, am_origin, public_host='native-am.local.test', *, mark_stage,
+          admin_bearer=None, expected_subject=None):
     headers = {'Host': public_host}
     mark_stage('am_login')
     status, first, _ = client.http_raw(am_origin, 'GET', '/auth/login', headers=headers)
@@ -22,17 +23,22 @@ def login(client, am_origin, public_host='native-am.local.test', *, mark_stage):
     mark_stage('identity_forward')
     identity_origin = client.forward('identity', 8080)
     mark_stage('identity_authorize')
-    status, second, _ = client.http_raw(identity_origin, 'GET', authorization.path + '?' + authorization.query)
+    authorize_path = authorization.path + '?' + authorization.query
+    if admin_bearer is None:
+        status, second, _ = client.http_raw(identity_origin, 'GET', authorize_path)
+    else:
+        status, second, _ = client.http_raw(identity_origin, 'GET', authorize_path,
+                                            headers={'Authorization': 'Bearer ' + admin_bearer})
     if status != 302:
         raise RuntimeError('identity_authorization_refused')
     callback = urlsplit(second.get('Location', ''))
     if callback.scheme != 'https' or callback.netloc != public_host or callback.path != '/auth/callback':
         raise RuntimeError('local_callback_mismatch')
     mark_stage('am_callback')
-    status, final, _ = client.http_raw(am_origin, 'GET', callback.path + '?' + callback.query,
-                                      headers={**headers, 'Cookie': binding})
-    if status not in [302, 303] or not final.get_all('Set-Cookie', []):
-        raise RuntimeError('real_am_callback_failed_' + str(status))
+    callback_status, final, _ = client.http_raw(am_origin, 'GET', callback.path + '?' + callback.query,
+                                               headers={**headers, 'Cookie': binding})
+    if callback_status not in [302, 303] or not final.get_all('Set-Cookie', []):
+        raise RuntimeError('real_am_callback_failed_' + str(callback_status))
     session = SimpleCookie()
     for value in final.get_all('Set-Cookie', []):
         session.load(value)
@@ -41,8 +47,15 @@ def login(client, am_origin, public_host='native-am.local.test', *, mark_stage):
             or cookie['path'] != '/' or cookie['samesite'].lower() != 'lax'
             or not cookie['max-age'].isdigit() or int(cookie['max-age']) <= 0):
         raise RuntimeError('real_browser_session_cookie_missing')
-    write(client.output / 'owner-login.json', {'at': utc(), 'flow': 'real_am_browser_pkce_callback',
+    if expected_subject is not None:
+        mark_stage('am_session_subject')
+        status, body = client.http(am_origin, 'GET', '/auth/session',
+                                   headers={**headers, 'Cookie': 'cma_session=' + cookie.value})
+        if status != 200 or not body or body.get('authenticated') is not True or body.get('subject') != expected_subject:
+            raise RuntimeError('real_browser_session_subject_mismatch')
+    evidence = 'owner-login.json' if admin_bearer is None else 'document-recipient-login.json'
+    write(client.output / evidence, {'at': utc(), 'flow': 'real_am_browser_pkce_callback',
         'identity_provider': 'local_dependency', 'authorization_code_used_once': True,
-        'callback_status': status, 'secret_cookies_and_code_retained': False,
+        'callback_status': callback_status, 'secret_cookies_and_code_retained': False,
         'database_authority_injection': False})
     return cookie.value

@@ -1,5 +1,7 @@
 """Exercise the synthetic login redirect as an HTTP boundary."""
+import base64
 import contextlib
+import hashlib
 import http.client
 from http.server import ThreadingHTTPServer
 import io
@@ -138,8 +140,10 @@ class IndependentActorTests(unittest.TestCase):
 class LoginRedirectTests(unittest.TestCase):
     def setUp(self):
         class Handler(Identity):
-            config = {'client_id': 'test-client'}
+            config = {'client_id': 'test-client', **{key: secrets.token_urlsafe(32) for key in (
+                'client_secret', 'bearer', 'admin_bearer', 'refresh_token')}}
             codes = {}
+        self.config = Handler.config
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -151,19 +155,22 @@ class LoginRedirectTests(unittest.TestCase):
         self.thread.join(timeout=5)
         self.assertFalse(self.thread.is_alive())
 
-    def authorize(self, **changes):
-        params = {'client_id': 'test-client', 'redirect_uri': 'https://api.localhost.direct/auth/callback',
-                  'response_type': 'code', 'code_challenge_method': 'S256',
-                  'state': 'fixture-state', 'code_challenge': 'x' * 43, **changes}
+    def request(self, method, path, *, headers=None, body=None):
         connection = http.client.HTTPConnection(*self.server.server_address, timeout=5)
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                connection.request('GET', '/authorize?' + urlencode(params))
+                connection.request(method, path, headers=headers or {}, body=body)
                 response = connection.getresponse()
-                body = response.read()
-            return response.status, dict(response.getheaders()), body
+                return response.status, dict(response.getheaders()), response.read()
         finally:
             connection.close()
+
+    def authorize(self, *, token=None, **changes):
+        params = {'client_id': 'test-client', 'redirect_uri': 'https://api.localhost.direct/auth/callback',
+                  'response_type': 'code', 'code_challenge_method': 'S256',
+                  'state': 'fixture-state', 'code_challenge': 'x' * 43, **changes}
+        return self.request('GET', '/authorize?' + urlencode(params),
+                            headers={'Authorization': 'Bearer ' + token} if token else None)
 
     def test_state_is_encoded_and_callback_is_fixed(self):
         state = 'fixture\r\nLocation: https://unrelated.invalid'
@@ -182,6 +189,25 @@ class LoginRedirectTests(unittest.TestCase):
             status, headers, _ = self.authorize(redirect_uri=destination)
             self.assertEqual(status, 400)
             self.assertNotIn('Location', headers)
+
+    def test_recipient_sign_in_is_bound_to_its_authorization_code(self):
+        verifier = secrets.token_urlsafe(32)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
+        self.assertEqual(self.authorize(token=self.config['bearer'], code_challenge=challenge)[0], 401)
+        for token_key in ('admin_bearer', 'bearer'):
+            token = self.config[token_key] if token_key == 'admin_bearer' else None
+            status, headers, _ = self.authorize(token=token, code_challenge=challenge)
+            self.assertEqual(status, 302)
+            code = parse_qs(urlsplit(headers['Location']).query)['code'][0]
+            body = urlencode({'client_id': self.config['client_id'], 'client_secret': self.config['client_secret'],
+                              'grant_type': 'authorization_code', 'code': code, 'code_verifier': verifier,
+                              'redirect_uri': 'https://api.localhost.direct/auth/callback'})
+            status, _, raw = self.request('POST', '/token', body=body)
+            self.assertEqual(status, 200)
+            receipt = json.loads(raw)
+            self.assertEqual(receipt['access_token'], self.config[token_key])
+            self.assertEqual('refresh_token' in receipt, token_key == 'bearer')
+            self.assertEqual(self.request('POST', '/token', body=body)[0], 400)
 
 
 if __name__ == '__main__':

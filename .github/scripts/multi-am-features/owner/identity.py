@@ -15,6 +15,7 @@ import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 OWNER = 'native-am-fixture-owner'
+ADMIN = 'native-am-fixture-admin'
 ORGANIZATION = {'id': 'fixture-organization', 'your_role': 'member', 'display_name': 'Synthetic organization'}
 SERVICES = [{'id': 'fixture-llm', 'slug': 'chrono-llm-public', 'is_active': True},
             {'id': 'fixture-ornn', 'slug': 'ornn-api', 'is_active': True},
@@ -107,7 +108,7 @@ class Identity(BaseHTTPRequestHandler):
     def actor(self, token):
         for key, subject, permissions in [
             ('bearer', OWNER, PERMISSIONS),
-            ('admin_bearer', 'native-am-fixture-admin', ADMIN_PERMISSIONS),
+            ('admin_bearer', ADMIN, ADMIN_PERMISSIONS),
             ('outsider_bearer', 'native-am-fixture-outsider', PERMISSIONS),
         ]:
             expected = self.config.get(key)
@@ -132,11 +133,17 @@ class Identity(BaseHTTPRequestHandler):
                     or params['response_type'] != ['code'] or params['code_challenge_method'] != ['S256']
                     or len(params['state'][0]) > 256 or len(params['code_challenge'][0]) != 43):
                     raise ValueError('authorization_contract')
+                authorization = self.headers.get('Authorization')
+                token_key = 'bearer'
+                if authorization is not None:
+                    if not hmac.compare_digest(authorization, 'Bearer ' + self.config['admin_bearer']):
+                        return self.reply(401, {'error': 'unauthorized'})
+                    token_key = 'admin_bearer'
                 code = secrets.token_hex(32)
                 with self.lock:
                     if self.codes:
                         raise ValueError('single_authorization_bound')
-                    self.codes[code] = params['code_challenge'][0]
+                    self.codes[code] = (params['code_challenge'][0], token_key)
                 location = 'https://api.localhost.direct/auth/callback?' + urlencode({'state': params['state'][0], 'code': code})
                 self.send_response(302)
                 self.send_header('Location', location)
@@ -204,11 +211,15 @@ class Identity(BaseHTTPRequestHandler):
                     or form.get('client_secret') != [self.config['client_secret']]):
                     return self.reply(401, {'error': 'invalid_client'})
                 grant = form.get('grant_type')
+                token_key = 'bearer'
                 if grant == ['authorization_code']:
                     with self.lock:
-                        expected = self.codes.pop(form.get('code', [''])[0], None)
+                        attempt = self.codes.pop(form.get('code', [''])[0], None)
+                    if attempt is None:
+                        return self.reply(400, {'error': 'invalid_grant'})
+                    expected, token_key = attempt
                     actual = base64.urlsafe_b64encode(hashlib.sha256(form.get('code_verifier', [''])[0].encode()).digest()).decode().rstrip('=')
-                    if (expected is None or not hmac.compare_digest(expected, actual)
+                    if (not hmac.compare_digest(expected, actual)
                         or form.get('redirect_uri') != ['https://api.localhost.direct/auth/callback']):
                         return self.reply(400, {'error': 'invalid_grant'})
                 elif grant == ['refresh_token']:
@@ -216,9 +227,12 @@ class Identity(BaseHTTPRequestHandler):
                         return self.reply(400, {'error': 'invalid_grant'})
                 else:
                     return self.reply(400, {'error': 'unsupported_grant'})
-                return self.reply(200, {'access_token': self.config['bearer'], 'token_type': 'Bearer',
-                    'refresh_token': self.config['refresh_token'], 'expires_in': 3600,
-                    'scope': 'openid profile email roles proxy offline_access'})
+                response = {'access_token': self.config[token_key], 'token_type': 'Bearer', 'expires_in': 3600,
+                            'scope': 'openid profile email roles proxy'}
+                if token_key == 'bearer':
+                    response.update(refresh_token=self.config['refresh_token'],
+                                    scope=response['scope'] + ' offline_access')
+                return self.reply(200, response)
             if self.path == '/oauth/introspect':
                 form = parse_qs(raw.decode(), strict_parsing=True)
                 client = self.config.get('gateway_client')

@@ -1,5 +1,6 @@
 import {randomUUID, randomBytes, createHash} from 'node:crypto';
 import {check} from '../cma/core.mjs';
+import {withRestoration} from '../failure.mjs';
 
 const digest = value => createHash('sha256').update(value).digest('hex');
 const root = '/api/v1/documents';
@@ -14,8 +15,15 @@ export async function documentCases({owner, recipient, ownerId, recipientId, run
   const request = async (client, am, method, route, options) =>
     (await client.request(am, method, route, options)).body;
   const read = async am => request(owner, am, 'GET', path(''));
-  const mutation = async (client, am, method, suffix, body, allowed = [200]) =>
-    request(client, am, method, path(suffix), {body, key: randomUUID(), allowed});
+  const mutation = async (operation, client, am, method, suffix, body, allowed = [200]) => {
+    try {
+      return await request(client, am, method, path(suffix), {body, key: randomUUID(), allowed});
+    } catch (cause) {
+      const error = new Error(operation, {cause});
+      error.response = cause.response;
+      throw error;
+    }
+  };
 
   await runCase('user.documents_create_edit_conflict', async () => {
     const markdown = '# ' + name + '\n\nOriginal source.\n';
@@ -34,14 +42,14 @@ export async function documentCases({owner, recipient, ownerId, recipientId, run
     await request(recipient, 'b', 'GET', path(''), {allowed: [404]});
     const original = await read('b');
     const edited = markdown + '\n## Preserved formatting\n\n- **Strong**\n- `code`\n';
-    document = await mutation(owner, 'b', 'PATCH', '', {
+    document = await mutation('document_edit', owner, 'b', 'PATCH', '', {
       expected_revision: original.revision, title: name + ' edited', markdown: edited});
     check(document.revision > original.revision && document.source_revision > original.source_revision,
       'document_update_revision');
     const seen = await read('a');
     check(seen.revision === document.revision && seen.sha256 === digest(edited)
       && seen.title === name + ' edited', 'document_peer_update');
-    await mutation(owner, 'a', 'PATCH', '', {
+    await mutation('document_stale_edit_refusal', owner, 'a', 'PATCH', '', {
       expected_revision: original.revision, markdown: 'stale overwrite'}, [409]);
     const source = await request(owner, 'b', 'GET', path('/source'));
     check(source.id === document.id && source.revision === document.source_revision
@@ -54,20 +62,27 @@ export async function documentCases({owner, recipient, ownerId, recipientId, run
       'document_revision_history');
   });
 
-  await runCase('user.documents_grant_comment_revoke', async () => {
+  await runCase('user.documents_grant_comment_revoke', async recordFailure => {
     const before = await read('a');
-    document = await mutation(owner, 'a', 'PUT', '/shares/' + encodeURIComponent(recipientId), {
+    const query = '/share-recipients?q=' + encodeURIComponent(recipientId);
+    for (const am of ['a', 'b']) {
+      const registered = await request(owner, am, 'GET', path(query));
+      check(registered?.length === 1 && registered[0].subject === recipientId, 'document_recipient_not_registered');
+    }
+    const share = '/shares/' + encodeURIComponent(recipientId);
+    document = await mutation('document_grant', owner, 'a', 'PUT', share, {
       expected_revision: before.revision, permission: 'comment'});
-    try {
+    await withRestoration(async () => {
       const shared = await request(recipient, 'b', 'GET', path(''));
       check(shared.id === document.id && shared.access === 'comment' && shared.owner_subject === ownerId,
         'document_recipient_scope');
       const listing = await request(recipient, 'b', 'GET', root + '?scope=shared&q=' + encodeURIComponent(name));
       check(listing.items.some(row => row.id === document.id && row.access === 'comment'), 'document_shared_listing');
-      await mutation(recipient, 'b', 'PATCH', '', {expected_revision: shared.revision, title: 'forbidden'}, [404]);
+      await mutation('document_recipient_update_refusal', recipient, 'b', 'PATCH', '',
+        {expected_revision: shared.revision, title: 'forbidden'}, [404]);
       await request(recipient, 'b', 'GET', path('/shares'), {allowed: [404]});
       const body = 'Comment ' + randomUUID();
-      const added = await mutation(recipient, 'b', 'POST', '/comments', {
+      const added = await mutation('document_comment_add', recipient, 'b', 'POST', '/comments', {
         body, document_revision: shared.source_revision}, [201]);
       check(added.comment?.body === body && added.comment.author_subject === recipientId
         && added.comment.document_revision === shared.source_revision, 'document_comment_identity');
@@ -75,15 +90,15 @@ export async function documentCases({owner, recipient, ownerId, recipientId, run
       check(page.items.filter(row => row.id === added.comment.id && row.body === body).length === 1,
         'document_comment_peer_readback');
       const current = await read('a');
-      await mutation(owner, 'a', 'DELETE', '/comments/' + encodeURIComponent(added.comment.id), {
+      await mutation('document_comment_remove', owner, 'a', 'DELETE', '/comments/' + encodeURIComponent(added.comment.id), {
         expected_revision: current.revision});
       const removed = await request(recipient, 'b', 'GET', path('/comments'));
       check(!removed.items.some(row => row.id === added.comment.id), 'document_comment_remove_readback');
-    } finally {
+    }, async () => {
       const current = await read('b');
-      await mutation(owner, 'b', 'DELETE', '/shares/' + encodeURIComponent(recipientId), {
+      await mutation('document_revoke', owner, 'b', 'DELETE', share, {
         expected_revision: current.revision});
-    }
+    }, recordFailure);
     for (const am of ['a', 'b']) {
       await request(recipient, am, 'GET', path(''), {allowed: [404]});
       await request(recipient, am, 'GET', path('/source'), {allowed: [404]});
@@ -92,13 +107,13 @@ export async function documentCases({owner, recipient, ownerId, recipientId, run
     check(!shares.some(row => row.subject === recipientId), 'document_grant_revoke_readback');
   });
 
-  await runCase('user.documents_link_revoke', async () => {
+  await runCase('user.documents_link_revoke', async recordFailure => {
     const token = randomBytes(32).toString('hex');
     const before = await read('a');
-    const created = await mutation(owner, 'a', 'POST', '/share-links', {
+    const created = await mutation('document_link_create', owner, 'a', 'POST', '/share-links', {
       expected_revision: before.revision, permission: 'read', token}, [201]);
     check(created.document.id === document.id && typeof created.link?.id === 'string', 'document_link_identity');
-    try {
+    await withRestoration(async () => {
       const shared = await request(recipient, 'b', 'GET', path(''), {documentShareToken: token});
       check(shared.access === 'read' && shared.id === document.id && shared.owner_subject === ownerId,
         'document_link_scope');
@@ -109,11 +124,11 @@ export async function documentCases({owner, recipient, ownerId, recipientId, run
       const links = await request(owner, 'b', 'GET', path('/share-links'));
       check(links.some(row => row.id === created.link.id) && !JSON.stringify(links).includes(token),
         'document_link_metadata_discloses_token');
-    } finally {
+    }, async () => {
       const current = await read('b');
-      await mutation(owner, 'b', 'DELETE', '/share-links/' + encodeURIComponent(created.link.id), {
+      await mutation('document_link_revoke', owner, 'b', 'DELETE', '/share-links/' + encodeURIComponent(created.link.id), {
         expected_revision: current.revision});
-    }
+    }, recordFailure);
     for (const am of ['a', 'b']) await request(recipient, am, 'GET', path(''), {
       documentShareToken: token, allowed: [404]});
   });

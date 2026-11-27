@@ -24,6 +24,7 @@ from common import Client, utc, write
 from configuration_log import configuration_dispatch, configuration_log
 import manifests
 import legacy_manifests as old
+from identity import ADMIN
 from login import login
 from prepared_runtime import prepared_runtime_evidence
 from publication_evidence import (artifact_publication_abort, prepared_publication_abort, prepared_schema_barrier, prepared_schema_race,
@@ -155,6 +156,11 @@ class Fixture:
             self.record('am_ready',am=am)
         self.browser_cookie=login(self.client,self.origins['a'],public_host='api.localhost.direct',
             mark_stage=self.mark_initialization_step)
+        if self.ready.get('fixture') == 'features':
+            # The public grant route resolves recipients from the directory populated by sign-in.
+            login(self.client, self.origins['b'], public_host='api.localhost.direct',
+                  mark_stage=lambda step: self.mark_initialization_step('document_recipient_' + step),
+                  admin_bearer=self.secret['admin_bearer'], expected_subject=ADMIN)
         # Prove the runtime-visible public API route before a real Agent create.
         self.mark_initialization_step('runtime_public_tls')
         probe="import urllib.request; r=urllib.request.urlopen('https://api.localhost.direct/ready',timeout=10); print(r.status)"

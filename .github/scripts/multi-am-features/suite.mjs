@@ -60,9 +60,19 @@ const outsider = new API({...normal, bearer: config.outsider_bearer}, observatio
 async function documentCase(iteration, name, operation) {
   const start = performance.now(), first = apiObservations.length;
   const row = {case: name, phase, iteration, verdict: 'RUNNING', routing: 'shared_document_has_no_agent_owner'};
-  try { const value = await operation(); row.verdict = 'PASS'; return value; }
-  catch (error) { row.verdict = 'FAIL'; throw error; }
+  const failures = [];
+  const recordFailure = async (stage, error) => {
+    const receipt = await retainFailure(config.matrix_output, stage, error, {case: name, phase, iteration});
+    failures.push(receipt);
+  };
+  try { const value = await operation(recordFailure); row.verdict = 'PASS'; return value; }
+  catch (error) {
+    row.verdict = 'FAIL';
+    if (!failures.length) await recordFailure('primary', error).catch(() => {});
+    throw error;
+  }
   finally {
+    if (failures.length) row.document_failures = failures;
     row.ams = [...new Set(apiObservations.slice(first).map(x => x.am))];
     row.elapsed_ms = performance.now() - start;
     await record(row);
@@ -419,6 +429,7 @@ try {
     journey_verdict: result.journey ? journeyVerdict : 'NOT_RUN',
     ...journeyFailureSummary(result.journey),
     first_failed_case: failedCase ? {case: failedCase.case, phase: failedCase.phase, iteration: failedCase.iteration,
+      ...(failedCase.document_failures ? {document_failures: failedCase.document_failures} : {}),
       ...(failedCase.browser_failure ? {browser_ingress: failedCase.ams[0], browser_failure: failedCase.browser_failure} : {})} : null,
     writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,
