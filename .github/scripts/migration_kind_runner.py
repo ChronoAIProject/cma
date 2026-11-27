@@ -347,11 +347,10 @@ def run(args):
                                    lambda image, source: checked_identity(command, image, source))
     mongo = checked_dependency(command, args.mongo_image)
     identity = checked_identity_dependency(command, args.identity_image)
-    if policy is not None and (getattr(args, "membership_fixture", False) or
-                               getattr(args, "rate_fixture", False)):
-        raise RunnerError("selected fixture requires pairwise reader aliases")
     campaign = Campaign(output, args.kind, args.timeout, plan_bytes,
                         getattr(args, "kind_node_image", KIND_NODE))
+    campaign.reader_artifacts = {role: {key: artifact[key] for key in ("source", "image")}
+                                 for role, artifact in artifacts.items()}
     runtime_password = secrets.token_urlsafe(24)
     admin_password = secrets.token_urlsafe(24)
     campaign.mongo_password = runtime_password

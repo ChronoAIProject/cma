@@ -15,6 +15,7 @@ import uuid
 
 from migration_browser_fixture import COLLECTIONS as AUTH_COLLECTIONS, SHAPES as AUTH_SHAPES
 from migration_profile_fixture import Fixture
+from migration_release_probe import STAGE_ROLES, declared_reader_artifacts
 
 STAGES = ('old-write', 'new-read-old-write', 'new-write', 'old-read-new-write')
 SHAPES = ['shared-input-budget', 'fresh-process-budget-continuity']
@@ -43,10 +44,10 @@ class RateFixture:
     def __init__(self, fixture, stage, artifact, reader_uid, plan, clock=time.time):
         require(stage in STAGES, 'unknown stage')
         require(isinstance(reader_uid, str) and bool(reader_uid), 'reader pod UID missing')
-        readers = {row['id']: row['artifact'] for row in plan['readers']}
+        readers = declared_reader_artifacts(plan)
         self.old, self.new = readers['historical'], readers['candidate']
         require(self.old != self.new, 'distinct artifacts required')
-        expected = self.old if stage in ('old-write', 'old-read-new-write') else self.new
+        expected = readers[STAGE_ROLES[stage]]
         require(artifact == expected, 'reader artifact differs from plan')
         self.fixture, self.stage, self.artifact = fixture, stage, artifact
         self.reader_uid, self.clock = reader_uid, clock
