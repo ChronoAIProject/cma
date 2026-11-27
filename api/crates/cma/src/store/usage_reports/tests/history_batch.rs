@@ -12,6 +12,7 @@ use tracing::instrument::WithSubscriber;
 pub(super) struct Commands {
     pub(super) event_reads: AtomicUsize,
     pub(super) returned: AtomicUsize,
+    pub(super) bucket_find_deadlines_ms: Mutex<Vec<Option<i32>>>,
     max_batch: AtomicUsize,
     pending: Mutex<std::collections::HashSet<i32>>,
 }
@@ -34,6 +35,17 @@ async fn observe_store(original: Arc<ReportingStore>) -> (Arc<ReportingStore>, A
         {
             observed.event_reads.fetch_add(1, Ordering::SeqCst);
             observed.pending.lock().unwrap().insert(e.request_id);
+        }
+        CommandEvent::Started(e)
+            if e.command.get_str("find").ok()
+                == Some(crate::store::allocation_buckets::COLLECTION) =>
+        {
+            let deadline = e.command.get_i32("maxTimeMS").ok();
+            observed
+                .bucket_find_deadlines_ms
+                .lock()
+                .unwrap()
+                .push(deadline);
         }
         CommandEvent::Succeeded(e) if observed.pending.lock().unwrap().remove(&e.request_id) => {
             let cursor = e.reply.get_document("cursor").unwrap();
