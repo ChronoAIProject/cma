@@ -56,7 +56,7 @@ it('renders one preparation host and keeps the original request separate from a 
   expect(screen.queryByRole('link', { name: 'Help starting a task' })).not.toBeInTheDocument();
   expect(screen.getByRole('region', { name: 'Original request' }).textContent).toBe(request);
   expect(screen.getAllByText('Setup details')).toHaveLength(1);
-  expect(document.querySelectorAll('.character-avatar[data-motion="live"]')).toHaveLength(1);
+  expect(document.querySelectorAll('.agent-mascot__artwork')).toHaveLength(1);
   fireEvent.change(input, { target: { value: followup } });
   fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });
   fireEvent.keyDown(input, { key: 'Enter', metaKey: true });

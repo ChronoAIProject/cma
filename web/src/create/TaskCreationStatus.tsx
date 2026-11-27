@@ -4,7 +4,7 @@ import type { Intent } from './lifecycleIntentStorage';
 import { DocsLink } from '../services/DocsLink';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import { DiscardWaitingCreation } from './DiscardWaitingCreation';
-import { PreparationView } from '../preparation/PreparationView';
+import { PreparationView, type PreparationMotionContext } from '../preparation/PreparationView';
 import { derivePreparationView } from '../preparation/preparationPresentation';
 
 export function TaskQuotaNotice({
@@ -25,7 +25,9 @@ export function TaskQuotaNotice({
 
 export function TaskCreationStatus({
   intent,
-  operation,
+  operation: observation,
+  motion,
+  connectionRequired,
   failure,
   pending,
   resolvedCommit,
@@ -37,6 +39,8 @@ export function TaskCreationStatus({
 }: {
   readonly intent?: Intent;
   readonly operation?: AgentLifecycleOperationView;
+  readonly motion?: PreparationMotionContext;
+  readonly connectionRequired?: boolean;
   readonly failure?: string;
   readonly pending: boolean;
   readonly hasFollowUp?: boolean;
@@ -47,12 +51,20 @@ export function TaskCreationStatus({
   readonly titleId?: string;
 }) {
   if (!intent) return null;
+  const operation =
+    observation?.id === intent.receipt?.id &&
+    (intent.agentId === undefined || observation?.agent_id === intent.agentId)
+      ? observation
+      : undefined;
   return (
     <PreparationView
       titleId={titleId}
+      motion={motion && { ...motion, requestKey: intent.key, agentId: intent.agentId }}
       model={derivePreparationView({
         receipt: intent.receipt,
         operation,
+        agentId: intent.agentId,
+        connectionRequired: !intent.receipt && connectionRequired,
         readError: failure,
         initialTask: !failure && operation?.status === 'queued' ? 'not-started' : 'unknown',
       })}
