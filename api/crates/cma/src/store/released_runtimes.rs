@@ -199,29 +199,49 @@ impl MongoReleasedRuntimes {
 
     /// Create the lane from its verified first record once. A concurrent or
     /// earlier bootstrap wins, and its record is returned instead.
+    #[cfg(test)]
     pub(crate) async fn bootstrap(
         &self,
         record: ReleasedLaneRecord,
     ) -> Result<ReleasedLaneRecord, SandboxStoreError> {
+        match self.insert_bootstrap(&record, None).await {
+            Ok(()) => Ok(record),
+            Err(SandboxStoreError::Conflict) => self
+                .load(record.lane)
+                .await?
+                .ok_or(SandboxStoreError::Conflict),
+            Err(error) => Err(error),
+        }
+    }
+
+    pub(super) async fn insert_bootstrap(
+        &self,
+        record: &ReleasedLaneRecord,
+        session: Option<&mut ClientSession>,
+    ) -> Result<(), SandboxStoreError> {
         record
             .validate()
             .map_err(|_| SandboxStoreError::Corrupt("released runtime bootstrap".into()))?;
-        let lane = record.lane;
         let document = LaneDocument {
-            id: self.id(lane),
+            id: self.id(record.lane),
             deployment: self.deployment.clone(),
             document_schema_version: SCHEMA_VERSION,
             revision: revision(record.revision)?,
-            record,
+            record: record.clone(),
             decision_fence: None,
         };
-        match self.lanes.insert_one(&document).await {
-            Ok(_) => Ok(document.record),
-            Err(error) if super::sandbox_mongo::is_duplicate_key(&error) => {
-                self.load(lane).await?.ok_or(SandboxStoreError::Conflict)
+        let insert = self.lanes.insert_one(document);
+        let result = match session {
+            Some(session) => insert.session(session).await,
+            None => insert.await,
+        };
+        result.map(|_| ()).map_err(|error| {
+            if super::sandbox_mongo::is_duplicate_key(&error) {
+                SandboxStoreError::Conflict
+            } else {
+                unavailable(error)
             }
-            Err(error) => Err(unavailable(error)),
-        }
+        })
     }
 
     /// Replace `current` with `next` only if its lane revision still matches.

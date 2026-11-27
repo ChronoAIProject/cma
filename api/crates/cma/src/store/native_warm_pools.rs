@@ -14,6 +14,7 @@ use super::durability::majority_collection;
 use crate::warm_pools::{OperatorReplicas, PoolTarget, PoolTargetStore};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
+mod activation;
 mod released;
 mod retirement;
 mod schema;

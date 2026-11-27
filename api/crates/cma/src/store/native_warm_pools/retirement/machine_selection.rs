@@ -104,7 +104,7 @@ pub(super) async fn activate(
 /// Every Desktop selection and promotion writes the same deployment-scoped
 /// document, even when no pool has ever been activated. The coordination
 /// record is independent of target identity and survives their retirement.
-pub(super) async fn selection_fence(
+pub(in crate::store::native_warm_pools) async fn selection_fence(
     store: &MongoNativeWarmPools,
     session: &mut ClientSession,
 ) -> mongodb::error::Result<()> {
@@ -132,6 +132,9 @@ async fn select_once(
     session: &mut ClientSession,
 ) -> Result<bool, SelectionError> {
     selection_fence(store, session).await?;
+    store
+        .verify_activation_floor(true, &candidate.plan.spec.image.uri, session)
+        .await?;
 
     let mut exact = release_scope(store, true);
     exact.extend(doc! {"_id":&candidate.id,"retiring":{"$ne":true},"retired":{"$ne":true}});

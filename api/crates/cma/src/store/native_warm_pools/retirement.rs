@@ -4,17 +4,8 @@ use layer2_core::sandbox::{Sandbox, SandboxStatus, WarmSandbox, WarmSandboxState
 use layer3_adapter::HomeVolumeAttachment;
 
 mod eligibility;
-mod machine_selection;
+pub(super) mod machine_selection;
 use eligibility::{owned_home, warm_blocks};
-
-pub(super) async fn fence_machine_selection(
-    store: &MongoNativeWarmPools,
-    session: &mut mongodb::ClientSession,
-) -> Result<(), WarmPoolError> {
-    machine_selection::selection_fence(store, session)
-        .await
-        .map_err(|_| WarmPoolError::Unavailable)
-}
 
 const MAX_RECORDS: i64 = 10_000;
 
@@ -48,30 +39,7 @@ pub(super) async fn activate(store: &MongoNativeWarmPools, id: &str) -> Result<(
     if candidate.machine {
         machine_selection::activate(store, &candidate).await?;
     } else {
-        let mut image_scope = release_scope(store, candidate.machine);
-        image_scope.extend(doc! {"plan.spec.image.uri":&candidate.plan.spec.image.uri,
-        "activated_at":{"$type":"date"}});
-        let previous = store
-            .targets
-            .find_one(image_scope)
-            .sort(doc! {"activated_at":1})
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?
-            .and_then(|row| row.activated_at);
-        let mut filter = store.scope();
-        filter.extend(doc! {"_id":id,"activated_at":mongodb::bson::Bson::Null,"retiring":{"$ne":true},"retired":{"$ne":true}});
-        // Release order belongs to the image, not a resource size or Pod policy.
-        // A new plan for a known image inherits its original release timestamp;
-        // an older API cannot promote a superseded image by changing its plan hash.
-        let activation = match previous {
-            Some(at) => doc! {"$set":{"activated_at":at}},
-            None => doc! {"$currentDate":{"activated_at":true}},
-        };
-        store
-            .targets
-            .update_one(filter, activation)
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?;
+        store.activate_agent(&candidate).await?;
     }
     let row = store
         .find(id)
