@@ -29,6 +29,7 @@ pub struct RoutedTargetExecutor {
     tracker: Arc<TurnTracker>,
     worker: String,
     failure_text: String,
+    acknowledgement_text: String,
     pub(super) frame_limit: usize,
     pub(super) renew_interval: Duration,
     pub(super) invocation_bound: Duration,
@@ -51,13 +52,21 @@ impl RoutedTargetExecutor {
             tracker,
             worker: format!("routed-{}", uuid::Uuid::new_v4()),
             failure_text: config.failure_text.clone(),
+            acknowledgement_text: config.ack_text.clone(),
             frame_limit: MAX_FRAMES,
             renew_interval,
             invocation_bound: INVOCATION_BOUND,
         }
     }
     async fn run(&self, work: &WorkItem) -> Result<Disposition, ExecutionError> {
-        let dispatcher = self.port.clone().dispatcher();
+        let dispatcher = self
+            .port
+            .clone()
+            .dispatcher()
+            .with_readiness_acknowledgement(
+                self.delivery.coordinator.clone(),
+                &self.acknowledgement_text,
+            );
         let journal = dispatcher.journal();
         let outcome = dispatcher
             .dispatch(&work.identity, &work.target_id, &self.worker)
