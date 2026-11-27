@@ -1,6 +1,8 @@
 //! Paired complete authenticated routes, including relay and read custody.
 use super::*;
 use serde_json::Value;
+#[path = "response_shared_auth_errors.rs"]
+mod auth_errors;
 #[path = "response_shared_generation.rs"]
 mod generation;
 #[path = "response_shared_limits.rs"]
