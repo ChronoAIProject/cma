@@ -225,6 +225,7 @@ impl Fixture {
     fn request(&self) -> RuntimeBootstrapRequest {
         RuntimeBootstrapRequest {
             version: crate::runtime_bootstrap::RUNTIME_BOOTSTRAP_VERSION,
+            staging_startup_failure: None,
             pod_uid: "original-pod".into(),
             environment: BTreeMap::from([
                 ("CHRONO_SANDBOX_ID".into(), "logical-sandbox".into()),

@@ -1,6 +1,4 @@
 //! Credential delivery only after the caller durably adopts a native pool member.
-use std::time::Duration;
-
 use kube::{api::AttachParams, ResourceExt};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 
@@ -10,7 +8,7 @@ use crate::{
     Result, RuntimeHandle,
 };
 
-pub(super) const ASSIGN_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) use crate::runtime_bootstrap::NATIVE_ASSIGNMENT_DEADLINE as ASSIGN_TIMEOUT;
 const RECEIPT_LIMIT: usize = 1024;
 const STDERR_LIMIT: usize = 4096;
 

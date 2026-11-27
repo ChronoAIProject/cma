@@ -240,6 +240,7 @@ fn validate_request(
     crate::runtime_bootstrap::RuntimeBootstrapRequest {
         version: crate::runtime_bootstrap::RUNTIME_BOOTSTRAP_VERSION,
         pod_uid: "pending-pod".into(),
+        staging_startup_failure: None,
         environment,
     }
     .validate()

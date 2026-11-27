@@ -24,6 +24,7 @@ fn pool_images_must_explicitly_support_both_runtime_and_assignment_contracts() {
 fn request() -> RuntimeBootstrapRequest {
     RuntimeBootstrapRequest {
         version: RUNTIME_BOOTSTRAP_VERSION,
+        staging_startup_failure: None,
         pod_uid: "original-pod".into(),
         environment: BTreeMap::from([
             ("CHRONO_SANDBOX_ID".into(), "sbx_original".into()),

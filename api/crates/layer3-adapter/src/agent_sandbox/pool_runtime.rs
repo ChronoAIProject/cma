@@ -360,10 +360,24 @@ impl AgentSandboxClient {
             "CHRONO_RUNTIME_CONTROL_TOKEN".into(),
             self.control_token(&expected.sandbox_name),
         );
+        let staging_startup_failure = self
+            .staging_startup_failure
+            .as_ref()
+            .filter(|fault| {
+                origin.claim.request.home.policy.is_native_vct()
+                    && self.runtime_startup_breaker_enabled()
+                    && fault.targets_assignment(
+                        &origin.claim.request.home.sandbox_id,
+                        expected.runtime_restart_count,
+                        std::time::SystemTime::now(),
+                    )
+            })
+            .cloned();
         let bootstrap = RuntimeBootstrapRequest {
             version: RUNTIME_BOOTSTRAP_VERSION,
             pod_uid: expected.pod_uid.clone(),
             environment,
+            staging_startup_failure,
         };
         if origin.claim.request.home.policy.is_native_vct() {
             return self

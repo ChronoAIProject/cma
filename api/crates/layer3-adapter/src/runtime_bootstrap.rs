@@ -1,5 +1,6 @@
 //! Per-Pod assignment delivered over Kubernetes exec after a native pool claim.
 use std::collections::BTreeMap;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -8,6 +9,11 @@ use crate::{AdapterError, Result};
 pub use crate::runtime_versions::RUNTIME_BOOTSTRAP_VERSION;
 pub const RUNTIME_BOOTSTRAP_LABEL: &str = "dev.chrono.cma.runtime-bootstrap";
 pub const RUNTIME_HOME_LAYOUT_LABEL: &str = "dev.chrono.cma.home-layout";
+pub const NATIVE_ASSIGNMENT_DEADLINE: Duration = Duration::from_secs(30);
+
+mod staging_startup;
+pub use staging_startup::StagingStartupFailure;
+
 pub const MAX_RUNTIME_BOOTSTRAP_BYTES: usize = 64 * 1024;
 pub const RUNTIME_BOOTSTRAP_SOCKET: &str = "/var/lib/cma-runtime/assignment.sock";
 
@@ -33,6 +39,9 @@ pub struct RuntimeBootstrapRequest {
     pub version: u16,
     pub pod_uid: String,
     pub environment: BTreeMap<String, String>,
+    /// Operator-owned qualification, outside the tenant environment map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging_startup_failure: Option<StagingStartupFailure>,
 }
 
 impl std::fmt::Debug for RuntimeBootstrapRequest {
@@ -41,6 +50,10 @@ impl std::fmt::Debug for RuntimeBootstrapRequest {
             .field("version", &self.version)
             .field("pod_uid", &self.pod_uid)
             .field("environment", &"<redacted>")
+            .field(
+                "staging_startup_failure",
+                &self.staging_startup_failure.is_some(),
+            )
             .finish()
     }
 }
@@ -51,6 +64,10 @@ impl RuntimeBootstrapRequest {
         let generation = value("CHRONO_RUNTIME_GENERATION");
         if self.version != RUNTIME_BOOTSTRAP_VERSION
             || !valid_pod_uid(&self.pod_uid)
+            || self
+                .staging_startup_failure
+                .as_ref()
+                .is_some_and(|fault| !fault.valid_for(value("CHRONO_SANDBOX_ID")))
             || self.environment.len() > 128
             || self.environment.iter().any(|(name, value)| {
                 name.is_empty()

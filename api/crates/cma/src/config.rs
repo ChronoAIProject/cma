@@ -50,6 +50,7 @@ mod rate_limits;
 pub use rate_limits::RateLimitConfig;
 mod inspection_refusal;
 mod open_reply_loss;
+mod startup_failure_fixture;
 pub(crate) use inspection_refusal::InspectionRefusalControl;
 mod relay_capacity;
 mod runtime;
@@ -196,6 +197,8 @@ pub struct Config {
     pub mongodb_authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub deployment_id: String,
     pub runtime: RuntimeConfig,
+    pub(crate) staging_startup_failure:
+        Option<layer3_adapter::runtime_bootstrap::StagingStartupFailure>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
@@ -407,6 +410,10 @@ impl Config {
             mongodb_authority,
             deployment_id,
             runtime,
+            staging_startup_failure: startup_failure_fixture::from_lookup(
+                &mut lookup,
+                std::time::SystemTime::now(),
+            )?,
             execution,
             baseline_services,
             auth_encryption_key,

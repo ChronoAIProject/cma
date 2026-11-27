@@ -7,8 +7,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use layer3_adapter::runtime_bootstrap::{
-    valid_pod_uid, RuntimeBootstrapReceipt, RuntimeBootstrapRequest, MAX_RUNTIME_BOOTSTRAP_BYTES,
-    RUNTIME_BOOTSTRAP_SOCKET,
+    valid_pod_uid, RuntimeBootstrapReceipt, RuntimeBootstrapRequest, StagingStartupFailure,
+    MAX_RUNTIME_BOOTSTRAP_BYTES, RUNTIME_BOOTSTRAP_SOCKET,
 };
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
@@ -24,6 +24,7 @@ const MAX_CONNECTIONS: usize = 8;
 pub(crate) struct AssignedRuntime {
     pub config: RuntimeConfig,
     pub auth: Arc<ControlAuth>,
+    pub startup_failure: Option<StagingStartupFailure>,
 }
 
 pub(crate) struct AssignmentServer {
@@ -202,7 +203,11 @@ async fn accept(
         .sender
         .take()
         .ok_or("runtime assignment receiver is unavailable")?
-        .send(AssignedRuntime { config, auth })
+        .send(AssignedRuntime {
+            config,
+            auth,
+            startup_failure: request.staging_startup_failure,
+        })
         .map_err(|_| "runtime assignment receiver is unavailable")?;
     state.receipt = Some(receipt.clone());
     Ok(receipt)
@@ -307,3 +312,19 @@ async fn read_bounded(reader: impl AsyncRead + Unpin, limit: usize) -> Result<Ve
 #[cfg(test)]
 #[path = "pool_bootstrap_tests.rs"]
 mod tests;
+
+pub(crate) async fn apply_staging_startup_failure(
+    fault: StagingStartupFailure,
+) -> Result<(), String> {
+    use layer3_adapter::runtime_bootstrap::NATIVE_ASSIGNMENT_DEADLINE;
+    if !fault.armed_at(std::time::SystemTime::now()) {
+        return Ok(());
+    }
+    // Allow the acknowledgement and the manager's post-delivery authority
+    // proof to complete before this incarnation exits.
+    tokio::time::sleep(NATIVE_ASSIGNMENT_DEADLINE + Duration::from_secs(5)).await;
+    if fault.armed_at(std::time::SystemTime::now()) {
+        return Err("staging qualification: runtime startup interrupted after assignment".into());
+    }
+    Ok(())
+}
