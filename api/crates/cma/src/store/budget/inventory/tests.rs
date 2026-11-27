@@ -22,6 +22,7 @@ pub(super) fn saved(agent: &Agent) -> super::super::TurnRecord {
         runtime_generation: Some(1),
         period_start: Some(123),
         period_shard: Some(2),
+        certification: None,
         reservation: TurnReservation::new(
             BudgetPolicy {
                 owner_day_limit: 1000,
