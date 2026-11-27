@@ -167,6 +167,12 @@
     }
   }
 
+  async function rawAgent(agentId) {
+    const raw = await d.agents.findOne({_id: agentId}, undefined, {raw: true});
+    if (!Buffer.isBuffer(raw)) throw Error('prepared_owner_fence_agent_bson_unavailable');
+    return raw;
+  }
+
   async function inject() {
     const deadline = Date.now() + 4500;
     while (Date.now() < deadline) {
@@ -203,6 +209,7 @@
               || Number(rows.agent.work_lease_fence) !== workFence) {
             throw Error('prepared_publication_original_authority_unbound');
           }
+          const originalAgent = ownerFence ? await rawAgent(rows.agent._id) : null;
           const mutation = {$set: {[marker]: {operation: operationId, barrier: scope.barrier}}};
           const collection = ownerFence ? d.cma_agent_manager_owners : d.native_prepared_sandboxes;
           // Both writes change the transaction snapshot while keeping authority intact.
@@ -214,6 +221,7 @@
           };
           const changed = await collection.updateOne(filter, mutation, {maxTimeMS: 700});
           if (changed.modifiedCount !== 1) throw Error('prepared_publication_conflict_write_missed');
+          const agentUnchanged = !ownerFence || originalAgent.equals(await rawAgent(rows.agent._id));
           const after = await currentUpdate(rows);
           if (after?.opid !== bound.opid || after?.session !== bound.session
               || after?.transaction !== bound.transaction) {
@@ -221,8 +229,6 @@
           }
           const workLeaseSha256 = require('crypto').createHash('sha256')
             .update(`${workFence}:${lease.holder}`).digest('hex');
-          const agentUnchanged = !ownerFence || EJSON.stringify(await d.agents.findOne({_id: rows.agent._id}))
-            === EJSON.stringify(rows.agent);
           return {...before, ownerInstance: owner.instance_id, ownerEpoch, leaseDeadlineMs, workLeaseSha256,
             agentUnchanged};
         }
