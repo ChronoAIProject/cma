@@ -9,11 +9,12 @@ async fn fixture(prepared: bool) -> (Arc<InMemorySandboxStore>, Arc<Authority>, 
     }
 }
 
-struct RecordedReservations {
+pub(super) struct RecordedReservations {
     inner: Arc<InMemorySandboxStore>,
     requests: Mutex<Vec<CommandReservation>>,
     refusal: Option<CommandLedgerError>,
     lost_reply: bool,
+    acknowledge_stale_abort: bool,
 }
 
 impl RecordedReservations {
@@ -23,7 +24,32 @@ impl RecordedReservations {
             requests: Mutex::new(Vec::new()),
             refusal: None,
             lost_reply: false,
+            acknowledge_stale_abort: false,
         }
+    }
+
+    pub(super) fn with_stale_abort(inner: Arc<InMemorySandboxStore>) -> Self {
+        Self {
+            acknowledge_stale_abort: true,
+            ..Self::new(inner)
+        }
+    }
+
+    async fn observed_stale_revision(&self, request: &CommandReservation) -> bool {
+        let agent = self
+            .inner
+            .get_agent(&request.envelope.agent_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let parent = self
+            .inner
+            .get_sandbox(&agent.sandbox_id)
+            .await
+            .unwrap()
+            .unwrap();
+        agent.revision != request.expected_agent_revision
+            || parent.revision != request.parent.expected_revision
     }
 }
 
@@ -37,12 +63,31 @@ impl AgentCommandStore for RecordedReservations {
         if let Some(error) = &self.refusal {
             return Err(error.clone());
         }
+        if self.acknowledge_stale_abort
+            && self.observed_stale_revision(&request).await
+            && self
+                .inner
+                .get_admitted_command(&request.scope(), &request.key_sha256)
+                .await
+                .unwrap()
+                .is_none()
+        {
+            // The fixture observed a stale revision before issuing any write
+            // and found no earlier receipt to replay.
+            return Err(CommandLedgerError::KnownAborted);
+        }
         let result = self.inner.reserve_command(request).await?;
         if self.lost_reply {
             Err(CommandLedgerError::Unavailable)
         } else {
             Ok(result)
         }
+    }
+    async fn edit_queued_input(
+        &self,
+        request: QueuedInputReservation,
+    ) -> Result<QueuedInputOutcome, CommandLedgerError> {
+        self.inner.edit_queued_input(request).await
     }
     async fn get_command(
         &self,
@@ -70,7 +115,7 @@ async fn creation_refresh_retains_request_identity_order_and_queue_expiry() {
     for prepared in [false, true] {
         let (store, authority, _) = fixture(prepared).await;
         let (_, progressing) = service(&store, authority.clone(), Progress::Parent);
-        let recorded = Arc::new(RecordedReservations::new(store.clone()));
+        let recorded = Arc::new(RecordedReservations::with_stale_abort(store.clone()));
         let service = AgentCommandService::new(
             recorded.clone(),
             Arc::new(ResourceAccessService::new(store.clone(), authority)),
@@ -105,6 +150,7 @@ async fn creation_refresh_never_retries_ambiguous_commit_or_other_refusals() {
     for prepared in [false, true] {
         for refusal in [
             None,
+            Some(CommandLedgerError::Conflict),
             Some(CommandLedgerError::NotAdmissible),
             Some(CommandLedgerError::StaleClaim),
             Some(CommandLedgerError::QueueFull),
@@ -137,6 +183,15 @@ async fn creation_refresh_never_retries_ambiguous_commit_or_other_refusals() {
             assert_eq!(error, refusal.unwrap_or(CommandLedgerError::Unavailable));
             assert_eq!(recorded.requests.lock().unwrap().len(), 1);
             assert_eq!(authority.calls.load(Ordering::SeqCst), 1);
+            let recovered = service
+                .lookup_admitted(
+                    &context("owner"),
+                    "selected-credential",
+                    CommandSubmissionSource::Api,
+                    submission("uncertain"),
+                )
+                .await
+                .unwrap();
             let commands = store
                 .command_work_page(&PageRequest::default())
                 .await
@@ -151,7 +206,13 @@ async fn creation_refresh_never_retries_ambiguous_commit_or_other_refusals() {
                 );
                 assert_eq!(commands[0].receipt.response_id, original.response_id);
                 assert!(commands[0].work.dispatch.is_none());
+                let recovered = recovered.expect("same key must recover the committed receipt");
+                assert_eq!(recovered.receipt.command_id, original.envelope.command_id);
+                assert_eq!(recovered.receipt.response_id, original.response_id);
+            } else {
+                assert_eq!(recovered, None);
             }
+            assert_eq!(recorded.requests.lock().unwrap().len(), 1);
         }
     }
 }
@@ -162,7 +223,7 @@ async fn creation_refresh_cannot_extend_time_budget_or_change_idempotency_scope(
         for progress in [Progress::SlowRefresh, Progress::ChangedScope] {
             let (store, authority, _) = fixture(prepared).await;
             let (_, progressing) = service(&store, authority.clone(), progress);
-            let recorded = Arc::new(RecordedReservations::new(store.clone()));
+            let recorded = Arc::new(RecordedReservations::with_stale_abort(store.clone()));
             let service = AgentCommandService::new(
                 recorded.clone(),
                 Arc::new(ResourceAccessService::new(store.clone(), authority)),
@@ -226,7 +287,9 @@ async fn bootstrap_refresh_does_not_retry_generic_starting_agents_or_controls() 
                     input
                 )
                 .await,
-            Err(CommandAdmissionError::Ledger(CommandLedgerError::Conflict))
+            Err(CommandAdmissionError::Ledger(
+                CommandLedgerError::KnownAborted
+            ))
         ));
         assert_eq!(authority.calls.load(Ordering::SeqCst), 1);
         assert!(store
@@ -289,7 +352,7 @@ pub(super) async fn ordinary_fixture() -> (Arc<InMemorySandboxStore>, Arc<Author
 async fn ordinary_ready_message_refreshes_a_known_aborted_revision_once() {
     let (store, authority, _) = ordinary_fixture().await;
     let (_, progressing) = service(&store, authority.clone(), Progress::Agent);
-    let recorded = Arc::new(RecordedReservations::new(store.clone()));
+    let recorded = Arc::new(RecordedReservations::with_stale_abort(store.clone()));
     let service = AgentCommandService::new(
         recorded.clone(),
         Arc::new(ResourceAccessService::new(store.clone(), authority)),
@@ -348,7 +411,7 @@ async fn ordinary_ready_refresh_keeps_explicit_revision_and_refuses_changed_stop
     for (progress, expected_explicit) in [(Progress::Agent, true), (Progress::Stop, false)] {
         let (store, authority, agent) = ordinary_fixture().await;
         let (_, progressing) = service(&store, authority.clone(), progress);
-        let recorded = Arc::new(RecordedReservations::new(store.clone()));
+        let recorded = Arc::new(RecordedReservations::with_stale_abort(store.clone()));
         let service = AgentCommandService::new(
             recorded.clone(),
             Arc::new(ResourceAccessService::new(store.clone(), authority)),
@@ -356,17 +419,20 @@ async fn ordinary_ready_refresh_keeps_explicit_revision_and_refuses_changed_stop
         );
         let mut request = submission("ordinary-refused-input");
         request.expected_agent_revision = expected_explicit.then_some(agent.revision);
-        assert!(matches!(
-            service
-                .admit(
-                    &context("owner"),
-                    "selected-credential",
-                    CommandSubmissionSource::Api,
-                    request
-                )
-                .await,
-            Err(CommandAdmissionError::Ledger(CommandLedgerError::Conflict))
-        ));
+        let result = service
+            .admit(
+                &context("owner"),
+                "selected-credential",
+                CommandSubmissionSource::Api,
+                request,
+            )
+            .await;
+        let expected = if expected_explicit {
+            CommandLedgerError::KnownAborted
+        } else {
+            CommandLedgerError::Conflict
+        };
+        assert!(matches!(result, Err(CommandAdmissionError::Ledger(error)) if error == expected));
         assert_eq!(
             progressing.calls.load(Ordering::SeqCst),
             if expected_explicit { 1 } else { 2 }
@@ -389,7 +455,7 @@ async fn funded_ready_refresh_keeps_the_original_reservation_until_a_definitive_
     for (progress, should_admit) in [(Progress::Agent, true), (Progress::Stop, false)] {
         let (store, authority, _) = ordinary_fixture().await;
         let (_, progressing) = service(&store, authority.clone(), progress);
-        let recorded = Arc::new(RecordedReservations::new(store.clone()));
+        let recorded = Arc::new(RecordedReservations::with_stale_abort(store.clone()));
         let (funding, ledger, payer) = super::super::execution::funding::funded_admission_fixture();
         let service = AgentCommandService::new(
             recorded.clone(),
@@ -452,7 +518,7 @@ async fn cancelling_funded_ready_refresh_releases_the_known_aborted_participant(
     let release = Arc::new(Notify::new());
     Arc::get_mut(&mut authority).unwrap().gate = Some((entered.clone(), release.clone()));
     let (_, progressing) = service(&store, authority.clone(), Progress::Agent);
-    let recorded = Arc::new(RecordedReservations::new(store.clone()));
+    let recorded = Arc::new(RecordedReservations::with_stale_abort(store.clone()));
     let (funding, ledger, payer) = super::super::execution::funding::funded_admission_fixture();
     let service = AgentCommandService::new(
         recorded.clone(),

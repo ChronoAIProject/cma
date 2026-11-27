@@ -28,7 +28,7 @@ pub(in crate::responses::v2) fn admission(value: CommandAdmissionError) -> Respo
             layer2_core::sandbox::AgentOperationError::ModelFundingUnsupported
             | layer2_core::sandbox::AgentOperationError::ModelFunding(_),
         ) => error::admission(value),
-        CommandAdmissionError::Ledger(CommandLedgerError::Conflict | CommandLedgerError::NotAdmissible | CommandLedgerError::StaleClaim) => {
+        CommandAdmissionError::Ledger(CommandLedgerError::Conflict | CommandLedgerError::KnownAborted | CommandLedgerError::NotAdmissible | CommandLedgerError::StaleClaim) => {
             error::error(StatusCode::CONFLICT, "response_control_conflict",
                 "The observed Agent, response turn or pending approval cannot accept this control. Recover an uncertain admission with the original key and body; observe again before creating a new intent.", None)
         }

@@ -43,7 +43,7 @@ async fn policy_revision_is_fenced_without_aggregate_changes_and_retries_recover
     let mut current = request(&agent, &parent, "fresh");
     assert_eq!(
         store.reserve_command(current.clone()).await,
-        Err(CommandLedgerError::Conflict)
+        Err(CommandLedgerError::KnownAborted)
     );
     assert_eq!(
         record(store.reserve_command(original_request).await.unwrap()),
@@ -87,7 +87,7 @@ async fn ledger_hold_refuses_new_command_and_retains_exact_replay() {
 
     assert_eq!(
         store.reserve_command(fresh.clone()).await,
-        Err(CommandLedgerError::Conflict)
+        Err(CommandLedgerError::KnownAborted)
     );
     assert_eq!(
         store.reserve_command(retained).await.unwrap(),
@@ -165,7 +165,7 @@ async fn owner_kind_incarnation_and_corrupt_policy_cannot_consume_admission_orde
     submission.policy.sandbox_created_at = TWO_MINUTES.into();
     assert_eq!(
         store.reserve_command(submission.clone()).await,
-        Err(CommandLedgerError::Conflict)
+        Err(CommandLedgerError::KnownAborted)
     );
     submission.policy.sandbox_created_at = parent.created_at.clone();
     assert_eq!(

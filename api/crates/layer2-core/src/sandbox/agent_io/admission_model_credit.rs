@@ -133,7 +133,7 @@ impl AgentCommandService {
                 result
             })
             .await;
-        if may_refresh && matches!(&result, Ok(Err(CommandLedgerError::Conflict))) {
+        if may_refresh && matches!(&result, Ok(Err(CommandLedgerError::KnownAborted))) {
             deferred_refusal.pending = refusal.pending.take();
         } else {
             refusal.settle().await?;
@@ -220,6 +220,7 @@ fn admission_refused(
             | CommandLedgerError::NotFound
             | CommandLedgerError::IdempotencyConflict
             | CommandLedgerError::Conflict
+            | CommandLedgerError::KnownAborted
             | CommandLedgerError::StaleClaim
             | CommandLedgerError::NotAdmissible
             | CommandLedgerError::QueueFull,

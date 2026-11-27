@@ -236,7 +236,9 @@ fn admission_problem(error: CommandAdmissionError) -> Response {
         CommandAdmissionError::Ledger(CommandLedgerError::Invalid)
         | CommandAdmissionError::ModelMismatch => InstanceProblem::InvalidRequest.into_response(),
         CommandAdmissionError::Ledger(
-            CommandLedgerError::Conflict | CommandLedgerError::StaleClaim,
+            CommandLedgerError::Conflict
+            | CommandLedgerError::KnownAborted
+            | CommandLedgerError::StaleClaim,
         ) => InstanceProblem::OperationInFlight.into_response(),
         CommandAdmissionError::Ledger(
             CommandLedgerError::Corrupt | CommandLedgerError::Unavailable,
