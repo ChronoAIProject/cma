@@ -70,11 +70,7 @@ async fn ambiguous_metric_name_preserves_prior_rollups_and_replay_advances() {
                     .into_iter()
                     .find(|metric| selection.starts_with(metric.name()))
                     .unwrap();
-                let rate = match mode {
-                    0 => 1,
-                    1 => 2,
-                    _ => 3,
-                };
+                let rate = u64::from(mode) + 1;
                 let mut rows = Vec::new();
                 for id in ids
                     .iter()
@@ -83,10 +79,19 @@ async fn ambiguous_metric_name_preserves_prior_rollups_and_replay_advances() {
                     let mut row = export_line(from, id, metric, &[(0, 0), (60, 60 * rate)]);
                     row["metric"]["node"] = json!("current-node");
                     rows.push(row.to_string());
-                    if mode == 1 && id == &ids[0] && metric == SourceMetric::CpuCounter {
-                        let mut older = export_line(from, id, metric, &[(90, 150)]);
-                        older["metric"]["node"] = json!("other-node");
-                        rows.push(older.to_string());
+                    if id == &ids[0] && metric == SourceMetric::CpuCounter {
+                        match mode {
+                            1 => {
+                                let mut older = export_line(from, id, metric, &[(90, 150)]);
+                                older["metric"]["node"] = json!("other-node");
+                                rows.push(older.to_string());
+                            }
+                            2 => {
+                                row["values"][1] = json!(60 * rate + 1);
+                                rows.push(row.to_string());
+                            }
+                            _ => {}
+                        }
                     }
                 }
                 rows.join("\n")
@@ -104,13 +109,6 @@ async fn ambiguous_metric_name_preserves_prior_rollups_and_replay_advances() {
         .await
         .unwrap();
 
-    mode.store(1, Ordering::Relaxed);
-    crate::sandbox_metrics::replay_fixture(store.clone(), client.clone(), range)
-        .await
-        .unwrap();
-    let progress = store.progress("replay").await.unwrap();
-    assert_eq!(progress.from, range.to);
-    assert!(progress.after.is_none());
     let wanted = [ids[0].clone(), ids[1].clone(), ids[100].clone()];
     let read = || async {
         let mut snapshot = store.snapshot().await.unwrap();
@@ -130,18 +128,27 @@ async fn ambiguous_metric_name_preserves_prior_rollups_and_replay_advances() {
             })
             .collect::<std::collections::BTreeMap<_, _>>()
     };
-    let mixed = read().await;
-    assert_eq!(mixed[&ids[0]], 60.);
-    assert_eq!(mixed[&ids[1]], 120.);
-    assert_eq!(mixed[&ids[100]], 120.);
+    for (case, sibling_cpu) in [(1, 120.), (2, 180.)] {
+        mode.store(case, Ordering::Relaxed);
+        crate::sandbox_metrics::replay_fixture(store.clone(), client.clone(), range)
+            .await
+            .unwrap();
+        let progress = store.progress("replay").await.unwrap();
+        assert_eq!(progress.from, range.to);
+        assert!(progress.after.is_none());
+        let mixed = read().await;
+        assert_eq!(mixed[&ids[0]], 60.);
+        assert_eq!(mixed[&ids[1]], sibling_cpu);
+        assert_eq!(mixed[&ids[100]], sibling_cpu);
+    }
 
-    mode.store(2, Ordering::Relaxed);
+    mode.store(3, Ordering::Relaxed);
     crate::sandbox_metrics::replay_fixture(store.clone(), client, range)
         .await
         .unwrap();
     let repaired = read().await;
     assert_eq!(repaired.len(), 3);
-    assert!(repaired.values().all(|value| *value == 180.));
+    assert!(repaired.values().all(|value| *value == 240.));
     server.abort();
     store.db.drop().await.unwrap();
 }
