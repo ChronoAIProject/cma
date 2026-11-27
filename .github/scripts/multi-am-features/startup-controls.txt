@@ -1,3 +1,6 @@
+agent_manager::relay::tests::mongo::preferences::process_recovery::rename_contention::non_owner_rename_retries_known_aborted_publication_once
+agent_manager::relay::tests::mongo::preferences::process_recovery::rename_replays_after_owner_process_loss
+agent_manager::relay::tests::mongo::shared_streams::sw04_cancel::sw04_cancel_admitted_by_non_owner_executes_once
 sandbox::agent_worker::prepared_open_ready::tests::prepared_parent_conflict_retains_completed_open_without_waiting_for_lease_expiry
 sandbox::agent_worker::prepared_open_ready::tests::publication_contention::prepared_connection_contention_releases_only_new_lease_and_preserves_input
 sandbox::agent_worker::prepared_open_ready::tests::publication_contention::prepared_connection_retry_guard_refuses_settings_or_input_mutation

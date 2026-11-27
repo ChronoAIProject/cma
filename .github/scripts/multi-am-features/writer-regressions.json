@@ -10,7 +10,7 @@
       "feature": "Rename",
       "requirement": "Request is authorized and executed under current owning AM authority; server-internal CAS conflict re-reads and retries boundedly; acknowledged title remains after reload and owner move. A stale explicit expected revision receives the established typed stale-client response.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The two ingresses now compete on one explicit preference revision and require one durable rename. The server-internal lifecycle/log publication conflict and integrated execution remain pending.",
+      "remaining": "The two ingresses race one explicit preference revision. Same-source native controls prove retry of an actual Mongo publication abort and replay after owner process loss. The exact-image conflict and hosted execution remain pending.",
       "trigger": "PATCH Agent preferences with a genuinely changed title while owner lifecycle/log publication advances the Agent",
       "required_assertions": [
         {"case": "writer.competing_renames", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
@@ -130,7 +130,7 @@
       "feature": "Send, interrupt, queued cancellation, Stop, delete, revive/Open",
       "requirement": "Admission is executed under current owner or explicitly reviewed non-routable CAS contract. Immutable command/idempotency receipt is unique; effect runs once; old owner cannot publish after epoch change. Cleanup uses public owner path.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The journey binds the original held command to both ingresses, the successor and the final replay. Old-epoch publication barriers, Event Gateway ingress, and hosted execution of replay, queued edit/cancel and ownerless revive/Open remain pending.",
+      "remaining": "The journey binds the original held command to both ingresses, the successor and final replay. The same-source non-owner Cancel control requires one effect. Exact-image old-epoch barriers, Event Gateway ingress, and hosted execution remain pending.",
       "trigger": "Use each actual Agent mutation route on non-owner ingress; include queued response cancellation during stream output and owner move",
       "required_assertions": [
         {
