@@ -381,6 +381,8 @@ function TaskHomeContent({
       ) : null}
       <TaskCreationStatus
         titleId={titleId}
+        motion={{ client, viewerId, authEpoch: home?.authEpoch, visible: home?.visible }}
+        connectionRequired={Boolean(lifecycle.connection)}
         draft={<PreparationDraft draft={preparationDraft} />}
         intent={intent}
         operation={operation}

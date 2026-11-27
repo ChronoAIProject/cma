@@ -129,6 +129,13 @@ async fn settings_policy_io_cannot_outlive_credential_custody() {
     }
 }
 
+#[tokio::test]
+async fn file_preview_ingress_custody_failure_refuses_before_owner_lookup() {
+    for change in [CustodyChange::Outage, CustodyChange::Revoke] {
+        custody_change("GET", "files/content?path=sample", change).await;
+    }
+}
+
 async fn custody_change(method: &str, suffix: &str, change: CustodyChange) {
     let browser = crate::auth::relay::tests::Fixture::new(true).await;
     let mut f = fixture::fixture(browser.auth.clone(), "agt-public", "owner").await;
@@ -150,9 +157,10 @@ async fn custody_change(method: &str, suffix: &str, change: CustodyChange) {
         Arc::new(adapter),
     );
     let (router, ownership) = fixture::router(&f).await;
+    let uri = format!("/api/v1/agents/agt-public/{suffix}");
     let mut request = Request::builder()
         .method(method)
-        .uri(format!("/api/v1/agents/agt-public/{suffix}"))
+        .uri(uri.as_str())
         .body(Body::empty())
         .unwrap();
     *request.headers_mut() = browser.headers.clone();
@@ -167,6 +175,16 @@ async fn custody_change(method: &str, suffix: &str, change: CustodyChange) {
         .insert(layer1_public::DelegatedCredential::new(
             "test-access".into(),
         ));
+    let preview = suffix.starts_with("files/content?");
+    let router = if preview {
+        Relay::file_preview_identity_route(router.layer(axum::middleware::from_fn_with_state(
+            browser.auth.clone(),
+            crate::auth::attach_subject,
+        )))
+    } else {
+        router
+    };
+    let provider_calls = browser.provider_calls();
     let response = router.oneshot(request).await.unwrap();
     assert_eq!(
         response.status(),
@@ -194,5 +212,11 @@ async fn custody_change(method: &str, suffix: &str, change: CustodyChange) {
     );
     assert_eq!(policy_store.reads.load(Ordering::SeqCst), 2);
     assert_eq!(ownership.calls.load(Ordering::SeqCst), 0);
+    if preview {
+        assert_eq!(
+            browser.provider_calls(),
+            (provider_calls.0 + 1, provider_calls.1 + 1)
+        );
+    }
     // The fixture handler panics if any denied request reaches an effect.
 }

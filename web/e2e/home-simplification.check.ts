@@ -29,12 +29,15 @@ for (const theme of ['dark', 'light']) {
           page.getByRole('button', { name: 'Research a topic', exact: true }),
         ).toBeVisible();
         await expect(page.locator('.task-home__templates button')).toHaveCount(5);
+        await expect(page.locator('.task-home__first-mascot .agent-mascot__poster')).toHaveCount(1);
+        await expect(page.locator('.task-home__first-mascot .agent-mascot__sprite')).toHaveCount(0);
         await expect(page.getByRole('button', { name: 'Templates', exact: true })).toHaveCount(0);
         expect(local.previews).toEqual([]);
       } else if (state === 'navigation-error') {
         await expect(page.getByRole('main').getByRole('alert')).toBeVisible();
         await expect(page.locator('[data-first-visit="true"]')).toHaveCount(0);
       } else {
+        await expect(page.locator('.task-home__heading .agent-mascot')).toHaveCount(0);
         const cards = page.locator('.task-crew__card');
         await expect(cards).toHaveCount(3);
         await expect(cards.locator('.task-crew__description')).toHaveText([
@@ -69,6 +72,20 @@ for (const theme of ['dark', 'light']) {
         path: info.outputPath(`home-${state}-${theme}.png`),
         animations: 'disabled',
       });
+      if (state === 'empty') {
+        await page.setViewportSize({ width: 320, height: 900 });
+        await page.clock.runFor(200);
+        const mascot = page.locator('.task-home__first-mascot');
+        await expect(mascot).toHaveCSS('height', '48px');
+        await expect(input).toBeInViewport({ ratio: 1 });
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+          true,
+        );
+        await page.screenshot({
+          path: info.outputPath(`home-first-320-${theme}.png`),
+          animations: 'disabled',
+        });
+      }
       expect(local.writes).toEqual([]);
       expect(local.boundary.writes).toEqual([]);
       expect(local.boundary.errors).toEqual([]);

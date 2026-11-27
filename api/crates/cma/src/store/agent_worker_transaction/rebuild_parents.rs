@@ -39,20 +39,23 @@ pub(super) async fn fence(
         && parents.lineage == AgentWorkPublicationLineage::Authorized
         && (mutation.agent.work.step == AgentWorkStep::AddWorktree
             || persistence::is_effect_free_workspace_wait_requeue(mutation));
+    let refresh_restart_ready = agent.work.step == AgentWorkStep::RestartConversation
+        && mutation.agent.status == AgentStatus::Ready
+        && parents.lineage == AgentWorkPublicationLineage::Authorized;
     for (collection, id, revision, owner, refresh) in [
         (
             &store.sandboxes,
             agent.sandbox_id.as_str(),
             parents.sandbox_revision,
             owner.clone(),
-            refresh_workspace_wait,
+            refresh_workspace_wait || refresh_restart_ready,
         ),
         (
             &store.workspaces,
             agent.workspace_id.as_str(),
             parents.workspace_revision,
             workspace_owner,
-            refresh_workspace_wait,
+            refresh_workspace_wait || refresh_restart_ready,
         ),
         (
             &store.worktrees,

@@ -8,7 +8,7 @@ use axum::{
 use layer2_core::{Authorization, SubjectId};
 use serde_json::json;
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::Duration,
 };
 use tokio::sync::Notify;
@@ -17,10 +17,13 @@ use tokio::sync::Notify;
 struct Provider {
     block: AtomicBool,
     denied: AtomicBool,
+    userinfo_calls: AtomicUsize,
+    introspection_calls: AtomicUsize,
     entered: Notify,
     release: Notify,
 }
 async fn userinfo(State(state): State<Arc<Provider>>) -> Json<serde_json::Value> {
+    state.userinfo_calls.fetch_add(1, Ordering::SeqCst);
     if state.block.load(Ordering::SeqCst) {
         state.entered.notify_one();
         state.release.notified().await;
@@ -28,6 +31,7 @@ async fn userinfo(State(state): State<Arc<Provider>>) -> Json<serde_json::Value>
     Json(json!({"sub":"owner"}))
 }
 async fn introspect(State(state): State<Arc<Provider>>) -> Json<serde_json::Value> {
+    state.introspection_calls.fetch_add(1, Ordering::SeqCst);
     Json(
         json!({"sub":"owner", "active":!state.denied.load(Ordering::SeqCst), "permissions":["cma:sandbox:use"]}),
     )
@@ -35,11 +39,9 @@ async fn introspect(State(state): State<Arc<Provider>>) -> Json<serde_json::Valu
 pub struct Fixture {
     pub auth: Arc<AuthState>,
     pub store: Arc<MemoryAuthStore>,
-    #[cfg(test)]
     provider: Arc<Provider>,
     pub headers: HeaderMap,
     pub context: CallerContext,
-    #[cfg(test)]
     login: SecretDigest,
     server: tokio::task::JoinHandle<()>,
 }
@@ -49,6 +51,17 @@ impl Drop for Fixture {
     }
 }
 impl Fixture {
+    pub fn provider_calls(&self) -> (usize, usize) {
+        (
+            self.provider.userinfo_calls.load(Ordering::SeqCst),
+            self.provider.introspection_calls.load(Ordering::SeqCst),
+        )
+    }
+
+    pub async fn logout(&self) {
+        self.store.delete_browser_login(&self.login).await.unwrap();
+    }
+
     pub async fn new(browser: bool) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin = format!("http://{}", listener.local_addr().unwrap());
@@ -114,11 +127,9 @@ impl Fixture {
         Self {
             auth,
             store,
-            #[cfg(test)]
             provider,
             headers,
             context,
-            #[cfg(test)]
             login,
             server,
         }
@@ -130,9 +141,168 @@ impl Fixture {
             &self.headers,
             &self.context,
             Some("test-access"),
+            None,
         )
         .await
     }
+
+    #[cfg(test)]
+    async fn capture(&self, uri: &str) -> BrowserRelayProof {
+        use axum::{body::Body, extract::Request, Extension};
+        use tower::ServiceExt;
+        let app = Router::new()
+            .route(
+                "/api/v1/agents/{id}/files/content",
+                get(
+                    |Extension(proof): Extension<BrowserRelayProof>| async move {
+                        let mut response = axum::response::Response::new(Body::empty());
+                        response.extensions_mut().insert(proof);
+                        response
+                    },
+                ),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                self.auth.clone(),
+                super::super::attach_subject,
+            ))
+            .layer(Extension(ReuseFilePreviewIdentity));
+        let mut request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+        *request.headers_mut() = self.headers.clone();
+        let mut response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        response.extensions_mut().remove().unwrap()
+    }
+
+    #[cfg(test)]
+    async fn verify_captured(&self, proof: &BrowserRelayProof) -> Result<RelayCaller, StatusCode> {
+        RelayCaller::verify(
+            self.auth.clone(),
+            &self.headers,
+            &self.context,
+            Some("test-access"),
+            Some(proof),
+        )
+        .await
+    }
+}
+
+#[cfg(test)]
+const PREVIEW: &str = "/api/v1/agents/fixture/files/content?path=sample";
+
+#[tokio::test]
+async fn file_preview_proof_reuses_one_verification_and_is_bound_to_the_request_target() {
+    let f = Fixture::new(true).await;
+    let before = f.provider_calls();
+    let captured = f.capture(PREVIEW).await;
+    assert_eq!(f.provider_calls(), (before.0 + 1, before.1 + 1));
+    let uri = PREVIEW.parse().unwrap();
+    assert!(captured.matches(&Method::GET, &uri));
+    assert!(!captured.matches(&Method::HEAD, &uri));
+    assert!(!captured.matches(
+        &Method::GET,
+        &"/api/v1/agents/fixture/files/content?path=other"
+            .parse()
+            .unwrap()
+    ));
+    let before = f.provider_calls();
+    let admitted = f.verify_captured(&captured).await.unwrap();
+    admitted.current().await.unwrap();
+    assert_eq!(f.provider_calls(), before);
+    // A route without the ingress extension still performs its own provider verification.
+    f.verify().await.unwrap();
+    assert_eq!(f.provider_calls(), (before.0 + 1, before.1 + 1));
+}
+
+#[tokio::test]
+async fn file_preview_proof_refuses_logout_and_observed_revocation_across_policy_io() {
+    let f = Fixture::new(true).await;
+    let captured = f.capture(PREVIEW).await;
+    let admitted = f.verify_captured(&captured).await.unwrap();
+    f.auth.identity_store.invalidate_token("test-access");
+    assert_eq!(admitted.current().await, Err(StatusCode::UNAUTHORIZED));
+    assert!(matches!(
+        f.verify_captured(&captured).await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+    let captured = f.capture(PREVIEW).await;
+    let admitted = f.verify_captured(&captured).await.unwrap();
+    f.logout().await;
+    assert_eq!(admitted.current().await, Err(StatusCode::UNAUTHORIZED));
+    assert!(matches!(
+        f.verify_captured(&captured).await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+}
+
+#[tokio::test]
+async fn file_preview_proof_refuses_new_generation_with_identical_token_text() {
+    let f = Fixture::new(true).await;
+    let captured = f.capture(PREVIEW).await;
+    let admitted = f.verify_captured(&captured).await.unwrap();
+    let mut replacement = f
+        .store
+        .subject(&f.context.caller.subject)
+        .await
+        .unwrap()
+        .unwrap();
+    replacement.revision += 1;
+    replacement.token_generation += 1;
+    f.store.put_subject(replacement).await.unwrap();
+    assert_eq!(admitted.current().await, Err(StatusCode::UNAUTHORIZED));
+    assert!(matches!(
+        f.verify_captured(&captured).await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+}
+
+#[tokio::test]
+async fn file_preview_proof_refuses_a_recreated_subject() {
+    let f = Fixture::new(true).await;
+    let captured = f.capture(PREVIEW).await;
+    let admitted = f.verify_captured(&captured).await.unwrap();
+    let mut replacement = f
+        .store
+        .subject(&f.context.caller.subject)
+        .await
+        .unwrap()
+        .unwrap();
+    replacement.incarnation = "recreated-subject".into();
+    f.store.put_subject(replacement).await.unwrap();
+    assert_eq!(admitted.current().await, Err(StatusCode::UNAUTHORIZED));
+    assert!(matches!(
+        f.verify_captured(&captured).await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+}
+
+#[tokio::test]
+async fn file_preview_proof_keeps_the_original_monotonic_deadline() {
+    let f = Fixture::new(true).await;
+    let captured = f.capture(PREVIEW).await;
+    let admitted = f.verify_captured(&captured).await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(3601)).await;
+    assert_eq!(admitted.current().await, Err(StatusCode::UNAUTHORIZED));
+    assert!(matches!(
+        f.verify_captured(&captured).await,
+        Err(StatusCode::UNAUTHORIZED)
+    ));
+}
+
+#[tokio::test]
+async fn file_preview_proof_reports_an_unavailable_custody_store() {
+    let f = Fixture::new(true).await;
+    let captured = f.capture(PREVIEW).await;
+    let admitted = f.verify_captured(&captured).await.unwrap();
+    f.store.set_unavailable(true);
+    assert_eq!(
+        admitted.current().await,
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    );
+    assert!(matches!(
+        f.verify_captured(&captured).await,
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    ));
 }
 
 #[tokio::test]

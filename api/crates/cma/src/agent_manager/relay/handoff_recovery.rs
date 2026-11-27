@@ -35,7 +35,7 @@ impl Recovery<'_> {
                 return http::unavailable_with(diagnostic, Refusal::CoordinatorNotReady);
             }
             if let Err(refusal) =
-                http::authorize_public(relay, id, &request, diagnostic, false).await
+                http::authorize_public(relay, id, &request, diagnostic, None, false).await
             {
                 return refusal;
             }

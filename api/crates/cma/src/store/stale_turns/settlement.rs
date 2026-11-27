@@ -61,7 +61,9 @@ impl StaleTurnStore {
         {
             return Err(SandboxStoreError::Conflict);
         }
+        let (_, event) = terminal_event(proof).map_err(store_error)?;
         if self.confirm(proof, None, budget).await? {
+            log_confirmation(proof, event.seq, "existing_receipt");
             return Ok(());
         }
         let _writer = self.store.agent_writes.lock(&token.agent_id).await;
@@ -92,6 +94,7 @@ impl StaleTurnStore {
         }
         match commit_transaction(session).await {
             CommitOutcome::Committed => {
+                log_confirmation(proof, event.seq, "committed");
                 crate::telemetry::work::published(
                     &proof.checkpoint().outcome.appended,
                     "committed",
@@ -109,6 +112,7 @@ impl StaleTurnStore {
                     false
                 };
                 if confirmed || self.confirm(proof, None, budget).await? {
+                    log_confirmation(proof, event.seq, "reconciled");
                     crate::telemetry::work::published(
                         &proof.checkpoint().outcome.appended,
                         "reconciled",
@@ -421,6 +425,15 @@ impl StaleTurnStore {
         }
         Ok(true)
     }
+}
+
+fn log_confirmation(proof: &StaleTurnSettlement, terminal_seq: u64, confirmation: &'static str) {
+    tracing::info!(
+        command_id = %proof.command().receipt.envelope.command_id,
+        terminal_seq,
+        confirmation,
+        "Stale turn publication confirmed"
+    );
 }
 
 async fn read_scoped(

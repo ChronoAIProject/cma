@@ -4,7 +4,7 @@ use super::*;
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
 async fn owner_stop_without_capability_then_restart_with_retained_history() {
     for segmented in [false, true] {
-        Box::pin(exercise_owner_stop_restart(false, segmented)).await;
+        Box::pin(exercise_owner_stop_restart(false, segmented, false)).await;
     }
 }
 
@@ -12,11 +12,19 @@ async fn owner_stop_without_capability_then_restart_with_retained_history() {
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
 async fn historical_owner_stop_requires_close_proof_then_restarts_with_one_terminal_event() {
     for segmented in [false, true] {
-        Box::pin(exercise_owner_stop_restart(true, segmented)).await;
+        Box::pin(exercise_owner_stop_restart(true, segmented, false)).await;
     }
 }
 
-async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
+async fn owner_restart_publishes_ready_after_sandbox_activity() {
+    for segmented in [false, true] {
+        Box::pin(exercise_owner_stop_restart(false, segmented, true)).await;
+    }
+}
+
+async fn exercise_owner_stop_restart(historical: bool, segmented: bool, touch_sandbox: bool) {
     use crate::sandbox::agent_process_proof::RestartObservation;
     use crate::store::budget_test_fixture::OwnerStopBudgetFixture;
     use crate::store::skill_result_test_support::{assert_format, enable_segments};
@@ -81,6 +89,8 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
                 restart_supported: restart_supported.clone(),
                 close_refusal: close_refusal.clone(),
                 replay_restart_history: !historical,
+                touch_sandbox_on_restart: touch_sandbox
+                    .then(|| (store.clone(), sandbox.id.clone())),
             }),
             CodexSandboxSpec::default(),
         )
@@ -289,6 +299,11 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
             restart.restart(&caller, &agent.id, key).await.unwrap(),
             acceptance
         );
+        let parent_before_restart = store
+            .get_sandbox(&stopped.sandbox_id)
+            .await
+            .unwrap()
+            .unwrap();
         harness.run(&agent.id, SystemTime::now()).await;
         let ready = harness.stored(&agent.id).await;
         assert_eq!(ready.status, AgentStatus::Ready);
@@ -318,6 +333,21 @@ async fn exercise_owner_stop_restart(historical: bool, segmented: bool) {
         let retained = store.get_sandbox(&ready.sandbox_id).await.unwrap().unwrap();
         assert_eq!(retained.lifecycle.home, sandbox.lifecycle.home);
         assert_eq!(retained.runtime, sandbox.runtime);
+        if touch_sandbox {
+            assert_eq!(retained.revision, parent_before_restart.revision + 1);
+            assert!(retained.last_activity_at > parent_before_restart.last_activity_at);
+            let open = layer3_adapter::AgentProcessAction::Open.operation_id(agent.id.as_str(), 2);
+            let requests = harness.backend.requests().await;
+            assert_eq!(
+                requests
+                    .iter()
+                    .filter(|(_, request)| matches!(request,
+                        RequestFrame::OpenAgent(request) if request.request.operation_id == open
+                    ))
+                    .count(),
+                1
+            );
+        }
         operations
             .send_message(&caller, &agent.id, "Continue the same conversation".into())
             .await

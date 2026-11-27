@@ -64,9 +64,22 @@ async fn attach_subject_inner(
     }
     let mut observation = crate::request_observation::Resolution::start(&request, "ambient");
     let personal_inventory = is_personal_inventory(&request);
+    let mut browser_proof = None;
+    let capture_file_preview = request
+        .extensions()
+        .get::<super::relay::ReuseFilePreviewIdentity>()
+        .is_some()
+        && request.method() == axum::http::Method::GET
+        && request
+            .extensions()
+            .get::<axum::extract::MatchedPath>()
+            .is_some_and(|path| path.as_str() == "/api/v1/agents/{id}/files/content");
     // Keep the resolver's state out of each diagnostic scope's future.
-    let resolution =
-        Box::pin(auth.resolve_request_with_proxy_inventory(request.headers(), personal_inventory));
+    let resolution = Box::pin(auth.resolve_request_with_proxy_inventory(
+        request.headers(),
+        personal_inventory,
+        capture_file_preview.then_some(&mut browser_proof),
+    ));
     let ((resolved, failure), retry_after) = super::identity_throttle::capture(
         layer2_core::diagnostic_context::DiagnosticContext::current()
             .with_phase("identity")
@@ -198,6 +211,9 @@ async fn attach_subject_inner(
             request
                 .extensions_mut()
                 .insert(DelegatedCredential::new(value));
+        }
+        if let Some(proof) = browser_proof.map(|proof| proof.bind(request.uri())) {
+            request.extensions_mut().insert(proof);
         }
         request.extensions_mut().insert(resolved.authorization);
         request.extensions_mut().insert(resolved.profile);
