@@ -148,7 +148,7 @@ async fn bucket_ranges_equal_raw_for_all_presets_edges_and_live_tails() {
         } else {
             2
         };
-        assert_eq!(deadlines, vec![5_000; expected_queries], "{range:?}");
+        assert_eq!(deadlines, vec![Some(5_000); expected_queries], "{range:?}");
         if range.to <= end {
             assert_eq!(commands.event_reads.load(Ordering::SeqCst), 0);
         }
