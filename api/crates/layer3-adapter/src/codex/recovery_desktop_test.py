@@ -23,6 +23,7 @@ class DesktopRecovery(unittest.TestCase):
         self.live = {p["pid"]: p for p in [process(1, 0), process(20, 1),
                      process(30, 20), process(40, 30), process(50, 20)]}
         self.command = b"/bin/bash\0/usr/local/bin/cma-desktop-session\0"
+        self.guardian = None
         self.environment = {b"HOME": b"/home/cma", b"DISPLAY": b":99"}
         self.source = m.DESKTOP_SOURCE
         self.real_readlink = m.os.readlink
@@ -34,17 +35,26 @@ class DesktopRecovery(unittest.TestCase):
     def read(self, path, *_):
         if path == "/proc/20/cmdline":
             return self.command
+        if self.guardian and path == f"/proc/{self.guardian}/cmdline":
+            return m.RUNTIME_PATH.encode() + b"\0" + m.DESKTOP_GUARDIAN + b"\0"
         return b"unrelated\0"
 
     def readlink(self, path):
         if path == "/proc/20/exe":
             return m.os.path.realpath("/bin/bash")
+        if self.guardian and path in ("/proc/1/exe", f"/proc/{self.guardian}/exe"):
+            return m.RUNTIME_PATH
         if not str(path).startswith("/proc/"):
             return self.real_readlink(path)
         self.fail("sandboxed browser processes must not require readable exe/environ: " + path)
 
     def plan(self):
         return {"services": m.services(self.live), "supervisor": self.live[1], "topology": []}
+
+    def enable_supervised_desktop(self):
+        self.guardian = 21
+        self.live[self.guardian] = process(self.guardian, 1)
+        self.live[20].update(ppid=self.guardian, sid=self.guardian)
 
     def test_installed_launcher_matches_reviewed_source(self):
         local = SOURCE / "../../../layer4-runtime/src/desktop-session.sh"
@@ -80,6 +90,28 @@ class DesktopRecovery(unittest.TestCase):
         # still adopted by the launcher subreaper, never the runtime root.
         self.assertEqual({p["pid"] for p in m.services(self.live)}, {20, 30, 40, 50})
         self.assertTrue(m.absent(self.plan(), self.live))
+
+    def test_supervised_guardian_and_its_launcher_are_bound_to_the_recovery_plan(self):
+        self.enable_supervised_desktop()
+        with patch.object(m, "stdin_owner", return_value={"reader": "pipe:[1]"}) as stdin:
+            plan = self.plan()
+            self.assertEqual({p["pid"] for p in plan["services"]}, {20, 21, 30, 40, 50})
+            self.assertEqual(plan["services"][0]["desktopLauncher"]["pid"], 20)
+            stdin.assert_called_once_with(21, 1, (1, 21))
+            self.assertTrue(m.absent(plan, self.live))
+            self.live[20]["start"] += 1
+            with self.assertRaisesRegex(m.Refused, "desktop_changed"):
+                m.absent(plan, self.live)
+
+    def test_supervised_guardian_requires_control_pipe_and_exact_launcher(self):
+        self.enable_supervised_desktop()
+        with patch.object(m, "stdin_owner", side_effect=m.Refused("stdin_owner_mismatch")):
+            with self.assertRaisesRegex(m.Refused, "stdin_owner_mismatch"):
+                self.plan()
+        with patch.object(m, "stdin_owner", return_value={"reader": "pipe:[1]"}):
+            self.command = b"unrelated\0"
+            with self.assertRaisesRegex(m.Refused, "desktop_identity"):
+                self.plan()
 
     def test_unrelated_sibling_is_not_a_desktop_service(self):
         plan = self.plan()

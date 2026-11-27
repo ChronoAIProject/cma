@@ -135,6 +135,23 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
             "issuance custody is not supported".into(),
         ))
     }
+    async fn has_retirement_receipt(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+    ) -> Result<bool, CredentialCustodyError> {
+        Ok(false)
+    }
+    async fn record_retirement_receipt(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+        _receipt: &crate::auth::keys::CredentialRetirementReceipt,
+    ) -> Result<(), CredentialCustodyError> {
+        Err(CredentialCustodyError::Unavailable(
+            "credential retirement receipts are not supported".into(),
+        ))
+    }
     async fn observe_issuance(
         &self,
         _sandbox: &Sandbox,

@@ -203,8 +203,8 @@ async fn equal_duration_on_another_interval_cannot_replace_retained_support() {
     save_binding(&f, &binding).await;
     let mut samples = series(&f, &binding, f.minute + 30, f.minute + 60, 0.0);
     samples.metric = SourceMetric::WorkingSet;
-    samples.samples[0].value = 5.0;
-    samples.samples[1].value = 5.0;
+    samples.samples[0].value = Some(5.0);
+    samples.samples[1].value = Some(5.0);
     let (published, candidate) = publish(&f, vec![samples]).await;
     let memory = &candidate.manifest.frozen.as_ref().unwrap().fact().metrics[1];
     assert_eq!(memory.covered_binding_ms, "30000");

@@ -27,3 +27,4 @@ pub(in crate::config) fn flag(
         _ => Err(format!("{key} must be true or false")),
     }
 }
+pub(super) const CREDENTIAL_RETIREMENT_RECEIPTS: &str = "CHRONO_CREDENTIAL_RETIREMENT_RECEIPTS";
