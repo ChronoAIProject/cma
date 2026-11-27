@@ -10,22 +10,29 @@ async fn reservation_requires_acknowledged_abort_and_recovers_unknown_commit_by_
     options.app_name = Some(name.clone());
     let attempts = Arc::new(AtomicU64::new(0));
     let observed_attempts = attempts.clone();
-    options.command_event_handler = Some(EventHandler::callback(move |event| {
-        let CommandEvent::Started(event) = event else {
-            return;
-        };
-        if event.command_name == "find"
-            && event
-                .command
-                .get_str("find")
-                .is_ok_and(|name| name == "agent_commands")
-            && matches!(event.command.get_bool("autocommit"), Ok(false))
-            && event.command.get_document("filter").is_ok_and(|filter| {
-                filter.contains_key("scope") && filter.contains_key("key_sha256")
-            })
+    let commit_replies = Arc::new(AtomicU64::new(0));
+    let observed_commits = commit_replies.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| match event {
+        CommandEvent::Succeeded(event)
+            if event.command_name == "commitTransaction"
+                && event.reply.contains_key("writeConcernError") =>
+        {
+            observed_commits.fetch_add(1, Ordering::Relaxed);
+        }
+        CommandEvent::Started(event)
+            if event.command_name == "find"
+                && event
+                    .command
+                    .get_str("find")
+                    .is_ok_and(|name| name == "agent_commands")
+                && matches!(event.command.get_bool("autocommit"), Ok(false))
+                && event.command.get_document("filter").is_ok_and(|filter| {
+                    filter.contains_key("scope") && filter.contains_key("key_sha256")
+                }) =>
         {
             observed_attempts.fetch_add(1, Ordering::Relaxed);
         }
+        _ => {}
     }));
     let client = Client::with_options(options).unwrap();
     let (store, agent, parent) = fixture(&name, &client).await;
@@ -93,22 +100,28 @@ async fn reservation_requires_acknowledged_abort_and_recovers_unknown_commit_by_
         })
         .await
         .unwrap();
-    let lost_commit = store.reserve_command(original.clone()).await;
+    let before = attempts.load(Ordering::Relaxed);
+    let commits_before = commit_replies.load(Ordering::Relaxed);
+    let committed = request(&agent, &parent, "commit-key");
+    let lost_commit = store.reserve_command(committed.clone()).await;
     admin
         .run_command(doc! { "configureFailPoint": "failCommand", "mode": "off" })
         .await
         .unwrap();
     assert_eq!(lost_commit, Err(CommandLedgerError::Unavailable));
+    assert_eq!(attempts.load(Ordering::Relaxed), before + 1);
+    assert!(commit_replies.load(Ordering::Relaxed) > commits_before);
+    crate::store::test_visibility::majority_barrier(admin.client(), &name).await;
     let receipt = store
-        .get_admitted_command(&scope, key)
+        .get_admitted_command(&committed.scope(), &committed.key_sha256)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(
         receipt.receipt.envelope.command_id,
-        original.envelope.command_id
+        committed.envelope.command_id
     );
-    assert_eq!(receipt.receipt.response_id, original.response_id);
+    assert_eq!(receipt.receipt.response_id, committed.response_id);
     assert_eq!(
         store.agent_commands.count_documents(doc! {}).await.unwrap(),
         1
