@@ -209,24 +209,6 @@ impl AgentSandboxPools {
         origin: &NativePoolHomeOrigin,
         allow_converted: bool,
     ) -> Result<bool> {
-        self.check_member_spec(member, origin, allow_converted, false)
-    }
-
-    pub(super) fn member_spec_before_runtime_validation(
-        &self,
-        member: &DynamicObject,
-        origin: &NativePoolHomeOrigin,
-    ) -> Result<bool> {
-        self.check_member_spec(member, origin, false, true)
-    }
-
-    fn check_member_spec(
-        &self,
-        member: &DynamicObject,
-        origin: &NativePoolHomeOrigin,
-        allow_converted: bool,
-        runtime_validation_follows: bool,
-    ) -> Result<bool> {
         if member.uid().as_deref() != Some(&origin.sandbox_uid) {
             return Err(rejected("native Sandbox UID changed"));
         }
@@ -253,10 +235,9 @@ impl AgentSandboxPools {
             return Ok(false);
         }
         if origin.claim.request.home.policy.is_native_vct() {
-            // Adoption validates storage and then compares the complete admitted
-            // runtime spec. Let that comparison classify Pod-template drift.
-            if runtime_validation_follows
-                && member.annotations().get(NATIVE_HOME_ANNOTATION) == Some(&encode(origin)?)
+            // A retained, unconverted home can be held for spec drift. A
+            // changed VCT layout or home annotation is an authority refusal.
+            if member.annotations().get(NATIVE_HOME_ANNOTATION) == Some(&encode(origin)?)
                 && model::contains(
                     &member.data["spec"]["volumeClaimTemplates"],
                     &desired["volumeClaimTemplates"],
@@ -265,7 +246,7 @@ impl AgentSandboxPools {
                     .get("volumes")
                     .is_none_or(|volumes| volumes.as_array().is_some_and(Vec::is_empty))
             {
-                return Ok(true);
+                return Err(crate::AdapterError::AdmittedSandboxSpecDrift);
             }
             return Err(rejected("native VCT ownership cannot be converted"));
         }

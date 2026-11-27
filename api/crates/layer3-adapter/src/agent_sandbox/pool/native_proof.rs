@@ -3,28 +3,13 @@ use super::{
     api_error, claims, model, rejected, unavailable, AgentSandboxPools, NativePoolHomeOrigin,
     NATIVE_HOME_ANNOTATION,
 };
-use crate::{HomeVolumeAttachment, Result};
+use crate::{AdapterError, HomeVolumeAttachment, Result};
 use kube::{api::DynamicObject, ResourceExt};
 
 impl AgentSandboxPools {
     pub(crate) async fn prove_native_home(
         &self,
         home: &HomeVolumeAttachment,
-    ) -> Result<DynamicObject> {
-        self.read_native_home(home, false).await
-    }
-
-    pub(crate) async fn prove_native_home_before_runtime_validation(
-        &self,
-        home: &HomeVolumeAttachment,
-    ) -> Result<DynamicObject> {
-        self.read_native_home(home, true).await
-    }
-
-    async fn read_native_home(
-        &self,
-        home: &HomeVolumeAttachment,
-        runtime_validation_follows: bool,
     ) -> Result<DynamicObject> {
         home.validate_for(&home.request.sandbox_id)?;
         let origin = home
@@ -78,19 +63,20 @@ impl AgentSandboxPools {
             .map_err(api_error)?
             .ok_or_else(|| unavailable("native Sandbox no longer exists"))?;
         self.member_owned(&member, &origin.claim)?;
-        let exact_member = if runtime_validation_follows {
-            self.member_spec_before_runtime_validation(&member, origin)?
-        } else {
-            self.member_spec(&member, origin, false)?
+        let drifted = match self.member_spec(&member, origin, false) {
+            Ok(true) => false,
+            Ok(false) => return Err(rejected("native Sandbox home authority changed")),
+            Err(AdapterError::AdmittedSandboxSpecDrift) => true,
+            Err(error) => return Err(error),
         };
-        if !exact_member {
-            return Err(rejected("native Sandbox home authority changed"));
-        }
         let volume = volume
             .map_err(api_error)?
             .ok_or_else(|| unavailable("native PVC no longer exists"))?;
         if self.native_attachment(origin, &volume)? != *home {
             return Err(rejected("native home identity changed"));
+        }
+        if drifted {
+            return Err(AdapterError::AdmittedSandboxSpecDrift);
         }
         Ok(member)
     }
