@@ -16,6 +16,7 @@ IMAGE = r"ghcr\.io/chronoaiproject/cma-web@sha256:[0-9a-f]{64}"
 HASH = r"[0-9a-f]{64}"
 ASSET = r"/assets/[A-Za-z0-9_-][A-Za-z0-9_.-]{0,239}"
 INPUT_FIELDS = {"image", "source_sha", "version", "completed_rollouts"}
+DEFAULT_RETENTION_ROLLOUTS = 6
 
 
 def immutable_image(image):
@@ -172,9 +173,10 @@ def bootstrap_inputs(bootstrap, evidence, incumbent, finalized):
     return [dict(row, completed_rollouts=0) for row in bootstrap["retained"]]
 
 
-def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstrap_evidence=None, retain_rollouts=None):
+def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstrap_evidence=None,
+                    retain_rollouts=DEFAULT_RETENTION_ROLLOUTS):
     """Bind a scoped controller preimage to the lineage of its finalized serving image."""
-    require(retain_rollouts is None or type(retain_rollouts) is int and retain_rollouts > 0,
+    require(type(retain_rollouts) is int and retain_rollouts > 0,
             "Web asset retention needs a positive rollout count")
     require(isinstance(preimage, dict) and set(preimage) == {"schema", "observed_at", "incumbent", "asset_manifest_sha256"}
             and preimage["schema"] == PREIMAGE_SCHEMA and preimage["observed_at"] == started_at,
@@ -210,8 +212,7 @@ def retention_scope(preimage, started_at, finalized, *, bootstrap=None, bootstra
             for row in inputs:
                 row["completed_rollouts"] = (0 if row["image"] == incumbent["base_image"]
                                              else row["completed_rollouts"] + 1)
-            if retain_rollouts is not None:
-                inputs = [row for row in inputs if row["completed_rollouts"] <= retain_rollouts]
+            inputs = [row for row in inputs if row["completed_rollouts"] <= retain_rollouts]
         return {"incumbent": dict(incumbent), "preimage_sha256": sha256(preimage), "inputs": inputs}
     inputs = bootstrap_inputs(bootstrap, bootstrap_evidence, incumbent, finalized)
     return {"incumbent": dict(incumbent), "inputs": inputs,

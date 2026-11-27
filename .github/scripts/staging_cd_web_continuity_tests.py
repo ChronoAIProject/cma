@@ -262,6 +262,33 @@ class WebContinuityTests(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, "differs from its admission"):
             retention_scope(fixture_preimage(after_rollback, manifest), "2026-01-01T00:01:00Z", [self.receipt])
 
+    def test_default_retention_prunes_only_after_the_sixth_successor(self):
+        proof = copy.deepcopy(self.proof)
+        proof["inputs"][2]["completed_rollouts"] = 6
+        proof["inputs"].append({
+            "image": image("7"), "source_sha": "d" * 40, "version": "0.9.1",
+            "catalog_sha256": "7" * 64, "completed_rollouts": 5,
+        })
+        continuity = dict(self.continuity, proof_sha256=sha256(proof))
+        receipt = self.publish(self.original, asset_continuity=continuity, asset_proof=proof)
+        manifest = continuity["asset_manifest_sha256"]
+
+        prepared = dict(continuity["incumbent"], image=continuity["prepare_image"])
+        rollback_scope = retention_scope(fixture_preimage(prepared, manifest), STARTED, [receipt])
+        self.assertEqual(rollback_scope["inputs"], proof["inputs"])
+
+        promoted = {
+            "image": REPOSITORY + "@" + receipt["digest"],
+            "base_image": continuity["candidate_base_image"],
+            "source_sha": receipt["source"],
+            "version": receipt["identity"]["version"],
+        }
+        settled_scope = retention_scope(fixture_preimage(promoted, manifest), STARTED, [receipt])
+        self.assertEqual(
+            [(row["image"], row["completed_rollouts"]) for row in settled_scope["inputs"]],
+            [(image("2"), 1), (image("3"), 0), (image("7"), 6)],
+        )
+
     def test_legacy_raw_preimage_requires_bootstrap_and_full_identity(self):
         legacy = {"image": REPOSITORY + "@" + self.original["digest"],
                   "base_image": REPOSITORY + "@" + self.original["digest"], "source_sha": self.original["source"],
