@@ -2,6 +2,8 @@ use super::*;
 use layer2_core::admission::AdmissionControlStore;
 use mongodb::Client;
 
+mod home_capacity;
+
 async fn fixture() -> (Client, String, MongoAgentLifecycleStore) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
         .expect("CHRONO_TEST_MONGODB_URI must name a disposable replica set");

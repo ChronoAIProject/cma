@@ -140,6 +140,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
                 ),
         );
     }
+    Arc::make_mut(&mut stores.agent_lifecycle).global_sandbox_limit = config.global_sandbox_limit;
     Ok(Arc::new(
         stores
             .with_empty_discovery(config.features.empty_discovery)

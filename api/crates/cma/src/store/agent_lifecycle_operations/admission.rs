@@ -1,4 +1,4 @@
-//! Fresh lifecycle operations check majority control before the original
+//! Fresh lifecycle operations check majority control and capacity before the
 //! single-document insert. Recovery never repeats this admission check.
 
 use super::*;
@@ -13,6 +13,8 @@ pub(crate) enum LifecycleCreateError {
     Store(#[from] StoreError),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("retained home capacity is temporarily unavailable")]
+    HomeCapacity,
     #[error("released runtime changed before lifecycle admission")]
     StaleReleasedRuntime,
 }
@@ -172,20 +174,32 @@ impl MongoAgentLifecycleStore {
             layer2_core::released_runtime::ReleasedLane,
         )>,
     ) -> Result<CreateResult, LifecycleCreateError> {
-        match super::super::admission_checks::require_fresh_read(&self.admission_settings).await {
+        let owner = SubjectId::new(&record.owner);
+        let request = &record.input.request;
+        let new_home = (request.sandbox_id.is_none() && request.workspace_id.is_none())
+            .then_some((&owner, self.global_sandbox_limit));
+        match super::super::admission_checks::require_fresh_lifecycle(
+            &self.admission_settings,
+            new_home,
+        )
+        .await
+        {
             Ok(()) => {}
-            Err(SandboxStoreError::AdmissionPaused) => {
-                // A concurrent exact writer can commit after the outer replay
-                // lookup but before the stop. Its operation keeps authority.
+            Err(
+                error @ (SandboxStoreError::AdmissionPaused
+                | SandboxStoreError::GlobalCapacityReached),
+            ) => {
+                let refusal = if error == SandboxStoreError::AdmissionPaused {
+                    LifecycleCreateError::AdmissionPaused
+                } else {
+                    LifecycleCreateError::HomeCapacity
+                };
+                // A concurrent exact writer may have committed after the outer replay read.
                 return self
-                    .replay(
-                        &SubjectId::new(&record.owner),
-                        &record.key,
-                        &record.input.request,
-                    )
+                    .replay(&owner, &record.key, request)
                     .await?
                     .map(|existing| CreateResult::Existing(Box::new(existing)))
-                    .ok_or(LifecycleCreateError::AdmissionPaused);
+                    .ok_or(refusal);
             }
             Err(error) => return Err(StoreError::Unavailable(error.to_string()).into()),
         }
