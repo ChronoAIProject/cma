@@ -196,6 +196,51 @@ fn worktree_lifecycle_matches_the_transition_contract() {
     );
 }
 
+#[test]
+fn abandoned_worktree_removal_requires_an_unfinished_agent_worktree() {
+    let ready = worktree();
+    let unfinished = Worktree {
+        status: T::Creating,
+        ..ready.clone()
+    };
+    for original in [
+        ready,
+        Worktree {
+            agent_id: None,
+            ..unfinished.clone()
+        },
+    ] {
+        let mut refused = original.clone();
+        assert_eq!(
+            refused.remove_abandoned_agent_worktree(),
+            Err(SandboxModelError::invalid_value("worktree"))
+        );
+        assert_eq!(refused, original);
+    }
+
+    let mut exhausted = Worktree {
+        revision: u64::MAX,
+        ..unfinished.clone()
+    };
+    let original = exhausted.clone();
+    assert_eq!(
+        exhausted.remove_abandoned_agent_worktree(),
+        Err(SandboxModelError::invalid_value("worktree.revision"))
+    );
+    assert_eq!(exhausted, original);
+
+    let mut admitted = unfinished.clone();
+    admitted.remove_abandoned_agent_worktree().unwrap();
+    assert_eq!(
+        admitted,
+        Worktree {
+            status: T::Removing,
+            revision: unfinished.revision + 1,
+            ..unfinished
+        }
+    );
+}
+
 #[tokio::test]
 async fn only_active_sandbox_admits_a_live_session() {
     for &(status, _) in SANDBOX_EDGES {
