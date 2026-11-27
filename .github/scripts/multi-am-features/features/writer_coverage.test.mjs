@@ -46,6 +46,20 @@ test('readiness coverage requires drain, HPA convergence and the never-Ready wit
   assert.equal(evaluate().verdict, 'FAIL');
 });
 
+test('SW04 requires a separate Send and interrupt from the recovered ownership epoch', async () => {
+  const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
+  const initial = {name: 'plain_send_and_interrupt_non_owner', verdict: 'PASS'};
+  const recovered = {name: 'plain_send_and_interrupt_after_restart', verdict: 'PASS'};
+  const journey = {verdict: 'LOCAL_TWO_AM_JOURNEY_PASS', steps: [initial]};
+  const evaluate = () => writerCoverage(registry, [], journey, 'features').groups
+    .find(group => group.id === 'SW04').assertions.find(assertion => assertion.case === recovered.name).verdict;
+  assert.equal(evaluate(), 'NOT_RUN');
+  journey.steps.push(recovered);
+  assert.equal(evaluate(), 'PASS');
+  recovered.verdict = 'FAIL';
+  assert.equal(evaluate(), 'FAIL');
+});
+
 test('complete mapping needs all distinct repetitions and both restart phases', () => {
   const registry = complete(), rows = observations();
   const evaluate = selected => writerCoverage(registry, selected, undefined, 'features');

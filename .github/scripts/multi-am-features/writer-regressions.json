@@ -146,6 +146,12 @@
           "routing": "journey"
         },
         {
+          "case": "plain_send_and_interrupt_after_restart",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        },
+        {
           "case": "plain_public_stop_retire",
           "minimum_runs": 1,
           "phases": [],

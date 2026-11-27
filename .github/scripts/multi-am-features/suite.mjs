@@ -383,6 +383,14 @@ try {
   const recovery = result.journey?.steps.find(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS');
   const drain = result.journey?.steps.find(s => s.name === 'owner_drain_and_readiness' && s.verdict === 'PASS');
   const runtimeLoss = result.journey?.steps.find(s => s.name === 'native_runtime_loss_preserves_agents' && s.verdict === 'PASS');
+  const interrupts = ['plain_send_and_interrupt_non_owner', 'plain_send_and_interrupt_after_restart']
+    .map(name => result.journey?.steps.find(step => step.name === name && step.verdict === 'PASS'))
+    .filter(Boolean)
+    .map(step => ({step: step.name, send_ingress: step.ingress_am, send_owner: step.send_owner,
+      send_owner_epoch: step.send_owner_epoch, send_request_sha256: step.send_request_sha256,
+      cancel_ingress: step.interrupt_am, cancel_owner: step.cancel_owner, cancel_owner_epoch: step.cancel_owner_epoch,
+      cancel_request_sha256: step.cancel_request_sha256, command_sha256: step.command_sha256,
+      response_sha256: step.response_sha256, terminal_ms: step.terminal_ms}));
   const journeyVerdict = result.journey?.verdict === 'LOCAL_TWO_AM_JOURNEY_PASS' ? 'PASS' : 'FAIL';
   const failedCase = rows.find(row => row.verdict === 'FAIL');
   // This allowlist is the only suite content eligible for CI artifact upload.
@@ -394,6 +402,7 @@ try {
     writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: Boolean(recovery), owner_restart_replay: recovery?.replay ?? null,
+    non_owner_interrupts: interrupts,
     owner_drain: drain ? {readiness_dropped: drain.readiness_dropped, process_still_live: drain.process_still_live,
       peer_advanced: drain.peer_advanced, drain_ms: drain.drain_ms, takeover_ms: drain.takeover_ms,
       useful_reads_during_restart: drain.useful_reads_during_restart} : null,

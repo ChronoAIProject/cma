@@ -198,8 +198,13 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
   async function readResponse(am, record, responseId) {
     const {body} = await api.request(am, 'GET', `/api/v2/responses/${responseId}`); return assertResponse(body, record.agentId, responseId);
   }
-  async function interrupt(record, am, phase) {
+  async function interrupt(record, am, phase, minimumEpoch = 1) {
     const turn = await sendHeld(record, am, 'interrupt');
+    const sendRequest = turn.stream.timing?.request_id;
+    const sendProof = result.non_owner_requests?.find(proof => proof.request_id === sendRequest);
+    check(sendProof?.verdict === 'PASS' && sendProof.ingress === turn.stream.ingress_am
+      && sendProof.owner !== sendProof.ingress && sendProof.owner_epoch >= minimumEpoch,
+    'interrupt_send_ingress_or_epoch_unbound');
     if (queuedTurnHook && phase) await queuedTurnHook({record, api, adapter, config, turn, phase});
     check(turn.controls.runtime_support?.cancel === true, 'cancel_not_supported'); const start = performance.now();
     const intent = {body: {turn_sequence: turn.controls.target.turn_sequence,
@@ -207,8 +212,11 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     key: turn.caseId + '-cancel', allowed: [202]};
     const owner = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
     const {body, timing: controlTiming} = await api.request(other(am), 'POST', turn.path, intent);
-    await retainTurn('cancel_receipt', {case_id:turn.caseId, am:other(am), body});
-    check(controlTiming.am === other(owner.am), 'cancel_ingress_was_not_the_non_owner');
+    await retainTurn('cancel_receipt', {case_id:turn.caseId, am:controlTiming.am, body});
+    const cancelProof = result.non_owner_requests?.find(proof => proof.request_id === controlTiming.request_id);
+    check(controlTiming.am === other(owner.am) && cancelProof?.verdict === 'PASS'
+      && cancelProof.verified_owner_write === true && cancelProof.owner_epoch === owner.epoch
+      && cancelProof.owner_instance_sha256 === hash(owner.instance_id), 'cancel_owner_publication_unbound');
     check(body?.target?.response_id === turn.stream.responseId && body.target.turn_sequence === turn.controls.target.turn_sequence
       && body.control?.receipt?.agent_id === record.agentId && id(body.control.receipt.command_id), 'cancel_receipt_mismatch');
     const commandId = body.control.receipt.command_id;
@@ -235,7 +243,10 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       'cancel_owner_changed_during_replay');
     const oracle = await poll(() => observeOracle(turn.caseId), x => x.active_streams === 0, {timeout: 20000, code: 'interrupted_provider_not_closed'});
     assertOracle(oracle, turn.caseId, 0); turn.stream.abort(); await turn.stream.done;
-    return {ingress_am: turn.stream.ingress_am, interrupt_am: controlTiming.am, response_sha256: hash(turn.stream.responseId), command_sha256: hash(commandId),
+    return {ingress_am: turn.stream.ingress_am, send_owner: sendProof.owner, send_owner_epoch: sendProof.owner_epoch,
+      send_request_sha256: hash(sendRequest), interrupt_am: controlTiming.am, cancel_owner: owner.am,
+      cancel_owner_epoch: owner.epoch, cancel_request_sha256: hash(controlTiming.request_id),
+      response_sha256: hash(turn.stream.responseId), command_sha256: hash(commandId),
       interrupted: true, terminal_ms: performance.now() - start, same_cancel_receipt_after_completion: true,
       provider_requests: oracle.request_count, provider_completions: 0};
   }
@@ -411,11 +422,12 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       record: plain, api, adapter, config, create, cleanup, phase: 'before_restart',
     }));
     await step('plain_send_and_interrupt_non_owner', () => interrupt(plain, 'a', 'before_restart'));
-    await step('actual_owner_kill_and_recovery', () => recovery(plain, 'b'));
+    const recovered = await step('actual_owner_kill_and_recovery', () => recovery(plain, 'b'));
     if (featureHook) await step('features_after_restart', () => featureHook({
       record: plain, api, adapter, config, create, cleanup, phase: 'after_restart',
     }));
-    await step('plain_send_and_interrupt_after_restart', () => interrupt(plain, 'b', 'after_restart'));
+    await step('plain_send_and_interrupt_after_restart',
+      () => interrupt(plain, 'b', 'after_restart', recovered.owner_epoch_after));
     await step('owner_drain_and_readiness', () => drainOwnerCase({adapter, api, record: plain, config}));
     await step('ready_autoscaler_two_three_two', () => scaleManagerCase({adapter, api, record: plain}));
     await step('never_ready_third_manager', () => neverReadyManagerCase({adapter, api, record: plain}));
