@@ -27,6 +27,45 @@ async fn finish_rejection(f: &Fixture, before: i32) {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a replica set"]
+async fn accepted_result_survives_confirmed_database_abort_opening_custody() {
+    let mut f = Fixture::new("issuance_acceptance_write_conflict").await;
+    let app = format!("acceptance-conflict-{}", uuid::Uuid::new_v4());
+    f.use_custody_app(&app).await;
+    let issuing = f.issue(1);
+    let mint = f.prepare().await;
+    let intent = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+
+    let before = f
+        .client
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint":"failCommand", "mode":{"times":1},
+            "data":{"failCommands":["update"], "appName":app, "errorCode":112_i32,
+                "errorLabels":["TransientTransactionError"]}
+        })
+        .await
+        .unwrap()
+        .get_i32("count")
+        .unwrap();
+    accepted(mint);
+    let result = issuing.await.unwrap().unwrap();
+    finish_rejection(&f, before).await;
+
+    let material = result.unwrap();
+    let stored = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+    assert_eq!(stored.state, IssuanceState::Accepted);
+    assert_eq!(stored.operation_id, intent.operation_id);
+    assert_eq!(stored.original_fence, intent.original_fence);
+    let custody = f.custody.list(&f.claim.id).await.unwrap();
+    assert_eq!(custody.len(), 1);
+    assert_eq!(custody[0].authority, material.authority);
+    assert!(f.controller.settle_revocations(&f.claim).await.is_ok());
+    assert_eq!(f.peer.count_route("POST", "/api/v1/api-keys"), 1);
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a replica set"]
 async fn rejected_issuance_barrier_cannot_dispatch_an_unowned_key() {
     let mut f = Fixture::new("issuance_barrier_rejected").await;
     let app = format!("barrier-rejected-{}", uuid::Uuid::new_v4());
