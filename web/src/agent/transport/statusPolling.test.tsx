@@ -180,6 +180,29 @@ it('keeps the empty queue cadence under stream hints and refreshes after submiss
   hook.unmount();
 });
 
+it('slows unchanged nonempty queues under sustained hints and keeps post-submit discovery prompt', async () => {
+  const h = fixture();
+  h.listQueued.mockImplementation(async () => json(queuedPage('Waiting message')));
+  const hook = renderHook(
+    ({ revision, request }) =>
+      useQueuedInputs(h.session, true, true, revision, unchangedIdentity, request),
+    { initialProps: { revision: '0', request: 0 } },
+  );
+  await advance(0);
+  for (let tick = 1; tick <= 180; tick++) {
+    hook.rerender({ revision: String(tick), request: 0 });
+    await advance(1000);
+  }
+  expect(h.listQueued).toHaveBeenCalledTimes(19);
+  expect(hook.result.current.items[0]?.input).toBe('Waiting message');
+  h.listQueued.mockImplementation(async () => json(queuedPage('New waiting message')));
+  hook.rerender({ revision: '180', request: 1 });
+  await advance(100);
+  expect(h.listQueued).toHaveBeenCalledTimes(20);
+  expect(hook.result.current.items[0]?.input).toBe('New waiting message');
+  hook.unmount();
+});
+
 it('keeps error backoff and an honest error while events arrive, then recovers', async () => {
   const h = fixture();
   h.listQueued.mockImplementation(async () =>
