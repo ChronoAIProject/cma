@@ -25,7 +25,7 @@ export function useMascotFrame(
 
   useLayoutEffect(() => {
     const node = slot.current;
-    if (!enabled || !node || typeof IntersectionObserver === 'undefined') return;
+    if (!scope || !node || typeof IntersectionObserver === 'undefined') return;
     let observing = true;
     const observer = new IntersectionObserver((entries) => {
       if (!observing) return;
@@ -42,7 +42,7 @@ export function useMascotFrame(
       observer.disconnect();
       attributes.disconnect();
     };
-  }, [enabled, slot]);
+  }, [scope, slot]);
 
   useLayoutEffect(() => {
     const { action, enabled, scope } = run;
@@ -54,9 +54,7 @@ export function useMascotFrame(
       scope,
       observedWork:
         (sameTurn && previous.observedWork) ||
-        action === 'working' ||
-        action === 'idea' ||
-        action === 'question',
+        (enabled && (action === 'working' || action === 'idea' || action === 'question')),
       celebrated: love || (sameTurn && previous.celebrated),
     };
     if (!enabled || !scope || typeof window.matchMedia !== 'function') return;

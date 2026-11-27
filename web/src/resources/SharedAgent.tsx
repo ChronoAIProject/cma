@@ -32,6 +32,7 @@ import '../agent/Agent.css';
 import './AgentShareLinks.css';
 
 interface Props {
+  readonly authEpoch?: number;
   readonly viewerId?: string;
   readonly computerObservation?: AgentComputerObservation;
   readonly client: ResourceViewsClient;
@@ -46,6 +47,7 @@ interface Props {
 }
 
 export function SharedAgent({
+  authEpoch,
   viewerId,
   client,
   web,
@@ -431,6 +433,9 @@ export function SharedAgent({
             unknownUserName="Participant"
             emptyMessage="No messages yet."
             conversation={conversation}
+            turnPresentation={
+              observedLoaded && authEpoch !== undefined ? { status, authEpoch } : undefined
+            }
             approvalBusy={busy}
             approvalReadOnly={!can('resolve_approval')}
             arrivalsEnabled={ready !== undefined}

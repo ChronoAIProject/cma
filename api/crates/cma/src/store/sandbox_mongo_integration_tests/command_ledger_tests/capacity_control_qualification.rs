@@ -45,7 +45,7 @@ struct Saturated {
 }
 
 impl Saturated {
-    async fn fill(store: MongoSandboxStore, name: &str) -> Self {
+    async fn fill(store: MongoSandboxStore, peer_client: &Client, name: &str) -> Self {
         let store = store.with_global_sandbox_limit(HOME_LIMIT);
         super::super::ceilings_tests::configure(
             &store,
@@ -57,10 +57,7 @@ impl Saturated {
             },
         )
         .await;
-        let peer_client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
-            .await
-            .unwrap();
-        let peer = MongoSandboxStore::open(&peer_client, name)
+        let peer = MongoSandboxStore::open(peer_client, name)
             .await
             .unwrap()
             .with_global_sandbox_limit(HOME_LIMIT);
@@ -163,7 +160,12 @@ impl Saturated {
     }
 }
 
-async fn sample(control: Control, name: &str, client: &Client) -> (Duration, u32, u32) {
+async fn sample(
+    control: Control,
+    name: &str,
+    client: &Client,
+    peer_client: &Client,
+) -> (Duration, u32, u32) {
     let (capacity, elapsed) = match control {
         Control::Stop => {
             let (store, agent, _, _) = composed(name, client).await;
@@ -175,7 +177,7 @@ async fn sample(control: Control, name: &str, client: &Client) -> (Duration, u32
             worktree.agent_id = Some(agent.id.clone());
             store.create_workspace(workspace).await.unwrap();
             store.create_worktree(worktree).await.unwrap();
-            let capacity = Saturated::fill(store, name).await;
+            let capacity = Saturated::fill(store, peer_client, name).await;
             let request = AgentStopRequest {
                 target: AgentControlTarget::from(&agent),
                 reason: AgentStopReason::Owner,
@@ -206,7 +208,7 @@ async fn sample(control: Control, name: &str, client: &Client) -> (Duration, u32
         Control::Cancel => {
             let (store, _, _, request, source) =
                 super::super::queued_cancellation_tests::queued(name, client).await;
-            let capacity = Saturated::fill(store, name).await;
+            let capacity = Saturated::fill(store, peer_client, name).await;
             let (result, elapsed) = capacity
                 .control(capacity.store.cancel_queued_response(request.clone()))
                 .await;
@@ -223,7 +225,7 @@ async fn sample(control: Control, name: &str, client: &Client) -> (Duration, u32
         Control::Approval => {
             let (store, agent, mut request, _) = composed(name, client).await;
             operator_stop_controls::prepare_approval(&store, &agent, &mut request).await;
-            let capacity = Saturated::fill(store, name).await;
+            let capacity = Saturated::fill(store, peer_client, name).await;
             let (accepted, elapsed) = capacity
                 .control(capacity.store.reserve_targeted_control(request.clone()))
                 .await;
@@ -258,28 +260,44 @@ async fn sample(control: Control, name: &str, client: &Client) -> (Duration, u32
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn tc070_admitted_controls_remain_bounded_at_retained_home_capacity() {
+    let (client, name) = database("tc070_control").await;
+    let peer_client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let result = AssertUnwindSafe(campaign(&client, &peer_client, &name))
+        .catch_unwind()
+        .await;
+    let cleanup = client.database(&name).drop().await;
+    match result {
+        Ok(()) => cleanup.unwrap(),
+        Err(original) => {
+            if let Err(error) = cleanup {
+                eprintln!("fixture cleanup after failure: {error}");
+            }
+            std::panic::resume_unwind(original);
+        }
+    }
+}
+
+async fn campaign(client: &Client, peer_client: &Client, name: &str) {
+    let database = client.database(name);
     for control in [Control::Stop, Control::Cancel, Control::Approval] {
         let mut samples = Vec::new();
         let mut requested_cpu_millis = 0;
         let mut requested_memory_mib = 0;
         for _ in 0..SAMPLES {
-            let (client, name) = database("tc070_control").await;
-            let result = AssertUnwindSafe(sample(control, &name, &client))
-                .catch_unwind()
-                .await;
-            let cleanup = client.database(&name).drop().await;
-            let (elapsed, cpu, memory) = match result {
-                Ok(value) => {
-                    cleanup.unwrap();
-                    value
+            let (elapsed, cpu, memory) = sample(control, name, client, peer_client).await;
+            // Each sample needs empty data. Retain the catalog so MongoDB
+            // does not build and retire hundreds of copies of the same indexes.
+            for collection in database.list_collection_names().await.unwrap() {
+                if !collection.starts_with("system.") {
+                    database
+                        .collection::<Document>(&collection)
+                        .delete_many(doc! {})
+                        .await
+                        .unwrap();
                 }
-                Err(original) => {
-                    if let Err(error) = cleanup {
-                        eprintln!("fixture cleanup after failure: {error}");
-                    }
-                    std::panic::resume_unwind(original);
-                }
-            };
+            }
             samples.push(elapsed);
             requested_cpu_millis = cpu;
             requested_memory_mib = memory;
