@@ -55,5 +55,7 @@ COPY --from=build /build/image/ /usr/share/nginx/
 # writes (32 MiB decoded), and compression of immutable JavaScript/CSS assets.
 # nginx.conf pins an 8 KiB request-line buffer; public login URLs stay <=4 KiB.
 COPY web/nginx.conf /etc/nginx/conf.d/default.conf
+COPY --chmod=0755 web/scripts/web-clear-drain.sh /docker-entrypoint.d/40-clear-web-drain.sh
+COPY --chmod=0755 web/scripts/web-prestop.sh /usr/local/bin/cma-web-prestop
 EXPOSE 8080
 # Operators configure health probes outside this repository.
