@@ -174,6 +174,7 @@ async function accountBrowserCases(ams, witness) {
       recipient: 'native-am-fixture-admin', recipientCookie: config.recipient_browser_session_cookie})]];
   if (config.eg_origin) cases.push(['eg.public_documentation', gatewayDocumentation]);
   await withBrowser(ams, async browser => {
+    const privateDocuments = {};
     for (let iteration = 1; iteration <= 3; iteration++) {
       for (const am of ['a', 'b']) {
         await browser.forIngress(am, async ({page}) => {
@@ -199,10 +200,12 @@ async function accountBrowserCases(ams, witness) {
             documentFormat({page, ingress: am, user, documentId: document.id,
               recordFailure: (stage, error) => retainFailure(config.matrix_output, stage, error,
                 {case: 'user.documents_browser_format', phase, iteration})}));
-          if (iteration === 1) await browserCase(am, iteration, 'user.documents_browser_link_sharing', () =>
+          if (iteration === 1) privateDocuments[am] = document.id;
+          if (iteration === 2) await browserCase(am, iteration, 'user.documents_browser_link_sharing', () =>
             documentLinkBrowser({page, ingress: am, owner: user, recipient: admin, ownerId: config.owner_id,
               recipientId: 'native-am-fixture-admin', recipientCookie: config.recipient_browser_session_cookie,
-              documentId: document.id, recordFailure: (stage, error) => retainFailure(config.matrix_output,
+              documentId: document.id, privateDocumentId: privateDocuments[am],
+              recordFailure: (stage, error) => retainFailure(config.matrix_output,
                 stage, error, {case: 'user.documents_browser_link_sharing', phase, iteration})}));
           await browserCase(am, iteration, 'user.documents_browser_browse', () => documentBrowse({page, ingress: am,
             user, admin, ownerId: config.owner_id, recordFailure: (stage, error) =>
