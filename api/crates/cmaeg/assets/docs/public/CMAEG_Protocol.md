@@ -3732,9 +3732,13 @@ Text means a MIME type under `text/`, or `application/json`, `application/xml`,
 
 ## 10. Delivery semantics
 
-An acknowledgement may be sent after `ack_after_ms` for a long turn; zero disables
-it. It is progress only and never suppresses the final answer. After an ack,
-inactivity may produce heartbeats (60s default), at most five. Committed message
+An acknowledgement may be sent after `ack_after_ms` for a long turn. For routed
+chat messages with source replies enabled, Gateway can acknowledge the first
+`conversation_not_ready` response immediately. Gateway attempts this early
+acknowledgement once per event, including across retries and restarts. Zero
+disables acknowledgements. An acknowledgement is progress only and the final
+answer continues through ordinary delivery. After an ack, inactivity may
+produce heartbeats (60s default), at most five. Committed message
 items are delivered when `auto_final` is true; completion text is a fallback only
 when no committed/tool answer exists. A confirmed or unknown tool reply suppresses
 later automatic answer delivery. A failure notice is attempted once unless a tool

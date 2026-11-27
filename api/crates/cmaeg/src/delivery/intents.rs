@@ -12,6 +12,7 @@ use tokio::sync::oneshot;
 pub enum ReplySource {
     Tool,
     Stream,
+    Acknowledgement,
 }
 #[derive(Debug)]
 pub enum DeliveryCommand {

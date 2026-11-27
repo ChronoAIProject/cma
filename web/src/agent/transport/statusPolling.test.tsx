@@ -203,6 +203,63 @@ it('slows unchanged nonempty queues under sustained hints and keeps post-submit 
   hook.unmount();
 });
 
+it('keeps a post-submit refresh pending while an older queue read completes', async () => {
+  const h = fixture();
+  let finishRead!: (response: Response) => void;
+  h.listQueued.mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        finishRead = resolve;
+      }),
+  );
+  const hook = renderHook(
+    ({ request }) => useQueuedInputs(h.session, true, true, '0', unchangedIdentity, request),
+    { initialProps: { request: 0 } },
+  );
+  await advance(0);
+  expect(h.listQueued).toHaveBeenCalledOnce();
+  hook.rerender({ request: 1 });
+  h.listQueued.mockImplementation(async () => json(queuedPage('New queued message')));
+  await act(async () => finishRead(json({ ...queuedPage(), data: [] })));
+  await advance(100);
+  expect(h.listQueued).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.items[0]?.input).toBe('New queued message');
+  hook.unmount();
+});
+
+it('honors Retry-After when an older queue read refuses a pending post-submit refresh', async () => {
+  vi.spyOn(Math, 'random').mockReturnValue(0);
+  const h = fixture();
+  let finishRead!: (response: Response) => void;
+  h.listQueued.mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        finishRead = resolve;
+      }),
+  );
+  const hook = renderHook(
+    ({ request }) => useQueuedInputs(h.session, true, true, '0', unchangedIdentity, request),
+    { initialProps: { request: 0 } },
+  );
+  await advance(0);
+  hook.rerender({ request: 1 });
+  h.listQueued.mockImplementation(async () => json(queuedPage('New queued message')));
+  await act(async () => {
+    finishRead(
+      Response.json(
+        { error: { type: 'rate_limit_error', code: 'rate_limited', message: 'Busy', param: null } },
+        { status: 429, headers: { 'Retry-After': '15' } },
+      ),
+    );
+  });
+  await advance(14_999);
+  expect(h.listQueued).toHaveBeenCalledOnce();
+  await advance(1);
+  expect(h.listQueued).toHaveBeenCalledTimes(2);
+  expect(hook.result.current.items[0]?.input).toBe('New queued message');
+  hook.unmount();
+});
+
 it('keeps error backoff and an honest error while events arrive, then recovers', async () => {
   const h = fixture();
   h.listQueued.mockImplementation(async () =>
