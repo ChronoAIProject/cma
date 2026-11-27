@@ -48,7 +48,7 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
     pub legacy_receiver_image: Option<layer3_adapter::hosted::LegacyReceiverImage>,
     pub stale_turn_runtime_digest: Option<String>,
-    pub(crate) open_reply_loss_sandbox: Option<String>,
+    pub(crate) staging_sandbox: super::StagingSandboxControls,
     pub(crate) inspection_refusal: Option<super::InspectionRefusalControl>,
     pub(crate) suggestion_control: Option<super::suggestion_control::Target>,
     pub allocate_agent_sandbox: bool,
@@ -334,7 +334,7 @@ impl RuntimeConfig {
             agent_sandbox_runtime_transport,
             legacy_receiver_image,
             stale_turn_runtime_digest,
-            open_reply_loss_sandbox: super::open_reply_loss::sandbox_from_lookup(lookup)?,
+            staging_sandbox: super::StagingSandboxControls::from_lookup(lookup)?,
             inspection_refusal: super::InspectionRefusalControl::from_lookup(
                 lookup,
                 std::time::SystemTime::now(),
