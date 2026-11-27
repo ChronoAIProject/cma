@@ -5,7 +5,7 @@ use axum::response::{sse::Event, Response};
 use futures_util::stream::unfold;
 use layer2_core::sandbox::{
     agent_io::{AgentResponseReading, CommandReceiptView, ObservedResponseReadError},
-    AgentEventStreamAuthorization, AgentEventStreamHeader,
+    AgentEventStreamAuthorization, AgentEventStreamHeader, AgentReadError,
 };
 use serde_json::{json, Value};
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
@@ -29,18 +29,30 @@ pub(super) async fn open(
             "The replay cursor is out of range.",
         );
     };
-    let observation = match state.reads.observe_output_stream(&mut authorization) {
-        Ok(value) => value,
+    let (mut observation, mut recovering_observation) = match state
+        .reads
+        .observe_output_stream(&mut authorization)
+    {
+        Ok(value) => (value, false),
+        Err(AgentReadError::Unavailable(_)) if authorization.is_personal_owner() => (None, true),
         Err(err) => return error::read(err),
     };
     if let Err(err) = state.reads.validate_event_stream(&authorization).await {
-        return error::read(err);
+        if !use_durable_history(&mut authorization, &err) {
+            return error::read(err);
+        }
+        observation = None;
+        recovering_observation = true;
+        if let Err(err) = state.reads.validate_event_stream(&authorization).await {
+            return error::read(err);
+        }
     }
     let command_id = receipt.command_id.to_string();
     let evidence = Contract::new(ContractKind::ResponsesV2);
     let open = Open {
         evidence: evidence.clone(),
         observation,
+        recovering_observation,
         state,
         authorization,
         receipt,
@@ -72,6 +84,9 @@ pub(super) async fn open(
                         .validate_event_stream(&open.authorization)
                         .await
                     {
+                        if open.resume_from_durable_history(&error) {
+                            continue;
+                        }
                         open.evidence.record(CloseReason::read(&error));
                         return open.fail("response_observation_unavailable");
                     }
@@ -88,7 +103,12 @@ pub(super) async fn open(
                     return None;
                 }
                 if !open.first && !open.more {
-                    let wake = tokio::time::Instant::now() + Duration::from_millis(250);
+                    let interval = if open.recovering_observation {
+                        layer2_core::sandbox::agent_observation::OBSERVATION_INTERVAL
+                    } else {
+                        Duration::from_millis(250)
+                    };
+                    let wake = tokio::time::Instant::now() + interval;
                     let wake = open
                         .authorization
                         .revalidation_deadline()
@@ -97,6 +117,9 @@ pub(super) async fn open(
                         // Every notice checks current command state even if its
                         // durable log coordinate is unchanged.
                         if let Err(error) = observation.changed().await {
+                            if open.resume_from_durable_history(&error) {
+                                continue;
+                            }
                             open.evidence.record(CloseReason::read(&error));
                             return open.fail("response_observation_unavailable");
                         }
@@ -146,6 +169,7 @@ struct Seen {
 struct Open {
     evidence: Contract,
     observation: Option<layer2_core::sandbox::agent_observation::AgentObservationSubscription>,
+    recovering_observation: bool,
     state: ResponsesV2State,
     authorization: AgentEventStreamAuthorization,
     receipt: CommandReceiptView,
@@ -162,36 +186,67 @@ struct Open {
 }
 
 impl Open {
+    fn resume_from_durable_history(&mut self, error: &AgentReadError) -> bool {
+        if !use_durable_history(&mut self.authorization, error) {
+            return false;
+        }
+        self.observation = None;
+        self.recovering_observation = true;
+        // Rebuild unreleased frames from current durable history. The next
+        // sequence is the first frame this connection has not yet released.
+        self.pending.clear();
+        self.seen = None;
+        self.terminal = false;
+        self.more = false;
+        self.pagination_required = false;
+        true
+    }
+
     async fn refresh(&mut self) -> Result<bool, &'static str> {
         let id = self
             .receipt
             .response_id
-            .as_ref()
+            .clone()
             .ok_or("response_observation_unavailable")?;
         // Always re-read current command state and authority, including on quiet
         // heads: queued rejection and revocation need not append Agent events.
-        let (command, observed_header) = if self.observation.is_some() {
-            self.state
+        let observed = if self.observation.is_some() {
+            match self
+                .state
                 .commands
-                .response_for_observed_stream(&self.state.reads, &self.authorization, id)
+                .response_for_observed_stream(&self.state.reads, &self.authorization, &id)
                 .await
-                .map(|(command, header)| (command, Some(header)))
-                .inspect_err(|error| {
+            {
+                Ok(observed) => Some(observed),
+                Err(ObservedResponseReadError::Header(ref error))
+                    if self.resume_from_durable_history(error) =>
+                {
+                    None
+                }
+                Err(error) => {
                     let reason = match error {
-                        ObservedResponseReadError::Command(error) => CloseReason::command(error),
-                        ObservedResponseReadError::Header(error) => CloseReason::read(error),
+                        ObservedResponseReadError::Command(ref error) => {
+                            CloseReason::command(error)
+                        }
+                        ObservedResponseReadError::Header(ref error) => CloseReason::read(error),
                     };
                     self.evidence.record(reason);
-                })
-                .map_err(|_| "response_observation_unavailable")?
+                    return Err("response_observation_unavailable");
+                }
+            }
         } else {
-            self.state
+            None
+        };
+        let (command, observed_header) = match observed {
+            Some((command, header)) => (command, Some(header)),
+            None => self
+                .state
                 .commands
-                .response_for_stream(&self.authorization, id)
+                .response_for_stream(&self.authorization, &id)
                 .await
                 .map(|command| (command, None))
                 .inspect_err(|error| self.evidence.record(CloseReason::command(error)))
-                .map_err(|_| "response_observation_unavailable")?
+                .map_err(|_| "response_observation_unavailable")?,
         };
         if command.command.receipt != self.receipt {
             return Err("response_observation_unavailable");
@@ -304,4 +359,11 @@ impl Open {
         // No durable id and no cursor advancement on dependency failures.
         Some((Ok(stream::sse(event)), self))
     }
+}
+
+fn use_durable_history(
+    authorization: &mut AgentEventStreamAuthorization,
+    error: &AgentReadError,
+) -> bool {
+    matches!(error, AgentReadError::Unavailable(_)) && authorization.use_personal_durable_reads()
 }
