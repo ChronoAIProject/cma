@@ -15,6 +15,10 @@ import { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeiling
 
 registerRegistryRunnerTests({fixture, requiredPrefixes});
 
+const preparedControls = readFileSync(new URL('./multi-am-features/startup-controls.txt', import.meta.url), 'utf8')
+  .trim().split('\n');
+const preparedFilter = `package(=cma) and (${preparedControls.map(name => `test(=${name})`).join(' or ')})`;
+
 for (const reuse of [false, true]) {
   const mode = reuse ? 'archive' : 'source';
   test(`${mode}: prepared startup requires a complete listing before making a fixture`, () => {
@@ -24,13 +28,15 @@ for (const reuse of [false, true]) {
         const run = () => execFileSync('bash', [...f.args, '--prepared-startup'], {env: f.env, timeout: 15000, stdio: 'pipe'});
         const missing = scenario === 'prepared-startup-missing';
         if (scenario === 'prepared-startup-success') {
-          assert.match(run().toString(), /selected 19\/19 exact tests/);
+          const count = preparedControls.length;
+          assert.match(run().toString(), new RegExp(`selected ${count}/${count} exact tests`));
         } else {
           assert.throws(run, error => missing ? /inventory differs/.test(error.stderr) : error.status === 7);
         }
         const calls = f.calls();
         const cargo = calls.filter(row => row.command === 'cargo');
         assert.deepEqual(cargo.map(row => row.args[1]), missing ? ['list'] : ['list', 'run']);
+        assert.ok(cargo[0].args.at(-1).startsWith(`${preparedFilter} & `));
         assert.equal(cargo[0].uri, undefined);
         assert.equal(calls.some(row => row.command === 'docker'), !missing);
         if (!missing) {
