@@ -79,6 +79,12 @@ it('requires the owner to choose a repo-capable connection and replays the exact
               manage_url: 'https://nyx.example/keys/profile-only',
             },
             {
+              id: 'unverified-repository-access',
+              label: 'Unverified repository access',
+              granted_scopes: ['repo'],
+              manage_url: 'https://nyx.example/keys/unverified-repository-access',
+            },
+            {
               id: 'stale-repository-access',
               label: 'Stale repository access',
               granted_scopes: ['repo'],
@@ -105,6 +111,13 @@ it('requires the owner to choose a repo-capable connection and replays the exact
   expect(screen.getByText('Live scopes — repo, read:user')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: /Select Profile access/ })).not.toBeInTheDocument();
+  expect(screen.getByText('Live repository permissions could not be verified.')).toBeVisible();
+  expect(
+    screen.queryByRole('button', { name: /Select Unverified repository access/ }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh GitHub connections' }));
+  expect(await screen.findByText('GitHub account @repository-owner')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
   expect(
     screen.queryByRole('button', { name: /Select Stale repository access/ }),
   ).not.toBeInTheDocument();
@@ -170,6 +183,7 @@ it('requires fresh consent after a definitely refused stale generation, includin
               id: 'repository-access',
               label: 'Repository access',
               granted_scopes: ['repo'],
+              account: { login: 'repository-owner', observed_scopes: ['repo'] },
               manage_url: 'https://nyx.example/keys/repository-access',
             },
           ],
@@ -239,6 +253,7 @@ it('preserves an exact retry for generic conflict until durable request state is
               id: 'repository-access',
               label: 'Repository access',
               granted_scopes: ['repo'],
+              account: { login: 'repository-owner', observed_scopes: ['repo'] },
               manage_url: 'https://nyx.example/keys/repository-access',
             },
           ],
