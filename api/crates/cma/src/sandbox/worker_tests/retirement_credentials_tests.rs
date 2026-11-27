@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "retirement_reauthorization_disable_tests.rs"]
+mod retirement_reauthorization_disable_tests;
+
 #[tokio::test]
 async fn retirement_settles_all_sources_and_retries_only_remaining_exact_keys() {
     let h = Harness::new(Vec::new(), 0, Duration::from_secs(60)).await;

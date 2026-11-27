@@ -195,6 +195,14 @@ pub(super) fn park_reauthorization(
 }
 
 impl SandboxWorker {
+    pub(super) fn retirement_reauthorization_disabled(&self, sandbox: &Sandbox) -> bool {
+        sandbox.work.retirement_credential_recovery.is_some()
+            && !self
+                .dependencies
+                .credentials
+                .uses_retirement_reauthorization(sandbox)
+    }
+
     pub(super) async fn probe_retirement_reauthorization(
         &self,
         mut sandbox: Sandbox,
