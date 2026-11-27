@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 import re
 
-from common import require_feature_fixture
+from common import CommandFailure, require_feature_fixture
 
 
 FAILURES = frozenset(('known_aborted_cas', 'owner_authority_refused', 'work_lease_changed', 'unknown_commit'))
@@ -329,4 +329,15 @@ def prepared_schema_race(fixture, action=None, operationId=None, reservations=No
     elif commitProof is not None:
         raise ValueError('prepared_acknowledgement_proof_required')
     scope = json.dumps(scope)
-    return fixture.mongo(f'const scope = {scope};\n' + SCHEMA_RACE.read_text())
+    script = SCHEMA_RACE.read_text()
+    try:
+        return fixture.mongo(f'const scope = {scope};\n' + script)
+    except CommandFailure as error:
+        # Expose only errors declared by this script. Keep driver output private.
+        allowed = set(re.findall(r"throw Error\('(prepared_[a-z0-9_]+)'\)", script))
+        lines = error.private_log.read_text().splitlines()
+        for line in lines:
+            match = re.fullmatch(r'Error: (prepared_[a-z0-9_]+)', line.strip())
+            if match and match[1] in allowed:
+                raise RuntimeError(match[1]) from error
+        raise

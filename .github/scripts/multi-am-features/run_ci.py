@@ -12,7 +12,7 @@ import time
 import urllib.error
 
 from desktop_policy import install as install_desktop_policy
-from diagnostics import command_outcome, initialization_timeout
+from diagnostics import command_outcome, initialization_timeout, suite_error_kind
 from fixture_evidence import summarize as summarize_fixture
 from fixture_evidence import summarize_runtime_failure
 from infrastructure import Infrastructure
@@ -101,12 +101,15 @@ def run(args):
         result['processes_ready_at'] = utc()
         result['stage'] = 'feature_journey'
         script = 'prepared_suite.mjs' if args.fixture == 'prepared' else 'suite.mjs'
-        code, output = fixture.client.command(['node', str(ROOT / script)],
-                                               data=json.dumps(config), timeout=2400, check=False)
+        stderr_file = private / 'suite-stderr.private.log'
+        code, output = fixture.client.command(['node', str(ROOT / script)], data=json.dumps(config),
+                                               timeout=2400, check=False, stderr_file=stderr_file)
         (private / 'suite.private.log').write_text(output)
         result['suite_exit_code'] = code
         coverage_file = summary / 'coverage.json'
         if not coverage_file.is_file():
+            if stderr_file.is_file():
+                result['suite_error_kind'] = suite_error_kind(stderr_file.read_text())
             raise RuntimeError('suite_coverage_artifact_missing')
         verdict = json.loads(coverage_file.read_text())
         result['verdict'] = 'PASS' if code == 0 and verdict['suite_verdict'] == 'PASS' else 'FAIL'

@@ -52,7 +52,7 @@ class Client:
             '--kubeconfig', ready['kubeconfig_path'], '--context', ready['context'],
             '--server', ready['server'], '--request-timeout=15s', '-n', self.namespace]
 
-    def command(self, argv, data=None, timeout=30, check=True):
+    def command(self, argv, data=None, timeout=30, check=True, stderr_file=None):
         remaining = self.deadline-time.monotonic()
         if remaining <= 0:
             raise TimeoutError('client_deadline')
@@ -67,6 +67,8 @@ class Client:
             raise
         if len(out)+len(err) > 4*1024*1024:
             raise RuntimeError('subprocess_output_bound')
+        if stderr_file is not None:
+            stderr_file.write_text(err)
         if check and child.returncode:
             label = 'command-'+str(time.time_ns())
             private_log = self.output / f'{label}.private.log'

@@ -1,5 +1,6 @@
 """Allowlisted command outcomes; never publish command arguments or raw output."""
 import hashlib
+import re
 
 INITIALIZATION_WAITS = {
     'role_not_ready', 'authenticated_mongo_primary_not_ready',
@@ -17,6 +18,12 @@ def initialization_timeout(error):
     if isinstance(error, TimeoutError) and str(error) in INITIALIZATION_WAITS:
         return str(error)
     return None
+
+
+def suite_error_kind(output):
+    match = re.search(r'^(TypeError|ReferenceError|SyntaxError|RangeError|AssertionError|Error):',
+                      output, re.MULTILINE)
+    return match[1] if match else 'unclassified'
 
 
 def command_outcome(stage, program, returncode, elapsed, output, timed_out=False):

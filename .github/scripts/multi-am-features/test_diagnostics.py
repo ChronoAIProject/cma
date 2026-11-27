@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
-from diagnostics import command_outcome, initialization_timeout
+from diagnostics import command_outcome, initialization_timeout, suite_error_kind
 from infrastructure import Infrastructure
 
 
@@ -19,6 +19,11 @@ class DiagnosticTests(unittest.TestCase):
                       TimeoutError('am_pod_not_ready_private_user'),
                       RuntimeError('am_pod_not_ready_a')]:
             self.assertIsNone(initialization_timeout(error))
+
+    def test_suite_output_keeps_only_the_javascript_error_class(self):
+        self.assertEqual(suite_error_kind('first line\nTypeError: fixture-private\n    at /private/path'),
+                         'TypeError')
+        self.assertEqual(suite_error_kind('PrivateError: unreviewed'), 'unclassified')
 
     def test_output_is_only_hashed_with_fixed_classification(self):
         private = b'private-token https://private.invalid?password=private-value\nno space left on device'

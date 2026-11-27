@@ -322,6 +322,24 @@ class OwnershipTests(unittest.TestCase):
             fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'publication_conflict')
         fixture.mongo.assert_called_once()
 
+    def test_prepared_mongo_command_reports_only_errors_declared_by_its_script(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        with tempfile.TemporaryDirectory() as directory:
+            log = Path(directory) / 'command.private.log'
+            failure = CommandFailure('command', 'kubectl', 1, .01, log)
+            fixture.mongo = Mock(side_effect=failure)
+            scope = ('inject', 'exact-operation', ['exact-reservation'], 'publication_conflict')
+            log.write_text('Error: prepared_publication_conflict_transaction_changed\n')
+            with self.assertRaisesRegex(RuntimeError, '^prepared_publication_conflict_transaction_changed$'):
+                fixture.preparedSchemaRace(*scope)
+            log.write_text('Error: prepared_synthetic_private_message\n')
+            with self.assertRaises(CommandFailure):
+                fixture.preparedSchemaRace(*scope)
+
     def test_prepared_parent_envelope_selector_validates_the_pair_and_holds_sandbox_reads(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12
