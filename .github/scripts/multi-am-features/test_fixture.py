@@ -268,11 +268,14 @@ class OwnershipTests(unittest.TestCase):
         known = entry('known_aborted_cas')
         lease = hashlib.sha256(b'1:fixture-worker').hexdigest()
         committed = (f'INFO agent_scheduler_failure: Prepared Agent Ready publication committed '
-                     f'phase="prepared_commit" agent_sha256={wanted} work_lease_sha256={lease}')
+                     f'phase="prepared_commit" agent_sha256={wanted} work_lease_sha256={lease} '
+                     f'sandbox_revision=12 workspace_revision=9')
+        same_sandbox_other_agent = committed.replace(wanted, 'a' * 64).replace('workspace_revision=9',
+                                                                                'workspace_revision=8')
         logs = {'am-a-0': [known, known, entry('owner_authority_refused', digest='a' * 64)],
                 'am-b-0': [entry('unknown_commit', 'publish_connection'),
                            entry('work_lease_changed', 'publish_deleted'), entry('unknown_commit', target='unrelated'),
-                           committed, committed.replace(wanted, 'a' * 64)]}
+                           committed, same_sandbox_other_agent]}
         fixture = Fixture.__new__(Fixture)
 
         def read(args, *, timeout):
@@ -284,9 +287,15 @@ class OwnershipTests(unittest.TestCase):
         fixture.client = SimpleNamespace(k=read)
         self.assertEqual(fixture.publicationEvidence('fixture-agent'), {
             'a': {'known_aborted_cas': {'open_conversation': 2}},
-            'b': {'unknown_commit': {'publish_connection': 1}, 'prepared_commit_work_lease_sha256': [lease]}})
+            'b': {'unknown_commit': {'publish_connection': 1}, 'prepared_commit_work_lease_sha256': [lease],
+                  'prepared_commit_parent_revisions': [[12, 9]]}})
         with self.assertRaisesRegex(ValueError, 'publication_evidence_lineage_required'):
             fixture.publicationEvidence('../foreign-agent')
+        for invalid_revision in ('', '0', '-1', '9007199254740992'):
+            logs['am-b-0'].append(committed.replace('workspace_revision=9', f'workspace_revision={invalid_revision}'))
+            with self.assertRaisesRegex(RuntimeError, 'prepared_publication_invalid_parent_revisions'):
+                fixture.publicationEvidence('fixture-agent')
+            logs['am-b-0'].pop()
         logs['am-b-0'].append(entry('unexpected_classification'))
         with self.assertRaisesRegex(RuntimeError, 'publication_evidence_invalid_diagnostic'):
             fixture.publicationEvidence('fixture-agent')

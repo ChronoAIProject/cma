@@ -177,12 +177,12 @@ export async function preparedParentEnvelopes({adapter, create, cleanup, step, r
       const originalRuntime = new Map(await Promise.all(reservations.map(async sandboxId =>
         [sandboxId, await adapter.preparedRuntimeEvidence({sandboxId})])));
       const disarm = () => adapter.preparedSchemaBarrier({arm: false});
-      let record, collision, pending;
+      let record, installed, pending;
       await withRestoration(async () => {
         await adapter.preparedSchemaBarrier({arm: true, parentEnvelope: true});
         record = await create(ingress, false, {}, undefined, ({operationId}) => {
           pending = withRestoration(async () => {
-            collision = await poll(() => adapter.preparedSchemaRace({
+            installed = await poll(() => adapter.preparedSchemaRace({
               action: 'inject', operationId, reservations, barrier: 'parent_envelope', parentVersions,
             }), value => value !== null, {timeout: 120000, interval: 100,
               code: 'prepared_parent_envelope_observation_missing'});
@@ -193,8 +193,11 @@ export async function preparedParentEnvelopes({adapter, create, cleanup, step, r
       const {error} = await pending;
       if (error) throw error;
       const {agentId, sandboxId, operationId} = record;
-      check(collision?.agentId === agentId && collision.sandboxId === sandboxId && equal(collision.parentVersions, parentVersions)
-        && reservations.includes(sandboxId), 'prepared_parent_envelope_lineage_unbound');
+      check(installed?.agentId === agentId && installed.sandboxId === sandboxId
+        && equal(installed.parentVersions, parentVersions) && reservations.includes(sandboxId)
+        && installed.parentRevisions?.length === 2
+        && installed.parentRevisions.every(revision => Number.isSafeInteger(revision) && revision > 1),
+      'prepared_parent_envelope_lineage_unbound');
       const [durable, runtime] = await Promise.all([
         adapter.preparedEvidence({agentId, sandboxId, operationId}),
         adapter.preparedRuntimeEvidence({sandboxId, operationId}),
@@ -207,13 +210,18 @@ export async function preparedParentEnvelopes({adapter, create, cleanup, step, r
         && runtime.pod_sha256 === hash(record.runtime.pod_uid), 'prepared_parent_envelope_runtime_changed');
       const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
       const diagnostics = await adapter.publicationEvidence({agentId});
-      const commits = diagnostics[owner.am]?.prepared_commit_work_lease_sha256;
-      check(commits?.length === 1 && isDigest(commits[0])
-        && !diagnostics[owner.am === 'a' ? 'b' : 'a']?.prepared_commit_work_lease_sha256?.length
+      const committed = diagnostics[owner.am];
+      const peer = diagnostics[owner.am === 'a' ? 'b' : 'a'];
+      const leases = committed?.prepared_commit_work_lease_sha256;
+      check(leases?.length === 1 && isDigest(leases[0])
+        && !peer?.prepared_commit_work_lease_sha256?.length
         && record.createToReadyMs > 0 && record.createToReadyMs < OLD_WORK_LEASE_MS,
       'prepared_parent_envelope_commit_unbound');
+      check(equal(committed.prepared_commit_parent_revisions, [installed.parentRevisions]),
+        'prepared_parent_envelope_committed_revisions_mismatch');
       await cleanup(record);
       return {ingress, owner: owner.am, owner_epoch: owner.epoch, parent_schema_versions: durable.schemas,
+        prepared_commit_parent_revisions: installed.parentRevisions,
         create_to_ready_ms: record.createToReadyMs, atomic_publication_fence_count: durable.ready_fences.length,
         startup_receipt_count: durable.startup_receipts.length, runtime_receipt_count: runtime.receipts.length,
         lifecycle_operation_sha256: hash(operationId), prepared_reservation_sha256: hash(sandboxId),
@@ -262,14 +270,14 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
     prepared_publication_abort: abortEvidence,
     steps: journey.steps.map(({name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
-      ready_before_collision_lease_deadline,
+      ready_before_collision_lease_deadline, prepared_commit_parent_revisions,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
       browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
       prepared_work_lease_refused}) => ({
       name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
-      ready_before_collision_lease_deadline,
+      ready_before_collision_lease_deadline, prepared_commit_parent_revisions,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
       browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,

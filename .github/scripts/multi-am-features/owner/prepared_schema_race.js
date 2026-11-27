@@ -79,18 +79,24 @@
     return observed;
   }
 
-  async function heldParentReads(rows) {
+  // A held read provides time to install the envelopes. It might be
+  // another reader of this Sandbox, so qualification uses the worker's commit.
+  async function hasHeldSandboxRead(rows) {
     const active = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
       appName: scope.app, active: true, 'command.find': 'sandboxes', 'command.filter._id': rows.sandbox._id,
       'command.autocommit': {$exists: false},
-    }}]).toArray();
-    return active.map(entry => entry.opid);
+    }}, {$limit: 1}]).toArray();
+    return active.length === 1;
   }
 
   async function replaceParentEnvelopes(rows) {
     const {sandbox, workspace, reservation} = rows;
     const [sandboxVersion, workspaceVersion] = scope.parentVersions;
     const installed = reservation.record.payload.installed_request_sha256;
+    const parentRevisions = [sandbox, workspace].map(row => Number(row.revision) + 1);
+    if (!parentRevisions.every(revision => Number.isSafeInteger(revision) && revision > 1)) {
+      throw Error('prepared_parent_envelope_revision_invalid');
+    }
     const session = await d.getMongo().startSession();
     try {
       await session.startTransaction({readConcern: {level: 'snapshot'}});
@@ -123,6 +129,7 @@
         if (result.modifiedCount !== 1) throw Error('prepared_parent_envelope_write_missed');
       }
       await session.commitTransaction();
+      return parentRevisions;
     } finally {
       await session.endSession();
     }
@@ -132,18 +139,15 @@
     const deadline = Date.now() + 4500;
     while (Date.now() < deadline) {
       const rows = await lineage(d);
-      const bound = rows && (parentEnvelope ? (await heldParentReads(rows))[0] : await currentUpdate(rows));
+      const bound = rows && (parentEnvelope ? await hasHeldSandboxRead(rows) : await currentUpdate(rows));
       if (bound) {
         const before = proof(rows);
         if (!pending(before) || before.schema !== 1 || before.cleanup_marked || rows.tree.status !== 'creating') {
           throw Error('prepared_schema_race_startup_precondition');
         }
         if (parentEnvelope) {
-          await replaceParentEnvelopes(rows);
-          if (!(await heldParentReads(rows)).includes(bound)) {
-            throw Error('prepared_parent_envelope_observation_unbound');
-          }
-          return {...before, parentVersions: scope.parentVersions};
+          const parentRevisions = await replaceParentEnvelopes(rows);
+          return {...before, parentVersions: scope.parentVersions, parentRevisions};
         }
         if (publicationConflict) {
           const reservation = rows.reservation;

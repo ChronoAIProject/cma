@@ -283,8 +283,8 @@ async fn run_transaction(
                 }
                 history_cache.committed(store);
                 timing.committed();
-                if observed.is_some() {
-                    contention::diagnose_prepared_commit(&mutation);
+                if let Some(observed) = observed {
+                    contention::diagnose_prepared_commit(&mutation, observed);
                 }
                 crate::telemetry::work::published(&receipt.logs, "committed");
                 return Ok(Completion::Published);

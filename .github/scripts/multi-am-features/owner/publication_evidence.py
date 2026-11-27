@@ -13,7 +13,7 @@ STARTUP_STEPS = frozenset(('install_skill', 'wait_for_workspace', 'add_worktree'
                            'open_conversation', 'publish_ready', 'publish_connection', 'dispatch_first_message'))
 LOG_BOUND_BYTES = 2 * 1024 * 1024
 LOG_TARGET = ' agent_scheduler_failure: '
-FIELDS = re.compile(r'(?<!\S)(phase|failure|next_step|agent_sha256|cause_class|origin|agent_hash|operation|sandbox_sha256|work_lease_sha256)="?([a-z0-9_]+)"?(?=\s|$)')
+FIELDS = re.compile(r'(?<!\S)(phase|failure|next_step|agent_sha256|cause_class|origin|agent_hash|operation|sandbox_sha256|work_lease_sha256|sandbox_revision|workspace_revision)="?([a-z0-9_]+)"?(?=\s|$)')
 RECOVERY_FIELDS = re.compile(r'(?<!\S)(sandbox_id|outcome)="?([-A-Za-z0-9_]+)"?(?=\s|$)')
 PREPARED_MONGO_APP = 'cma-two-am-prepared-fixture'
 FEATURES_MONGO_APP = 'cma-two-am-features-fixture'
@@ -222,7 +222,12 @@ def publication_evidence(fixture, agentId=None):
                 work_lease = fields.get('work_lease_sha256', '')
                 if not re.fullmatch(r'[a-f0-9]{64}', work_lease):
                     raise RuntimeError('prepared_publication_invalid_work_lease_digest')
+                revisions = [fields.get(f'{parent}_revision', '') for parent in ('sandbox', 'workspace')]
+                if any(not re.fullmatch(r'[1-9][0-9]{0,15}', revision)
+                       or int(revision) > 2**53 - 1 for revision in revisions):
+                    raise RuntimeError('prepared_publication_invalid_parent_revisions')
                 counts.setdefault('prepared_commit_work_lease_sha256', []).append(work_lease)
+                counts.setdefault('prepared_commit_parent_revisions', []).append(list(map(int, revisions)))
                 continue
             if fields.get('phase') != 'publication':
                 continue

@@ -9,7 +9,8 @@ import {hash} from '../cma/core.mjs';
 test('parent-envelope cases require exact schemas and unchanged Runtime receipts on both ingresses', async () => {
   const steps = [], cleaned = [], holds = [];
   const originalRuntime = {pod_sha256: hash('synthetic-pod'), receipts: ['first', 'second', 'third']};
-  let pair, malformed = false;
+  let pair, malformed = false, workspaceReadFirst = false;
+  const installedRevisions = [12, 9];
   const context = {
     adapter: {
       preparedReady: async () => ['fixture-home'],
@@ -19,13 +20,17 @@ test('parent-envelope cases require exact schemas and unchanged Runtime receipts
         assert.deepEqual(scope, {action: 'inject', operationId: 'fixture-operation',
           reservations: ['fixture-home'], barrier: 'parent_envelope'});
         pair = parentVersions;
-        return {agentId: 'fixture-agent', sandboxId: 'fixture-home', parentVersions};
+        return {agentId: 'fixture-agent', sandboxId: 'fixture-home', parentVersions,
+          parentRevisions: installedRevisions};
       },
       preparedEvidence: async () => ({consumed: true, agent_ready: true, reservation_bound: true,
         installation_bound: true, schemas: malformed ? [4, 3, 1] : [...pair, 1],
         ready_fences: [1, 1, 1, 1], startup_receipts: [1, 1, 1]}),
       ownerOf: async () => ({agent_id: 'fixture-agent', am: 'a', epoch: 2, pod_uid: 'fixture-owner-pod'}),
-      publicationEvidence: async () => ({a: {prepared_commit_work_lease_sha256: [hash('fixture-commit')]}, b: {}}),
+      publicationEvidence: async () => ({a: {
+        prepared_commit_work_lease_sha256: [hash('fixture-commit')],
+        prepared_commit_parent_revisions: [workspaceReadFirst ? [12, 8] : installedRevisions],
+      }, b: {}}),
     },
     create: async (ingress, desktop, _overrides, _open, admitted) => {
       assert.equal(desktop, false);
@@ -40,8 +45,15 @@ test('parent-envelope cases require exact schemas and unchanged Runtime receipts
   await preparedParentEnvelopes(context);
   assert.deepEqual(steps.map(step => step.parent_schema_versions),
     [[1, 1, 1], [1, 3, 1], [3, 1, 1], [3, 3, 1], [4, 1, 1], [4, 3, 1]]);
+  assert.deepEqual(steps.map(step => step.prepared_commit_parent_revisions),
+    Array.from({length: 6}, () => installedRevisions));
   assert.deepEqual(cleaned, ['a', 'b', 'a', 'b', 'a', 'b']);
   assert.deepEqual(holds.slice(-2), [{arm: true, parentEnvelope: true}, {arm: false}]);
+  // Final schema and fence evidence alone would accept a stale Workspace read.
+  workspaceReadFirst = true;
+  await assert.rejects(preparedParentEnvelopes(context), /prepared_parent_envelope_committed_revisions_mismatch/);
+  workspaceReadFirst = false;
+  assert.equal(cleaned.length, 6);
   malformed = true;
   await assert.rejects(preparedParentEnvelopes(context), /prepared_parent_envelope_publication_unproven/);
   assert.deepEqual(holds.at(-1), {arm: false});

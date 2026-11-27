@@ -11,6 +11,11 @@ async fn prepared_open_ready_fences_each_supported_parent_envelope() {
         [(1_i64, 1_i64), (3, 1), (1, 3), (3, 3), (4, 1), (4, 3)]
     {
         let (client, name, store, agent, mut observed) = fixture().await;
+        let workspace_before_change = store
+            .get_workspace(&agent.workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
         if sandbox_version != 1 {
             let sandbox = &mut observed.sandbox;
             let previous = sandbox.revision;
@@ -49,6 +54,23 @@ async fn prepared_open_ready_fences_each_supported_parent_envelope() {
                 .unwrap();
         }
         let done = completion(&agent, &observed.worktree);
+        if workspace_version == 3 {
+            // The parallel Workspace read can complete before the Sandbox read.
+            // A second reader of the same Sandbox cannot certify this context.
+            let mixed = PreparedAgentOpenContext {
+                sandbox: store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap(),
+                workspace: workspace_before_change,
+                worktree: observed.worktree.clone(),
+            };
+            let rejected = store
+                .commit_prepared_agent_open_ready(done.clone(), mixed)
+                .await;
+            assert!(matches!(
+                rejected,
+                Err(SandboxStoreError::Conflict) | Ok(false)
+            ));
+            assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
+        }
         assert!(store
             .commit_prepared_agent_open_ready(done.clone(), observed.clone())
             .await

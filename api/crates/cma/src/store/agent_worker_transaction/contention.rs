@@ -1,5 +1,6 @@
 //! Back off only between definitively aborted Agent publication transactions.
 use super::*;
+use layer2_core::sandbox::store::PreparedAgentOpenContext;
 use sha2::{Digest, Sha256};
 
 pub(super) enum PublicationFailure {
@@ -33,13 +34,18 @@ pub(super) fn diagnose_write_conflict(mutation: &AgentWorkMutation, error: &mong
     }
 }
 
-pub(super) fn diagnose_prepared_commit(mutation: &AgentWorkMutation) {
+pub(super) fn diagnose_prepared_commit(
+    mutation: &AgentWorkMutation,
+    observed: &PreparedAgentOpenContext,
+) {
     let work_lease = format!("{}:{}", mutation.fence, mutation.holder);
     tracing::info!(
         target: "agent_scheduler_failure",
         phase = "prepared_commit",
         agent_sha256 = %format_args!("{:x}", Sha256::digest(mutation.agent.id.as_str().as_bytes())),
         work_lease_sha256 = %format_args!("{:x}", Sha256::digest(work_lease.as_bytes())),
+        sandbox_revision = observed.sandbox.revision,
+        workspace_revision = observed.workspace.revision,
         "Prepared Agent Ready publication committed"
     );
 }
