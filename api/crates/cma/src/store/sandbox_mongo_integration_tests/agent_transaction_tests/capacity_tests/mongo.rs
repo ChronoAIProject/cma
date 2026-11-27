@@ -79,7 +79,7 @@ pub(in crate::store) async fn verify_full_log_cleanup(bytes: bool, boundary: Opt
         })
         .await
         .unwrap();
-    let fenced = claim(&store, &agent.id, MINUTE).await;
+    let fenced = claim_interaction_fence(&store, &agent.id).await;
     store
         .commit_agent_work(advance(&fenced, AgentWorkStep::CloseProcess, MINUTE))
         .await
