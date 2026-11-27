@@ -31,7 +31,7 @@ import {artifactCommittedWithoutAcknowledgement, artifactUnknownPublication, rev
   shareAgentArtifact} from './features/sharing.mjs';
 import {organizationShare} from './features/organization_share.mjs';
 import {accessRequest} from './features/access_request.mjs';
-import {retirementRetention} from './features/retirement_retention.mjs';
+import {retirementRetention, unresolvedTitleRetirement} from './features/retirement_retention.mjs';
 import {triggerAlwaysOn} from './features/trigger_always_on.mjs';
 import {suggestionsCase} from './features/suggestions.mjs';
 import {suggestionDraftBrowser} from './features/suggestion_draft_browser.mjs';
@@ -251,9 +251,13 @@ try {
         finally { await record(row); }
       }
     }, 'command_search_after_retirement');
-  }, retirementHook: context => {
+  }, retirementHook: async context => {
     Object.assign(normal.ams, context.config.ams);
-    return retirementRetention({...context, user, outsider});
+    const retired = await retirementRetention({...context, user, outsider});
+    await context.step('unresolved_title_retirement_defers_purge', () =>
+      unresolvedTitleRetirement({...context, recordFailure: (stage, error) =>
+        retainFailure(config.matrix_output, stage, error, {case: 'unresolved_title_retirement_defers_purge'})}));
+    return retired;
   }, triggerHook: context => {
     Object.assign(normal.ams, context.config.ams);
     return withBrowser(context.config.ams, browser => triggerAlwaysOn({...context, user, admin, outsider, browser}),
@@ -512,6 +516,8 @@ try {
   const drain = result.journey?.steps.find(s => s.name === 'owner_drain_and_readiness' && s.verdict === 'PASS');
   const runtimeLoss = result.journey?.steps.find(s => s.name === 'native_runtime_loss_preserves_agents' && s.verdict === 'PASS');
   const retirement = result.journey?.steps.find(s => s.name === 'retirement_retains_terminal_evidence' && s.verdict === 'PASS');
+  const unresolvedTitle = result.journey?.steps.find(s => s.name === 'unresolved_title_retirement_defers_purge'
+    && s.verdict === 'PASS');
   const interrupts = ['plain_send_and_interrupt_non_owner', 'plain_send_and_interrupt_after_restart']
     .map(name => result.journey?.steps.find(step => step.name === name && step.verdict === 'PASS'))
     .filter(Boolean)
@@ -538,6 +544,9 @@ try {
     retirement: retirement ? {retained_history: retirement.retained_history,
       eligible_purge: retirement.eligible_purge, retained_title_custody: retirement.retained_title_custody,
       retained_creation_provenance: retirement.retained_creation_provenance, purged_agents: retirement.purged_agents} : null,
+    unresolved_title_retirement: unresolvedTitle ? {deferred_purge: unresolvedTitle.unresolved_title_deferred_purge,
+      title_request_count: unresolvedTitle.title_request_count, eligible_purge: unresolvedTitle.eligible_purge,
+      retained_creation_provenance: unresolvedTitle.retained_creation_provenance} : null,
     owner_drain: drain ? {readiness_dropped: drain.readiness_dropped, process_still_live: drain.process_still_live,
       peer_advanced: drain.peer_advanced, drain_ms: drain.drain_ms, takeover_ms: drain.takeover_ms,
       useful_reads_during_restart: drain.useful_reads_during_restart} : null,

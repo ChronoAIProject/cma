@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
-import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
+import {assertOracle, assertOwner, assertResponse, check, hash, id, other, poll, terminal} from '../cma/core.mjs';
+import {withRestoration} from '../failure.mjs';
 
 export async function retirementRetention({adapter, user, outsider, record, cleanup, admissions, waitForPurge = poll}) {
   const {agentId, sandboxId} = record;
@@ -97,13 +98,74 @@ export async function retirementRetention({adapter, user, outsider, record, clea
     retained_history: true, observed_future_purge_deadline: true, retained_title_custody: true, ...purged};
 }
 
-async function observeEligiblePurge({adapter, user, record, admissions, paths, waitForPurge}) {
+export async function unresolvedTitleRetirement({adapter, api, create, cleanup, recordFailure}) {
+  const record = await create('a', false, {title_mode: 'automatic'});
+  const {agentId, sandboxId, operationId} = record;
+  const caseId = 'retirement-title-' + randomUUID();
+  const marker = 'WS4_TITLE_' + randomUUID().replaceAll('-', '');
+  let stream, titleDigest;
+  await adapter.prepareTurn({caseId, marker, title: 'lost_reply'});
+  await withRestoration(async () => {
+    await adapter.releaseTurn({caseId});
+    stream = await api.send('a', agentId, 'Return the exact marker ' + marker + ' without making changes.', caseId);
+    const input = await poll(() => adapter.oracle({caseId}), observed => observed.title_requests === 1,
+      {timeout: 30000, interval: 100, code: 'retirement_title_request_missing'});
+    titleDigest = input.title_request_sha256;
+    check(/^[a-f0-9]{64}$/.test(titleDigest ?? '') && input.title_responses === 0, 'retirement_title_request_unbound');
+    await adapter.releaseTurn({caseId, title: true});
+    await poll(() => adapter.oracle({caseId}), observed => observed.title_lost_replies === 1,
+      {timeout: 10000, interval: 100, code: 'retirement_title_reply_loss_missing'});
+    const response = await poll(async () => assertResponse((await api.rawRequest('b', 'GET',
+      '/api/v2/responses/' + stream.responseId)).body, agentId, stream.responseId), terminal,
+    {timeout: 30000, code: 'retirement_title_turn_did_not_settle'});
+    check(response.status === 'completed', 'retirement_title_turn_failed');
+    const custody = await adapter.titleIntent({agentId});
+    check(custody?.request_sha256 === titleDigest && custody.accepted === false
+      && Number.isSafeInteger(custody.turn_sequence), 'retirement_unresolved_title_custody_missing');
+  }, async () => {
+    try { await adapter.releaseTurn({caseId, title: true}); }
+    finally { if (stream) { stream.abort(); await stream.done; } }
+  }, recordFailure);
+
+  await cleanup(record);
+  const admissions = [{agentId, operationId}];
+  const paths = ['/api/v1/agents/' + agentId, '/api/v1/sandboxes/' + sandboxId];
+  const purged = await observeEligiblePurge({adapter, user: api, record, admissions, paths, titleDigest,
+    waitForPurge: poll, afterArm: async (target, armed) => {
+      const match = observations => ['a', 'b'].flatMap(am => {
+        const sample = observations?.[am];
+        return sample?.title_deferrals >= 1 && sample.refused_purge_attempts >= 1
+          ? sample.refused_lease_digests ?? [] : [];
+      });
+      const deferrals = await poll(() => adapter.retirementTitleDeferral({agentId, sandboxId}),
+        observations => match(observations).length > 0,
+        {timeout: 30000, code: 'retirement_live_title_did_not_defer_purge'});
+      const digests = [...new Set(match(deferrals))];
+      check(digests.length === 1 && /^[a-f0-9]{64}$/.test(digests[0]), 'retirement_refused_lease_not_bound');
+      const held = await adapter.retirementPurge(target);
+      check(held.present === true && held.agents === 1 && held.unresolved_title_active === true
+        && ['agent_events', 'sandbox_events', 'workspaces', 'worktrees'].every(key => held[key] === true)
+        && held.creation_sha256 === armed.creation_sha256, 'retirement_live_title_retention_unproven');
+      const advanced = await adapter.retirementPurge({...target, advanceTitle: true, refusedLeaseSha256: digests[0]});
+      check(advanced.title_advanced === true && advanced.creation_sha256 === armed.creation_sha256,
+        'retirement_title_window_not_advanced');
+    }});
+  const observed = await adapter.oracle({caseId});
+  assertOracle(observed, caseId, 1);
+  check(observed.title_requests === 1 && observed.title_lost_replies === 1 && observed.title_responses === 0
+    && observed.title_request_sha256 === titleDigest, 'retirement_title_effect_replayed');
+  return {agent_sha256: hash(agentId), sandbox_sha256: hash(sandboxId),
+    unresolved_title_deferred_purge: true, title_request_count: observed.title_requests, ...purged};
+}
+
+async function observeEligiblePurge({adapter, user, record, admissions, paths, waitForPurge, titleDigest, afterArm}) {
   const {agentId, sandboxId, operationId} = record;
   check(id(operationId), 'retirement_purge_lifecycle_required');
-  const target = {agentId, sandboxId, operationId, admissions};
+  const target = {agentId, sandboxId, operationId, admissions, ...(titleDigest ? {titleDigest} : {})};
   const armed = await adapter.retirementPurge({...target, arm: true});
   check(armed?.armed === true && armed.agents === admissions.length
     && /^[a-f0-9]{64}$/.test(armed.creation_sha256 ?? ''), 'retirement_purge_not_armed');
+  await afterArm?.(target, armed);
   const fields = ['agent_events', 'sandbox_events', 'workspaces', 'worktrees'];
   let samples = 0;
   await waitForPurge(() => adapter.retirementPurge(target), sample => {

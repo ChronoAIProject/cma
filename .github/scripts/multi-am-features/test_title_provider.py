@@ -18,6 +18,12 @@ import provider
 
 class TitleProviderTests(unittest.TestCase):
     def test_one_title_request_is_held_and_bound_to_its_exact_wire_body(self):
+        self.verify_title_reply(True)
+
+    def test_lost_reply_keeps_one_exact_provider_request_and_no_result(self):
+        self.verify_title_reply('lost_reply')
+
+    def verify_title_reply(self, title):
         control = secrets.token_urlsafe(32)
         marker = 'WS4_TITLE_' + 'f' * 32
         case_id = 'title-fixture'
@@ -43,7 +49,7 @@ class TitleProviderTests(unittest.TestCase):
             try:
                 self.assertEqual(post('/v1/responses', raw)[0], 404)
                 self.assertEqual(post('/__ws4/arm', json.dumps({'case_id': case_id,
-                    'marker': marker, 'title': True}))[0], 200)
+                    'marker': marker, 'title': title}))[0], 200)
                 with ThreadPoolExecutor(max_workers=1) as pool:
                     pending = pool.submit(post, '/v1/responses', raw)
                     try:
@@ -59,8 +65,15 @@ class TitleProviderTests(unittest.TestCase):
                         self.assertEqual(post('/v1/responses', raw)[0], 409)
                     finally:
                         self.assertEqual(post('/__ws4/release-title', json.dumps({'case_id': case_id}))[0], 200)
-                    self.assertEqual(pending.result(timeout=4), (200, {'output_text': 'Generated Fixture Conversation'}))
-                self.assertEqual(provider.snapshot(case_id)['title_responses'], 1)
+                    if title == 'lost_reply':
+                        with self.assertRaises(http.client.IncompleteRead):
+                            pending.result(timeout=4)
+                    else:
+                        self.assertEqual(pending.result(timeout=4), (200, {'output_text': 'Generated Fixture Conversation'}))
+                final = provider.snapshot(case_id)
+                self.assertEqual(final['title_responses'], int(title is True))
+                self.assertEqual(final['title_lost_replies'], int(title == 'lost_reply'))
+                self.assertEqual(final['title_request_sha256'], hashlib.sha256(raw).hexdigest())
             finally:
                 server.shutdown()
                 worker.join(timeout=5)

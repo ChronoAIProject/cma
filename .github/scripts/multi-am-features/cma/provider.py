@@ -56,7 +56,7 @@ def arm(case_id, marker, access_request=None, suggestions=False, configuration=N
                 or not re.fullmatch(r'two-am-(?:retry-)?(?:before|after)-restart', skill['id'])
                 or type(skill['present']) is not bool):
             raise ValueError('fixture_skill_invalid')
-    if type(title) is not bool or (title and (suggestions or access_request is not None
+    if (type(title) is not bool and title != 'lost_reply') or (title and (suggestions or access_request is not None
             or configuration is not None or skill is not None or not re.fullmatch(r'WS4_TITLE_[a-f0-9]{32}', marker))):
         raise ValueError('fixture_title_invalid')
     file_preview = re.fullmatch(r'WS4_FILE_[a-f0-9]{32}', marker) is not None
@@ -73,7 +73,7 @@ def arm(case_id, marker, access_request=None, suggestions=False, configuration=N
                          'configuration': configuration, 'configuration_matches': 0,
                          'skill': skill, 'skill_matches': 0,
                          'title': title, 'title_release': threading.Event(), 'title_requests': 0,
-                         'title_responses': 0, 'title_request_sha256': None,
+                         'title_responses': 0, 'title_lost_replies': 0, 'title_request_sha256': None,
                          'suggestion_requests': 0, 'suggestion_responses': 0,
                          'request_count': 0, 'completed_effect_count': 0,
                          'disconnect_count': 0, 'active_streams': 0,
@@ -94,7 +94,7 @@ def snapshot(case_id):
                 'configuration_matches': case['configuration_matches'],
                 'skill_matches': case['skill_matches'],
                 'title_requests': case['title_requests'], 'title_responses': case['title_responses'],
-                'title_request_sha256': case['title_request_sha256'],
+                'title_request_sha256': case['title_request_sha256'], 'title_lost_replies': case['title_lost_replies'],
                 'released': case['release'].is_set(),
                 'synthetic_effect': 'one_consent_proposal' if case['access_request'] else 'one_text_completion'}
 
@@ -463,6 +463,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.reply(409, {'error': 'duplicate_title_generation'})
         if not case['title_release'].wait(8):
             return self.reply(504, {'error': 'title_barrier_timeout'})
+        if case['title'] == 'lost_reply':
+            with LOCK:
+                case['title_lost_replies'] += 1
+            self.close_connection = True
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', '64')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.write(b'{"output_text":')
+            self.wfile.flush()
+            return
         self.reply(200, {'output_text': 'Generated Fixture Conversation'})
         with LOCK:
             case['title_responses'] += 1

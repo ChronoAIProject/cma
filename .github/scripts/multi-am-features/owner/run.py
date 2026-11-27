@@ -35,7 +35,7 @@ from publication_evidence import (access_proposal_abort, artifact_publication_ab
                                   share_redemption_publication_abort,
                                   writer_publication_abort, writer_publication_evidence)
 from readiness_scaling import drain_owner, observe_never_ready, observe_scale
-from retirement_purge import retirement_purge
+from retirement_purge import retirement_purge, retirement_title_deferral
 from runtime_loss import remove_runtime_pod, runtime_inventory_authority
 from title_evidence import title_effects, title_intent
 
@@ -67,6 +67,7 @@ class Fixture:
     preparedSchemaRace = prepared_schema_race
     preparedSchemaRefusals = prepared_schema_refusals
     retirementPurge = retirement_purge
+    retirementTitleDeferral = retirement_title_deferral
     removeRuntimePod = remove_runtime_pod
     runtimeInventoryAuthority = runtime_inventory_authority
     seedOversizeFile = seed_oversize_file
@@ -443,7 +444,7 @@ class Fixture:
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence','preparedRuntimeEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
                              'organizationMembership','configurationLog','configurationDispatch','publicationEvidence',
-                             'retirementPurge','removeRuntimePod','artifactPublicationAbort','artifactPublicationRace','preparedSchemaBarrier',
+                             'retirementPurge','retirementTitleDeferral','removeRuntimePod','artifactPublicationAbort','artifactPublicationRace','preparedSchemaBarrier',
                              'preparedSchemaRace','preparedSchemaRefusals','writerPublicationAbort','writerPublicationEvidence',
                              'runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
                              'shareRedemptionPublicationAbort','accessProposalAbort','seedOversizeFile']

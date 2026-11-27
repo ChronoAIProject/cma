@@ -3,7 +3,7 @@ import {createRequire} from 'node:module';
 import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {runInNewContext} from 'node:vm';
-import {retirementRetention} from './retirement_retention.mjs';
+import {retirementRetention, unresolvedTitleRetirement} from './retirement_retention.mjs';
 
 function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateRetirement = false,
   duplicateStop = false, stopReplayWrites = false, duplicateDelete = false, deleteReplayWrites = false,
@@ -161,13 +161,119 @@ test('a foreign side effect, early purge deadline or duplicate retirement fails'
   }
 });
 
+test('an unresolved title must defer a real purge attempt, then allow removal without a second request', async () => {
+  const identity = {agentId: 'fixture-agent', sandboxId: 'fixture-sandbox', operationId: 'fixture-operation'};
+  const title = 'a'.repeat(64), provenance = 'b'.repeat(64), refusedLease = 'c'.repeat(64), requests = [];
+  let attempts = 0, advanced = false, released = false, activeAtDeferral = true;
+  const witness = () => ({case_id: requests[0].caseId, request_count: 1, completed_effect_count: 1,
+    active_streams: 0, title_requests: 1, title_lost_replies: Number(released), title_responses: 0,
+    title_request_sha256: title});
+  const context = {
+    adapter: {
+      prepareTurn: async spec => requests.push(spec),
+      releaseTurn: async spec => { if (spec.title === true) released = true; },
+      oracle: async () => witness(),
+      titleIntent: async () => ({request_sha256: title, accepted: false, turn_sequence: 1}),
+      retirementTitleDeferral: async ids => {
+        assert.deepEqual(ids, {agentId: identity.agentId, sandboxId: identity.sandboxId});
+        attempts++;
+        return {a: {title_deferrals: 1, refused_purge_attempts: 1, refused_lease_digests: [refusedLease]}, b: {}};
+      },
+      retirementPurge: async spec => {
+        assert.equal(spec.titleDigest, title);
+        if (spec.arm) return {armed: true, agents: 1, creation_sha256: provenance};
+        if (spec.advanceTitle) {
+          assert.equal(attempts, 1);
+          assert.equal(spec.refusedLeaseSha256, refusedLease);
+          advanced = true;
+          return {title_advanced: true, creation_sha256: provenance};
+        }
+        return {present: !advanced, agents: Number(!advanced), creation_sha256: provenance,
+          unresolved_title_active: !advanced && activeAtDeferral,
+          agent_events: !advanced, sandbox_events: !advanced, workspaces: !advanced, worktrees: !advanced};
+      },
+    },
+    api: {
+      send: async () => ({responseId: 'response', abort() {}, done: Promise.resolve()}),
+      rawRequest: async (_am, _method, path) => path === '/api/v2/responses/response'
+        ? {body: {id: 'response', conversation: {id: identity.agentId}, status: 'completed'}} : {status: 404},
+    },
+    create: async (_am, desktop, spec) => {
+      assert.equal(desktop, false);
+      assert.deepEqual(spec, {title_mode: 'automatic'});
+      return identity;
+    },
+    cleanup: async record => assert.equal(record, identity),
+  };
+  const proof = await unresolvedTitleRetirement(context);
+  assert.equal(requests[0].title, 'lost_reply');
+  assert.equal(proof.unresolved_title_deferred_purge, true);
+  assert.equal(proof.purged_agents, 1);
+  assert.equal(proof.title_request_count, 1);
+
+  attempts = 0;
+  advanced = false;
+  released = false;
+  activeAtDeferral = false;
+  requests.length = 0;
+  await assert.rejects(unresolvedTitleRetirement(context), /retirement_live_title_retention_unproven/);
+  assert.equal(advanced, false);
+});
+
+test('purge uses tagged Mongo work steps and cannot expire a replacement lease', async () => {
+  const script = await readFile(new URL('../owner/retirement_purge.js', import.meta.url), 'utf8');
+  const {createHash} = createRequire(import.meta.url)('crypto');
+  const agentId = 'fixture-agent', sandboxId = 'fixture-sandbox', operationId = 'fixture-operation';
+  const titleDigest = 'a'.repeat(64), owner = 'native-am-fixture-owner';
+  const refusedLeaseSha256 = createHash('sha256').update('5:old-worker').digest('hex');
+  const child = {_id: agentId, status: 'deleted', owner, record: {origin: {operation_id: operationId}}};
+  const future = new Date(Date.now() + 60000).toISOString();
+  const sandbox = {status: 'retired', purge_after: future, work_ready_at: future,
+    record: {runtime: null, work: {step: {kind: 'wait_for_purge'}}}};
+  const title = {title_effect_custody: {intent: {acquired_ms: 1000, expires_ms: 46000}}};
+  const writes = [];
+  const receipt = {findOne: async () => ({_id: 'fixture-receipt'})};
+  const updated = name => async filter => { writes.push([name, filter]); return {modifiedCount: 1}; };
+  const snapshot = {
+    sandboxes: {findOne: async () => sandbox, updateOne: updated('sandbox')},
+    agents: {find: () => ({limit: () => ({toArray: async () => [child]})}),
+      findOne: async () => title, updateOne: updated('agent')},
+    agent_log: receipt, agent_creation_provenance: receipt, getCollection: () => receipt,
+  };
+  const d = {getName: () => 'fixture', getMongo: () => ({
+    startSession: async () => ({startTransaction: async () => {}, getDatabase: () => snapshot,
+      commitTransaction: async () => {}, endSession: async () => {}}),
+  })};
+  const run = fields => runInNewContext(script, {
+    scope: {agentId, sandboxId, operationId, titleDigest, admissions: [{agentId, operationId}], ...fields},
+    d, EJSON: JSON, require: createRequire(import.meta.url), NumberLong: Number, print: () => {},
+  });
+  await run({arm: true});
+  assert.equal(writes[1][1]['record.work.step.kind'], 'wait_for_purge');
+
+  sandbox.record.work.step.kind = 'purge';
+  sandbox.purge_after = new Date(Date.now() - 1000).toISOString();
+  sandbox.work_lease_expires_at = future;
+  sandbox.record.work.lease = {holder: 'successor', fence: 6, expires_at: future};
+  writes.length = 0;
+  const advance = {arm: false, advanceTitle: true, refusedLeaseSha256};
+  await assert.rejects(run(advance), /retirement_purge_refused_lease_replaced/);
+  assert.equal(writes.length, 0);
+
+  sandbox.record.work.lease = {holder: 'old-worker', fence: 5, expires_at: future};
+  await run(advance);
+  assert.equal(writes[1][1]['record.work.step.kind'], 'purge');
+  assert.equal(writes[1][1]['record.work.lease.holder'], 'old-worker');
+  assert.equal(writes[1][1]['record.work.lease.fence'], 5);
+});
+
 test('an equal-count unlisted child cannot authorize or pass a purge observation', async () => {
   const script = await readFile(new URL('../owner/retirement_purge.js', import.meta.url), 'utf8');
   const owner = 'native-am-fixture-owner';
   const agentId = 'fixture-agent', sandboxId = 'fixture-sandbox', operationId = 'fixture-operation';
   const future = new Date(Date.now() + 60000).toISOString();
   const sandbox = {status: 'retired', purge_after: future, work_ready_at: future,
-    record: {runtime: null, work: {step: 'wait_for_purge'}}};
+    record: {runtime: null, work: {step: {kind: 'wait_for_purge'}}}};
   const rows = [{_id: agentId, owner, status: 'deleted', record: {origin: {operation_id: operationId}}},
     {_id: 'unlisted', owner, status: 'deleted'}];
   let writes = 0;
