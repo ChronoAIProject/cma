@@ -26,9 +26,12 @@ export async function preparedSchemaRefusal({adapter, admit, cleanup, recordFail
       'prepared_schema_race_abort_not_attributed');
     const state = await race('read');
     const changesSchema = barrier === 'worktree_schema';
+    const addsCleanup = barrier === 'worktree_cleanup';
+    const changesLease = barrier === 'work_lease';
     check(state.agentId === record.agentId && state.sandboxId === record.sandboxId
       && (changesSchema ? state.schema === 999 : state.schema === changed.schema)
-      && state.cleanup_marked === !changesSchema && state.receipt_count === changed.receipt_count
+      && state.cleanup_marked === addsCleanup && state.work_lease_changed === changesLease
+      && state.receipt_count === changed.receipt_count
       && state.conversation_unpublished === true && state.ready_fences_absent === true,
     'prepared_schema_race_partial_publication');
     const finalOwner = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
@@ -36,7 +39,8 @@ export async function preparedSchemaRefusal({adapter, admit, cleanup, recordFail
       'prepared_schema_race_owner_changed');
     result = {ingress, owner: owner.am, owner_epoch: owner.epoch, agent_sha256: hash(record.agentId),
       observed_known_abort: true, prepared_schema_refused: changesSchema,
-      prepared_cleanup_refused: !changesSchema, startup_receipt_count: state.receipt_count};
+      prepared_cleanup_refused: addsCleanup, prepared_work_lease_refused: changesLease,
+      startup_receipt_count: state.receipt_count};
   }, async () => {
     await withRestoration(async () => {
       if (record) {

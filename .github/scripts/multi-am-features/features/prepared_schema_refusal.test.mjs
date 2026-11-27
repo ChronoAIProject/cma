@@ -18,7 +18,8 @@ function fixture({aborts = 1, refusals = {a: 1, b: 0}, partial = false, restoreF
       calls.push(action);
       if (action === 'inject') return before;
       if (action === 'read') return {...before, schema: barrier === 'worktree_schema' ? 999 : before.schema,
-        cleanup_marked: barrier === 'worktree_cleanup', conversation_unpublished: true, ready_fences_absent: !partial};
+        cleanup_marked: barrier === 'worktree_cleanup', work_lease_changed: barrier === 'work_lease',
+        conversation_unpublished: true, ready_fences_absent: !partial};
       if (restoreFails) throw Error('restore_failure');
       return {restored: 1};
     },
@@ -48,6 +49,16 @@ test('a live prepared cleanup marker refuses publication without changing the Wo
   const result = await preparedSchemaRefusal(context);
   assert.equal(result.prepared_cleanup_refused, true);
   assert.equal(result.prepared_schema_refused, false);
+  assert.equal(result.startup_receipt_count, 2);
+  assert.deepEqual(context.calls, ['arm', 'admit', 'inject', 'disarm', 'read', 'restore', 'disarm', 'cleanup']);
+});
+
+test('the exact Agent work lease can change without committing Ready or its open receipt', async () => {
+  const context = fixture({barrier: 'work_lease'});
+  const result = await preparedSchemaRefusal(context);
+  assert.equal(result.prepared_work_lease_refused, true);
+  assert.equal(result.prepared_schema_refused, false);
+  assert.equal(result.prepared_cleanup_refused, false);
   assert.equal(result.startup_receipt_count, 2);
   assert.deepEqual(context.calls, ['arm', 'admit', 'inject', 'disarm', 'read', 'restore', 'disarm', 'cleanup']);
 });

@@ -93,6 +93,7 @@ test('prepared coverage requires the scoped abort, both ingress steps and a comp
   journey.verdict = 'LOCAL_PREPARED_TWO_AM_PASS';
   for (const [missing, expected] of [
     ['prepared_worktree_cleanup_refusal', ['PASS', 'PASS', 'NOT_RUN']],
+    ['prepared_work_lease_refusal', ['PASS', 'NOT_RUN', 'PASS']],
     ['prepared_worktree_schema_refusal', ['PASS', 'NOT_RUN', 'NOT_RUN']],
     ['prepared_create_on_b', ['NOT_RUN', 'PASS', 'NOT_RUN']],
   ]) {

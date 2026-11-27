@@ -168,9 +168,9 @@ def publication_evidence(fixture, agentId=None):
 
 def prepared_schema_refusals(fixture, agentId=None, barrier='worktree_schema'):
     require_feature_fixture(fixture, kind='prepared')
-    cause = {'worktree_schema': 'stored_data_invalid', 'worktree_cleanup': 'store_conflict'}.get(barrier)
-    if cause is None:
+    if barrier not in ('worktree_schema', 'worktree_cleanup', 'work_lease'):
         raise ValueError('prepared_parent_barrier_required')
+    cause = 'stored_data_invalid' if barrier == 'worktree_schema' else 'store_conflict'
     digest = agent_digest(agentId)
     return {manager: sum(fields.get('phase') == 'execution' and fields.get('origin') == 'execute'
                          and fields.get('cause_class') == cause and fields.get('agent_hash') == digest
@@ -200,7 +200,7 @@ def prepared_schema_barrier(fixture, arm=None):
 
 def prepared_schema_race(fixture, action=None, operationId=None, reservations=None, barrier='worktree_schema'):
     require_feature_fixture(fixture, kind='prepared')
-    if (action not in ('inject', 'read', 'restore') or barrier not in ('worktree_schema', 'worktree_cleanup')
+    if (action not in ('inject', 'read', 'restore') or barrier not in ('worktree_schema', 'worktree_cleanup', 'work_lease')
             or not isinstance(reservations, list)
             or not 1 <= len(reservations) <= 2 or any(not isinstance(value, str)
             or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in [operationId, *reservations])):
