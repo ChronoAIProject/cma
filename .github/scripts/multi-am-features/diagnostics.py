@@ -35,7 +35,7 @@ def command_outcome(stage, program, returncode, elapsed, output, timed_out=False
         'api_invalid_resource': (b'error from server (invalid)', b' is invalid: '),
         'admission_webhook_unreachable': (b'failed calling webhook', b'failed to call webhook'),
         'admission_webhook_denied': (b'denied the request',),
-        'image_not_found': (b'manifest unknown', b'image not found', b'code = notfound desc = an image with ref'),
+        'image_not_found': (b'manifest unknown', b'image not found'),
         'executable_format': (b'exec format error',),
         'configuration_refused': (b'configuration is not usable:',),
         'application_stopped': (b'cma stopped',),

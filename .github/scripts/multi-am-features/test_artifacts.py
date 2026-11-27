@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from artifacts import SOURCE, checked_metadata, load_image
+from artifacts import SOURCE, checked_metadata, import_tag, load_image
 
 REVISION = 'a' * 40
 TREE = 'b' * 40
@@ -141,17 +141,41 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(self.load(command), reference)
         self.assertIn(['docker', 'exec', 'test-node', 'crictl', 'inspecti', reference], calls)
 
-    def test_immutable_reference_requires_the_expected_config_after_inspection(self):
-        _, loader, reference = self.loader(IMAGE)
+    def test_import_waits_only_for_an_absent_exact_cri_image(self):
+        tag = f'localhost/multi-am-{COMPONENT}:{REVISION}'
+        replies = iter((None, None, json.dumps({'status': {'id': IMAGE_ID}})))
+        calls, base, reference = self.loader(IMAGE)
+        inspect = ['docker', 'exec', 'test-node', 'crictl', 'inspecti', reference]
+        attempts = []
+
+        def command(argv, **kwargs):
+            if argv == inspect:
+                attempts.append(kwargs)
+                return next(replies)
+            return base(argv, **kwargs)
+
+        with patch('artifacts.time.sleep') as sleep:
+            self.assertEqual(import_tag(command, 'test-node', 'test-cluster', tag, IMAGE_ID), reference)
+        self.assertEqual(attempts, [{'timeout': 10, 'allow_pending_image': True}] * 3)
+        self.assertEqual([call.args for call in sleep.call_args_list], [(1,), (2,)])
+        self.assertEqual(sum(argv[0] == 'kind' for argv in calls), 1)
+
+    def test_missing_cri_image_does_not_bypass_the_final_read(self):
+        attempts = []
+        tag = f'localhost/multi-am-{COMPONENT}:{REVISION}'
+        _, base, reference = self.loader(IMAGE)
 
         def command(argv, **kwargs):
             if argv[-2:] == ['inspecti', reference]:
-                self.assertEqual(kwargs, {'timeout': 5, 'attempts': 6})
-                return json.dumps({'status': {'id': 'sha256:' + 'f' * 64}})
-            return loader(argv, **kwargs)
+                attempts.append(kwargs)
+                if kwargs.get('allow_pending_image'):
+                    return None
+                raise RuntimeError('fixture_command_failed')
+            return base(argv, **kwargs)
 
-        with self.assertRaisesRegex(ValueError, 'imported_config_mismatch'):
-            self.load(command)
+        with patch('artifacts.time.sleep'), self.assertRaisesRegex(RuntimeError, 'fixture_command_failed'):
+            import_tag(command, 'test-node', 'test-cluster', tag, IMAGE_ID)
+        self.assertEqual(attempts, [{'timeout': 10, 'allow_pending_image': True}] * 3 + [{'timeout': 10}])
 
     def test_mismatched_loaded_runtime_contract_fails_before_kind_import(self):
         labels = {**IMAGE['Config']['Labels'], 'dev.chrono.cma.runtime-contract': '2'}

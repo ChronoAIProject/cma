@@ -39,16 +39,7 @@ class Infrastructure:
         self.command_outcomes = []
         self.failed_command = None
 
-    def command(self, argv, timeout=60, data=None, *, attempts=1):
-        for attempt in range(attempts):
-            try:
-                return self._command_once(argv, timeout, data, final_attempt=attempt + 1 == attempts)
-            except RuntimeError as error:
-                if str(error) != 'fixture_command_failed' or attempt + 1 == attempts:
-                    raise
-                time.sleep(min(1, max(0, self.deadline - time.monotonic())))
-
-    def _command_once(self, argv, timeout, data, *, final_attempt):
+    def command(self, argv, timeout=60, data=None, *, allow_pending_image=False):
         remaining = self.deadline - time.monotonic()
         if remaining <= 0:
             raise TimeoutError('infrastructure_deadline')
@@ -68,13 +59,25 @@ class Infrastructure:
                 raise
             finally:
                 log.flush()
+                raw = path.read_bytes()
                 outcome = command_outcome(self.stage, Path(argv[0]).name,
-                    process.returncode, time.monotonic() - started, path.read_bytes(), interrupted)
-                if argv[0:2] == ['docker', 'exec'] and argv[3:5] == ['crictl', 'inspecti']:
-                    outcome['operation'] = 'inspect_imported_image'
+                    process.returncode, time.monotonic() - started, raw, interrupted)
+                inspect_image = argv[:2] == ['docker', 'exec'] and argv[3:5] == ['crictl', 'inspecti'] and len(argv) == 6
+                missing_image = False
+                if inspect_image and process.returncode == 1 and not interrupted:
+                    message = f'no such image "{argv[-1]}" present'
+                    # crictl's text formatter can quote and escape the error.
+                    missing_image = any(text.encode() in raw for text in (message, json.dumps(message)[1:-1]))
+                pending_image = allow_pending_image and missing_image
+                if inspect_image:
+                    outcome['operation'] = 'cri_image_status'
+                if missing_image:
+                    outcome['signals'].append('cri_image_absent')
                 self.command_outcomes.append(outcome)
-                if (interrupted or (process.returncode and final_attempt)) and self.failed_command is None:
+                if (process.returncode or interrupted) and not pending_image and self.failed_command is None:
                     self.failed_command = outcome
+            if pending_image:
+                return None
             if process.returncode:
                 raise RuntimeError('fixture_command_failed')
             log.seek(0)

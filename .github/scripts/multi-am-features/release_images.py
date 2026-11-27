@@ -4,7 +4,6 @@ import json
 from pathlib import Path, PurePosixPath
 import re
 import tarfile
-from artifacts import inspect_imported_image
 
 COMPONENTS = ('api', 'runtime', 'runtime-omarchy')
 SOURCE = 'https://github.com/ChronoAIProject/cma'
@@ -119,6 +118,6 @@ def load_release_image(command, node, cluster, directory, component, row):
     reference = f'localhost/multi-am-{component}@' + row['manifest']
     if not any(parts[0] == reference for parts in matches):
         command(prefix + ['images', 'tag', matches[0][0], reference])
-    status = inspect_imported_image(command, node, reference)
+    status = json.loads(command(['docker', 'exec', node, 'crictl', 'inspecti', reference]))['status']
     require(status.get('id') == row['config'], 'release_imported_config_mismatch')
     return reference

@@ -5,7 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from diagnostics import command_outcome, initialization_timeout
 from infrastructure import Infrastructure
@@ -53,6 +53,35 @@ class DiagnosticTests(unittest.TestCase):
             self.assertEqual(infra.failed_command, first)
             self.assertTrue(all(p.poll() is not None for p in infra.children))
 
+    def test_only_exact_cri_absence_can_be_a_pending_image_read(self):
+        reference = 'localhost/runtime@sha256:' + 'a' * 64
+        argv = ['docker', 'exec', 'fixture-node', 'crictl', 'inspecti', reference]
+        pending = f'no such image "{reference}" present'
+        with tempfile.TemporaryDirectory() as directory:
+            infra = Infrastructure(directory)
+            infra.stage = 'image_runtime_omarchy'
+
+            def execute(output, *, allow):
+                def spawn(_, *, stdout, **_kwargs):
+                    process = Mock(returncode=1)
+                    process.communicate.side_effect = lambda *_args, **_kwargs: stdout.write(output)
+                    return process
+
+                with patch('infrastructure.subprocess.Popen', side_effect=spawn):
+                    return infra.command(argv, allow_pending_image=allow)
+
+            for output in (pending, 'level=fatal msg=' + json.dumps(pending)):
+                self.assertIsNone(execute(output, allow=True))
+                self.assertEqual(infra.command_outcomes[-1]['signals'], ['cri_image_absent'])
+                self.assertEqual(infra.command_outcomes[-1]['operation'], 'cri_image_status')
+                self.assertIsNone(infra.failed_command)
+            with self.assertRaisesRegex(RuntimeError, 'fixture_command_failed'):
+                execute('no such image "unrelated" present', allow=True)
+            self.assertEqual(infra.failed_command['signals'], [])
+            with self.assertRaisesRegex(RuntimeError, 'fixture_command_failed'):
+                execute(pending, allow=False)
+            self.assertNotIn(reference, json.dumps(infra.command_outcomes))
+
     def test_timeout_joins_child_and_retains_original_stage(self):
         with tempfile.TemporaryDirectory() as directory:
             infra = Infrastructure(directory)
@@ -61,21 +90,4 @@ class DiagnosticTests(unittest.TestCase):
                 infra.command([sys.executable, '-c', 'import time;time.sleep(10)'], timeout=0.05)
             self.assertTrue(infra.failed_command['timed_out'])
             self.assertEqual(infra.failed_command['stage'], 'kind_cluster_create')
-            self.assertTrue(all(p.poll() is not None for p in infra.children))
-
-    def test_read_retry_retains_attempts_and_reports_only_terminal_failure(self):
-        with tempfile.TemporaryDirectory() as directory, patch('infrastructure.time.sleep'):
-            infra = Infrastructure(directory)
-            infra.stage = 'image_runtime_omarchy'
-            marker = Path(directory, 'read-attempt')
-            recovering = [sys.executable, '-c',
-                "from pathlib import Path; import sys; p = Path(sys.argv[1]); "
-                "found = p.exists(); p.touch(); sys.exit(0 if found else 3)", str(marker)]
-            self.assertEqual(infra.command(recovering, attempts=3), '')
-            self.assertEqual([row['returncode'] for row in infra.command_outcomes], [3, 0])
-            self.assertIsNone(infra.failed_command)
-            with self.assertRaisesRegex(RuntimeError, 'fixture_command_failed'):
-                infra.command([sys.executable, '-c', 'raise SystemExit(4)'], attempts=2)
-            self.assertEqual([row['returncode'] for row in infra.command_outcomes], [3, 0, 4, 4])
-            self.assertEqual(infra.failed_command['returncode'], 4)
             self.assertTrue(all(p.poll() is not None for p in infra.children))

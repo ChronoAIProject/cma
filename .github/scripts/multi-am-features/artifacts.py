@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import stat
 import subprocess
+import time
 
 SOURCE = 'https://github.com/ChronoAIProject/cma'
 MAX_METADATA_BYTES = 16 * 1024
@@ -79,16 +80,20 @@ def import_tag(command, node, cluster, tag, config_id):
         raise ValueError('imported_manifest_missing')
     reference = tag.split(':')[0] + '@' + matches[0][2]
     command(prefix + ['images', 'tag', tag, reference])
-    observed = inspect_imported_image(command, node, reference)
+    inspect = ['docker', 'exec', node, 'crictl', 'inspecti', reference]
+    # ctr can publish the alias before the CRI service has observed its event.
+    # Re-read only when CRI explicitly reports the same digest is absent.
+    for delay in (1, 2, 4):
+        raw = command(inspect, timeout=10, allow_pending_image=True)
+        if raw is not None:
+            break
+        time.sleep(delay)
+    else:
+        raw = command(inspect, timeout=10)
+    observed = json.loads(raw)['status']
     if observed.get('id') != config_id:
         raise ValueError('imported_config_mismatch')
     return reference
-
-
-def inspect_imported_image(command, node, reference):
-    # CRI learns about the new containerd image reference asynchronously.
-    result = command(['docker', 'exec', node, 'crictl', 'inspecti', reference], timeout=5, attempts=6)
-    return json.loads(result)['status']
 
 
 def load_pinned_dependency(command, node, cluster, component, pinned):
