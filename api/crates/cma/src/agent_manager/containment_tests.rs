@@ -3,7 +3,7 @@ use layer2_core::agent_ownership::{
     test_support::MemoryOwnershipStore, Member, OwnershipStore, DEFAULT_MAX_OWNED_AGENTS,
     PROTOCOL_VERSION,
 };
-use layer3_adapter::owner_protocol::ReceiverRevocation;
+use layer3_adapter::owner_protocol::{ReceiverRevocation, TransportAuthority};
 use std::sync::atomic::AtomicBool;
 use std::{collections::BTreeSet, time::Duration};
 
