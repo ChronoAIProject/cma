@@ -15,7 +15,7 @@ export function createAdapter(config) {
     'observeNeverReady','liveOwnerLease','lifecycleSnapshot','organizationMembership',
     'configurationLog','configurationDispatch','publicationEvidence','retirementPurge','removeRuntimePod',
     'artifactPublicationAbort','preparedPublicationAbort','preparedSchemaBarrier','preparedSchemaRace','preparedSchemaRefusals',
-    'writerPublicationAbort','writerPublicationEvidence','runtimeLossPublicationAbort','runtimeLossEvidence',
+    'writerPublicationAbort','writerPublicationEvidence','runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
     'shareRedemptionPublicationAbort']
     .map(name=>[name,(body)=>call(name,body)]));
 }

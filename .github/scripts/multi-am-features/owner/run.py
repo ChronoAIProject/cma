@@ -33,7 +33,7 @@ from publication_evidence import (artifact_publication_abort, prepared_publicati
                                   writer_publication_abort, writer_publication_evidence)
 from readiness_scaling import drain_owner, observe_never_ready, observe_scale
 from retirement_purge import retirement_purge
-from runtime_loss import remove_runtime_pod
+from runtime_loss import remove_runtime_pod, runtime_inventory_authority
 from title_evidence import title_effects, title_intent
 
 ROOT=Path(__file__).resolve().parent
@@ -64,6 +64,7 @@ class Fixture:
     preparedSchemaRefusals = prepared_schema_refusals
     retirementPurge = retirement_purge
     removeRuntimePod = remove_runtime_pod
+    runtimeInventoryAuthority = runtime_inventory_authority
     drainOwner = drain_owner
     titleEffects = title_effects
     titleIntent = title_intent
@@ -418,7 +419,8 @@ class Fixture:
                              'organizationMembership','configurationLog','configurationDispatch','publicationEvidence',
                              'retirementPurge','removeRuntimePod','artifactPublicationAbort','preparedPublicationAbort','preparedSchemaBarrier',
                              'preparedSchemaRace','preparedSchemaRefusals','writerPublicationAbort','writerPublicationEvidence',
-                             'runtimeLossPublicationAbort','runtimeLossEvidence','shareRedemptionPublicationAbort']
+                             'runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
+                             'shareRedemptionPublicationAbort']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

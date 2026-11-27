@@ -154,6 +154,8 @@ def managers(secret, ready):
         container['name']=name
         container['env']=[{'name':'POD_IP','valueFrom':{'fieldRef':{'fieldPath':'status.podIP'}}},
             {'name':'CHRONO_AGENT_MANAGER_RELAY_ADDRESS','value':'http://$(POD_IP):8080'}]
+        if ready.get('fixture') == 'features':
+            pod['spec']['serviceAccountName'] = 'cma-native-am-' + suffix
         pod['spec']['restartPolicy'] = 'Always'
         stateful = {'apiVersion': 'apps/v1', 'kind': 'StatefulSet',
             'metadata': old.metadata(name), 'spec': {'serviceName': name, 'replicas': 1,

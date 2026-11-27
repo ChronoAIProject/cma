@@ -124,7 +124,8 @@ class Infrastructure:
             time.sleep(max(0, min(deadline - time.monotonic(), 1)))
         raise ValueError('rwop_csi_driver_missing')
 
-    def setup(self, artifacts, revision, run_id, attempt, release_packet=None, *, include_gateway=False):
+    def setup(self, artifacts, revision, run_id, attempt, release_packet=None, *, include_gateway=False,
+              split_inventory=False):
         if include_gateway and release_packet:
             raise ValueError('gateway_requires_same_invocation_image')
         self.stage = 'checkout_binding'
@@ -181,7 +182,7 @@ class Infrastructure:
                 obj = bind_storage(obj, self.command, self.node, self.cluster)
             self.k(['create', '-f', '-'], data=json.dumps(obj))
         namespace = 'cma-native-am'
-        for index, obj in enumerate(application_objects(namespace)):
+        for index, obj in enumerate(application_objects(namespace, split_inventory=split_inventory)):
             self.stage = 'fixture_application_' + str(index)
             self.k(['create', '-f', '-'], data=json.dumps(obj))
         self.stage = 'sandbox_controller_ready'

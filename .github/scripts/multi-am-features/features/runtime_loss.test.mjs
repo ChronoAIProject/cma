@@ -5,7 +5,7 @@ import {runtimeLoss} from './runtime_loss.mjs';
 
 function fixture({changeHome = false, changeConversation = false, loseHistory = false,
   postEvents = 1, mixedGenerations = false, aborts = {a: 1, b: 0}, consumedAborts = 1,
-  scheduled = {a: 0, b: 1},
+  scheduled = {a: 1, b: 0}, inventoryUnbound = false,
   missWindow = false, loseTitle = false, titleSeq = 23, transactionEntered = true,
   writerOnIngress = false, writerNotLogged = false, replaceManager = false, repeatAbort = false} = {}) {
   const record = {agentId: 'agent', sandboxId: 'sandbox', operationId: 'create', runtime: {image: 'image'}};
@@ -23,7 +23,7 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
   const members = Object.fromEntries([['a', 'agent'], ['b', 'sibling']].map(([am, agent]) => [am, {
     ready: true, instance_id: 'manager-' + am, pod_uid: 'owner-' + agent,
   }]));
-  const reads = [], completions = [], faultActions = [];
+  const reads = [], completions = [], faultActions = [], inventoryActions = [];
   const adapter = {
     ownerOf: async ({agentId}) => {
       const am = agentId === 'agent' ? 'a' : 'b';
@@ -48,6 +48,7 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
       assert.deepEqual(scope, {agentId: 'agent', sandboxId: 'sandbox', operationId: 'create', podUid: 'pod-a'});
       assert(!removed);
       assert.deepEqual(faultActions, ['arm']);
+      assert.deepEqual(inventoryActions, [{manager: 'b', allow: false}]);
       removed = true;
       return {accepted: true, pod_uid: 'pod-a'};
     },
@@ -69,6 +70,10 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
         return {entered: transactionEntered};
       }
       return {count: action === 'arm' ? 3 : 3 + consumedAborts};
+    },
+    runtimeInventoryAuthority: async ({manager, allow}) => {
+      inventoryActions.push({manager, allow});
+      return {manager, allowed: allow, peer_allowed: allow || !inventoryUnbound};
     },
     titleEffects: async ({agentId, title: expected}) => {
       assert.equal(agentId, 'sibling');
@@ -100,7 +105,7 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
     return {body: {id: agentId, status: 'ready', sandbox: {id: 'sandbox'}, workspace: {id: 'workspace'},
       worktree: {id: 'worktree-' + agentId}}};
   }};
-  return {adapter, api, record, sibling, reads, completions, faultActions,
+  return {adapter, api, record, sibling, reads, completions, faultActions, inventoryActions,
     openBoth: async input => { assert([record, sibling].includes(input)); return {both_am_details_and_transcripts: true}; },
     complete: async (input, am) => completions.push([input.agentId, am, removed]),
     waitFor: async (read, accept, {code}) => {
@@ -121,12 +126,13 @@ test('runtime loss retains both Agents with one replacement and a working peer S
   assert.equal(result.competing_metadata_publications, 1);
   assert.equal(result.recovery_abort_manager, 'a');
   assert.equal(result.recovery_abort_instance_sha256, hash('manager-a'));
-  assert.equal(result.recovery_commit_manager, 'b');
-  assert.equal(result.recovery_commit_instance_sha256, hash('manager-b'));
+  assert.equal(result.recovery_commit_manager, 'a');
+  assert.equal(result.recovery_commit_instance_sha256, hash('manager-a'));
   assert.equal(result.metadata_ingress_instance_sha256, hash('manager-a'));
   assert.equal(result.metadata_writer_instance_sha256, hash('manager-b'));
   assert.equal(result.metadata_request_sha256, hash('preferences-request'));
   assert.deepEqual(context.faultActions, ['arm', 'wait', 'disarm']);
+  assert.deepEqual(context.inventoryActions, [{manager: 'b', allow: false}, {manager: 'b', allow: true}]);
   assert.deepEqual(context.reads.filter(([, path]) => path.includes('/events')), [
     ['a', '/api/v1/agents/agent/events?after=20'], ['b', '/api/v1/agents/agent/events?after=20'],
     ['a', '/api/v1/agents/sibling/events?after=20'], ['b', '/api/v1/agents/sibling/events?after=20'],
@@ -148,12 +154,21 @@ test('runtime loss disarms the fault and rejects unbound or repeated aborts', as
     [{repeatAbort: true}, /runtime_loss_abort_repeated_after_retry/],
     [{scheduled: {a: 0, b: 0}}, /runtime_loss_successful_publication_unattributed/],
     [{scheduled: {a: 1, b: 1}}, /runtime_loss_successful_publication_not_unique/],
+    [{scheduled: {a: 0, b: 1}}, /runtime_loss_recovery_commit_wrong_manager/],
   ]) {
     const context = fixture(input);
     await assert.rejects(runtimeLoss(context), error);
     assert.deepEqual(context.faultActions, ['arm', 'wait', 'disarm']);
+    assert.deepEqual(context.inventoryActions, [{manager: 'b', allow: false}, {manager: 'b', allow: true}]);
     assert.deepEqual(context.completions, [['sibling', 'a', false]]);
   }
+});
+
+test('runtime loss restores inventory access if the peer cannot perform the initial provider read', async () => {
+  const context = fixture({inventoryUnbound: true});
+  await assert.rejects(runtimeLoss(context), /runtime_loss_inventory_authority_unbound/);
+  assert.deepEqual(context.faultActions, []);
+  assert.deepEqual(context.inventoryActions, [{manager: 'b', allow: false}, {manager: 'b', allow: true}]);
 });
 
 test('a new Pod alone cannot pass while the home, conversation or event custody changes', async () => {

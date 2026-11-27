@@ -64,8 +64,14 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
   let writer;
   let writerProof;
   const router = new NonOwnerRouter({adapter, record: proof => { writerProof = proof; }});
-  let armed, disarmed, observedRecovery;
-  await withRestoration(async () => {
+  const recoveryManager = other(siblingOwner.am);
+  const inventoryAuthority = async allow => {
+    const authority = await adapter.runtimeInventoryAuthority({manager: siblingOwner.am, allow});
+    check(authority?.manager === siblingOwner.am && authority.allowed === allow && authority.peer_allowed === true,
+      'runtime_loss_inventory_authority_unbound');
+  };
+  let armed, disarmed, observedRecovery, publication;
+  const removeAndWrite = async () => {
     armed = await adapter.runtimeLossPublicationAbort({action: 'arm'});
     check(Number.isSafeInteger(armed?.count), 'runtime_loss_abort_count_unbound');
     const removed = await adapter.removeRuntimePod({agentId, sandboxId, operationId, podUid: runtime.pod_uid});
@@ -77,7 +83,8 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
     }));
     check(writer.body?.title === title && writer.body?.revision === preferences.revision + 1,
       'runtime_loss_competing_publication_unbound');
-    check(writerProof?.verified_owner_write === true && writer.timing.am === writerProof.ingress,
+    check(writerProof?.verified_owner_write === true && writer.timing.am === writerProof.ingress
+      && writerProof.owner === siblingOwner.am && writerProof.owner_epoch === siblingOwner.epoch,
       'runtime_loss_writer_unattributed');
     const ingressEvidence = await adapter.peerWriteEvidence({am: writerProof.ingress,
       requestHash: hash(writerProof.request_id), epoch: writerProof.owner_epoch, operation: 'preferences'});
@@ -85,25 +92,30 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
     check(equal(await observeRecovery(), priorRecovery), 'runtime_loss_writer_missed_transaction_window');
     observedRecovery = await waitFor(observeRecovery, value => managers.some(am => value[am]?.known_aborts > 0),
       {timeout: 90000, code: 'runtime_loss_abort_not_observed'});
-  }, async () => {
-    disarmed = await adapter.runtimeLossPublicationAbort({action: 'disarm'});
-  });
+  };
+  await withRestoration(async () => {
+    await inventoryAuthority(false);
+    await withRestoration(removeAndWrite, async () => {
+      disarmed = await adapter.runtimeLossPublicationAbort({action: 'disarm'});
+    });
+    publication = await waitFor(observeRecovery, value => managers.some(am => value[am]?.recovery_scheduled > 0),
+      {timeout: 90000, code: 'runtime_loss_successful_publication_unattributed'});
+  }, () => inventoryAuthority(true));
   check(Number.isSafeInteger(armed?.count) && disarmed?.count === armed.count + 1,
     'runtime_loss_abort_not_consumed_once');
   const aborts = managers.map(am => observedRecovery[am]?.known_aborts);
   check(aborts.every(count => count === 0 || count === 1) && aborts[0] + aborts[1] === 1,
     'runtime_loss_abort_count_unbound');
   const abortAm = managers[aborts.indexOf(1)];
-  check(abortAm === writerProof.ingress, 'runtime_loss_recovery_and_writer_share_manager');
+  check(abortAm === recoveryManager && abortAm === writerProof.ingress, 'runtime_loss_recovery_and_writer_share_manager');
   const recovered = await waitFor(snapshot, recoveredSnapshot, {timeout: 240000, code: 'runtime_loss_recovery_timeout'});
-  const publication = await waitFor(observeRecovery, value => managers.some(am => value[am]?.recovery_scheduled > 0),
-    {timeout: 10000, code: 'runtime_loss_successful_publication_unattributed'});
   check(managers.every((am, index) => publication[am]?.known_aborts === aborts[index]),
     'runtime_loss_abort_repeated_after_retry');
   const scheduled = managers.map(am => publication[am]?.recovery_scheduled);
   check(scheduled.every(count => count === 0 || count === 1) && scheduled[0] + scheduled[1] === 1,
     'runtime_loss_successful_publication_not_unique');
   const recoveryAm = managers[scheduled.indexOf(1)];
+  check(recoveryAm === recoveryManager, 'runtime_loss_recovery_commit_wrong_manager');
   const finalTopology = await adapter.topology();
   check(managers.every(am => {
     const initial = initialTopology.ams?.[am];

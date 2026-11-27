@@ -63,7 +63,8 @@ def run(args):
         result['stage'] = 'shared_cluster_and_images'
         include_gateway = args.fixture == 'features' and release_packet is None
         ready = infrastructure.setup(args.artifacts, args.revision, args.run_id, args.attempt,
-                                     release_packet, include_gateway=include_gateway)
+                                     release_packet, include_gateway=include_gateway,
+                                     split_inventory=args.fixture == 'features')
         result['image_input']['manifests'] = {
             'api': ready['expected_api_image'].split('@', 1)[1],
             'runtime': ready['runtime_images']['base'].split('@', 1)[1],

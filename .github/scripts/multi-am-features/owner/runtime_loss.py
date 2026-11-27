@@ -6,6 +6,43 @@ import re
 from common import require_feature_fixture
 
 
+def runtime_inventory_authority(fixture, manager=None, allow=None):
+    require_feature_fixture(fixture)
+    if manager not in ('a', 'b') or type(allow) is not bool:
+        raise ValueError('runtime_inventory_authority_scope_required')
+    client = fixture.client
+    namespace = client.namespace
+    account = f'cma-native-am-{manager}'
+    binding = account + '-inventory'
+    subject = {'kind': 'ServiceAccount', 'name': account, 'namespace': namespace}
+    row = client.kjson(['get', 'rolebinding', binding, '-o', 'json'])
+    if (row['metadata'].get('name') != binding or row['metadata'].get('namespace') != namespace
+            or row.get('roleRef') != {'apiGroup': 'rbac.authorization.k8s.io', 'kind': 'Role',
+                                     'name': 'cma-native-am-inventory'}
+            or row.get('subjects', []) not in ([], [subject])):
+        raise RuntimeError('runtime_inventory_binding_unbound')
+    pod = client.kjson(['get', 'pod', f'am-{manager}-0', '-o', 'json'])
+    if pod.get('spec', {}).get('serviceAccountName') != account:
+        raise RuntimeError('runtime_inventory_process_unbound')
+    expected = [subject] if allow else []
+    if row.get('subjects', []) != expected:
+        row['subjects'] = expected
+        client.k(['replace', '-f', '-'], data=json.dumps(row))
+
+    def can_list(am):
+        test_account = f'system:serviceaccount:{namespace}:cma-native-am-{am}'
+        code, result = client.k(['auth', 'can-i', 'list', 'sandboxes.agents.x-k8s.io',
+                                 '--as', test_account], check=False, timeout=5)
+        if (code, result.strip()) not in ((0, 'yes'), (1, 'no')):
+            raise RuntimeError('runtime_inventory_access_review_failed')
+        return code == 0
+
+    peer = 'b' if manager == 'a' else 'a'
+    client.wait(lambda: can_list(manager) == allow and can_list(peer), 12,
+                'runtime_inventory_authority_not_observed')
+    return {'manager': manager, 'allowed': allow, 'peer_allowed': True}
+
+
 def remove_runtime_pod(self, agentId=None, sandboxId=None, operationId=None, podUid=None):
     require_feature_fixture(self)
     if (any(not isinstance(value, str) or not re.fullmatch(r'[-A-Za-z0-9_]{1,160}', value)

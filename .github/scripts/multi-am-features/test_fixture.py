@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from cleanup import cleanup
+from application_fixture import objects as application_objects
 from infrastructure import Infrastructure
 from run_ci import run as run_ci
 
@@ -21,9 +22,40 @@ import legacy_manifests
 from run import Fixture
 from publication_evidence import FEATURES_MONGO_APP, PREPARED_MONGO_APP
 from readiness_scaling import observe_never_ready, observe_scale
+from runtime_loss import runtime_inventory_authority
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_feature_inventory_access_is_independent_for_the_two_managers(self):
+        namespace = 'cma-native-am'
+        resources = application_objects(namespace, split_inventory=True)
+        roles = {row['metadata']['name']: row['rules'] for row in resources if row['kind'] == 'Role'}
+        self.assertNotIn('list', roles['cma-native-am'][0]['verbs'])
+        self.assertEqual(roles['cma-native-am-inventory'], [{'apiGroups': ['agents.x-k8s.io'],
+                                                           'resources': ['sandboxes'], 'verbs': ['list']}])
+        manager_bindings = [row for row in resources if row['kind'] == 'RoleBinding'
+                            and row['roleRef']['name'] == 'cma-native-am-inventory']
+        self.assertEqual([row['subjects'][0]['name'] for row in manager_bindings],
+                         ['cma-native-am-a', 'cma-native-am-b'])
+        client = Mock(namespace=namespace)
+        pod = {'spec': {'serviceAccountName': 'cma-native-am-a'}}
+        fixture = SimpleNamespace(client=client, ready={'fixture': 'features', 'run_id': 'cma-ci-0123456789ab',
+            'context': 'kind-cma-ci-0123456789ab', 'server': 'https://127.0.0.1:1234'})
+        client.wait.side_effect = lambda predicate, *_: self.assertTrue(predicate())
+        client.kjson.side_effect = [manager_bindings[0], pod]
+        client.k.side_effect = ['', (1, 'no\n'), (0, 'yes\n')]
+        self.assertEqual(runtime_inventory_authority(fixture, manager='a', allow=False),
+                         {'manager': 'a', 'allowed': False, 'peer_allowed': True})
+        replaced = json.loads(client.k.call_args_list[0].kwargs['data'])
+        self.assertEqual(replaced['subjects'], [])
+        self.assertIn('cma-native-am-a-inventory', replaced['metadata']['name'])
+        client.kjson.side_effect = [replaced, pod]
+        client.k.side_effect = ['', (0, 'yes\n'), (0, 'yes\n')]
+        self.assertTrue(runtime_inventory_authority(fixture, manager='a', allow=True)['allowed'])
+        restored = json.loads(client.k.call_args_list[3].kwargs['data'])
+        self.assertEqual(restored['subjects'], [{'kind': 'ServiceAccount', 'name': 'cma-native-am-a',
+                                                'namespace': namespace}])
+
     def test_drain_records_readiness_and_liveness_on_the_original_process(self):
         fixture = Fixture.__new__(Fixture)
         fixture.drained, fixture.killed = {}, {}
