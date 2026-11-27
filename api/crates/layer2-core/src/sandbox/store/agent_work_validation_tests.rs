@@ -26,6 +26,86 @@ mod startup_failure_tests;
 mod startup_hold_tests;
 
 #[test]
+fn restart_positions_require_prior_readiness_and_the_matching_stop_intent() {
+    use super::agent_work_transition_validation::validate_position;
+
+    for (step, stop_reason) in [
+        (AgentWorkStep::RestartConversation, None),
+        (AgentWorkStep::RestartTeardown, Some(AgentStopReason::Owner)),
+    ] {
+        let (mut agent, mut worktree) = claimed(step, AgentStatus::Starting, WorktreeStatus::Ready);
+        agent.requested_stop_reason = stop_reason.clone();
+        assert_eq!(
+            validate_position(&agent, &worktree, false),
+            Err(SandboxStoreError::Conflict),
+            "{step:?} before first readiness"
+        );
+        agent.ready_at = Some(NOW.into());
+        assert_eq!(
+            validate_position(&agent, &worktree, false),
+            Ok(()),
+            "{step:?}"
+        );
+
+        agent.requested_stop_reason = stop_reason.is_none().then_some(AgentStopReason::Owner);
+        assert_eq!(
+            validate_position(&agent, &worktree, false),
+            Err(SandboxStoreError::Conflict),
+            "{step:?} with the other step's stop intent"
+        );
+        agent.requested_stop_reason = stop_reason;
+
+        worktree.status = WorktreeStatus::Creating;
+        assert_eq!(
+            validate_position(&agent, &worktree, false),
+            Err(SandboxStoreError::Conflict),
+            "{step:?} with an unfinished Worktree"
+        );
+        worktree.status = WorktreeStatus::Ready;
+        agent.status = AgentStatus::Ready;
+        assert_eq!(
+            validate_position(&agent, &worktree, false),
+            Err(SandboxStoreError::Conflict),
+            "{step:?} outside Starting"
+        );
+    }
+}
+
+#[test]
+fn unfinished_worktree_cleanup_requires_proof_that_the_retired_process_is_absent() {
+    use super::agent_work_transition_validation::validate_position;
+
+    let (stopped, mut worktree) = claimed(
+        AgentWorkStep::EnsureProcessClosed,
+        AgentStatus::Stopped,
+        WorktreeStatus::Creating,
+    );
+    assert_eq!(
+        validate_position(&stopped, &worktree, false),
+        Err(SandboxStoreError::Conflict)
+    );
+    assert_eq!(validate_position(&stopped, &worktree, true), Ok(()));
+
+    let (failed, _) = claimed(
+        AgentWorkStep::EnsureProcessClosed,
+        AgentStatus::Failed,
+        WorktreeStatus::Creating,
+    );
+    assert_eq!(
+        validate_position(&failed, &worktree, true),
+        Err(SandboxStoreError::Conflict)
+    );
+    worktree.status = WorktreeStatus::Ready;
+    assert_eq!(validate_position(&failed, &worktree, false), Ok(()));
+
+    worktree.status = WorktreeStatus::Removed;
+    assert_eq!(
+        validate_position(&stopped, &worktree, true),
+        Err(SandboxStoreError::Conflict)
+    );
+}
+
+#[test]
 fn warm_home_intent_preserves_the_prepared_skill_selection_and_session() {
     let (mut current, worktree) = claimed(
         AgentWorkStep::MaterializeHome,
