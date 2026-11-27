@@ -1,6 +1,8 @@
 (async () => {
   const hold = 'hangDuringBatchInsert';
+  const sweepHold = 'hangInsertBeforeWrite';
   const namespace = d.getName() + '.agent_creation_provenance';
+  const sweepNamespace = d.getName() + '.agent_provenance_progress';
   const budget = 10;
   const {action, app} = scope;
   async function configure(failpoint, mode, data) {
@@ -25,7 +27,10 @@
     try { await configure('failCommand', 'off'); }
     finally {
       try { await configure(hold, 'off'); }
-      finally { await profile(false); }
+      finally {
+        try { await configure(sweepHold, 'off'); }
+        finally { await profile(false); }
+      }
     }
     print(JSON.stringify({configured: false}));
     return;
@@ -61,6 +66,9 @@
     } while (Date.now() < deadline);
     if (!held) throw Error('provenance_progress_commit_insert_not_held');
 
+    // The worker can retry before its log reaches the fixture. Keep the
+    // following sweep receipt transaction from consuming the commit pulse.
+    await configure(sweepHold, 'alwaysOn', {ns: sweepNamespace});
     await profile(true);
     const baseline = await configure('failCommand', {times: budget}, {appName: app,
       failCommands: ['commitTransaction'], writeConcernError: {
@@ -109,5 +117,6 @@
   if (!Number.isSafeInteger(affected) || affected !== 5 || target !== affected || other !== 0 || confirmed !== 0) {
     throw Error('provenance_progress_commit_attribution_failed');
   }
+  if (action === 'settle') await configure(sweepHold, 'off');
   print(JSON.stringify({commit_acknowledgements_lost: affected}));
 })();
