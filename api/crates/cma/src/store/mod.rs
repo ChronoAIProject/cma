@@ -88,6 +88,7 @@ mod checkpoint_storage;
 mod checkpoints;
 mod child_writer_claims;
 mod codex_subscriptions;
+mod connection_recovery_activity;
 mod contention;
 mod cooperative_budget;
 pub(crate) mod creation_outcomes;
