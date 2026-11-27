@@ -131,6 +131,7 @@ async fn bucket_ranges_equal_raw_for_all_presets_edges_and_live_tails() {
             .await
             .unwrap();
         commands.event_reads.store(0, Ordering::SeqCst);
+        commands.bucket_find_deadlines_ms.lock().unwrap().clear();
         let got = store
             .bucketed_allocation_range(&mut store.snapshot().await.unwrap(), &states, range)
             .await
