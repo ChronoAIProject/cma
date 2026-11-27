@@ -1,4 +1,6 @@
 use super::*;
+use crate::config::suggestion_control::{Mode, Target};
+use crate::store::suggestion_control::SuggestionControl;
 use layer2_core::sandbox::AgentReadError;
 use mongodb::{event::EventHandler, options::ClientOptions};
 
@@ -16,6 +18,14 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub async fn new() -> Self {
+        Self::new_with_mode(None).await
+    }
+
+    pub async fn with_control(mode: Mode) -> Self {
+        Self::new_with_mode(Some(mode)).await
+    }
+
+    async fn new_with_mode(mode: Option<Mode>) -> Self {
         let (client, name) = database("suggestion_parent").await;
         let gate = Arc::new(Gate::default());
         let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
@@ -27,15 +37,33 @@ impl Fixture {
         options.command_event_handler =
             Some(EventHandler::callback(move |event| capture.observe(event)));
         let observed = Client::with_options(options).unwrap();
-        let store = Arc::new(enabled_store(&observed, &name).await);
+        let mut store = enabled_store(&observed, &name).await;
         let other = Arc::new(enabled_store(&client, &name).await);
-        let (parent, agent) = seed(
+        let suffix = if mode.is_some() {
+            "00000000000000000000000000000001"
+        } else {
+            "parent_cutoff"
+        };
+        let (parent, agent) = seed_identity(&store, suffix).await;
+        if let Some(mode) = mode {
+            let control = SuggestionControl::new(
+                &store,
+                Target {
+                    sandbox_id: parent.id.to_string(),
+                    agent_id: agent.id.to_string(),
+                },
+            );
+            assert!(control.arm(mode).await.unwrap());
+            store.suggestion_control = Some(control);
+        }
+        let agent = seed_completed_answer(
             &store,
-            "parent_cutoff",
+            agent,
             "Compare local databases.",
             "SQLite suits a local-only app.",
         )
         .await;
+        let store = Arc::new(store);
         let claim = store
             .claim_suggestions(unix_millis())
             .await

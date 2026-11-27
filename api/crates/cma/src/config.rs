@@ -54,6 +54,7 @@ mod startup_failure_fixture;
 pub(crate) use inspection_refusal::InspectionRefusalControl;
 mod relay_capacity;
 mod runtime;
+pub(crate) mod suggestion_control;
 pub(crate) use runtime::deployment_id_from_lookup;
 mod runtime_capacity;
 mod runtime_migration;
