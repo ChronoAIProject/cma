@@ -864,10 +864,9 @@
   },
   "cma-user.documents.browse": {
     "cases": [
-      "user.documents_create_edit_conflict",
-      "user.documents_grant_comment_revoke"
+      "user.documents_browser_browse"
     ],
-    "blocked": "API assertions prepared; required real-browser controls and draft/navigation behavior remain unimplemented",
+    "browser": true,
     "minimum_runs": 3,
     "phases": [
       "before_restart",

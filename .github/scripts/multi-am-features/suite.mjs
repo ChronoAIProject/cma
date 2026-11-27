@@ -10,6 +10,7 @@ import {userCases} from './features/user.mjs';
 import {documentCases} from './features/documents.mjs';
 import {createDocumentAfterLostReply} from './features/document_creation_browser.mjs';
 import {documentEditAndConflict} from './features/document_edit_browser.mjs';
+import {documentBrowse} from './features/document_browse_browser.mjs';
 import {busyConfigurationCase, competingSystemPrompts, configurationCases, heldConfigurationCases, assertWriterTitle,
   verifyLifecycleReplay} from './features/agent_configuration.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
@@ -147,6 +148,9 @@ async function accountBrowserCases(ams, witness) {
           });
           await exercise(am, iteration, 'user.documents_browser_edit_and_conflict', () =>
             documentEditAndConflict({page, ingress: am, user, document}));
+          await exercise(am, iteration, 'user.documents_browser_browse', () => documentBrowse({page, ingress: am,
+            user, admin, ownerId: config.owner_id, recordFailure: (stage, error) =>
+              retainFailure(config.matrix_output, stage, error, {case: 'user.documents_browser_browse', phase, iteration})}));
         });
         await browser.forIngress(am, async ({page}) => {
           const peer = am === 'a' ? 'b' : 'a';
