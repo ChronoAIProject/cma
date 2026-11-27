@@ -166,7 +166,7 @@ impl LiveAgentRegistry {
         &self,
         target: &AgentRuntimeTarget,
     ) -> Result<(), AgentRuntimeError> {
-        let identity = {
+        let (identity, owner) = {
             let state = self.lock();
             let entry = state
                 .entries
@@ -177,15 +177,32 @@ impl LiveAgentRegistry {
             {
                 return Err(AgentRuntimeError::StaleGeneration);
             }
-            LiveAgentAttachmentIdentity {
+            let identity = LiveAgentAttachmentIdentity {
                 agent_id: target.agent_id.clone(),
                 conversation_id: target.conversation_id.clone(),
                 runtime_generation: target.runtime_generation,
                 authority_fence: entry.authority_fence,
                 nonce: entry.nonce,
+            };
+            let owner = entry.manager_authority.clone();
+            if let Some(caller) = layer2_core::agent_ownership::execution_authority() {
+                if owner
+                    .as_ref()
+                    .is_none_or(|owner| owner.token != caller.token)
+                {
+                    return Err(AgentRuntimeError::StaleGeneration);
+                }
             }
+            (identity, owner)
         };
-        self.connection_ended(identity).await;
+        if let Some(owner) = owner {
+            owner
+                .run(self.connection_ended(identity))
+                .await
+                .map_err(|_| AgentRuntimeError::StaleGeneration)?;
+        } else {
+            self.connection_ended(identity).await;
+        }
         Ok(())
     }
 

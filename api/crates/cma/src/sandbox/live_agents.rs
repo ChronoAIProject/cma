@@ -118,6 +118,9 @@ pub(crate) struct LiveAgentRegistry {
     state: Mutex<RegistryState>,
     next_nonce: AtomicU64,
     loss_handler: OnceLock<Arc<dyn LiveAgentConnectionLossHandler>>,
+    #[cfg(test)]
+    pub(crate) before_missing_attachment:
+        Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 }
 
 impl LiveAgentRegistry {

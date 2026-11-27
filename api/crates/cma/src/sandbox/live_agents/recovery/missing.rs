@@ -14,6 +14,17 @@ impl LiveAgentRegistry {
                 "Claimed command attachment recovery deferred");
             return;
         }
+        if self.unresolved_reason(target).is_none() {
+            return;
+        }
+        #[cfg(test)]
+        {
+            let pause = self.before_missing_attachment.lock().unwrap().take();
+            if let Some((observed, resume)) = pause {
+                let _ = observed.send(());
+                let _ = resume.await;
+            }
+        }
         if let Some(handler) = self.loss_handler.get() {
             handler.missing_attachment(target, self).await;
         }

@@ -5,7 +5,9 @@ use layer2_core::agent_ownership::{
     test_support::MemoryOwnershipStore, Member, OwnershipCoordinator, PROTOCOL_VERSION,
 };
 use layer2_core::sandbox::agent_io::{AdmittedAgentCommand, AgentResponseStatus};
-use layer2_core::sandbox::store::AgentLogPublicationIdentity;
+use layer2_core::sandbox::store::{
+    AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome, AgentLogPublicationIdentity,
+};
 use tower::ServiceExt;
 
 fn member(id: &str) -> Member {
@@ -26,15 +28,15 @@ async fn claimed_response_recovers_missing_receiver_after_owner_handoff_once() {
     let old = OwnershipCoordinator::register(owners.clone(), member("first-manager"))
         .await
         .unwrap();
-    let next = OwnershipCoordinator::register(owners, member("next-manager"))
-        .await
-        .unwrap();
     let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
     let admitted_agent = harness.admit("receiver-handoff", vec![]).await;
     harness.registry.install_ownership(old.clone());
     let first_owner = old.acquire(&admitted_agent.id).await.unwrap().unwrap();
     let agent = first_owner
         .run(harness.drive_ready(&admitted_agent.id))
+        .await
+        .unwrap();
+    let next = OwnershipCoordinator::register(owners, member("next-manager"))
         .await
         .unwrap();
     let successor_store = harness.store.clone();
@@ -71,12 +73,6 @@ async fn segmented_claimed_response_recovers_missing_receiver_after_owner_handof
             .await
             .unwrap(),
     );
-    let next = OwnershipCoordinator::register(
-        successor_store.agent_ownership.as_ref().unwrap().clone(),
-        member("next-manager"),
-    )
-    .await
-    .unwrap();
     let mut harness = Harness::with_store(store, Arc::new(EmptyAgentSkillResolver), 1).await;
     harness.now = SystemTime::now();
     let admitted_agent = harness.admit("segmented-receiver-handoff", vec![]).await;
@@ -102,6 +98,12 @@ async fn segmented_claimed_response_recovers_missing_receiver_after_owner_handof
         .unwrap();
     crate::store::skill_result_test_support::assert_format(&harness.store, &ready.id, true).await;
     let agent = harness.stored(&ready.id).await;
+    let next = OwnershipCoordinator::register(
+        successor_store.agent_ownership.as_ref().unwrap().clone(),
+        member("next-manager"),
+    )
+    .await
+    .unwrap();
     exercise(
         harness,
         agent.clone(),
@@ -146,6 +148,7 @@ async fn exercise<S: FixtureStore>(
         conversation_id: agent.conversation.conversation_id.clone().unwrap(),
         runtime_generation: agent.conversation.runtime_generation.unwrap(),
     };
+    old.begin_drain().await;
     old.handoff(first_owner, async {
         harness.registry.detach_owner(&first_owner.token);
         Ok(())
@@ -223,17 +226,49 @@ async fn exercise<S: FixtureStore>(
         agent.conversation.runtime_generation
     );
     let current_owner = next.acquire(&agent.id).await.unwrap().unwrap();
-    current_owner
-        .run(AgentRuntimeRegistry::recover_missing_attachment(
-            harness.registry.as_ref(),
-            &target,
-        ))
+    harness.registry.fence(
+        &agent.id,
+        Some(target.runtime_generation),
+        recovered.work.next_fence - 1,
+    );
+    let (observed, observed_rx) = oneshot::channel();
+    let (resume, resume_rx) = oneshot::channel();
+    *harness.registry.before_missing_attachment.lock().unwrap() = Some((observed, resume_rx));
+    let delayed = tokio::spawn({
+        let registry = harness.registry.clone();
+        let target = target.clone();
+        let owner = current_owner.clone();
+        async move {
+            owner
+                .run(AgentRuntimeRegistry::recover_missing_attachment(
+                    registry.as_ref(),
+                    &target,
+                ))
+                .await
+                .unwrap()
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(5), observed_rx)
         .await
+        .unwrap()
         .unwrap();
+    let candidate = AgentConnectionRecoveryCandidate::from_agent(&recovered).unwrap();
+    let request = candidate.restart_request(layer2_core::now_rfc3339());
+    let scheduled = current_owner
+        .run(harness.store.schedule_agent_connection_recovery(request))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(scheduled, AgentConnectionRecoveryOutcome::Scheduled);
+    harness.run(&agent.id, SystemTime::now()).await;
+    let published = harness.stored(&agent.id).await;
+    assert_eq!(published.work.step, AgentWorkStep::None);
+    resume.send(()).unwrap();
+    delayed.await.unwrap();
     assert_eq!(
         harness.stored(&agent.id).await,
-        recovered,
-        "a completed publication wins against a delayed recovery request"
+        published,
+        "a concurrent publication wins after the initial missing-receiver observation"
     );
     worker.run_scheduled(id).await.unwrap();
     let response = tokio::time::timeout(Duration::from_secs(5), pending)
@@ -295,4 +330,18 @@ async fn exercise<S: FixtureStore>(
             .count(),
         1
     );
+
+    // The settings/managed-context drop handlers run on a spawned task. The
+    // exact published attachment supplies the owner even without a task local.
+    let registry = harness.registry.clone();
+    tokio::spawn(async move {
+        AgentRuntimeRegistry::request_reconnect(registry.as_ref(), &target).await
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    let scheduled = harness.stored(&agent.id).await;
+    assert_eq!(scheduled.work.step, AgentWorkStep::PublishConnection);
+    assert_eq!(scheduled.revision, ready.revision + 1);
+    assert_eq!(scheduled.conversation, ready.conversation);
 }
