@@ -5,13 +5,18 @@ use layer3_adapter::{ConversationUpdate, SessionUpdate};
 use sha2::{Digest, Sha256};
 use tokio::sync::broadcast;
 
-use crate::AgentId;
+use crate::{agent_ownership::Authority, AgentId};
+use tokio::sync::watch;
 
 use super::super::{Agent, AgentMessageAssembly};
 use super::live_budget::{AgentLiveDelivery, LiveBudget};
 #[path = "conversation_head.rs"]
 mod head;
 pub use head::AgentHeadSubscription;
+#[path = "conversation_live_attachment.rs"]
+mod attachment;
+use attachment::AgentLiveAttachment;
+pub use attachment::AgentLiveInterruption;
 
 pub(crate) const LIVE_BUFFER_FRAGMENTS: usize = 256;
 const LIVE_FRAGMENT_BYTES: usize = 16 * 1024;
@@ -55,23 +60,32 @@ pub struct AgentLiveSubscription {
     _sender: Arc<broadcast::Sender<LiveFrame>>,
     admission: Option<tokio::sync::oneshot::Receiver<Result<(), AgentLiveError>>>,
     admission_deadline: std::time::Duration,
+    attachment: Option<watch::Receiver<Option<AgentLiveAttachment>>>,
 }
 
 #[derive(Clone)]
-struct LiveFrame {
-    fragment: Option<AgentLiveDelivery>,
-    authority: Option<Arc<crate::agent_ownership::Authority>>,
+enum LiveFrame {
+    Fragment(AgentLiveDelivery),
+    Lagged(u64),
+    Interrupted(AgentLiveInterruption),
+}
+
+pub enum AgentLiveEvent {
+    Fragment(AgentLiveDelivery),
+    Interrupted(AgentLiveInterruption),
 }
 
 impl LiveFrame {
-    fn current(self) -> Result<AgentLiveDelivery, broadcast::error::RecvError> {
-        if self
-            .authority
-            .is_some_and(|authority| !authority.is_current())
-        {
-            return Err(broadcast::error::RecvError::Lagged(1));
+    fn current(self) -> Result<AgentLiveEvent, broadcast::error::RecvError> {
+        use broadcast::error::RecvError;
+        match self {
+            Self::Fragment(fragment) if fragment.is_current() => {
+                Ok(AgentLiveEvent::Fragment(fragment))
+            }
+            Self::Fragment(_) => Err(RecvError::Lagged(1)),
+            Self::Lagged(count) => Err(RecvError::Lagged(count)),
+            Self::Interrupted(interruption) => Ok(AgentLiveEvent::Interrupted(interruption)),
         }
-        self.fragment.ok_or(broadcast::error::RecvError::Lagged(1))
     }
 }
 
@@ -92,29 +106,27 @@ pub trait AgentLiveSource: Send + Sync {
 }
 
 #[derive(Clone)]
-pub struct AgentLivePublisher(Arc<broadcast::Sender<LiveFrame>>);
+pub struct AgentLivePublisher {
+    sender: Arc<broadcast::Sender<LiveFrame>>,
+    attachment: watch::Sender<Option<AgentLiveAttachment>>,
+}
 
 impl AgentLivePublisher {
-    pub fn publish(
-        &self,
-        fragment: impl Into<AgentLiveDelivery>,
-        authority: Arc<crate::agent_ownership::Authority>,
-    ) {
-        let _ = self.0.send(LiveFrame {
-            fragment: Some(fragment.into()),
-            authority: Some(authority),
-        });
+    pub fn publish(&self, fragment: impl Into<AgentLiveDelivery>, authority: Arc<Authority>) {
+        let fragment = fragment.into().with_authority(Some(authority));
+        let _ = self.sender.send(LiveFrame::Fragment(fragment));
     }
 
     pub fn gap(&self) {
-        let _ = self.0.send(LiveFrame {
-            fragment: None,
-            authority: None,
-        });
+        self.lagged(1);
+    }
+
+    pub fn lagged(&self, count: u64) {
+        let _ = self.sender.send(LiveFrame::Lagged(count));
     }
 
     pub async fn closed(&self) {
-        self.0.closed().await;
+        self.sender.closed().await;
     }
 }
 
@@ -144,14 +156,16 @@ impl AgentLiveSubscription {
     pub const BUFFER_FRAGMENTS: usize = LIVE_BUFFER_FRAGMENTS;
     pub fn channel() -> (AgentLivePublisher, Self) {
         let sender = Arc::new(broadcast::channel(LIVE_BUFFER_FRAGMENTS).0);
+        let (attachment, observing) = watch::channel(None);
         let subscription = Self {
+            attachment: Some(observing),
             admission: None,
             admission_deadline: std::time::Duration::ZERO,
             receiver: sender.subscribe(),
             lag_limit: None,
             _sender: sender.clone(),
         };
-        (AgentLivePublisher(sender), subscription)
+        (AgentLivePublisher { sender, attachment }, subscription)
     }
 
     /// Bound unread logical lag without copying the shared source lane.
@@ -169,7 +183,18 @@ impl AgentLiveSubscription {
             None
         }
     }
+    pub fn is_empty(&self) -> bool {
+        self.receiver.is_empty()
+    }
+
     pub async fn recv(&mut self) -> Result<AgentLiveDelivery, broadcast::error::RecvError> {
+        match self.recv_event().await? {
+            AgentLiveEvent::Fragment(fragment) => Ok(fragment),
+            AgentLiveEvent::Interrupted(_) => Err(broadcast::error::RecvError::Lagged(1)),
+        }
+    }
+
+    pub async fn recv_event(&mut self) -> Result<AgentLiveEvent, broadcast::error::RecvError> {
         if let Some(count) = self.discard_lag(0) {
             return Err(broadcast::error::RecvError::Lagged(count));
         }
@@ -183,6 +208,13 @@ impl AgentLiveSubscription {
     }
 
     pub fn try_recv(&mut self) -> Result<AgentLiveDelivery, broadcast::error::TryRecvError> {
+        match self.try_recv_event()? {
+            AgentLiveEvent::Fragment(fragment) => Ok(fragment),
+            AgentLiveEvent::Interrupted(_) => Err(broadcast::error::TryRecvError::Lagged(1)),
+        }
+    }
+
+    pub fn try_recv_event(&mut self) -> Result<AgentLiveEvent, broadcast::error::TryRecvError> {
         if let Some(count) = self.discard_lag(0) {
             return Err(broadcast::error::TryRecvError::Lagged(count));
         }
@@ -249,6 +281,7 @@ impl AgentLiveHub {
             sender
         });
         AgentLiveSubscription {
+            attachment: None,
             admission: None,
             admission_deadline: std::time::Duration::ZERO,
             receiver: sender.subscribe(),
@@ -283,10 +316,12 @@ impl AgentLiveHub {
             };
             // None is an ordered gap, not an acknowledged runtime output. Live
             // consumers already replay durable history after broadcast lag.
-            let _ = sender.send(LiveFrame {
-                fragment: delivery,
-                authority: crate::agent_ownership::execution_authority(),
+            let frame = delivery.map_or(LiveFrame::Lagged(1), |fragment| {
+                LiveFrame::Fragment(
+                    fragment.with_authority(crate::agent_ownership::execution_authority()),
+                )
             });
+            let _ = sender.send(frame);
             remaining = &remaining[end..];
         }
     }
@@ -430,53 +465,5 @@ mod observation_lag_tests {
 }
 
 #[cfg(test)]
-mod admission_tests {
-    use super::*;
-    use std::time::Duration;
-    use tokio::time::Instant;
-
-    #[tokio::test(start_paused = true)]
-    async fn local_subscription_without_admission_receiver_never_waits() {
-        let recorder = super::super::DurableAgentUpdateRecorder::new(Arc::new(
-            crate::sandbox::store::InMemorySandboxStore::default(),
-        ));
-        let mut subscription = recorder.subscribe_local(&AgentId("local-admission".into()));
-        let started = Instant::now();
-        subscription.admit().await.unwrap();
-        assert_eq!(started.elapsed(), Duration::ZERO);
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn unanswered_admission_falls_back_at_the_supplied_deadline_once() {
-        let (_, subscription) = AgentLiveSubscription::channel();
-        let (_sender, receiver) = tokio::sync::oneshot::channel();
-        let deadline = Duration::from_secs(3);
-        let mut subscription = subscription.with_admission_deadline(receiver, deadline);
-        let started = Instant::now();
-        subscription.admit().await.unwrap();
-        assert_eq!(started.elapsed(), deadline);
-        subscription.admit().await.unwrap();
-        assert_eq!(started.elapsed(), deadline, "admission is not repeated");
-    }
-
-    #[tokio::test(start_paused = true)]
-    async fn capacity_refusal_is_typed_and_disconnected_sources_allow_replay() {
-        for outcome in [
-            Ok(()),
-            Err(AgentLiveError::Capacity),
-            Err(AgentLiveError::Unavailable),
-        ] {
-            let (_, subscription) = AgentLiveSubscription::channel();
-            let (sender, receiver) = tokio::sync::oneshot::channel();
-            let mut subscription =
-                subscription.with_admission_deadline(receiver, Duration::from_secs(3));
-            sender.send(outcome).unwrap();
-            let expected = if outcome == Err(AgentLiveError::Capacity) {
-                outcome
-            } else {
-                Ok(())
-            };
-            assert_eq!(subscription.admit().await, expected);
-        }
-    }
-}
+#[path = "conversation_live_admission_tests.rs"]
+mod admission_tests;

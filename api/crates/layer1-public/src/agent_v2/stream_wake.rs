@@ -1,6 +1,7 @@
 //! Event-driven tailing with a fixed fallback and current release authority.
 use super::{cursor, error::Error, stream::Following};
 use crate::stream_telemetry::{self, AgentWake, Kind, Poll};
+use layer2_core::sandbox::AgentLiveEvent;
 use std::future::pending;
 use tokio::{sync::broadcast::error::RecvError, time::Instant};
 
@@ -44,10 +45,15 @@ impl Following {
                     }
                     received = async {
                         if !allow_live { return pending().await; }
-                        match &mut self.watching { Some(live) => live.recv().await, None => pending().await }
+                        match &mut self.watching { Some(live) => live.recv_event().await, None => pending().await }
                     } => {
                         match received {
-                            Ok(fragment) => self.held = Some(fragment),
+                            Ok(AgentLiveEvent::Fragment(fragment)) => self.held = Some(fragment),
+                            Ok(AgentLiveEvent::Interrupted(interruption)) => {
+                                self.interruption = Some(interruption);
+                                stream_telemetry::agent_wake(AgentWake::Live);
+                                return Ok(());
+                            }
                             Err(RecvError::Lagged(count)) => self.discarded_fragments += count,
                             Err(RecvError::Closed) => { self.watching = None; continue; }
                         }

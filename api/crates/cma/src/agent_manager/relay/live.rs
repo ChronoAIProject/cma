@@ -1,7 +1,7 @@
 use super::*;
 use axum::{
     body::Body,
-    extract::{Path, State},
+    extract::{Path, RawQuery, State},
     http::{HeaderMap, Method, Uri},
     response::{IntoResponse, Response},
     Extension,
@@ -10,6 +10,7 @@ use futures_util::StreamExt;
 use layer2_core::sandbox::{
     AgentLiveError, AgentLiveFragment, AgentLivePublisher, AgentLiveSource, AgentLiveSubscription,
 };
+use tokio::{sync::broadcast::error::RecvError, time::Instant};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -18,6 +19,31 @@ struct Frame {
     fragment: Option<AgentLiveFragment>,
     #[serde(default)]
     head_changed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    control: Option<Control>,
+}
+
+const LIVE_CONTROL: &str = "live_control=1";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+enum Control {
+    Retired,
+    Lagged(u64),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum LiveExit {
+    CleanRetirement,
+    BufferedRetirement,
+    AuthorityUnavailable,
+    OwnerUnavailable,
+    HeadUnavailable,
+    PeerAdmission,
+    PeerEof,
+    PeerPartialFrame,
+    PeerTransport,
+    PeerTimeout,
+    InvalidFrame,
 }
 
 tokio::task_local! {
@@ -95,29 +121,30 @@ impl Relay {
         while self.coordinator.is_ready() {
             if let Ok(destination) = self.destination(&id).await {
                 let authority = destination.authority.clone();
-                if destination.member.instance_id == self.coordinator.instance_id {
-                    if let Some(updates) = self.updates.upgrade() {
-                        let mut lane = updates.subscribe_local(&id);
-                        admitted(&mut admission, Ok(()));
-                        loop {
-                            tokio::select! {
-                                biased;
-                                _ = authority.revoked() => break,
-                                fragment = lane.recv() => match fragment {
-                                    Ok(fragment) => publisher.publish(fragment, authority.clone()),
-                                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => publisher.gap(),
-                                    Err(_) => break,
-                                },
-                            }
-                        }
-                    }
+                let exit = if destination.member.instance_id == self.coordinator.instance_id {
+                    self.follow_local(&authority, publisher, &mut admission)
+                        .await
                 } else {
-                    let _ = self
+                    let exit = self
                         .follow_remote(destination, publisher, &mut admission)
                         .await;
                     authority.revoke();
+                    exit
+                };
+                tracing::debug!(
+                    agent = %id,
+                    owner_epoch = authority.token.epoch,
+                    local = authority.token.instance_id == self.coordinator.instance_id,
+                    reason = ?exit,
+                    "Agent live relay exited"
+                );
+                match exit {
+                    LiveExit::CleanRetirement => publisher.interrupted(
+                        authority.token.clone(),
+                        Instant::now() + LIVE_ADMISSION_DEADLINE,
+                    ),
+                    _ => publisher.gap(),
                 }
-                publisher.gap();
             }
             if admission.is_some() {
                 admitted(&mut admission, Ok(()));
@@ -126,35 +153,72 @@ impl Relay {
         }
     }
 
+    async fn follow_local(
+        &self,
+        authority: &Arc<Authority>,
+        publisher: &AgentLivePublisher,
+        admission: &mut Admission,
+    ) -> LiveExit {
+        let Some(updates) = self.updates.upgrade() else {
+            return LiveExit::OwnerUnavailable;
+        };
+        let mut lane = updates.subscribe_local(&authority.token.agent_id);
+        publisher.attached(authority.clone(), self.coordinator.clone());
+        admitted(admission, Ok(()));
+        loop {
+            tokio::select! {
+                biased;
+                _ = authority.revoked() => return retirement(&lane),
+                fragment = lane.recv() => match fragment {
+                    Ok(fragment) if fragment.is_current_for(&authority.token) => {
+                        publisher.publish(fragment, authority.clone());
+                    }
+                    Ok(_) => publisher.gap(),
+                    Err(RecvError::Lagged(count)) => publisher.lagged(count),
+                    Err(RecvError::Closed) => return LiveExit::OwnerUnavailable,
+                },
+            }
+        }
+    }
+
     pub(super) async fn follow_remote(
         &self,
         destination: Destination,
         publisher: &AgentLivePublisher,
         admission: &mut Admission,
-    ) -> Result<(), ()> {
-        let uri: Uri = format!("{PREFIX}/live/{}", destination.token.agent_id)
-            .parse()
-            .map_err(|_| ())?;
-        let headers = self.authentication.signed_headers(
+    ) -> LiveExit {
+        let Ok(uri) = format!(
+            "{PREFIX}/live/{}?{LIVE_CONTROL}",
+            destination.token.agent_id
+        )
+        .parse::<Uri>() else {
+            return LiveExit::PeerAdmission;
+        };
+        let Ok(headers) = self.authentication.signed_headers(
             &self.coordinator.instance_id,
             &destination.token,
             &Method::GET,
             &uri,
             HeaderMap::new(),
             &[],
-        )?;
+        ) else {
+            return LiveExit::PeerAdmission;
+        };
         let url = format!(
             "{}{}",
             destination.member.relay_address.trim_end_matches('/'),
             uri
         );
-        let response = tokio::time::timeout(
+        let response = match tokio::time::timeout(
             LIVE_ADMISSION_DEADLINE,
             self.client.get(url).headers(headers).send(),
         )
         .await
-        .map_err(|_| ())?
-        .map_err(|_| ())?;
+        {
+            Ok(Ok(response)) => response,
+            Ok(Err(_)) => return LiveExit::PeerTransport,
+            Err(_) => return LiveExit::PeerTimeout,
+        };
         if !response.status().is_success() {
             let error = if response.status() == axum::http::StatusCode::TOO_MANY_REQUESTS {
                 metrics::counter!("cma_relay_refusals_total", "class" => "observer", "reason" => "remote_capacity").increment(1);
@@ -163,71 +227,122 @@ impl Relay {
                 AgentLiveError::Unavailable
             };
             admitted(admission, Err(error));
-            return Err(());
+            return LiveExit::PeerAdmission;
         }
+        // A successful response opens an owner subscription. The reader
+        // rechecks the exact lease before treating this as a successor.
+        publisher.attached(destination.authority.clone(), self.coordinator.clone());
         admitted(admission, Ok(()));
         let mut stream = response.bytes_stream();
         let mut buffer = Vec::new();
         loop {
             let chunk = tokio::select! {
                 biased;
-                _ = destination.authority.revoked() => return Err(()),
-                chunk = tokio::time::timeout(Duration::from_secs(5), stream.next()) => chunk.map_err(|_| ())?.ok_or(())?.map_err(|_| ())?,
+                _ = destination.authority.revoked() => return LiveExit::AuthorityUnavailable,
+                chunk = tokio::time::timeout(Duration::from_secs(5), stream.next()) => match chunk {
+                    Err(_) => return LiveExit::PeerTimeout,
+                    Ok(None) if !buffer.is_empty() => return LiveExit::PeerPartialFrame,
+                    Ok(None) => return LiveExit::PeerEof,
+                    Ok(Some(Err(_))) => return LiveExit::PeerTransport,
+                    Ok(Some(Ok(chunk))) => chunk,
+                },
             };
-            for byte in chunk {
+            for (offset, &byte) in chunk.iter().enumerate() {
                 if buffer.len() >= MAX_FRAME {
-                    return Err(());
+                    return LiveExit::InvalidFrame;
                 }
                 if byte != b'\n' {
                     buffer.push(byte);
                     continue;
                 }
-                let frame: Frame = serde_json::from_slice(&buffer).map_err(|_| ())?;
+                let Ok(frame) = serde_json::from_slice::<Frame>(&buffer) else {
+                    return LiveExit::InvalidFrame;
+                };
                 buffer.clear();
-                if frame.owner != destination.token || !self.coordinator.is_ready() {
-                    return Err(());
+                if frame.owner != destination.token {
+                    return LiveExit::InvalidFrame;
                 }
-                let started = tokio::time::Instant::now();
-                let remaining =
-                    bounded(self.coordinator.store.live_lease_remaining_ms(&frame.owner))
-                        .await
-                        .map_err(|_| ())?;
-                // The peer only observes store renewals. Start the local
-                // deadline before the read and never revive expired authority.
-                let deadline = started
-                    .checked_add(Duration::from_millis(remaining))
-                    .ok_or(())?;
-                if !self.coordinator.is_ready() {
-                    return Err(());
+                if matches!(frame.control, Some(Control::Retired)) {
+                    // A retirement control is terminal and carries no data.
+                    // The old exact lease need no longer be live at this point.
+                    destination.authority.revoke();
+                    if frame.fragment.is_some()
+                        || frame.head_changed
+                        || offset + 1 != chunk.len()
+                        || !self.coordinator.is_ready()
+                    {
+                        return LiveExit::InvalidFrame;
+                    }
+                    return match tokio::time::timeout(LIVE_ADMISSION_DEADLINE, stream.next()).await
+                    {
+                        Ok(None) => LiveExit::CleanRetirement,
+                        Ok(Some(Ok(_))) => LiveExit::InvalidFrame,
+                        Ok(Some(Err(_))) => LiveExit::PeerTransport,
+                        Err(_) => LiveExit::PeerTimeout,
+                    };
                 }
-                destination
-                    .authority
-                    .renew_until(deadline)
-                    .map_err(|_| ())?;
+                if !self.confirm_peer(&destination).await {
+                    return LiveExit::AuthorityUnavailable;
+                }
+                if let Some(Control::Lagged(count)) = frame.control {
+                    if frame.fragment.is_some() || frame.head_changed || count == 0 {
+                        return LiveExit::InvalidFrame;
+                    }
+                    publisher.lagged(count);
+                }
                 if frame.head_changed {
-                    let updates = self.updates.upgrade().ok_or(())?;
+                    let Some(updates) = self.updates.upgrade() else {
+                        return LiveExit::HeadUnavailable;
+                    };
                     if !updates
                         .notify_owned_head(&destination.token.agent_id, &destination.authority)
                     {
-                        return Err(());
+                        return LiveExit::AuthorityUnavailable;
                     }
                 }
                 if let Some(fragment) = frame.fragment {
                     if fragment.agent_id != destination.token.agent_id
                         || fragment.delta.len() > 16 * 1024
                     {
-                        return Err(());
+                        return LiveExit::InvalidFrame;
                     }
                     publisher.publish(fragment, destination.authority.clone());
                 }
             }
         }
     }
+
+    async fn confirm_peer(&self, destination: &Destination) -> bool {
+        let started = Instant::now();
+        let Ok(remaining) = bounded(
+            self.coordinator
+                .store
+                .live_lease_remaining_ms(&destination.token),
+        )
+        .await
+        else {
+            return false;
+        };
+        // Time spent in the read consumes the shorter owner/member allowance.
+        let Some(deadline) = started.checked_add(Duration::from_millis(remaining)) else {
+            return false;
+        };
+        self.coordinator.is_ready() && destination.authority.renew_until(deadline).is_ok()
+    }
+}
+
+fn retirement(lane: &AgentLiveSubscription) -> LiveExit {
+    if lane.is_empty() {
+        LiveExit::CleanRetirement
+    } else {
+        LiveExit::BufferedRetirement
+    }
 }
 
 pub(super) async fn serve(
     State(relay): State<Arc<Relay>>,
     Path(agent): Path<String>,
+    RawQuery(query): RawQuery,
     Extension(_peer): Extension<http::VerifiedPeer>,
 ) -> Response {
     let Some(authority) = layer2_core::agent_ownership::execution_authority() else {
@@ -241,33 +356,48 @@ pub(super) async fn serve(
     };
     let subscription = updates.subscribe_local(&authority.token.agent_id);
     let heads = updates.subscribe_local_head(&authority.token.agent_id);
+    let control_enabled = query.as_deref() == Some(LIVE_CONTROL);
     let stream = futures_util::stream::unfold(
-        (subscription, heads, authority),
-        |(mut subscription, mut heads, authority)| async move {
-            let (fragment, head_changed) = tokio::select! {
-                biased;
-                _ = authority.revoked() => return None,
-                next = heads.recv() => match next { Ok(()) => (None, true), Err(_) => return None },
-                next = subscription.recv() => match next { Ok(fragment) => (Some(fragment), false), Err(_) => return None },
-                _ = tokio::time::sleep(Duration::from_secs(1)) => (None, false),
+        Some((subscription, heads, authority)),
+        move |state| async move {
+            let (mut subscription, mut heads, authority) = state?;
+            let mut frame = Frame {
+                owner: authority.token.clone(),
+                fragment: None,
+                head_changed: false,
+                control: None,
             };
+            tokio::select! {
+                biased;
+                _ = authority.revoked() => {
+                    let exit = retirement(&subscription);
+                    tracing::debug!(
+                        agent = %authority.token.agent_id,
+                        owner_epoch = authority.token.epoch,
+                        reason = ?exit,
+                        "Agent live relay owner exited"
+                    );
+                    if !control_enabled || exit != LiveExit::CleanRetirement {
+                        return None;
+                    }
+                    frame.control = Some(Control::Retired);
+                    return Some((encode(&frame)?, None));
+                }
+                next = heads.recv() => { next.ok()?; frame.head_changed = true; }
+                next = subscription.recv() => match next {
+                    Ok(fragment) if fragment.is_current_for(&authority.token) => frame.fragment = Some((*fragment).clone()),
+                    Ok(_) if control_enabled => frame.control = Some(Control::Lagged(1)),
+                    Err(RecvError::Lagged(count)) if control_enabled => {
+                        frame.control = Some(Control::Lagged(count));
+                    }
+                    _ => return None,
+                },
+                _ = tokio::time::sleep(Duration::from_secs(1)) => (),
+            }
             if !authority.is_current() {
                 return None;
             }
-            let mut frame = serde_json::to_vec(&Frame {
-                owner: authority.token.clone(),
-                fragment: fragment.map(|delivery| (*delivery).clone()),
-                head_changed,
-            })
-            .ok()?;
-            if frame.len() >= MAX_FRAME {
-                return None;
-            }
-            frame.push(b'\n');
-            Some((
-                Ok::<_, std::io::Error>(frame),
-                (subscription, heads, authority),
-            ))
+            Some((encode(&frame)?, Some((subscription, heads, authority))))
         },
     );
     (
@@ -278,4 +408,13 @@ pub(super) async fn serve(
         Body::from_stream(stream),
     )
         .into_response()
+}
+
+fn encode(frame: &Frame) -> Option<Result<Vec<u8>, std::io::Error>> {
+    let mut bytes = serde_json::to_vec(frame).ok()?;
+    if bytes.len() >= MAX_FRAME {
+        return None;
+    }
+    bytes.push(b'\n');
+    Some(Ok(bytes))
 }
