@@ -7,6 +7,7 @@ import {createHash} from 'node:crypto';
 import {runInNewContext} from 'node:vm';
 import {journeyFailureSummary, lifecycleFailureSummary, lifecyclePollFailure, retainFailure, withRestoration} from '../failure.mjs';
 import {NonOwnerRouter} from '../routing.mjs';
+import {pollLifecycleOperation} from '../cma/lifecycle_operation.mjs';
 
 test('hosted summaries keep the initiating failure and count cleanup failures without resource identities', () => {
   const result = journeyFailureSummary({
@@ -39,6 +40,34 @@ test('lifecycle polling publishes only recognized failure types and status', () 
     {manager: 'b', kind: 'request_timeout'});
   const unknown = new TypeError('private body', {cause: {code: 'private_cause'}});
   assert.deepEqual(lifecyclePollFailure(unknown, 'b'), {manager: 'b', kind: 'unknown'});
+});
+
+test('lifecycle polling recovers one socket failure and requires the settled operation', async () => {
+  const events = [new TypeError('fetch failed', {cause: {code: 'UND_ERR_SOCKET'}}), {status: 'running'},
+    {status: 'succeeded'}];
+  const transient = [];
+  const result = await pollLifecycleOperation(() => {
+    const event = events.shift();
+    if (event instanceof Error) throw event;
+    return event;
+  }, body => body.status === 'succeeded', {manager: 'a', interval: 0, timeout: 1000,
+    onTransient: failure => transient.push(failure)});
+  assert.deepEqual(result, {status: 'succeeded'});
+  assert.deepEqual(transient, [{manager: 'a', kind: 'transport_error', cause: 'UND_ERR_SOCKET'}]);
+});
+
+test('lifecycle polling fails on repeated transport errors or an HTTP refusal', async () => {
+  const first = new DOMException('private outcome', 'TimeoutError');
+  const terminal = new TypeError('fetch failed', {cause: {code: 'UND_ERR_SOCKET'}});
+  const refused = Object.assign(Error('private response'), {response: {status: 503}});
+  const transient = [];
+  const options = {manager: 'b', interval: 0, timeout: 1000, onTransient: failure => transient.push(failure)};
+  for (const [failures, expected] of [[[first, terminal], terminal], [[refused], refused]]) {
+    await assert.rejects(pollLifecycleOperation(() => { throw failures.shift(); }, () => false, options),
+      error => error === expected);
+    assert.deepEqual(failures, []);
+  }
+  assert.deepEqual(transient, [{manager: 'b', kind: 'request_timeout'}]);
 });
 
 test('the failure snapshot binds parent progress to the exact admitted Agent and owner', async () => {

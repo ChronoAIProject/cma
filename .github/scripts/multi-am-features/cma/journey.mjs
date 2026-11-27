@@ -8,6 +8,7 @@ import {NonOwnerRouter} from '../routing.mjs';
 import {observeHeldCommand, verifyRecoveredReceipt} from '../features/conversation_ingress.mjs';
 import {desktopFrame, closeDesktop} from './desktop.mjs';
 import {cleanupFixture} from './cleanup.mjs';
+import {pollLifecycleOperation} from './lifecycle_operation.mjs';
 import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
 import {retainedLifecycle} from '../features/lifecycle_atomicity.mjs';
 import {runtimeLoss} from '../features/runtime_loss.mjs';
@@ -76,10 +77,11 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     const start = performance.now();
     const record = await admit(am, desktop, overrides);
     onAdmission?.(record);
-    let op, lastOperation;
+    let op, lastOperation, transientPollFailure;
+    const peer = other(am);
     try {
-      op = await poll(async () => {
-        const {body} = await api.request(other(am), 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
+      op = await pollLifecycleOperation(async () => {
+        const {body} = await api.request(peer, 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
         check(body?.id === record.operationId, 'lifecycle_identity_mismatch');
         lastOperation = body;
         if (id(body.agent_id) && !record.agentId) {
@@ -90,14 +92,15 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
         check(!['failed', 'waiting_for_connection'].includes(body.status), 'create_operation_failed');
         return body;
       }, value => value.status === 'succeeded' && id(record.agentId),
-      {timeout: 420000, interval: onAgentId ? 250 : 1000, code: 'create_lifecycle_timeout'});
+      {timeout: 420000, interval: onAgentId ? 250 : 1000, code: 'create_lifecycle_timeout',
+        manager: peer, onTransient: failure => { transientPollFailure = failure; }});
     } catch (error) {
       failedCreation = record.operationId;
       const operationHash = hash(record.operationId);
       result.create_failure = {operation_sha256: operationHash,
         agent_sha256: record.agentId ? hash(record.agentId) : null,
         lifecycle_status: lastOperation?.status ?? null, observation: lifecycleFailureSummary(lastOperation),
-        poll_failure: lifecyclePollFailure(error, other(am))};
+        poll_failure: lifecyclePollFailure(error, peer), transient_poll_failure: transientPollFailure};
       const failurePath = join(config.output_dir, 'create-failure-' + operationHash + '.private.json');
       try {
         await writeFile(failurePath, JSON.stringify(lastOperation ?? null, null, 2) + '\n', {mode: 0o600, flag: 'wx'});
@@ -145,6 +148,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     api.bindAdmission(record.key, record.agentId);
     result.resources.push({name: record.name, desktop, agent_sha256: hash(record.agentId), sandbox_sha256: hash(record.sandboxId), operation_sha256: hash(record.operationId),
       create_to_ready_ms: record.createToReadyMs, lifecycle_status: op.status, runtime_family: family,
+      transient_poll_failure: transientPollFailure,
       runtime_source: runtimes[family].source, runtime_image: runtime.image,
       selected_runtime_image: runtimes[family].image, runtime_image_matches_selected: true,
       runtime_source_basis: 'Owner per-family artifact metadata joined to observed exact Pod image',
