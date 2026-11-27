@@ -296,6 +296,7 @@ function TaskHomeContent({
             <TaskComposer
               text={submission.text}
               template={Boolean(draft.template)}
+              showSubmitLabel={!contextual}
               invalid={Boolean(draft.template && submission.issue)}
               input={input}
               validation={validation?.message}

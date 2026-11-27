@@ -4,9 +4,10 @@ import type { RuntimeAttention } from '../shell/runtimeAttention';
 import type { AppRoute } from '../routing/routes';
 import type { TaskTemplate } from './taskTemplateModel';
 import type { AssistantReplyPreview } from '../api/replyPreview';
-import { CharacterAvatar } from '../character/CharacterAvatar';
+import { AgentMascot } from '../brand/AgentMascot';
 import { DocsLink } from '../services/DocsLink';
-import { TaskCrew, taskCrewCards } from './TaskCrew';
+import { TaskCrew } from './TaskCrew';
+import { selectTaskHomePresentation } from './taskHomePresentation';
 import { TaskHomeDecorationContext } from './TaskHomeDecoration';
 import { HomeRuntimeAttention } from './HomeRuntimeAttention';
 
@@ -47,11 +48,9 @@ export function TaskHomeLayout({
   const [hour] = useState(() => new Date().getHours());
   const personal = !home?.scope;
   const navigation = personal ? home?.navigation : undefined;
-  const first =
-    navigation?.status === 'ready' &&
-    !navigation.refreshError &&
-    taskCrewCards(navigation).length === 0;
-  const hasCrew = taskCrewCards(navigation).length > 0;
+  const overview = !contextual && !template && !submitted;
+  const { empty, crew } = selectTaskHomePresentation({ navigation, contextual });
+  const first = overview && empty;
   const templateHeadlines = {
     research: 'What should it research?',
     spreadsheet: 'What should it analyze?',
@@ -65,7 +64,7 @@ export function TaskHomeLayout({
       ? templateHeadlines[template.id]
       : first
         ? 'Give it a job.'
-        : hasCrew
+        : crew.length
           ? `Good ${hour < 12 ? 'morning' : hour < 18 ? 'afternoon' : 'evening'}.`
           : 'What should your Agent work on?';
   return (
@@ -73,7 +72,8 @@ export function TaskHomeLayout({
       className="task-home"
       data-task-home
       data-contextual={contextual || undefined}
-      data-first-visit={(first && !template && !submitted) || undefined}
+      data-first-visit={first || undefined}
+      data-overview={(personal && overview) || undefined}
       data-submitted={submitted || undefined}
       aria-labelledby={titleId}
     >
@@ -83,43 +83,38 @@ export function TaskHomeLayout({
         </h2>
       ) : (
         <header className="task-home__heading">
-          {first && !template && !submitted ? (
-            <>
-              <div className="task-home__first-mascot">
-                <div className="task-home__decoration" aria-hidden="true">
-                  {decoration}
-                </div>
-                <CharacterAvatar pose="idle" size={104} still />
+          {first ? (
+            <div className="task-home__first-mascot" aria-hidden="true">
+              <div className="task-home__decoration" aria-hidden="true">
+                {decoration}
               </div>
-              <span className="task-home__eyebrow">Your next agent starts here</span>
-            </>
+              <span className="task-home__first-poster">
+                <AgentMascot visual={{ action: 'rest', label: '' }} size={96} decorative />
+              </span>
+            </div>
           ) : null}
           <h1 id={titleId}>{headline}</h1>
-          {template || submitted ? (
+          {template ? (
             <p className="task-home__intro">
-              {submitted
-                ? 'Your original request and its recorded preparation status.'
-                : template
-                  ? 'Fill in a few details. Your free-text draft is kept separately.'
-                  : hasCrew
-                    ? 'Pick up where you left off, or give another agent a job.'
-                    : 'Describe what you need. Your Agent works in its own cloud computer.'}
+              Fill in a few details. Your free-text draft is kept separately.
             </p>
           ) : null}
           <DocsLink view="start-a-task">Help starting a task</DocsLink>
         </header>
       )}
-      {!contextual && !template && !submitted ? (
+      {overview ? (
         <>
           {personal ? (
             <>
               <HomeRuntimeAttention attention={home?.attention} onReview={home?.onReviewRuntime} />
-              <TaskCrew
-                navigation={navigation}
-                onRetry={home?.onRetry}
-                onNavigate={onNavigate}
-                previews={previews}
-              />
+              {!first ? (
+                <TaskCrew
+                  navigation={navigation}
+                  onRetry={home?.onRetry}
+                  onNavigate={onNavigate}
+                  previews={previews}
+                />
+              ) : null}
             </>
           ) : (
             <p className="task-home__context">
@@ -129,17 +124,7 @@ export function TaskHomeLayout({
           )}
         </>
       ) : null}
-      <div
-        className="task-home__workspace"
-        data-with-mascot={(!contextual && !first && !submitted) || undefined}
-      >
-        {!contextual && !first && !submitted ? (
-          <aside className="task-home__mascot" aria-hidden="true">
-            <CharacterAvatar pose="idle" size={80} still />
-          </aside>
-        ) : null}
-        <div className="task-home__content">{children}</div>
-      </div>
+      <div className="task-home__content">{children}</div>
     </section>
   );
 }

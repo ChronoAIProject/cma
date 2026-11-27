@@ -44,9 +44,10 @@ afterEach(() => {
 
 it('uses the same catalog in the empty Home and the returning-owner menu without editing on open', async () => {
   const onCreated = vi.fn();
+  const api = client();
   const view = render(
     <TaskHome
-      client={client()}
+      client={api}
       viewerId="owner"
       canCreateSandbox
       onCreated={onCreated}
@@ -56,17 +57,20 @@ it('uses the same catalog in the empty Home and the returning-owner menu without
   for (const template of taskTemplates)
     expect(screen.getByRole('button', { name: template.name })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Templates' })).toBeNull();
-  fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Keep my draft' } });
+  const input = screen.getByLabelText('Your task');
+  fireEvent.change(input, { target: { value: 'Keep my draft' } });
   const saved = sessionStorage.getItem(taskDraftStorageKey('owner'));
   view.rerender(
     <TaskHome
-      client={client()}
+      client={api}
       viewerId="owner"
       canCreateSandbox
       onCreated={onCreated}
       home={{ navigation: { status: 'ready', items: navigationFixture() } }}
     />,
   );
+  expect(screen.getByLabelText('Your task')).toBe(input);
+  expect(input).toHaveValue('Keep my draft');
   const trigger = screen.getByRole('button', { name: 'Templates' });
   fireEvent.click(trigger);
   expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual(
@@ -129,7 +133,7 @@ it('uses neutral empty-state copy only after an empty personal read succeeds, ne
   const { rerender } = render(
     <TaskHomeLayout {...props} home={{ navigation: { status: 'loading' } }} />,
   );
-  expect(screen.queryByText('Your next agent starts here')).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Give it a job.' })).not.toBeInTheDocument();
   rerender(
     <TaskHomeLayout
       {...props}
@@ -137,18 +141,16 @@ it('uses neutral empty-state copy only after an empty personal read succeeds, ne
     />,
   );
   expect(screen.getByRole('alert')).toHaveTextContent('Access unavailable');
-  expect(screen.queryByText('Your next agent starts here')).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Give it a job.' })).not.toBeInTheDocument();
   rerender(
     <TaskHomeLayout
       {...props}
       home={{ navigation: { status: 'ready', items: [], refreshError: 'Stale list' } }}
     />,
   );
-  expect(screen.queryByText('Your next agent starts here')).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Give it a job.' })).not.toBeInTheDocument();
   rerender(<TaskHomeLayout {...props} home={{ navigation: { status: 'ready', items: [] } }} />);
   expect(screen.getByRole('heading', { name: 'Give it a job.' })).toBeVisible();
-  expect(screen.getByText('Your next agent starts here')).toBeVisible();
-  expect(screen.queryByText('Your first agent starts here')).not.toBeInTheDocument();
   rerender(
     <TaskHomeLayout
       {...props}
@@ -156,7 +158,7 @@ it('uses neutral empty-state copy only after an empty personal read succeeds, ne
     />,
   );
   expect(screen.queryByText('Agent one')).not.toBeInTheDocument();
-  expect(screen.queryByText('Your next agent starts here')).not.toBeInTheDocument();
+  expect(screen.queryByRole('heading', { name: 'Give it a job.' })).not.toBeInTheDocument();
 });
 
 it.each([
@@ -313,6 +315,5 @@ it('uses neutral copy for returning owners whose earlier workspaces were removed
       Composer
     </TaskHomeLayout>,
   );
-  expect(screen.getByText('Your next agent starts here')).toBeVisible();
-  expect(screen.queryByText('Your first agent starts here')).not.toBeInTheDocument();
+  expect(screen.getByRole('heading', { name: 'Give it a job.' })).toBeVisible();
 });

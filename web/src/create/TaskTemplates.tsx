@@ -35,7 +35,8 @@ export function TaskTemplates({
         onClose={() => setOpen(false)}
         anchor={
           <Button
-            placement="task-home__tool"
+            placement="task-home__template-chip"
+            variant="outline"
             aria-haspopup="menu"
             aria-expanded={open}
             onClick={() => setOpen(!open)}
