@@ -112,7 +112,13 @@ def require_runtime_inventory(documents)
   end
 end
 
-IMAGE_SCAN_IF = "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')))"
+IMAGE_SCAN_IF = "success() && steps.native-image-export.outcome == 'success' && (github.event_name != 'push' || github.ref != 'refs/heads/develop')"
+IMAGE_RETAIN_IF = "success() && steps.native-image-export.outcome == 'success' && (steps.native-image-scan.outcome == 'success' || (github.event_name == 'push' && github.ref == 'refs/heads/develop'))"
+OMARCHY_SCAN_IF = "success() && (github.event_name == 'merge_group' || " \
+  "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || " \
+  "(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')) || " \
+  "(inputs.export_verification_image && github.ref == 'refs/heads/develop' && " \
+  "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')))"
 
 # Staging CD refuses an image whose secret scan leaves a blocking finding. CI
 # runs the same gate on its exported image before retaining it, so a PR or
@@ -131,7 +137,9 @@ def require_image_secret_scan(documents)
   require_check(steps[install]['run'] == "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n" &&
                 steps[install]['timeout-minutes'] == 5, 'ci-images image scanner install differs')
   command = 'python3 -B .github/scripts/ci_image_secret_scan.py "$IMAGE_COMPONENT" "$RUNNER_TEMP/ci-native-image" "$GITHUB_SHA"'
-  require_check(steps[scan]['run'] == command && steps[scan]['timeout-minutes'] == 30, 'ci-images image secret scan command differs')
+  require_check(steps[scan]['run'] == command && steps[scan]['timeout-minutes'] == 30 &&
+    steps[scan]['id'] == 'native-image-scan', 'ci-images image secret scan command differs')
+  require_check(steps[keep]['if'].to_s.split.join(' ') == IMAGE_RETAIN_IF, 'ci-images verification archives require a successful scan')
   require_omarchy_image_secret_scan(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
 end
 
@@ -146,7 +154,7 @@ def require_omarchy_image_secret_scan(steps)
            steps.find { |step| step['name'] == 'Omarchy vulnerability gate' }, export, retain]
   require_check(order.all? && order.map { |step| steps.index(step) }.each_cons(2).all? { |a, b| a < b },
                 'Omarchy must join its scanner after the foreground image checks and before retention')
-  require_check(input['if'] == IMAGE_SCAN_IF && input['timeout-minutes'] == 11 &&
+  require_check(input['if'].to_s.split.join(' ') == OMARCHY_SCAN_IF && input['timeout-minutes'] == 11 &&
                 input['run'] == <<~'SH', 'Omarchy must prepare a private scan input on scan-eligible runs')
     if timeout 10m python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-ci-scan-input"; then
       echo "ready=true" >> "$GITHUB_OUTPUT"
@@ -170,14 +178,43 @@ def require_omarchy_image_secret_scan(steps)
   require_check(export['env'] == {
     'OMARCHY_SCAN_STARTED' => '${{ steps.omarchy-scan-start.outputs.ready }}',
   } && export['timeout-minutes'] == 31 && export['run'] == <<~'SH', 'Omarchy could export before image scan completion')
-    if [[ "$GITHUB_EVENT_NAME" = schedule || "$GITHUB_EVENT_NAME" = workflow_dispatch ]] ||
-       [[ "$GITHUB_EVENT_NAME" = push && "$GITHUB_REF" != refs/heads/tl/release/* ]]; then
+    if [[ "$GITHUB_EVENT_NAME" = push && "$GITHUB_REF" != refs/heads/tl/release/* ]]; then
       timeout 10m python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
     else
-      test "$OMARCHY_SCAN_STARTED" = true
-      python3 -B .github/scripts/omarchy-ci-scan.py promote "$GITHUB_SHA"
+      test "$OMARCHY_SCAN_STARTED" = true && python3 -B .github/scripts/omarchy-ci-scan.py promote "$GITHUB_SHA"
     fi
   SH
+  require_check(retain['if'] == "success() && steps.native-image-export.outcome == 'success'",
+    'Omarchy retention must require promotion success')
+end
+
+def check_verification_archive_scan_paths(documents)
+  images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
+  scan = images.find { |step| step['id'] == 'native-image-scan' }
+  omarchy = documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps')
+  promote = omarchy.find { |step| step['id'] == 'native-image-export' }
+  scanner = <<~'SH'
+    python3() { printf '%s\n' "$@"; return "$TEST_SCAN_EXIT"; }
+    timeout() { return 97; }
+  SH
+  revision = 'a' * 40
+  %w[schedule workflow_dispatch].each do |event|
+    env = {'GITHUB_EVENT_NAME' => event, 'GITHUB_REF' => 'refs/heads/develop',
+           'GITHUB_SHA' => revision, 'RUNNER_TEMP' => '/synthetic', 'OMARCHY_SCAN_STARTED' => 'true'}
+    [['api', scan, %W[-B .github/scripts/ci_image_secret_scan.py api /synthetic/ci-native-image #{revision}]],
+     ['runtime', scan, %W[-B .github/scripts/ci_image_secret_scan.py runtime /synthetic/ci-native-image #{revision}]],
+     ['runtime-omarchy', promote, %W[-B .github/scripts/omarchy-ci-scan.py promote #{revision}]]].each do |component, step, args|
+      [0, 42].each do |exit_code|
+        out, _, status = Open3.capture3(env.merge('IMAGE_COMPONENT' => component, 'TEST_SCAN_EXIT' => exit_code.to_s),
+          'bash', '-ec', scanner + step.fetch('run'))
+        require_check(out.lines.map(&:chomp) == args && status.exitstatus == exit_code,
+          "#{event} #{component} must use the exact archive and propagate scan status #{exit_code}")
+      end
+    end
+    out, _, status = Open3.capture3(env.merge('OMARCHY_SCAN_STARTED' => '', 'TEST_SCAN_EXIT' => '0'),
+      'bash', '-ec', scanner + promote.fetch('run'))
+    require_check(out.empty? && !status.success?, "#{event} Omarchy must refuse an absent scan")
+  end
 end
 
 RUNTIME_VULNERABILITY_BASE = "${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'merge_group' && github.event.merge_group.base_sha || github.event.before }}"

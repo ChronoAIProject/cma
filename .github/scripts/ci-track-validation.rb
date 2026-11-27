@@ -51,7 +51,8 @@ def check_merge_group_artifacts(documents)
     condition = "#{STAGING_IMAGE_FALLBACK} && success() && (#{NATIVE_IMAGE_EVENTS} || (#{VERIFICATION_IMAGE_EVENT}#{component_filter}))"
     require_check(export['id'] == 'native-image-export' && export['if'].gsub(/\s+/, ' ') == condition &&
       !export.key?('continue-on-error'), "#{file} must export only from eligible tested runs")
-    require_check(retain['if'] == "success() && steps.native-image-export.outcome == 'success'" &&
+    expected_retention = file == 'ci-images' ? IMAGE_RETAIN_IF : "success() && steps.native-image-export.outcome == 'success'"
+    require_check(retain['if'].to_s.split.join(' ') == expected_retention &&
       !retain.key?('continue-on-error'), "#{file} must only retain a successful native image export")
   end
   jobs = documents.fetch('ci').fetch('jobs')
