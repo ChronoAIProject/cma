@@ -264,7 +264,7 @@ async fn apply_publication_observed(
                 mutation,
                 publication_history::Selection {
                     ordinary: observed.is_none(),
-                    repeated: repeated_marker.is_some(),
+                    repeated_marker,
                 },
                 history_cache,
                 session,
