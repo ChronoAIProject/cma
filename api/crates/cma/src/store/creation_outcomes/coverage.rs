@@ -8,12 +8,12 @@ fn current_day() -> Document {
 }
 
 impl CreationOutcomes {
-    fn coverage_id(&self) -> String {
-        format!("coverage:{}:{}", self.config.deployment, self.config.epoch)
+    fn coverage_id(&self, epoch: &str) -> String {
+        format!("coverage:{}:{epoch}", self.config.deployment)
     }
 
     fn coverage_filter(&self) -> Document {
-        doc! {"_id": self.coverage_id(), "document_schema_version": VERSION, "first_day": self.config.first_day}
+        doc! {"_id": self.coverage_id(&self.config.epoch), "document_schema_version": VERSION, "first_day": self.config.first_day}
     }
 
     pub(super) async fn initialize_coverage(&self) -> Result<(), StoreError> {
@@ -90,23 +90,31 @@ impl CreationOutcomes {
     pub(super) async fn is_closed(
         &self,
         records: &Collection<Document>,
-        day: i64,
+        period: &contract::KeyPeriod<'_>,
         session: &mut ClientSession,
     ) -> Result<bool, StatusCode> {
+        let filter = if period.epoch == self.config.epoch {
+            self.coverage_filter()
+        } else {
+            // A retired epoch's certificate can prove absence only for days
+            // that were durably closed while that epoch was configured.
+            doc! {"_id":self.coverage_id(period.epoch), "document_schema_version":VERSION}
+        };
         let row = records
-            .find_one(self.coverage_filter())
-            .projection(doc! {"closed_day":1})
+            .find_one(filter)
+            .projection(doc! {"first_day":1,"closed_day":1})
             .max_time(IO_BUDGET)
             .session(session)
             .await
             .map_err(unavailable)?;
         let Some(row) = row else { return Ok(false) };
+        let first_day = row.get_i64("first_day").map_err(unavailable)?;
         let closed_day = match row.get("closed_day") {
             Some(Bson::Int64(day)) => *day,
             Some(Bson::Int32(day)) => i64::from(*day),
             _ => return Err(StatusCode::SERVICE_UNAVAILABLE),
         };
-        Ok(day >= self.config.first_day && day <= closed_day)
+        Ok(period.day >= first_day && period.day <= closed_day)
     }
 }
 

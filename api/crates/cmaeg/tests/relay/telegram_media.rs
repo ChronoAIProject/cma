@@ -15,6 +15,9 @@ use cmaeg::turns::{
 use cmaeg_core::activity::{ActivityKind, Attachment, AttachmentKind, AttachmentSource};
 use serde_json::{json, Value};
 
+#[path = "source_refusal.rs"]
+mod source_refusal;
+
 const MENTION: &str = "look at this @support_bot";
 
 fn mention_policy(value: &mut Value) {
@@ -147,7 +150,11 @@ async fn captioned_relay_photo_is_correlated_on_refusal_and_delivered_when_enabl
     let mut photo = telegram_photo();
     caption(&mut photo, "Describe the text in this fixture image.");
     let (body, token) = photo.signed();
-    let response = callbacks::router(off.state.clone().with_activity_observer(observer.clone()))
+    let observed = Arc::new(cmaeg::activity::ObservedActivity::new(
+        off.activity.clone(),
+        observer.clone(),
+    ));
+    let response = callbacks::router(off.state.clone().with_activity_observer(observed))
         .oneshot(off.local_request(Body::from(body), &token))
         .await
         .unwrap();

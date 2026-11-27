@@ -424,3 +424,91 @@ async fn disabled_gate_and_refused_senders_make_no_channel_request_and_ordinary_
         "ordinary non-thread partition retains its behavior on unavailable metadata"
     );
 }
+
+#[tokio::test]
+async fn scoped_discord_thread_admission_uses_the_current_exact_conversation() {
+    let f = fixture().await;
+    let mut saved = definition();
+    saved.partition.key = PartitionKey::Thread;
+    let Source::Discord { admission, .. } = &mut saved.sources[0] else {
+        panic!("expected native Discord source");
+    };
+    *admission = serde_json::from_value(json!({
+        "type":"scoped","senders":{"type":"allowlist","ids":["42"]},
+        "chats":{"type":"allowlist","ids":["100"]},"groups":"all"
+    }))
+    .unwrap();
+    f.replace(&saved);
+    let journal = f.acquire().await.unwrap();
+    let reader = InboxReader::new(f.store.channels.clone(), f.store.keys.clone());
+    let mut current = channel();
+    Arc::get_mut(&mut current).unwrap().definition = saved.clone();
+    metadata(&f, "100", thread("100", 11));
+    metadata(&f, "101", thread("101", 11));
+
+    for id in ["99", "100", "101"] {
+        f.advance(1_000);
+        let event = dispatch(&f, id);
+        journal
+            .persist_message(&journal.authority, &event)
+            .await
+            .unwrap();
+        let result = reader
+            .load(
+                &inbox_id(&f, &event),
+                current.clone(),
+                (f.store.clock)() / 1000,
+            )
+            .await
+            .unwrap();
+        if id == "100" {
+            let activity = launched(result).request.activity;
+            assert_eq!(activity.conversation.id, "100");
+            assert_eq!(activity.conversation.thread_id.as_deref(), Some("100"));
+        } else {
+            assert!(matches!(result, InboxLaunch::Refused(Refusal::ChatDenied)));
+        }
+    }
+
+    journal.release().await.unwrap();
+    let Source::Discord { admission, .. } = &mut saved.sources[0] else {
+        unreachable!()
+    };
+    *admission = serde_json::from_value(json!({
+        "type":"scoped","senders":{"type":"allowlist","ids":["42"]},
+        "chats":{"type":"allowlist","ids":["99"]},"groups":"all"
+    }))
+    .unwrap();
+    f.replace(&saved);
+    let journal = f.acquire().await.unwrap();
+    Arc::get_mut(&mut current).unwrap().definition = saved;
+    metadata(
+        &f,
+        "99",
+        json!({"id":"99","type":0,"guild_id":"88","parent_id":"90"}),
+    );
+
+    for id in ["99", "100"] {
+        f.advance(1_000);
+        let event = dispatch(&f, id);
+        journal
+            .persist_message(&journal.authority, &event)
+            .await
+            .unwrap();
+        let result = reader
+            .load(
+                &inbox_id(&f, &event),
+                current.clone(),
+                (f.store.clock)() / 1000,
+            )
+            .await
+            .unwrap();
+        if id == "99" {
+            let activity = launched(result).request.activity;
+            assert_eq!(activity.conversation.id, "99");
+            assert!(activity.conversation.thread_id.is_none());
+        } else {
+            assert!(matches!(result, InboxLaunch::Refused(Refusal::ChatDenied)));
+        }
+    }
+}

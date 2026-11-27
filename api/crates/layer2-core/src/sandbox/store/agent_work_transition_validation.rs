@@ -19,6 +19,7 @@ pub(super) enum PublicationKind {
 pub(super) fn validate_position(
     agent: &Agent,
     worktree: &Worktree,
+    retired_process_absent: bool,
 ) -> Result<(), SandboxStoreError> {
     let live_shape = !agent.status.is_live()
         || (agent.failure.is_none()
@@ -103,6 +104,9 @@ pub(super) fn validate_position(
                     worktree.status,
                     WorktreeStatus::Ready | WorktreeStatus::Failed
                 )
+                || (agent.status == AgentStatus::Stopped
+                    && worktree.status == WorktreeStatus::Creating
+                    && retired_process_absent)
         }
         AgentWorkStep::RemoveHome | AgentWorkStep::RemoveWorktree => {
             matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed)

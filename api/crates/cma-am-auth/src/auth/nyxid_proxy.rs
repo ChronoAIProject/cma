@@ -11,7 +11,6 @@ use axum::http::HeaderMap;
 use layer2_core::resource_access::CredentialSource;
 use layer2_core::{Authorization, StoreError, SubjectId};
 use std::sync::Arc;
-use std::time::SystemTime;
 
 use super::{cookie_authorization, refresh, AuthMode, AuthState, RequestAuth};
 
@@ -106,7 +105,7 @@ impl AuthState {
     pub(super) async fn proxy_request(
         &self,
         headers: &HeaderMap,
-        personal_agent_inventory: bool,
+        personal_inventory: bool,
     ) -> Result<Option<RequestAuth>, StoreError> {
         let token = match jwt::identity_token(headers) {
             Ok(Some(token)) => token,
@@ -156,12 +155,29 @@ impl AuthState {
             return Err(StoreError::Malformed("proxy owner mismatch".into()));
         }
         refresh::refresh_if_needed(self, &mut owner).await?;
-        if personal_agent_inventory && owner.usable_tokens(SystemTime::now()).is_none() {
-            // Personal inventory needs the signed permission and no execution custody.
-            return Ok(Some(assertion_only()));
-        }
-        let mut request =
-            cookie_authorization::request_for_cookie(self, &subject, owner.clone()).await?;
+        let owner_incarnation = owner.incarnation.clone();
+        let mut request = if personal_inventory {
+            let retained = cookie_authorization::verify_with_timeout(
+                self,
+                &subject,
+                owner,
+                cookie_authorization::PROVIDER_VERIFICATION_TIMEOUT,
+            )
+            .await?;
+            match retained {
+                Some(request) if request.delegated_credential.is_some() => request,
+                _ => {
+                    // The signed subject can read its own inventory when retained custody
+                    // is absent or explicitly rejected. Dependency errors still propagate.
+                    tracing::debug!(
+                        "Using signed identity for personal inventory without retained custody"
+                    );
+                    return Ok(Some(assertion_only()));
+                }
+            }
+        } else {
+            cookie_authorization::request_for_cookie(self, &subject, owner).await?
+        };
         request.authorization = intersect(&authorization, &request.authorization);
         let grant = ProxyGrant {
             id: ProxyGrant::identity(
@@ -175,7 +191,7 @@ impl AuthState {
             assertion_id: identity.jti,
             subject,
             authorization: request.authorization.clone(),
-            owner_incarnation: owner.incarnation,
+            owner_incarnation,
         };
         grant.validate()?;
         // Persist the ceiling once; a replay cannot replace its owner incarnation

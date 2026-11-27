@@ -189,6 +189,7 @@ class NativeRecovery(unittest.TestCase):
         jobs = yaml.safe_load((ROOT / '.github/workflows/cache-retention.yml').read_text())['jobs']
         job = jobs['recover_native_buildkit']
         self.assertIn("vars.CMA_LEGACY_BUILDKIT_GC == 'true'", job['if'])
+        self.assertIn("vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true'", job['if'])
         self.assertIn("vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true'", job['if'])
         self.assertIn("github.event_name == 'workflow_run'", job['if'])
         self.assertEqual(job['concurrency'], jobs['retain_layers']['concurrency'])
@@ -207,6 +208,7 @@ class NativeRecovery(unittest.TestCase):
         self.assertEqual(preview['run'], 'python3 -B .github/scripts/actions_cache_sweep.py')
         self.assertEqual(inspect['needs'], 'sweep')
         for condition in (
+            "vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true'",
             "github.event_name == 'workflow_dispatch' && inputs.inspect_buildkit",
             "github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push'",
             "github.event.workflow_run.head_repository.full_name == github.repository",

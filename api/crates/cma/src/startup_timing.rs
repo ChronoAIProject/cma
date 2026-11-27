@@ -1,6 +1,33 @@
 //! Bounded, payload-free observations of startup barriers.
 use std::{future::Future, time::Instant};
 
+use crate::config::ManagedMachineUpdates;
+
+pub(crate) fn observe_managed_machine_scope(
+    scope: ManagedMachineUpdates,
+    runtime_image_origin_enabled: bool,
+) {
+    if runtime_image_origin_enabled && scope == ManagedMachineUpdates::Disabled {
+        tracing::warn!(
+            target: "cma_startup",
+            parent: None,
+            setting = "CHRONO_MANAGED_MACHINE_RUNTIME_UPDATES",
+            mode = scope.mode(),
+            runtime_image_origin_enabled,
+            "Disabled Machine scope blocks origin qualification and new managed Machine update admission"
+        );
+    } else {
+        tracing::info!(
+            target: "cma_startup",
+            parent: None,
+            setting = "CHRONO_MANAGED_MACHINE_RUNTIME_UPDATES",
+            mode = scope.mode(),
+            runtime_image_origin_enabled,
+            "Managed Machine runtime update scope"
+        );
+    }
+}
+
 pub(crate) struct Phase {
     name: &'static str,
     started: Instant,

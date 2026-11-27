@@ -98,6 +98,7 @@ fn confirmed_receipts_and_local_buffering_remain_distinct_and_uncertainty_can_re
     };
     let request = fixture::request(|_| {}, fixture::message("fixture"));
     let mut row = ChannelActivity {
+        source_refusal: None,
         quoted_context: None,
         event_id: "event-1".into(),
         kind: None,

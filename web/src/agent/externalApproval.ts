@@ -50,11 +50,14 @@ export function approvalReviewUrl(
   }
 }
 
-export function currentExternalApproval(state: ConversationState) {
+export function currentExternalApproval(state: ConversationState, observedAt?: number) {
   const runId = state.activeRunId;
   if (runId === undefined || state.turnOutcomes?.[runId] !== undefined) return undefined;
   return state.approvals.find(
     (approval): approval is ExternalApprovalRequest =>
-      approval.source === 'external' && approval.runId === runId && approval.decision === undefined,
+      approval.source === 'external' &&
+      approval.runId === runId &&
+      approval.decision === undefined &&
+      (observedAt === undefined || Date.parse(approval.deadlineAt) > observedAt),
   );
 }

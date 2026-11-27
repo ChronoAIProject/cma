@@ -54,9 +54,32 @@ impl Supervisor {
             RequestFrame::ListAgentFiles(request) => Ok(ResponseFrame::ListAgentFiles(
                 crate::agent_filesystem::list(&self.config, request)?,
             )),
-            RequestFrame::ReadAgentFile(request) => Ok(ResponseFrame::ReadAgentFile(
-                crate::agent_filesystem::read(&self.config, request)?,
-            )),
+            RequestFrame::ReadAgentFile(request) => {
+                if let Some(home_identity) = &request.home_identity {
+                    let status = self
+                        .runtime_status(layer3_adapter::RuntimeStatusRequest {
+                            sandbox_id: request.sandbox_id.clone(),
+                            generation: request.runtime_generation,
+                            home_identity: home_identity.clone(),
+                        })
+                        .await?;
+                    // The confined file reader checks full-home mount support
+                    // before opening the path.
+                    if !status.installation_ready
+                        || !status.credential_ready
+                        || status.restore_pending
+                    {
+                        return Err(RuntimeError::rejected(
+                            "filesystem_runtime_unready",
+                            "runtime is not ready for filesystem access",
+                        ));
+                    }
+                }
+                Ok(ResponseFrame::ReadAgentFile(crate::agent_filesystem::read(
+                    &self.config,
+                    request,
+                )?))
+            }
             RequestFrame::WriteAgentFile(request) => Ok(ResponseFrame::WriteAgentFile(
                 crate::agent_filesystem::write(&self.config, request)?,
             )),

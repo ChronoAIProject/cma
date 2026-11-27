@@ -178,6 +178,17 @@ pub trait ActivityObserver: Send + Sync {
     ) {
     }
 
+    /// Persist owner-visible source metadata before acknowledging a refusal.
+    fn source_refused<'a>(
+        &'a self,
+        _owner: &'a str,
+        _record: &'a RecordId,
+        _receipt: crate::activity::ChannelActivity,
+        _received: time::OffsetDateTime,
+    ) -> BoxFuture<'a, Result<(), ()>> {
+        Box::pin(async { Err(()) })
+    }
+
     /// A consumer's launch ended; `accepted` is the time from receipt to
     /// that end.
     fn launched(

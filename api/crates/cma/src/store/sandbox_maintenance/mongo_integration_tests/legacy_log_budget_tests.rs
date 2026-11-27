@@ -9,6 +9,7 @@ use mongodb::{
 };
 use std::sync::Mutex;
 
+mod certification;
 mod integrity;
 
 struct TestStore {

@@ -191,3 +191,74 @@ async fn unrelated_schema_errors_remain_generic_and_never_echo_submitted_data() 
     stop.send(()).unwrap();
     task.await.unwrap();
 }
+
+#[tokio::test]
+async fn scoped_discord_admission_update_is_versioned_and_readable() {
+    let provider = FakeProvider::start(FakeProviderConfig::default()).await;
+    let cma = FakeCma::start(false).await;
+    let nyxid = FakeNyxid::start().await;
+    let (base, stop, task) =
+        serve_app(native_state_with_slug(&provider, &cma, &nyxid, "nyxbot")).await;
+    let mut input = native_body();
+    let response = post(&base, &input).await;
+    assert_eq!(response.status(), 201);
+    let created: Value = response.json().await.unwrap();
+    let id = created["channel_id"].as_str().unwrap();
+    let original_version = created["version"].as_u64().unwrap();
+    input.as_object_mut().unwrap().remove("record_id");
+    input.as_object_mut().unwrap().remove("credentials");
+    input["expected_version"] = original_version.into();
+    let scoped = json!({
+        "type":"scoped","senders":{"type":"allowlist","ids":["42"]},
+        "chats":{"type":"allowlist","ids":["100"]},"groups":"all"
+    });
+    input["sources"][0]["admission"] = scoped.clone();
+    let response = put(&base, id, &input).await;
+    assert_eq!(response.status(), 200);
+    let updated: Value = response.json().await.unwrap();
+    let version = updated["version"].as_u64().unwrap();
+    assert!(version > original_version);
+    assert_eq!(updated["definition"]["sources"][0]["admission"], scoped);
+    assert_eq!(
+        updated["provider"]["binding_id"],
+        created["provider"]["binding_id"]
+    );
+    assert_eq!(
+        updated["definition"]["routing"],
+        created["definition"]["routing"]
+    );
+    assert_eq!(updated["channel_id"], created["channel_id"]);
+
+    let mut denied = scoped.clone();
+    denied["chats"] = json!({"type":"deny"});
+    input["sources"][0]["admission"] = denied.clone();
+    assert_eq!(put(&base, id, &input).await.status(), 409);
+
+    let read = Client::new()
+        .get(format!("{base}/v1/channels/{id}"))
+        .bearer_auth("token-alice")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(read.status(), 200);
+    let read: Value = read.json().await.unwrap();
+    assert_eq!(read["version"], version);
+    assert_eq!(read["definition"]["sources"][0]["admission"], scoped);
+
+    input["expected_version"] = version.into();
+    for dimension in ["senders", "chats"] {
+        input["sources"][0]["admission"] = scoped.clone();
+        input["sources"][0]["admission"][dimension] = json!({"type":"allowlist","ids":[]});
+        let invalid = put(&base, id, &input).await;
+        assert_eq!(invalid.status(), 400);
+        assert_eq!(cma.records().values().next().unwrap().version, version);
+    }
+    input["sources"][0]["admission"] = denied.clone();
+    let response = put(&base, id, &input).await;
+    assert_eq!(response.status(), 200);
+    let saved: Value = response.json().await.unwrap();
+    assert!(saved["version"].as_u64().unwrap() > version);
+    assert_eq!(saved["definition"]["sources"][0]["admission"], denied);
+    stop.send(()).unwrap();
+    task.await.unwrap();
+}

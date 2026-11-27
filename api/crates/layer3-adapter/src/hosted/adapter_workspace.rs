@@ -18,7 +18,10 @@ pub(super) async fn prepare(
             "workspace clone depth is invalid".into(),
         ));
     }
-    let state = adapter.known_state(handle).await?;
+    let state = adapter
+        .known_state(handle)
+        .await
+        .inspect_err(|_| crate::workspace_prepare_observation::inspection())?;
     validate_operation(
         &request.operation_id,
         &request.request_sha256,
@@ -27,7 +30,8 @@ pub(super) async fn prepare(
     if request.repository_connection_id.is_some()
         && !adapter
             .inspect_runtime_status(handle)
-            .await?
+            .await
+            .inspect_err(|_| crate::workspace_prepare_observation::inspection())?
             .github_repository_scope
     {
         return Err(repository_scope_unsupported());
@@ -47,9 +51,12 @@ pub(super) async fn prepare(
         {
             Ok(receipt)
         }
-        ResponseFrame::PrepareWorkspace(_) => Err(AdapterError::Rejected(
-            "workspace receipt names a different workspace".into(),
-        )),
+        ResponseFrame::PrepareWorkspace(_) => {
+            crate::workspace_prepare_observation::invalid_receipt();
+            Err(AdapterError::Rejected(
+                "workspace receipt names a different workspace".into(),
+            ))
+        }
         _ => unreachable!("exchange verifies response operation"),
     }
 }
@@ -210,8 +217,14 @@ pub(super) async fn recover_prepare(
     request: &crate::WorkspacePrepareRecoveryRequest,
 ) -> crate::Result<crate::WorkspacePrepareRecoveryReceipt> {
     request.validate()?;
-    let state = adapter.known_state(handle).await?;
-    let runtime = adapter.inspect_runtime_status(handle).await?;
+    let state = adapter
+        .known_state(handle)
+        .await
+        .inspect_err(|_| crate::workspace_prepare_observation::inspection())?;
+    let runtime = adapter
+        .inspect_runtime_status(handle)
+        .await
+        .inspect_err(|_| crate::workspace_prepare_observation::inspection())?;
     if request.original.repository_connection_id.is_some() && !runtime.github_repository_scope {
         return Err(repository_scope_unsupported());
     }
@@ -231,6 +244,7 @@ pub(super) async fn recover_prepare(
     if Path::new(&receipt.prepared.path)
         != Path::new(&state.home_directory).join(&request.original.name)
     {
+        crate::workspace_prepare_observation::invalid_receipt();
         return Err(AdapterError::Rejected(
             "recovered Workspace receipt changed its original path".into(),
         ));
