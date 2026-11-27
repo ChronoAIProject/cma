@@ -135,7 +135,7 @@ impl Fixture {
             })
             .await
             .unwrap();
-        let fenced = claim(&store, &agent.id, MINUTE).await;
+        let fenced = claim_interaction_fence(&store, &agent.id).await;
         store.commit_agent_work(advance(&fenced)).await.unwrap();
         let store = store
             .prepare_bounded_admission(std::slice::from_ref(&agent.id))

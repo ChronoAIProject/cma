@@ -99,7 +99,29 @@ pub(super) async fn exercise(
     );
     assert!(coordinator.local(&working.id).await.is_some());
     assert!(ingress.local(&working.id).await.is_none());
-    let stop = request(&router, &working.id, "stop", "stop-on-peer").await;
+    // A concurrent writer on another store can hold the Agent row without
+    // advancing its revision, as an admission fence does.
+    let mut writer = client.start_session().await.unwrap();
+    writer.start_transaction().await.unwrap();
+    database
+        .collection::<mongodb::bson::Document>("agents")
+        .update_one(
+            doc! {"_id": working.id.as_str()},
+            doc! {"$inc": {"agent_command_admission_fence": 1_i64}},
+        )
+        .session(&mut writer)
+        .await
+        .unwrap();
+    let stop = request(&router, &working.id, "stop", "stop-on-peer");
+    tokio::pin!(stop);
+    tokio::select! {
+        response = &mut stop => panic!("Stop returned {} while the Agent row was locked", response.status()),
+        _ = tokio::time::sleep(Duration::from_millis(300)) => {}
+    }
+    writer.commit_transaction().await.unwrap();
+    let stop = tokio::time::timeout(Duration::from_secs(5), stop)
+        .await
+        .expect("Stop must settle after the competing writer commits");
     assert_eq!(stop.status(), StatusCode::ACCEPTED);
     let pending = harness.stored(&working.id).await;
     assert_eq!(pending.status, AgentStatus::Working);

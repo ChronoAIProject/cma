@@ -155,6 +155,54 @@ async fn stale_or_foreign_admission_has_no_receipt_or_consumed_order() {
     assert_eq!(valid.receipt.agent_order, 1);
 }
 
+#[tokio::test]
+async fn retry_without_matching_task_evidence_leaves_the_command_order_available() {
+    use crate::sandbox::store::AgentLogStore;
+    use crate::sandbox::task_acceptance::{TaskAcceptanceAction, TaskAcceptanceIntent};
+
+    let (store, agent, parent) = fixture().await;
+    let original_log = store.agent_log(&agent.id, 0, 20).await.unwrap();
+    let ordinary = reservation(&agent, &parent, "task-retry");
+    let mut retry = ordinary.clone();
+    let AgentCommand::Message { input, .. } = &mut retry.envelope.command else {
+        unreachable!();
+    };
+    input.task_acceptance = Some(TaskAcceptanceIntent {
+        version: 1,
+        action: TaskAcceptanceAction::Retry {
+            task_id: AgentCommandId::generate(),
+            after_turn_sequence: 1,
+        },
+    });
+    retry.envelope.request_fingerprint = retry.envelope.command.fingerprint().unwrap();
+
+    assert_eq!(
+        store.reserve_command(retry).await,
+        Err(CommandLedgerError::NotAdmissible)
+    );
+    assert!(store
+        .get_command(&ordinary.envelope.command_id)
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        store.get_agent(&agent.id).await.unwrap(),
+        Some(agent.clone())
+    );
+    assert_eq!(store.get_sandbox(&parent.id).await.unwrap(), Some(parent));
+    assert_eq!(
+        store.agent_log(&agent.id, 0, 20).await.unwrap(),
+        original_log
+    );
+
+    let CommandReservationResult::Created(admitted) =
+        store.reserve_command(ordinary).await.unwrap()
+    else {
+        panic!("the refused retry must leave its key available");
+    };
+    assert_eq!(admitted.receipt.agent_order, 1);
+}
+
 fn personal_policy(parent: &Sandbox) -> crate::resource_access::ResourcePolicyRecord {
     crate::resource_access::ResourcePolicyRecord {
         sandbox_id: parent.id.clone(),
