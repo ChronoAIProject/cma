@@ -9,6 +9,9 @@ use serde_json::json;
 mod faults;
 mod negatives;
 mod preclose;
+pub(super) use preclose::mongo::composed::{
+    parent_worker as mongo_parent_worker, run_due as run_mongo_parent_due,
+};
 pub(super) mod records;
 mod support;
 use support::*;
