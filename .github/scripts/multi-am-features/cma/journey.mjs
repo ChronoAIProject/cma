@@ -11,7 +11,7 @@ import {cleanupFixture} from './cleanup.mjs';
 import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
 import {retainedLifecycle} from '../features/lifecycle_atomicity.mjs';
 import {runtimeLoss} from '../features/runtime_loss.mjs';
-import {lifecycleFailureSummary} from '../failure.mjs';
+import {lifecycleFailureSummary, lifecyclePollFailure} from '../failure.mjs';
 
 export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook,
   preparedHook, triggerHook, retirementHook, navigationHook, firstAgentHook} = {}) {
@@ -96,7 +96,8 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       const operationHash = hash(record.operationId);
       result.create_failure = {operation_sha256: operationHash,
         agent_sha256: record.agentId ? hash(record.agentId) : null,
-        lifecycle_status: lastOperation?.status ?? null, observation: lifecycleFailureSummary(lastOperation)};
+        lifecycle_status: lastOperation?.status ?? null, observation: lifecycleFailureSummary(lastOperation),
+        poll_failure: lifecyclePollFailure(error, other(am))};
       const failurePath = join(config.output_dir, 'create-failure-' + operationHash + '.private.json');
       try {
         await writeFile(failurePath, JSON.stringify(lastOperation ?? null, null, 2) + '\n', {mode: 0o600, flag: 'wx'});

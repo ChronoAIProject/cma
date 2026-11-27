@@ -42,6 +42,20 @@ export function lifecycleFailureSummary(operation) {
   };
 }
 
+export function lifecyclePollFailure(error, manager) {
+  const status = error?.response?.status;
+  if (Number.isInteger(status) && status >= 400 && status <= 599) {
+    return {manager, kind: 'http_error', status};
+  }
+  if (error?.name === 'TimeoutError') return {manager, kind: 'request_timeout'};
+  if (error?.name === 'AbortError') return {manager, kind: 'request_aborted'};
+  const cause = error?.cause?.code;
+  if (['UND_ERR_SOCKET', 'UND_ERR_CONNECT_TIMEOUT', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT'].includes(cause)) {
+    return {manager, kind: 'transport_error', cause};
+  }
+  return {manager, kind: 'unknown'};
+}
+
 export function journeyFailureSummary(journey) {
   const step = journey?.steps.find(value => value.verdict === 'FAIL');
   const cleanup = journey?.cleanup ?? [];
@@ -52,6 +66,7 @@ export function journeyFailureSummary(journey) {
     first_failed_step: step ? fixedCode(step.name) : null,
     first_failed_step_code: step ? fixedCode(step.error) : null,
     lifecycle_failure: journey?.create_failure?.observation ?? null,
+    lifecycle_poll_failure: journey?.create_failure?.poll_failure,
     failure_runtime_pod_count: Number.isSafeInteger(podCount) && podCount >= 0 ? podCount : null,
     journey_cleanup_failures: {
       public_retirement: cleanup.filter(value => value.public_cleanup === 'FAILED').length,
