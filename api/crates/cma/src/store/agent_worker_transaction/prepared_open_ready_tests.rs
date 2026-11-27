@@ -7,6 +7,7 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::AgentStatus;
 
+mod commit_acknowledgement;
 mod snapshot;
 
 async fn fixture() -> (
