@@ -154,6 +154,37 @@ fn isolated_component_owner_physical_free_retains_all_permits() {
 }
 
 #[test]
+fn isolated_local_component_owner_retains_permits_through_physical_free() {
+    const TEST: &str = "ingress_budget::component::deallocation_tests::isolated_local_component_owner_retains_permits_through_physical_free";
+    if deallocation::isolated(TEST) {
+        return;
+    }
+    for boundary in [Boundary::Dynamic, Boundary::Payload, Boundary::Custody] {
+        let bytes = sizing::component_shared_owner_bytes::<Vec<u8>>().unwrap() + PAYLOAD;
+        let component = component(bytes);
+        let storage = IngressReservation::try_acquire(&component, None, bytes).unwrap();
+        let mut probe = AllocationProbe::new();
+        let (owner, pause) = probe.pause_deallocation_containing(
+            boundary.bytes(),
+            || storage.initialize_shared(|| vec![7u8; PAYLOAD]),
+            |owner| boundary.address(owner),
+        );
+        let last = owner.clone();
+        drop(owner);
+        pause.inspect_while_dropping(
+            move || drop(last),
+            || {
+                assert_eq!(component.available_permits(), 0);
+                assert!(IngressReservation::try_acquire(&component, None, 1).is_none());
+            },
+        );
+        assert_eq!(probe.allocated(), bytes);
+        assert_eq!(probe.live(), 0);
+        assert_eq!(component.available_permits(), bytes);
+    }
+}
+
+#[test]
 fn isolated_component_owner_racing_final_clones_retain_all_permits() {
     const TEST: &str = "ingress_budget::component::deallocation_tests::isolated_component_owner_racing_final_clones_retain_all_permits";
     if deallocation::isolated(TEST) {
