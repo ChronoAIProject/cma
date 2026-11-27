@@ -154,7 +154,7 @@ async fn current_statement(f: &Fixture) -> Option<Statement> {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn completeness_mixed_flag_takeover_keeps_measured_statement_current() {
-    use super::refresh::{assert_hold, head, retry};
+    use super::refresh::{head, retry};
     use super::refresh_source::{Response, Source};
 
     let f = completeness_fixture().await;
@@ -180,7 +180,7 @@ async fn completeness_mixed_flag_takeover_keeps_measured_statement_current() {
     retry(&f).await;
     source.set(Response::MemoryTimeout);
     assert!(!source.run_with_store(&f, &disabled).await);
-    assert_hold(&f, "refresh_source_unavailable", &original, &events).await;
+    assert_retained_refresh_hold(&f, &original, &events).await;
     let held = current_statement(&f).await.unwrap();
     assert_eq!(held.revision.0, first.revision.0 + 1);
     assert_eq!(held.facts, first.facts);
