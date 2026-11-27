@@ -38,6 +38,9 @@ use std::time::Duration;
 use tracing::Instrument;
 use utoipa::ToSchema;
 
+#[path = "callback_media_refusals.rs"]
+mod media_refusals;
+
 const SOURCE: &str = "nyxid_relay";
 
 pub fn router(state: IngressState) -> Router {
@@ -217,19 +220,7 @@ async fn admit_callback(
         .then(|| EventId::new(verified.payload.message_id.clone()).ok())
         .flatten();
     let refuse = |reason| {
-        if let (Refusal::AttachmentUnsupported, Some(event_id)) = (reason, &media_event_id) {
-            state
-                .activity
-                .refused(&record, SOURCE, Some(event_id), "attachment_unsupported");
-            tracing::info!(
-                source = SOURCE,
-                channel = %crate::telemetry::channel_hash(channel_id),
-                media_enabled = state.media_enabled,
-                "Telegram relay attachment refused"
-            );
-            return refused(reason);
-        }
-        authenticated_refusal(state, &record, SOURCE, reason)
+        media_refusals::refuse(state, &record, channel_id, media_event_id.as_ref(), reason)
     };
     let reject = |error| authenticated_invalid(state, &record, SOURCE, error);
     let observation = if state.relay_telegram_member_joins_enabled {
