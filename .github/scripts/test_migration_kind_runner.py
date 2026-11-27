@@ -190,14 +190,23 @@ class MigrationKindRunnerTests(unittest.TestCase):
 
     def test_pod_binding_requires_one_ready_selected_image(self):
         pod = {'metadata': {'name': 'api-1', 'uid': 'uid-1'},
+               'spec': {'containers': [{'name': 'api', 'image': 'cma-matrix-old'}]},
                'status': {'phase': 'Running', 'containerStatuses': [{
-                   'ready': True, 'restartCount': 0,
+                   'name': 'api', 'ready': True, 'restartCount': 0,
                    'image': 'cma-matrix-old',
                    'imageID': 'docker-pullable://sha256:' + '4' * 64}]}}
-        selected = runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', '4' * 64)
+        config = 'sha256:' + '4' * 64
+        selected = runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)
         self.assertEqual(selected['uid'], 'uid-1')
         with self.assertRaises(RuntimeError):
-            runner.select_ready_api_pod({'items': [pod, pod]}, 'cma-matrix-old', '4' * 64)
+            runner.select_ready_api_pod({'items': [pod, pod]}, 'cma-matrix-old', config)
+        pod['status']['containerStatuses'][0]['image'] = 'cma-matrix-current'
+        self.assertEqual(runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)['uid'], 'uid-1')
+        with self.assertRaises(RuntimeError):
+            runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-current', config)
+        pod['status']['containerStatuses'][0]['imageID'] = 'wrong-' + config
+        with self.assertRaises(RuntimeError):
+            runner.select_ready_api_pod({'items': [pod]}, 'cma-matrix-old', config)
 
 
 if __name__ == '__main__':
