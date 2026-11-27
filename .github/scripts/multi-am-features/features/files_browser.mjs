@@ -85,9 +85,12 @@ export async function browserFileRoundtrip({page, api, ingress, agentId, recordF
     check(await button(hiddenName).count() === 0, 'browser_files_hidden_entry_visible_by_default');
     const showHidden = dialog.getByRole('checkbox', {name: 'Show hidden', exact: true});
     await showHidden.check({timeout});
-    await button(hiddenName).waitFor({timeout});
-    check(await button(hiddenName).getAttribute('title') === '/home/' + hiddenPath,
-      'browser_files_hidden_entry_path_changed');
+    await button(hiddenName).click({timeout});
+    await dialog.getByLabel('Selected file', {exact: true})
+      .getByText('/home/' + hiddenPath, {exact: true}).waitFor({timeout});
+    const hiddenPreview = dialog.getByRole('textbox', {name: 'Contents of ' + hiddenName, exact: true});
+    await poll(() => hiddenPreview.inputValue({timeout}), value => value === hiddenText,
+      {timeout, interval: 100, code: 'browser_files_hidden_preview_bytes_changed'});
     await showHidden.uncheck({timeout});
     await button(hiddenName).waitFor({state: 'hidden', timeout});
     const currentDirectory = dialog.getByLabel('Current directory', {exact: true});
@@ -101,7 +104,7 @@ export async function browserFileRoundtrip({page, api, ingress, agentId, recordF
     await currentDirectory.getByText('/home/' + directory, {exact: true}).waitFor({timeout});
     await button(filename).waitFor({timeout});
     for (const am of [ingress, peer]) {
-      for (const rejected of ['cma/.cma', '../fixture-outside-home']) {
+      for (const rejected of ['/', 'cma/.cma', '../fixture-outside-home']) {
         const {status, body} = await api.request(am, 'GET', path + '/tree?path=' + encodeURIComponent(rejected),
           {direct: true, allowed: [200, 400]});
         check(status === 400 && body?.code === 'invalid_file_request' && !Object.hasOwn(body, 'entries'),
