@@ -28,6 +28,7 @@ mod receiver_incarnation;
 pub(crate) use receiver_incarnation::ReceiverIncarnation;
 mod native_runtime_proof;
 pub(crate) use native_runtime_proof::NativeRuntimeProof;
+pub(crate) use pool::NativeHomeRevision;
 mod network_policy;
 mod nonexecuting;
 mod observation;

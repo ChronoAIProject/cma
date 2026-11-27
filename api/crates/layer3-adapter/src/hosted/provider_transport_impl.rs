@@ -237,6 +237,39 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         response
     }
 
+    async fn exchange_bound_file_read(
+        &self,
+        handle: &RuntimeHandle,
+        pod: &crate::agent_sandbox::PodBinding,
+        request_sha256: &str,
+        request: crate::AgentFileReadRequest,
+    ) -> crate::Result<Option<ResponseFrame>> {
+        if self.native_transport == NativeRuntimeTransport::Direct {
+            return Ok(None);
+        }
+        let endpoint = crate::file_read_diagnostics::transport(
+            crate::wire::WireOperation::ReadAgentFile,
+            crate::file_read_diagnostics::TransportPhase::Endpoint,
+            self.endpoint(handle),
+        )
+        .await?;
+        if !endpoint
+            .native_binding()
+            .is_some_and(|(runtime, observed)| runtime == handle && observed == pod)
+            || !endpoint.native_identity().is_some_and(|identity| {
+                identity.sandbox_id.as_deref() == Some(request.sandbox_id.as_str())
+                    && identity.request_sha256.as_deref() == Some(request_sha256)
+            })
+        {
+            return Err(AdapterError::Rejected(
+                "runtime file read endpoint binding changed".into(),
+            ));
+        }
+        self.control_bound_file_read(&endpoint, request)
+            .await
+            .map(Some)
+    }
+
     async fn verify_checkpoint_hold(
         &self,
         handle: &RuntimeHandle,

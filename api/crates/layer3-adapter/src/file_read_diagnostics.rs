@@ -8,6 +8,9 @@ pub enum Stage {
     HomeBeforeStatus,
     HomeAfterStatus,
     RuntimeRead,
+    ReadBinding,
+    ReadBindingReused,
+    ReadPolicy,
     ReceiptValidation,
     StatusEndpoint,
     ReadEndpoint,
@@ -24,6 +27,9 @@ impl Stage {
             Self::HomeBeforeStatus => "home_before_status",
             Self::HomeAfterStatus => "home_after_status",
             Self::RuntimeRead => "runtime_read",
+            Self::ReadBinding => "read_binding",
+            Self::ReadBindingReused => "read_binding_reused",
+            Self::ReadPolicy => "read_policy",
             Self::ReceiptValidation => "receipt_validation",
             Self::StatusEndpoint => "status_endpoint",
             Self::ReadEndpoint => "read_endpoint",
@@ -107,6 +113,14 @@ pub async fn measure<T, E>(
     stage: Stage,
     operation: impl Future<Output = Result<T, E>>,
 ) -> Result<T, E> {
+    measure_by_result(stage, operation, |_| stage).await
+}
+
+pub(crate) async fn measure_by_result<T, E>(
+    stage: Stage,
+    operation: impl Future<Output = Result<T, E>>,
+    stage_for_success: impl FnOnce(&T) -> Stage,
+) -> Result<T, E> {
     let mut timing = OBSERVER
         .try_with(|observer| Timing {
             observer: observer.clone(),
@@ -117,10 +131,12 @@ pub async fn measure<T, E>(
         .ok();
     let result = operation.await;
     if let Some(timing) = timing.as_mut() {
-        timing.outcome = if result.is_ok() {
-            Outcome::Completed
-        } else {
-            Outcome::Error
+        timing.outcome = match &result {
+            Ok(value) => {
+                timing.stage = stage_for_success(value);
+                Outcome::Completed
+            }
+            Err(_) => Outcome::Error,
         };
     }
     result

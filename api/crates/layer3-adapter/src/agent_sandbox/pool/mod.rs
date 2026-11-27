@@ -19,6 +19,7 @@ pub use native_home_snapshots::{
     NativeHomeSnapshotObservation, NativeHomeSnapshotRequest, NativeHomeSnapshotSource,
 };
 pub use native_home_store::NativeHomeVolumes;
+pub(crate) use native_proof::NativeHomeRevision;
 mod binding_resources;
 mod management;
 mod model;

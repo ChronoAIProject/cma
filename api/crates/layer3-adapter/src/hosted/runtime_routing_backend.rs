@@ -1,14 +1,11 @@
 //! Preserve each runtime and home provider through creation and recovery.
 use super::*;
 use crate::ingress_budget::{AdmittedError, AdmittedOperation, IngressOwnershipPolicy, OwnedWork};
-
 #[path = "runtime_routing_backend_ingress.rs"]
 mod ingress;
 #[path = "runtime_routing_provider.rs"]
 mod provider;
-
 pub use provider::RuntimeRoutingStore;
-
 /// New allocations use the selected provider. Existing runtime handles retain
 /// their provider during rollout and rollback; inventory includes both owners.
 pub struct RuntimeBackends {
@@ -18,7 +15,6 @@ pub struct RuntimeBackends {
     pub routing: Arc<dyn RuntimeRoutingStore>,
     pub home_routes: Option<Arc<crate::RoutedHomeVolumes>>,
 }
-
 #[async_trait::async_trait]
 impl HostedBackend for RuntimeBackends {
     fn startup_binding_headroom(&self, handles: &[RuntimeHandle]) -> Option<usize> {
@@ -60,6 +56,16 @@ impl HostedBackend for RuntimeBackends {
         self.for_handle(handle).ok()?.stale_turn_producer(handle)
     }
 
+    async fn read_file_with_binding(
+        &self,
+        handle: &RuntimeHandle,
+        home: &crate::HomeVolumeAttachment,
+        request: &crate::AgentFileReadRequest,
+    ) -> Result<Option<crate::AgentFileReadReceipt>> {
+        self.for_handle(handle)?
+            .read_file_with_binding(handle, home, request)
+            .await
+    }
     async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
         self.for_handle(handle)?.open_desktop(handle).await
     }

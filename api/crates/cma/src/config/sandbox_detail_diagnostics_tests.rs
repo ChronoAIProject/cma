@@ -54,3 +54,21 @@ fn agent_file_read_timings_are_default_off_and_strict() {
         .is_err());
     }
 }
+
+#[test]
+fn single_exchange_file_reads_are_default_off_and_strict() {
+    const KEY: &str = "CHRONO_AGENT_FILE_SINGLE_EXCHANGE_ENABLED";
+    assert!(
+        !FeatureFlags::from_lookup(&mut |_| Ok(None))
+            .unwrap()
+            .agent_file_single_exchange
+    );
+    assert!(
+        FeatureFlags::from_lookup(&mut |name| Ok((name == KEY).then(|| "true".into())))
+            .unwrap()
+            .agent_file_single_exchange
+    );
+    assert!(
+        FeatureFlags::from_lookup(&mut |name| Ok((name == KEY).then(|| "TRUE".into()))).is_err()
+    );
+}
