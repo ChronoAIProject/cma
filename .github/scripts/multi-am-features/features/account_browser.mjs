@@ -165,3 +165,28 @@ export async function accountDocumentation(page, agentId) {
   await openResource();
   await account(page).waitFor({timeout});
 }
+
+export async function legacyNavigation(page) {
+  const visit = path => page.goto(path, {waitUntil: 'domcontentloaded', timeout});
+  const canonical = path => page.waitForURL(url => url.pathname === path, {timeout});
+  const appearance = () => page.getByRole('status').filter({hasText: 'Appearance is now in your account menu.'});
+  for (const [path, movedNotice] of [['/settings', true], ['/settings/general', true], ['/settings/usage', false]]) {
+    await visit(path);
+    await canonical('/usage');
+    await page.getByRole('dialog', {name: 'Your usage', exact: true}).waitFor({timeout});
+    await appearance().waitFor({state: movedNotice ? 'visible' : 'hidden', timeout});
+  }
+  await visit('/developer');
+  await canonical('/docs');
+  await page.getByRole('heading', {name: 'Docs', exact: true}).waitFor({timeout});
+  for (const path of ['/profiles', '/profiles/agent-profiles/retired', '/marketplace', '/marketplace/agent/retired']) {
+    await visit(path);
+    await canonical(path);
+    await page.getByRole('heading', {name: 'Configure Agents directly', exact: true}).waitFor({timeout});
+  }
+  for (const path of ['/image-manager', '/unknown-ci-route', '/agents/invalid%2Fsegment', '/agents/too/many/segments', '/docs/']) {
+    await visit(path);
+    await canonical(path);
+    await page.getByRole('heading', {name: 'Page not found', exact: true}).waitFor({timeout});
+  }
+}

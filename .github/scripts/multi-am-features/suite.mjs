@@ -29,7 +29,7 @@ import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
 import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_custody.mjs';
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
 import {accountAppearance, accountBuildVersion, accountDocumentation, accountSignIn, accountSignOut,
-  accountTextSize} from './features/account_browser.mjs';
+  accountTextSize, legacyNavigation} from './features/account_browser.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -102,7 +102,8 @@ async function withBrowser(am_origins, run, name) {
 async function accountBrowserCases(ams, agentId) {
   const cases = [['user.account_appearance', accountAppearance], ['user.account_text_size', accountTextSize],
     ['user.account_build_version', page => accountBuildVersion(page, config.expected_api_source)],
-    ['user.account_documentation', page => accountDocumentation(page, agentId)]];
+    ['user.account_documentation', page => accountDocumentation(page, agentId)],
+    ['user.navigation_legacy_routes', legacyNavigation]];
   async function exercise(am, iteration, name, run) {
     const start = performance.now();
     const row = {case: name, phase, iteration, ams: [am], real_browser: true, verdict: 'RUNNING'};

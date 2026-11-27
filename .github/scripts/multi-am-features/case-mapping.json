@@ -96,8 +96,9 @@
     ]
   },
   "cma-user.navigation.legacy-routes": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "cases": ["user.navigation_legacy_routes"],
+    "browser": true,
+    "routing": "both",
     "minimum_runs": 3,
     "phases": [
       "before_restart",
