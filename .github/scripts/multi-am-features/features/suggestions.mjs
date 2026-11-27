@@ -17,7 +17,7 @@ export async function suggestionsCase({api, adapter, record, recordState, record
   const rename = async (expected_revision, title) => (await api.request('a', 'PATCH', preferences,
     {body: {expected_revision, title}, key: randomUUID(), timeout: 8000})).body;
   const changed = 'Suggestion fence ' + randomUUID();
-  let baseline, stream;
+  let baseline, stream, witness;
   await adapter.prepareTurn({caseId, marker, suggestions: true});
   await withRestoration(async () => {
     await adapter.releaseTurn({caseId});
@@ -80,6 +80,7 @@ export async function suggestionsCase({api, adapter, record, recordState, record
         && set.source?.kind === 'generated' && typeof set.id === 'string' && set.id.length > 0
         && equal(set.items, [{id: set.id + ':0', rank: 0, text: SUGGESTION}]),
       'published_suggestion_scope_or_content_wrong');
+      witness = {scope, text: set.items[0].text};
     }
     for (const am of ['b', 'a']) {
       check(equal(await read(am, path), settled), 'suggestion_peer_replay_changed_result');
@@ -113,4 +114,5 @@ export async function suggestionsCase({api, adapter, record, recordState, record
       }
     }, (stage, error) => recordFailure('restoration', error));
   }, recordFailure);
+  return witness;
 }

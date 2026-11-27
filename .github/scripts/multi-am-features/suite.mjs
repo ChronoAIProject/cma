@@ -31,6 +31,7 @@ import {accessRequest} from './features/access_request.mjs';
 import {retirementRetention} from './features/retirement_retention.mjs';
 import {triggerAlwaysOn} from './features/trigger_always_on.mjs';
 import {suggestionsCase} from './features/suggestions.mjs';
+import {suggestionDraftBrowser} from './features/suggestion_draft_browser.mjs';
 import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
 import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_custody.mjs';
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
@@ -381,7 +382,17 @@ try {
               });
             }
           }, 'user.agent_open');
-          await caseContext.runCase('writer.suggestions_publish_once', () => suggestionsCase(caseContext, false));
+          await withBrowser(context.config.ams, async browser => {
+            for (const am of ['a', 'b']) {
+              let witness;
+              await caseContext.runCase('writer.suggestions_publish_once', async () => {
+                witness = await suggestionsCase(caseContext, false);
+              });
+              await browser.forIngress(am, ({page}) => browserCase(am, iteration, 'user.agent_suggestions', () =>
+                suggestionDraftBrowser({page, api: user, adapter: context.adapter,
+                  agentId: context.record.agentId, witness})));
+            }
+          }, 'user.agent_suggestions');
           await caseContext.runCase('writer.suggestions_expire_after_rename', () => suggestionsCase(caseContext, true));
         }
         await configurationDenials({...caseContext, outsider});
