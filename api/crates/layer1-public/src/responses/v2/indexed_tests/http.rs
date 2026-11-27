@@ -307,11 +307,20 @@ async fn unbound_submit_can_bind_before_first_snapshot_without_source_probe() {
 
 #[tokio::test]
 async fn replay_rebuilds_indexed_output_when_custody_expires_during_a_page() {
+    check_indexed_handoff("answer".into(), false).await;
+}
+
+#[tokio::test]
+async fn replay_pagination_error_releases_recovery_before_eof() {
+    check_indexed_handoff("\\".repeat(OUTPUT_PAGE_BYTES / 2 + 1), true).await;
+}
+
+async fn check_indexed_handoff(answer: String, expects_pagination: bool) {
     use layer2_core::sandbox::agent_observation::observation_scope;
 
     let data = make({
         let mut kinds = beginning();
-        kinds.push(message("answer"));
+        kinds.push(message(&answer));
         kinds.push(AgentLogKind::TurnCompleted { turn_sequence: 3 });
         kinds
     })
@@ -333,11 +342,14 @@ async fn replay_rebuilds_indexed_output_when_custody_expires_during_a_page() {
         command_store,
         &data.agent,
     );
-    let router = crate::responses::v2::router(crate::responses::v2::ResponsesV2State::new(
+    let state = crate::responses::v2::ResponsesV2State::new(
         data.state.agent_page_origin.clone(),
         commands,
         reads,
-    ));
+    );
+    let slots = state.durable_recovery_slots.clone();
+    let capacity = slots.available_permits();
+    let router = crate::responses::v2::router(state);
     let submit = observation_scope(
         custody.clone(),
         router.clone().oneshot(request(
@@ -376,7 +388,38 @@ async fn replay_rebuilds_indexed_output_when_custody_expires_during_a_page() {
     assert_eq!(response.headers()["x-cma-response-id"], id);
 
     data.source.counts.stall.store(true, Ordering::SeqCst);
-    let collected = tokio::spawn(axum::body::to_bytes(response.into_body(), 100_000));
+    let collected = tokio::spawn(async move {
+        let mut body = response.into_body().into_data_stream();
+        let mut released = Vec::new();
+        while let Some(frame) = body.next().await {
+            let frame = frame.unwrap();
+            let events = events(&frame);
+            if events
+                .iter()
+                .any(|event| event["code"] == "response_pagination_required")
+            {
+                assert!(expects_pagination);
+                assert_eq!(events.len(), 1);
+                assert_eq!(events[0]["type"], "error");
+                assert!(!std::str::from_utf8(&frame)
+                    .unwrap()
+                    .lines()
+                    .any(|line| line.starts_with("id:")));
+                assert_eq!(slots.available_permits(), capacity);
+                assert!(body.next().await.is_none());
+                return;
+            }
+            released.extend(events);
+        }
+        assert!(!expects_pagination, "pagination refusal must be explicit");
+        assert!(released.iter().all(|event| event["type"] != "error"));
+        for (index, event) in released.iter().enumerate() {
+            assert_eq!(event["sequence_number"], (index + 1) as u64);
+        }
+        let completed = released.last().unwrap();
+        assert_eq!(completed["type"], "response.completed");
+        assert_eq!(completed["response"]["id"], id);
+    });
     tokio::time::timeout(
         Duration::from_secs(4),
         data.source.counts.entered.notified(),
@@ -386,19 +429,10 @@ async fn replay_rebuilds_indexed_output_when_custody_expires_during_a_page() {
     custody.revoke();
     data.source.counts.stall.store(false, Ordering::SeqCst);
     data.source.counts.release.notify_one();
-    let bytes = tokio::time::timeout(Duration::from_secs(4), collected)
+    tokio::time::timeout(Duration::from_secs(4), collected)
         .await
         .unwrap()
-        .unwrap()
         .unwrap();
-    let released = events(&bytes);
-    assert!(released.iter().all(|event| event["type"] != "error"));
-    for (index, event) in released.iter().enumerate() {
-        assert_eq!(event["sequence_number"], (index + 1) as u64);
-    }
-    let completed = released.last().unwrap();
-    assert_eq!(completed["type"], "response.completed");
-    assert_eq!(completed["response"]["id"], id);
 }
 
 #[tokio::test]

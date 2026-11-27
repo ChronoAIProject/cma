@@ -9,12 +9,8 @@ use layer2_core::sandbox::{
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentReadError,
 };
 use serde_json::{json, Value};
-use std::{collections::VecDeque, convert::Infallible, time::Duration};
-use tokio::sync::{Semaphore, SemaphorePermit};
-
-// Direct polling is more expensive than shared observation. Limit the number
-// of admitted streams that can continue polling through a custody outage.
-static DURABLE_RECOVERY_SLOTS: Semaphore = Semaphore::const_new(16);
+use std::{collections::VecDeque, convert::Infallible, sync::Arc, time::Duration};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[path = "indexed_stream.rs"]
 pub(super) mod indexed;
@@ -41,7 +37,12 @@ pub(super) async fn open(
     };
     let mut durable_recovery = None;
     if let Err(err) = state.reads.validate_event_stream(&authorization).await {
-        durable_recovery = acquire_durable_recovery(&mut authorization, &observation, &err);
+        durable_recovery = acquire_durable_recovery(
+            &state.durable_recovery_slots,
+            &mut authorization,
+            observation.as_ref(),
+            &err,
+        );
         if durable_recovery.is_none() {
             return error::read(err);
         }
@@ -73,6 +74,9 @@ pub(super) async fn open(
     stream::response(
         unfold(open, |mut open| async move {
             loop {
+                if open.failed {
+                    return None;
+                }
                 if let Some(event) = open.pending.pop_front() {
                     let sequence = event["sequence_number"]
                         .as_u64()
@@ -99,10 +103,8 @@ pub(super) async fn open(
                 if open.pagination_required {
                     return open.fail("response_pagination_required");
                 }
-                if open.terminal || open.failed {
-                    if !open.failed {
-                        open.evidence.record(CloseReason::NormalTerminal);
-                    }
+                if open.terminal {
+                    open.evidence.record(CloseReason::NormalTerminal);
                     return None;
                 }
                 if !open.first && !open.more {
@@ -172,7 +174,7 @@ struct Seen {
 struct Open {
     evidence: Contract,
     observation: Option<AgentObservationSubscription>,
-    durable_recovery: Option<SemaphorePermit<'static>>,
+    durable_recovery: Option<OwnedSemaphorePermit>,
     state: ResponsesV2State,
     authorization: AgentEventStreamAuthorization,
     receipt: CommandReceiptView,
@@ -190,9 +192,12 @@ struct Open {
 
 impl Open {
     fn resume_from_durable_history(&mut self, error: &AgentReadError) -> bool {
-        let Some(permit) =
-            acquire_durable_recovery(&mut self.authorization, &self.observation, error)
-        else {
+        let Some(permit) = acquire_durable_recovery(
+            &self.state.durable_recovery_slots,
+            &mut self.authorization,
+            self.observation.as_ref(),
+            error,
+        ) else {
             return false;
         };
         self.observation = None;
@@ -353,6 +358,8 @@ impl Open {
                 CloseReason::ServerError
             });
         self.failed = true;
+        self.observation = None;
+        self.durable_recovery = None;
         self.pending.clear();
         let event = json!({"type":"error","sequence_number":self.next,"code":code,
             "message":if code=="response_pagination_required" {"The response exceeds the result budget. Read its /output pages; output was not truncated."} else {"Response observation ended. Retrieve or reconnect with current authorization."},"param":null});
@@ -373,17 +380,16 @@ impl From<AgentReadError> for RefreshError {
 }
 
 fn acquire_durable_recovery(
+    slots: &Arc<Semaphore>,
     authorization: &mut AgentEventStreamAuthorization,
-    observation: &Option<AgentObservationSubscription>,
+    observation: Option<&AgentObservationSubscription>,
     error: &AgentReadError,
-) -> Option<SemaphorePermit<'static>> {
+) -> Option<OwnedSemaphorePermit> {
     if !matches!(error, AgentReadError::Unavailable(_))
-        || !observation
-            .as_ref()
-            .is_some_and(AgentObservationSubscription::custody_lost)
+        || !observation.is_some_and(AgentObservationSubscription::custody_lost)
     {
         return None;
     }
-    let permit = DURABLE_RECOVERY_SLOTS.try_acquire().ok()?;
+    let permit = slots.clone().try_acquire_owned().ok()?;
     authorization.use_personal_durable_reads().then_some(permit)
 }
