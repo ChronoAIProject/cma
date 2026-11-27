@@ -88,7 +88,11 @@ async fn retirement_receipt_releases_quota_and_survives_worker_replacement() {
     f.controller =
         ManagedSandboxCredentials::new(f.issuer.clone(), Arc::new(Tokens), f.custody.clone())
             .with_retirement_receipts(true);
-    let (worker, _) = retirement_fixture::begin(&f).await;
+    // Use the same Mongo client for lifecycle publication and custody, as
+    // production does when both stores share a transaction.
+    let (worker, _) = retirement_fixture::begin_with_store(&f, Arc::new(f.store.clone())).await;
+    let before = f.store.owner_capacity(&f.claim.owner).await.unwrap();
+    assert_eq!(before.counts, vec![(SandboxStatus::Retiring, 1)]);
     for owner in ["wrong-fixture-owner", f.claim.owner.as_str()] {
         let mut blocked = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
         assert_eq!(

@@ -41,7 +41,10 @@ impl ManagedSandboxCredentials {
         // The read cannot mint or revoke. The store checks the live retirement
         // lease again when it accepts the provider's disposition.
         require_retirement_claim(sandbox)?;
-        let token = self.owner_token(sandbox).await?;
+        let token = self
+            .owner_token(sandbox)
+            .await
+            .map_err(|_| CredentialError::Uncertain)?;
         let receipt = self
             .issuer
             .retirement_receipt(

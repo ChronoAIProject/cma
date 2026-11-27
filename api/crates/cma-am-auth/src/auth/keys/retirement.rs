@@ -19,7 +19,7 @@ pub struct CredentialRetirementReceipt {
     owner: String,
     request_sha256: String,
     receipt_id: String,
-    revision: u64,
+    revision: i64,
     state: RetirementDisposition,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     key_id: Option<String>,
