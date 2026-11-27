@@ -65,7 +65,7 @@ KIND_NODE_PINNED = re.compile(r"^(?:docker\.io/)?kindest/node(?::v[0-9]+\.[0-9]+
 
 
 class Campaign:
-    def __init__(self, output, kind_bin, command_timeout, plan_path, node_image=KIND_NODE):
+    def __init__(self, output, kind_bin, command_timeout, plan_bytes, node_image=KIND_NODE):
         if node_image != KIND_NODE and not KIND_NODE_PINNED.fullmatch(node_image):
             raise RunnerError("kind node image must be pinned by digest")
         self.node_image = node_image
@@ -80,8 +80,10 @@ class Campaign:
         self.commands = []
         self.redactor = EvidenceRedactor()
         self.image_aliases = []
-        self.plan_path = Path(plan_path)
-        self.plan_sha256 = hashlib.sha256(self.plan_path.read_bytes()).hexdigest()
+        self.plan_path = self.output.resolve() / "matrix-plan.private.json"
+        with self.plan_path.open("xb") as snapshot:
+            snapshot.write(plan_bytes)
+        self.plan_sha256 = hashlib.sha256(plan_bytes).hexdigest()
         self.mongo_password = None
         self.mongo_image = None
         self.active_reader = None
@@ -334,7 +336,8 @@ def run(args):
     new = checked_identity(command, args.new_image, args.new_source)
     plan_path = Path(args.plan)
     try:
-        plan = json.loads(plan_path.read_text())
+        plan_bytes = plan_path.read_bytes()
+        plan = json.loads(plan_bytes)
     except (OSError, json.JSONDecodeError) as error:
         raise RunnerError("matrix plan is missing or invalid") from error
     if plan.get("schema") != "cma-migration-matrix-plan-v1" or not plan.get("fixtures") or not plan.get("cells"):
@@ -344,7 +347,10 @@ def run(args):
                                    lambda image, source: checked_identity(command, image, source))
     mongo = checked_dependency(command, args.mongo_image)
     identity = checked_identity_dependency(command, args.identity_image)
-    campaign = Campaign(output, args.kind, args.timeout, plan_path,
+    if policy is not None and (getattr(args, "membership_fixture", False) or
+                               getattr(args, "rate_fixture", False)):
+        raise RunnerError("selected fixture requires pairwise reader aliases")
+    campaign = Campaign(output, args.kind, args.timeout, plan_bytes,
                         getattr(args, "kind_node_image", KIND_NODE))
     runtime_password = secrets.token_urlsafe(24)
     admin_password = secrets.token_urlsafe(24)
@@ -372,13 +378,11 @@ def run(args):
     try:
         old_ref = campaign.alias_image(args.old_image, "old")
         new_ref = campaign.alias_image(args.new_image, "new")
-        aliases = {"historical": old_ref, "candidate": new_ref}
-        for reader in ("current", "recovery"):
-            artifact = artifacts[reader]
-            aliases[reader] = next((aliases[key] for key in aliases
-                                    if policy is None and artifacts[key] == artifact), None)
-            if aliases[reader] is None:
-                aliases[reader] = campaign.alias_image(artifact["image"], reader)
+        aliases = {"historical": old_ref, "candidate": new_ref,
+                   "current": new_ref, "recovery": old_ref}
+        if policy is not None:
+            for reader in ("current", "recovery"):
+                aliases[reader] = campaign.alias_image(artifacts[reader]["image"], reader)
         mongo_ref = campaign.alias_image(args.mongo_image, "mongo")
         identity_ref = campaign.alias_image(args.identity_image, "identity")
         campaign.identity_image = identity_ref

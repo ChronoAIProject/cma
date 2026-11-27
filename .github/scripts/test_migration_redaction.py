@@ -55,7 +55,7 @@ class MigrationCommandEvidenceTests(unittest.TestCase):
     def campaign(self, directory):
         plan = Path(directory) / 'plan.json'
         plan.write_text('{}')
-        campaign = runner.Campaign(directory, 'kind-not-invoked', 1, plan)
+        campaign = runner.Campaign(directory, 'kind-not-invoked', 1, plan.read_bytes())
         campaign.images = ['local-api']
         credential = secrets.token_urlsafe(24)
         objects = [{'kind': 'Deployment', 'metadata': {'name': 'api'}, 'spec': {

@@ -161,7 +161,7 @@ class BootRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / 'plan.json'
             plan.write_text('{}')
-            campaign = runner.Campaign(directory, 'kind-not-invoked', 1, plan)
+            campaign = runner.Campaign(directory, 'kind-not-invoked', 1, plan.read_bytes())
             server = {'apiVersion': 'v1', 'kind': 'PodList',
                       'metadata': {'resourceVersion': 'opaque-before-create'}, 'items': []}
             # kubectl's client-generated List drops the server's list version.
@@ -189,7 +189,7 @@ class BootRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / 'plan.json'
             plan.write_text('{}')
-            campaign = runner.Campaign(directory, 'kind-not-invoked', 1, plan)
+            campaign = runner.Campaign(directory, 'kind-not-invoked', 1, plan.read_bytes())
             campaign.images = []
             before = {'metadata': {'resourceVersion': 'before-apply'}, 'items': []}
             applied = []
@@ -216,7 +216,7 @@ class BootRunnerTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             plan = Path(directory) / 'plan.json'
             plan.write_text('{}')
-            campaign = runner.Campaign(directory, 'kind-not-invoked', 1, plan)
+            campaign = runner.Campaign(directory, 'kind-not-invoked', 1, plan.read_bytes())
             campaign.pending_boot = {'pods': {'metadata': {'resourceVersion': 'before-apply'},
                                               'items': []}, 'started_at': 123}
             ready = {'items': [pod(ready=True)]}
