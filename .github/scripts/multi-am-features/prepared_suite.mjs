@@ -1,7 +1,7 @@
 import {readFile, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {isDeepStrictEqual as equal} from 'node:util';
-import {assertOwner, check, hash, poll, safeError} from './cma/core.mjs';
+import {assertOwner, check, hash, other, poll, safeError} from './cma/core.mjs';
 import {runJourney} from './cma/journey.mjs';
 import {readConfig} from './config.mjs';
 import {journeyFailureSummary, retainFailure, withRestoration} from './failure.mjs';
@@ -187,6 +187,66 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
   }
 }
 
+export async function preparedCommitAcknowledgement({adapter, create, openBoth, cleanup, recordFailure}) {
+  const ingress = 'b', barrier = 'commit_acknowledgement';
+  const reservations = await poll(() => adapter.preparedReady(),
+    rows => Array.isArray(rows) && rows.length > 0,
+    {timeout: 180000, code: 'no_ready_prepared_reservation'});
+  const before = new Map(await Promise.all(reservations.map(async sandboxId =>
+    [sandboxId, await adapter.preparedRuntimeEvidence({sandboxId})])));
+  const configure = arm => adapter.preparedSchemaBarrier({arm, commitAcknowledgement: true});
+  let record, armed, pending, lost;
+  await withRestoration(async () => {
+    await configure(true);
+    record = await create(ingress, false, {}, undefined, ({operationId}) => {
+      pending = poll(() => adapter.preparedSchemaRace({action: 'arm_commit', operationId, reservations, barrier}),
+        value => value !== null, {timeout: 90000, interval: 100, code: 'prepared_ack_publication_not_observed'})
+        .then(value => { armed = value; }, async error => {
+          try { await configure(false); }
+          catch (restoration) { await recordFailure('restoration', restoration); }
+          return {error};
+        });
+    });
+    check(pending, 'prepared_ack_admission_not_observed');
+    const failure = await pending;
+    if (failure) throw failure.error;
+    check(armed?.agentId === record.agentId && armed.sandboxId === record.sandboxId
+      && armed.receipt_count === 2 && reservations.includes(record.sandboxId),
+    'prepared_ack_held_lineage_unbound');
+    lost = await adapter.preparedSchemaRace({action: 'verify_commit', operationId: record.operationId,
+      reservations, barrier, commitProof: armed.commitProof});
+  }, async () => {
+    try { await pending; }
+    finally { await configure(false); }
+  }, recordFailure);
+
+  const {agentId, sandboxId, operationId} = record;
+  const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
+  const diagnostics = await adapter.publicationEvidence({agentId});
+  const onOwner = diagnostics[owner.am], onPeer = diagnostics[other(owner.am)];
+  const lostCommits = lost?.commitAcknowledgementsLost;
+  check(Number.isSafeInteger(lostCommits) && lostCommits >= 5 && lostCommits <= 10
+    && equal(onOwner?.unknown_commit, {publish_connection: 1}) && !onPeer?.unknown_commit
+    && [onOwner, onPeer].every(observed => !observed?.known_aborted_cas?.publish_connection
+      && !observed?.prepared_commit_work_lease_sha256?.length), 'prepared_ack_outcome_unproven');
+  const [durable, runtime] = await Promise.all([
+    adapter.preparedEvidence({agentId, sandboxId, operationId}),
+    adapter.preparedRuntimeEvidence({sandboxId, operationId}),
+  ]);
+  check(durable.consumed === true && durable.agent_ready === true && durable.reservation_bound === true
+    && durable.installation_bound === true && equal(durable.ready_fences, [1, 1, 1, 1])
+    && equal(durable.startup_receipts, [1, 1, 1]), 'prepared_ack_durable_commit_unproven');
+  check(runtime?.receipts?.length === 3 && runtime.pod_sha256 === hash(record.runtime.pod_uid)
+    && equal(runtime, before.get(sandboxId)), 'prepared_ack_runtime_receipts_changed');
+  await openBoth(record);
+  await cleanup(record);
+  return {ingress, owner: owner.am, owner_epoch: owner.epoch, publication_diagnostics: diagnostics,
+    commit_acknowledgements_lost: lostCommits, atomic_publication_fence_count: durable.ready_fences.length,
+    startup_receipt_count: durable.startup_receipts.length, runtime_receipt_count: runtime.receipts.length,
+    lifecycle_operation_sha256: hash(operationId), prepared_reservation_sha256: hash(sandboxId),
+    agent_sha256: hash(agentId)};
+}
+
 export async function preparedParentEnvelopes({adapter, create, cleanup, step, recordFailure}) {
   for (const parentVersions of [[1, 1], [1, 3], [3, 1], [3, 3], [4, 1], [4, 3]]) {
     const ingress = parentVersions[1] === 1 ? 'a' : 'b';
@@ -277,6 +337,9 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
       await context.step('prepared_parent_pause_refusal', () => preparedParentPauseRefusal({...context,
         recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
           {case: 'prepared_parent_pause_refusal'})}));
+      await context.step('prepared_commit_acknowledgement_loss', () => preparedCommitAcknowledgement({...context,
+        recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
+          {case: 'prepared_commit_acknowledgement_loss'})}));
       await preparedParentEnvelopes({...context,
         recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
           {case: 'prepared_parent_envelope'})});
@@ -299,14 +362,14 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
       browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
-      prepared_work_lease_refused, prepared_parent_pause_refused}) => ({
+      prepared_work_lease_refused, prepared_parent_pause_refused, commit_acknowledgements_lost}) => ({
       name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
       ready_before_collision_lease_deadline, prepared_commit_parent_revisions, owner_fence_agent_unchanged,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
       browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
-      prepared_work_lease_refused, prepared_parent_pause_refused,
+      prepared_work_lease_refused, prepared_parent_pause_refused, commit_acknowledgements_lost,
     })),
   }, null, 2) + '\n', {flag: 'wx', mode: 0o600});
   process.exitCode = verdict === 'PASS' ? 0 : 1;

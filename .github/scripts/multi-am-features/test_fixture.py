@@ -365,6 +365,35 @@ class OwnershipTests(unittest.TestCase):
             fixture.preparedSchemaBarrier(True, parentEnvelope=True, parentPause=True)
         self.assertEqual(fixture.mongo.call_count, 3)
 
+    def test_prepared_acknowledgement_fault_requires_a_bound_transaction_proof(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        fixture.mongo = Mock()
+        fixture.preparedSchemaBarrier(True, commitAcknowledgement=True)
+        hold = fixture.mongo.call_args.args[0]
+        self.assertIn('"configureFailPoint": "hangDuringBatchUpdate"', hold)
+        self.assertIn('"nss": "cma_native_am.worktrees"', hold)
+        fixture.preparedSchemaBarrier(False, commitAcknowledgement=True)
+        restore = fixture.mongo.call_args.args[0]
+        self.assertIn('configureFailPoint:"failCommand",mode:"off"', restore)
+        self.assertIn('profile:0,filter:"unset"', restore)
+        arguments = ('exact-operation', ['exact-reservation'], 'commit_acknowledgement')
+        fixture.preparedSchemaRace('arm_commit', *arguments)
+        proof = {'transaction': 'a' * 64, 'baseline': 7}
+        fixture.preparedSchemaRace('verify_commit', *arguments, commitProof=proof)
+        scope, _ = json.JSONDecoder().raw_decode(
+            fixture.mongo.call_args.args[0].removeprefix('const scope = '))
+        self.assertEqual(scope['commitProof'], proof)
+        for invalid in (None, {**proof, 'baseline': True}, {**proof, 'transaction': 'foreign'}):
+            with self.assertRaisesRegex(ValueError, 'prepared_acknowledgement_proof_required'):
+                fixture.preparedSchemaRace('verify_commit', *arguments, commitProof=invalid)
+        with self.assertRaisesRegex(ValueError, 'prepared_acknowledgement_proof_required'):
+            fixture.preparedSchemaRace('arm_commit', *arguments, commitProof=proof)
+        self.assertEqual(fixture.mongo.call_count, 4)
+
     def test_owner_fence_conflict_targets_only_the_prepared_owner_collection(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12
