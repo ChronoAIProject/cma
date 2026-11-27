@@ -3,6 +3,8 @@ use layer2_core::agent_ownership::{
     test_support::MemoryOwnershipStore, Member, OwnershipStore, DEFAULT_MAX_OWNED_AGENTS,
     PROTOCOL_VERSION,
 };
+use layer3_adapter::owner_protocol::ReceiverRevocation;
+use std::sync::atomic::AtomicBool;
 use std::{collections::BTreeSet, time::Duration};
 
 async fn coordinator(store: Arc<MemoryOwnershipStore>) -> Arc<OwnershipCoordinator> {
@@ -121,12 +123,7 @@ async fn a_contained_receiver_stays_fenced_until_a_confirmed_retry_releases_it()
     let completed = contained
         .retry(&coordinator, |authority| {
             let coordinator = coordinator.clone();
-            async move {
-                coordinator
-                    .handoff(&authority, async { Err(unavailable()) })
-                    .await
-                    .map(|()| true)
-            }
+            async move { Err(failed_handoff(&coordinator, &authority).await) }
         })
         .await
         .unwrap();
@@ -146,6 +143,7 @@ async fn a_contained_receiver_stays_fenced_until_a_confirmed_retry_releases_it()
                     .handoff(&authority, async { Ok(()) })
                     .await
                     .map(|()| true)
+                    .map_err(BackgroundHandoffError::Ownership)
             }
         })
         .await
@@ -159,6 +157,92 @@ async fn a_contained_receiver_stays_fenced_until_a_confirmed_retry_releases_it()
         .is_none());
     assert!(!failing.is_current());
     assert!(healthy.is_current());
+}
+
+#[tokio::test(start_paused = true)]
+async fn acknowledged_retry_respects_release_failure_policy() {
+    struct Receiver {
+        acknowledge: AtomicBool,
+        store: Arc<MemoryOwnershipStore>,
+    }
+
+    #[async_trait::async_trait]
+    impl ReceiverRevocation for Receiver {
+        fn identity(&self) -> String {
+            "release-policy-receiver".into()
+        }
+
+        async fn revoke(&self) -> layer3_adapter::Result<()> {
+            if self.acknowledge.load(Ordering::Acquire) {
+                // The retry already read custody. Fail its durable release.
+                self.store.partition(true);
+                Ok(())
+            } else {
+                Err(layer3_adapter::AdapterError::Unavailable(
+                    "synthetic receiver refusal".into(),
+                ))
+            }
+        }
+    }
+
+    for contain_release_failures in [false, true] {
+        let store = Arc::new(MemoryOwnershipStore::default());
+        let coordinator = coordinator(store.clone()).await;
+        let id = AgentId("failing".into());
+        let authority = coordinator.acquire(&id).await.unwrap().unwrap();
+        let receiver = Arc::new(Receiver {
+            acknowledge: AtomicBool::new(false),
+            store: store.clone(),
+        });
+        authority.register_receiver(receiver.clone()).unwrap();
+        authority.receiver_confirmed(&receiver.identity());
+        let contained = ContainedHandoffs::default();
+        if contain_release_failures {
+            contained.enable();
+        }
+
+        let error = coordinator
+            .handoff_background_classified(&authority)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            error,
+            BackgroundHandoffError::ReceiverUnavailable(_)
+        ));
+        contained
+            .contain("current_handoff", &authority, error)
+            .unwrap();
+        assert!(!authority.is_current());
+        receiver.acknowledge.store(true, Ordering::Release);
+
+        let retry = |authority| {
+            let coordinator = coordinator.clone();
+            async move { coordinator.handoff_background_classified(&authority).await }
+        };
+        let result = contained.retry(&coordinator, retry).await;
+        if contain_release_failures {
+            assert!(result.unwrap().is_empty());
+        } else {
+            assert_eq!(
+                result,
+                Err(OwnershipError::Unavailable(
+                    "synthetic store partition".into()
+                ))
+            );
+        }
+        assert_eq!(contained.pending(), 1);
+        store.partition(false);
+        assert_eq!(
+            store.owner(&id).await.unwrap().unwrap().token,
+            authority.token
+        );
+        assert_eq!(
+            contained.retry(&coordinator, retry).await.unwrap(),
+            vec![id.clone()]
+        );
+        assert_eq!(contained.pending(), 0);
+        assert!(store.owner(&id).await.unwrap().is_none());
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -177,7 +261,9 @@ async fn a_fatal_retry_error_still_stops_the_process() {
         .unwrap();
     let result = contained
         .retry(&coordinator, |_| async {
-            Err(OwnershipError::IncompatibleProtocol)
+            Err(BackgroundHandoffError::Ownership(
+                OwnershipError::IncompatibleProtocol,
+            ))
         })
         .await;
     assert_eq!(result, Err(OwnershipError::IncompatibleProtocol));
@@ -239,7 +325,9 @@ async fn persistently_failing_receivers_do_not_starve_the_rest() {
                         .lock()
                         .unwrap()
                         .insert(authority.token.agent_id.clone());
-                    Err(unavailable())
+                    Err(BackgroundHandoffError::ReceiverUnavailable(
+                        "receiver acknowledgement missing".into(),
+                    ))
                 }
             })
             .await

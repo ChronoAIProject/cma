@@ -46,9 +46,7 @@ impl AgentManager {
         let completed = self
             .contained
             .retry(&self.coordinator, |authority| async move {
-                self.handoff_receiver(&authority)
-                    .await
-                    .map_err(BackgroundHandoffError::into_ownership_error)
+                self.handoff_receiver(&authority).await
             })
             .await?;
         for id in completed {

@@ -41,17 +41,7 @@ impl ContainedHandoffs {
         authority: &Arc<Authority>,
         error: BackgroundHandoffError,
     ) -> Result<(), OwnershipError> {
-        let error = match error {
-            BackgroundHandoffError::ReceiverUnavailable(detail) => {
-                OwnershipError::Unavailable(detail)
-            }
-            BackgroundHandoffError::Ownership(error @ OwnershipError::Unavailable(_))
-                if self.contain_release_failures.load(Ordering::Acquire) =>
-            {
-                error
-            }
-            BackgroundHandoffError::Ownership(error) => return Err(error),
-        };
+        let error = self.require_retryable(error)?;
         authority.log_receiver_handoff_failure(
             stage,
             &error,
@@ -62,6 +52,23 @@ impl ContainedHandoffs {
             .unwrap()
             .insert(authority.token.agent_id.clone(), authority.clone());
         Ok(())
+    }
+
+    fn require_retryable(
+        &self,
+        error: BackgroundHandoffError,
+    ) -> Result<OwnershipError, OwnershipError> {
+        match error {
+            BackgroundHandoffError::ReceiverUnavailable(detail) => {
+                Ok(OwnershipError::Unavailable(detail))
+            }
+            BackgroundHandoffError::Ownership(error @ OwnershipError::Unavailable(_))
+                if self.contain_release_failures.load(Ordering::Acquire) =>
+            {
+                Ok(error)
+            }
+            BackgroundHandoffError::Ownership(error) => Err(error),
+        }
     }
 
     #[cfg(test)]
@@ -75,9 +82,8 @@ impl ContainedHandoffs {
     /// dropped: a later acquisition replaced it or its release completed.
     /// Before each retry, an entry whose token no longer holds a live durable
     /// lease is forgotten, so this process can acquire the Agent again just as
-    /// a restart would allow. `Ok(true)` drops it, `Ok(false)` and
-    /// `Unavailable` keep it, and any other error is returned to stop the
-    /// process as before. Returned ids have no newer local authority, so their
+    /// a restart would allow. A deferred handoff or a retryable failure retains
+    /// the entry. Other handoff failures propagate. Returned ids have no newer local authority, so their
     /// per-Agent housekeeping timers can be cleared.
     pub(super) async fn retry<F, Fut>(
         &self,
@@ -86,7 +92,7 @@ impl ContainedHandoffs {
     ) -> Result<Vec<AgentId>, OwnershipError>
     where
         F: FnMut(Arc<Authority>) -> Fut,
-        Fut: Future<Output = Result<bool, OwnershipError>>,
+        Fut: Future<Output = Result<bool, BackgroundHandoffError>>,
     {
         let batch: Vec<_> = {
             let pending = self.pending.lock().unwrap();
@@ -117,8 +123,10 @@ impl ContainedHandoffs {
                     Ok(false) | Err(OwnershipError::Unavailable(_)) => {
                         match handoff(authority.clone()).await {
                             Ok(done) => done,
-                            Err(OwnershipError::Unavailable(_)) => false,
-                            Err(error) => return Err(error),
+                            Err(error) => {
+                                self.require_retryable(error)?;
+                                false
+                            }
                         }
                     }
                     Err(error) => return Err(error),
