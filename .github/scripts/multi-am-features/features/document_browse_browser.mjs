@@ -1,10 +1,35 @@
 import {randomUUID} from 'node:crypto';
 import {isDeepStrictEqual as equal} from 'node:util';
-import {check, id, other} from '../cma/core.mjs';
+import {check, id, other, poll} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 
 const timeout = 15000;
 const endpoint = '/api/v1/documents';
+const outlineHeading = 'Synthetic acceptance result';
+const code = 'print("Fixture code")';
+const previewMarkdown = ['# Document overview', ...Array.from({length: 30}, (_, index) => `Fixture paragraph ${index + 1}`),
+  '## ' + outlineHeading, '~~~python\n' + code + '\n~~~', '~~~mermaid\nflowchart LR\n  A --> B\n~~~'].join('\n\n') + '\n';
+
+async function readPreview(page) {
+  const content = page.getByRole('textbox', {name: 'Document content', exact: true});
+  await content.waitFor({timeout});
+  check(await content.getAttribute('contenteditable', {timeout}) === 'false', 'document_preview_editable');
+  const heading = content.getByRole('heading', {name: outlineHeading, exact: true});
+  const insideViewport = () => heading.evaluate(node => {
+    const {top, bottom} = node.getBoundingClientRect();
+    return top >= 0 && bottom <= window.innerHeight;
+  }, undefined, {timeout});
+  check(!await insideViewport(), 'document_preview_heading_already_in_view');
+  await page.getByRole('button', {name: 'On this page', exact: true}).click({timeout});
+  const outline = page.getByRole('navigation', {name: 'On this page', exact: true});
+  await outline.getByRole('button', {name: outlineHeading, exact: true}).click({timeout});
+  await poll(insideViewport, Boolean, {timeout, interval: 100, code: 'document_preview_outline_did_not_scroll'});
+  await content.locator('pre code').getByText(code, {exact: true}).waitFor({timeout});
+  const diagram = content.getByRole('img', {name: 'Mermaid diagram', exact: true});
+  await diagram.waitFor({timeout});
+  check(await diagram.evaluate(image => image.complete && image.naturalWidth > 0),
+    'document_preview_diagram_did_not_render');
+}
 
 export async function documentBrowse({page, ingress, user, admin, ownerId, recordFailure}) {
   const peer = other(ingress);
@@ -13,9 +38,9 @@ export async function documentBrowse({page, ingress, user, admin, ownerId, recor
   const sharedTitle = prefix + ' shared';
   const foreignTitle = prefix + ' private';
   let shared;
-  const create = async (actor, am, title) => {
+  const create = async (actor, am, title, markdown = '# ' + title + '\n') => {
     const {body: document} = await actor.request(am, 'POST', endpoint, {key: randomUUID(),
-      body: {title, markdown: '# ' + title + '\n'}, allowed: [201]});
+      body: {title, markdown}, allowed: [201]});
     check(id(document?.id) && document.title === title && document.access === 'owner', 'document_browse_seed_unbound');
     return document;
   };
@@ -27,8 +52,8 @@ export async function documentBrowse({page, ingress, user, admin, ownerId, recor
     return route.continue({url: url.href});
   };
   await withRestoration(async () => {
-    const owned = await create(user, ingress, ownedTitle);
-    shared = await create(admin, peer, sharedTitle);
+    const owned = await create(user, ingress, ownedTitle, previewMarkdown);
+    shared = await create(admin, peer, sharedTitle, previewMarkdown);
     const foreign = await create(admin, peer, foreignTitle);
     const sharePath = `${endpoint}/${shared.id}/shares/${encodeURIComponent(ownerId)}`;
     const {body: updated} = await admin.request(peer, 'PUT', sharePath, {key: randomUUID(),
@@ -82,6 +107,20 @@ export async function documentBrowse({page, ingress, user, admin, ownerId, recor
       const title = page.getByRole('textbox', {name: 'Document title', exact: true});
       check(await title.inputValue({timeout}) === sharedTitle && await title.isDisabled(),
         'document_browse_shared_open_not_read_only');
+      await readPreview(page);
+      check(await page.getByRole('button', {name: 'Save', exact: true}).count() === 0,
+        'document_preview_recipient_can_save');
+      await page.goto(`/artifacts/${owned.id}`, {waitUntil: 'domcontentloaded', timeout});
+      const mode = page.getByRole('group', {name: 'Document mode', exact: true});
+      await mode.getByRole('button', {name: 'Preview', exact: true}).click({timeout});
+      check(await title.inputValue({timeout}) === ownedTitle && await title.isDisabled(),
+        'document_preview_owner_mode_not_read_only');
+      await readPreview(page);
+      await mode.getByRole('button', {name: 'Edit', exact: true}).click({timeout});
+      check(await title.isEnabled(), 'document_preview_edit_not_restored');
+      const {body: after} = await user.request(peer, 'GET', `${endpoint}/${owned.id}`);
+      check(after.revision === owned.revision && after.source_revision === owned.source_revision,
+        'document_preview_changed_saved_source');
     } finally {
       await page.unroute(onlyRegistry, onePerPage);
     }

@@ -909,8 +909,7 @@
     ]
   },
   "cma-user.documents.preview-outline": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "cases": ["user.documents_browser_browse"],
     "minimum_runs": 3,
     "phases": [
       "before_restart",
