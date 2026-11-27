@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use super::*;
-use crate::sandbox::store::{SandboxSessionStore, SandboxStoreError};
+use crate::sandbox::store::{SandboxSessionStore, SandboxStoreError, WorkspaceWorkerStore};
 
 const TRANSITION_AT: &str = "2026-09-05T00:01:00Z";
 
@@ -239,6 +239,89 @@ fn abandoned_worktree_removal_requires_an_unfinished_agent_worktree() {
             ..unfinished
         }
     );
+}
+
+#[tokio::test]
+async fn workspace_renewal_rejects_expired_and_replaced_claims_without_mutation() {
+    const FIRST_EXPIRY: &str = "2026-09-05T00:00:15Z";
+    const RENEWED_AT: &str = "2026-09-05T00:00:05Z";
+    const RENEWED_EXPIRY: &str = "2026-09-05T00:00:20Z";
+    const NEXT_EXPIRY: &str = "2026-09-05T00:00:35Z";
+
+    let store = InMemorySandboxStore::default();
+    let parent = sandbox_in(S::Active);
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let mut unclaimed = workspace();
+    unclaimed.status = W::Preparing;
+    unclaimed.ready_at = None;
+    unclaimed.resolved_commit = None;
+    unclaimed
+        .work
+        .schedule(WorkspaceWorkStep::Prepare, NOW.into());
+    store.create_workspace(unclaimed.clone()).await.unwrap();
+
+    assert_eq!(
+        store
+            .renew_workspace_authority(&unclaimed, NOW, FIRST_EXPIRY)
+            .await,
+        Err(SandboxStoreError::Conflict)
+    );
+    let first = store
+        .claim_workspace_work(&unclaimed.id, "first", NOW.into(), FIRST_EXPIRY.into())
+        .await
+        .unwrap()
+        .unwrap();
+    let renewal = store
+        .renew_workspace_authority(&first, RENEWED_AT, RENEWED_EXPIRY)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(renewal.expires_at, RENEWED_EXPIRY);
+    assert_eq!(renewal.valid_for, std::time::Duration::from_secs(15));
+
+    let mut expected = first.clone();
+    expected.work.lease.as_mut().unwrap().expires_at = RENEWED_EXPIRY.into();
+    assert_eq!(
+        store.get_workspace(&first.id).await.unwrap(),
+        Some(expected.clone())
+    );
+    assert_eq!(
+        store
+            .renew_workspace_authority(&first, RENEWED_EXPIRY, NEXT_EXPIRY)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store.get_workspace(&first.id).await.unwrap(),
+        Some(expected)
+    );
+
+    let successor = store
+        .claim_workspace_work(
+            &first.id,
+            "successor",
+            RENEWED_EXPIRY.into(),
+            NEXT_EXPIRY.into(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        successor.work.lease.as_ref().unwrap().fence > first.work.lease.as_ref().unwrap().fence
+    );
+    assert_eq!(
+        store
+            .renew_workspace_authority(&first, RENEWED_EXPIRY, NEXT_EXPIRY)
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        store.get_workspace(&first.id).await.unwrap(),
+        Some(successor)
+    );
+    assert_eq!(store.get_sandbox(&parent.id).await.unwrap(), Some(parent));
 }
 
 #[tokio::test]
