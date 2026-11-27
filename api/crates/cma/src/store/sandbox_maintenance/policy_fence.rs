@@ -1,5 +1,6 @@
 //! Serialize global inactivity admission with mutable platform settings.
 use layer2_core::sandbox::store::{SandboxInactivityPauseRequest, SandboxStoreError};
+use layer2_core::sandbox::InactivityPauseRefusal;
 use mongodb::{bson::doc, ClientSession};
 
 use super::transaction::ApplyError;
@@ -9,7 +10,7 @@ pub(super) async fn fence(
     store: &MongoSandboxStore,
     request: &SandboxInactivityPauseRequest,
     session: &mut ClientSession,
-) -> Result<bool, ApplyError> {
+) -> Result<Option<InactivityPauseRefusal>, ApplyError> {
     // This existing handle addresses the shared platform_settings singleton;
     // inactivity owns its own outer fence, independent of budget counters.
     let Some(document) = store
@@ -19,12 +20,12 @@ pub(super) async fn fence(
         .await
         .map_err(ApplyError::Driver)?
     else {
-        return Ok(false);
+        return Ok(Some(InactivityPauseRefusal::PolicyChanged));
     };
     let stored = crate::store::settings::read_settings(document)
         .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
-    if !request.matches_policy(&stored) {
-        return Ok(false);
+    if let Some(refusal) = request.policy_refusal(&stored) {
+        return Ok(Some(refusal));
     }
     let result = store
         .budget_settings
@@ -42,5 +43,5 @@ pub(super) async fn fence(
     if result.matched_count != 1 {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
-    Ok(true)
+    Ok(None)
 }

@@ -340,6 +340,16 @@ fn persistent_response(request: &str) -> String {
             "sandbox_id":request.sandbox_id,"generation":request.generation,"home_identity":request.home_identity,
             "boot_id":"a".repeat(32),"installation_ready":true,"credential_ready":false,"restore_pending":false,"agent_processes":0
         })).unwrap()),
+        RequestFrame::ReadAgentFile(request) => {
+            use sha2::{Digest as _, Sha256};
+            assert!(request.home_identity.is_some());
+            ResponseFrame::ReadAgentFile(crate::AgentFileReadReceipt {
+                path: request.path,
+                size_bytes: 3,
+                sha256: format!("{:x}", Sha256::digest(b"CMA")),
+                content_base64: "Q01B".into(),
+            })
+        }
         RequestFrame::Resources => ResponseFrame::Resources(ResourceReading::default()),
         _ => panic!("unexpected persistent fixture operation"),
     };

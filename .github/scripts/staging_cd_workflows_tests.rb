@@ -202,6 +202,10 @@ class StagingWorkflowTest < Minitest::Test
       assert_equal "${{ (inputs.protected_web && inputs.web_archive != '' && 'true') || steps.producer.outputs.prepared }}",
                    publication.fetch('env').fetch('CD_PREPARED_ARCHIVE')
       assert_equal "${{ inputs.protected_web && 'required' || '' }}", publication.dig('env', 'CD_WEB_CONTINUITY')
+      [producer, publication].each do |step|
+        assert_equal "${{ vars.CMA_LEGACY_BUILDKIT_DRAIN == 'true' && 'enabled' || '' }}",
+                     step.fetch('env').fetch('CD_LEGACY_BUILDKIT_DRAIN')
+      end
     end
     transport = File.read(File.join(ROOT, 'scripts/staging_cd_transport.sh'))
     %w[Acquire::http::Timeout DPkg::Lock::Timeout].each { |option| assert_includes transport, option }

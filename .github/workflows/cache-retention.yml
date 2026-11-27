@@ -79,8 +79,11 @@ jobs:
         run: python3 -B .github/scripts/actions_cache_sweep.py --preview-recovery
   inspect_buildkit:
     needs: sweep
+    # Fetching the index refreshes its last access. The metadata sweep can
+    # measure storage without touching legacy indexes during natural expiry.
     if: >-
       always() && !cancelled() && github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true' &&
       ((github.event_name == 'workflow_dispatch' && inputs.inspect_buildkit) ||
        (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
         github.event.workflow_run.head_branch == 'develop' && github.event.workflow_run.head_repository.full_name == github.repository &&
@@ -130,6 +133,7 @@ jobs:
       observed_bytes_to_admit: ${{ steps.recovery.outputs.observed_bytes_to_admit }}
     if: >-
       always() && !cancelled() &&
+      vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true' &&
       (needs.staging_activity.result != 'success' || needs.staging_activity.outputs.needed != 'false') &&
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
       github.event_name == 'workflow_run' && github.event.workflow_run.event == 'push' &&
@@ -343,7 +347,9 @@ jobs:
           CD_LAYER_CACHE_WRITER_FLOOR: ${{ vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' && 'verified' || '' }}
         run: python3 -B .github/scripts/staging_cd_layer_reuse.py
       - name: Retire verified compatible archive predecessors
-        if: steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'
+        if: >-
+          steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true' &&
+          vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true'
         timeout-minutes: 3
         env:
           GH_TOKEN: ${{ github.token }}
@@ -356,6 +362,7 @@ jobs:
   recover_native_buildkit:
     if: >-
       vars.CMA_LEGACY_BUILDKIT_GC == 'true' && vars.CMA_LAYER_CACHE_WRITER_FLOOR == 'true' &&
+      vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true' &&
       github.event_name == 'workflow_run' && github.ref == 'refs/heads/develop' &&
       github.repository == 'ChronoAIProject/cma' && github.event.workflow_run.event == 'push' &&
       github.event.workflow_run.head_branch == 'develop' && github.event.workflow_run.head_repository.full_name == github.repository &&

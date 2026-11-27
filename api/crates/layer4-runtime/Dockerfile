@@ -530,12 +530,14 @@ ENV CODEX_PATH=/usr/local/bin/codex
 # The control plane must retain the endpoint with the binding before enabling it.
 WORKDIR /home/cma
 USER 10001:10001
+# Agent Manager admits exact-turn stops only for an explicitly qualified image digest.
 ENV HOME=/home/cma \
     CHRONO_RUNTIME_GENERATION=1 \
     CHRONO_RUNTIME_HOME_IDENTITY="" \
     PATH=/home/cma/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED=false \
     CHRONO_RUNTIME_AGENT_PROCESS_RESTART_ENABLED=true \
+    CHRONO_RUNTIME_STALE_TURN_SEAL_ENABLED=1 \
     CHRONO_RUNTIME_BIND=0.0.0.0:9090 \
     TERM=xterm-256color
 EXPOSE 9090

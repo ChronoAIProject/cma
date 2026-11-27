@@ -420,7 +420,7 @@ use self::schemas::*;
         PlatformDefaultsBody,
         InactivitySettingsBody,
         UsageReportingSettingsBody,
-        super::sandbox_always_on::AlwaysOnRequest, super::admin::sandboxes::AdminAlwaysOnRequest, super::admin::auto_pause::AutoPausePreviewView, super::admin::auto_pause::PauseIdleNowRequest, super::admin::auto_pause::PauseIdleNowView,
+        super::sandbox_always_on::AlwaysOnRequest, super::admin::sandboxes::AdminAlwaysOnRequest, super::admin::auto_pause::AutoPausePreviewView, super::admin::auto_pause::AutoPauseSandboxRefusalView, super::admin::auto_pause::PauseIdleNowRequest, super::admin::auto_pause::PauseIdleNowView,
         RetentionSettingsBody,
         PlatformLimitsBody,
         TriggerSettingsBody,

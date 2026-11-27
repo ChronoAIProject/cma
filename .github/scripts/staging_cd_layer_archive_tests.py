@@ -335,7 +335,8 @@ class ProducerTests(unittest.TestCase):
         self.assertEqual(replay['if'], replay_condition)
         self.assertEqual(setup['if'], replay_condition)
         self.assertEqual(reader['steps'][-1]['if'],
-                         "steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true'")
+                         "steps.verify-reuse.outcome == 'success' && vars.CMA_BOUNDED_LAYER_PREDECESSOR_RETIREMENT == 'true' && "
+                         "vars.CMA_LEGACY_BUILDKIT_DRAIN != 'true'")
         for step in publisher['steps']:
             if step.get('id') in ('producer', 'publication'):
                 self.assertEqual(step['env']['CD_LAYER_ARCHIVE_RESTORED'], "${{ steps.layer-validate.outcome == 'success' }}")

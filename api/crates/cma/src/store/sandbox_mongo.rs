@@ -123,6 +123,7 @@ pub struct MongoSandboxStore {
     pub(super) strict_inactivity_session_evidence: bool,
     pub(super) workspaces: Collection<Document>,
     pub(super) bounded_inactivity_legacy_log: bool,
+    pub(super) inactivity_log_preparation: std::sync::Arc<tokio::sync::Semaphore>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,

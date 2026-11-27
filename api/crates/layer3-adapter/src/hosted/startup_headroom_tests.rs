@@ -1,7 +1,7 @@
 use super::*;
 use crate::codex::{CodexAdapter, CodexSandboxSpec};
 
-fn assignment() -> Assignment {
+fn assignment() -> Arc<Assignment> {
     let request = crate::hosted::HostedDeployment::default()
         .render(&SandboxSpec {
             sandbox_id: "headroom-fixture".into(),
@@ -9,20 +9,22 @@ fn assignment() -> Assignment {
             ..Default::default()
         })
         .unwrap();
-    Assignment::for_request(
-        &PodBinding {
-            sandbox_name: "member".into(),
-            sandbox_uid: "member-uid".into(),
-            pod_name: "runtime".into(),
-            pod_uid: "runtime-uid".into(),
-            pod_ip: "127.0.0.1".parse().unwrap(),
-            runtime_container_id: Some("container-fixture".into()),
-            runtime_restart_count: Some(0),
-        },
-        &request,
+    Arc::new(
+        Assignment::for_request(
+            &PodBinding {
+                sandbox_name: "member".into(),
+                sandbox_uid: "member-uid".into(),
+                pod_name: "runtime".into(),
+                pod_uid: "runtime-uid".into(),
+                pod_ip: "127.0.0.1".parse().unwrap(),
+                runtime_container_id: Some("container-fixture".into()),
+                runtime_restart_count: Some(0),
+            },
+            &request,
+        )
+        .unwrap()
+        .unwrap(),
     )
-    .unwrap()
-    .unwrap()
 }
 
 #[tokio::test]

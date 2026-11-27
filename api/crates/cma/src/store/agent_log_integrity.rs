@@ -75,6 +75,7 @@ impl LogSummary {
 }
 
 pub(crate) mod fleet;
+pub(super) mod inactivity;
 mod metadata;
 mod preparation;
 mod proof;

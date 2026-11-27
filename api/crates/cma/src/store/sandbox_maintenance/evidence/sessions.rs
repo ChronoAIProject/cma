@@ -1,5 +1,8 @@
 //! Prove desktop leases expired from the same snapshot used for pause admission.
-use layer2_core::{sandbox::has_open_desktop_session, seconds_from_rfc3339, SandboxId};
+use layer2_core::{
+    sandbox::{has_open_desktop_session, InactivityPauseRefusal as Refusal},
+    seconds_from_rfc3339, SandboxId,
+};
 use layer3_adapter::DesktopOwnership;
 use mongodb::{
     bson::{doc, Bson, Document},
@@ -19,11 +22,22 @@ pub(in crate::store::sandbox_maintenance) async fn clear(
     observed_at: &str,
     session: &mut ClientSession,
 ) -> Result<bool, ApplyError> {
+    Ok(refusal(store, sandbox, observed_at, session)
+        .await?
+        .is_none())
+}
+
+pub(in crate::store::sandbox_maintenance) async fn refusal(
+    store: &MongoSandboxStore,
+    sandbox: &SandboxId,
+    observed_at: &str,
+    session: &mut ClientSession,
+) -> Result<Option<Refusal>, ApplyError> {
     let Some(observed_at_ms) = stamp_ms(observed_at) else {
-        return Ok(blocked("invalid_observation"));
+        return Ok(blocked("invalid_observation", Refusal::InvalidActivityTime));
     };
     if has_open_desktop_session(sandbox) {
-        return Ok(blocked("local_session"));
+        return Ok(blocked("local_session", Refusal::OpenSession));
     }
     // An expiry predicate could omit corrupt rows. Bound the complete metadata
     // set instead, with the extra row proving when the limit was exceeded.
@@ -44,16 +58,21 @@ pub(in crate::store::sandbox_maintenance) async fn clear(
     {
         seen += 1;
         if seen > MAX_LEASE_ROWS {
-            return Ok(blocked("lease_bound"));
+            return Ok(blocked("lease_bound", Refusal::SessionEvidenceUnclear));
         }
         let row = rows.deserialize_current().map_err(ApplyError::Driver)?;
         match expired(&row, sandbox, observed_at_ms) {
             Some(true) => {}
-            Some(false) => return Ok(blocked("live_lease")),
-            None => return Ok(blocked("indeterminate_lease")),
+            Some(false) => return Ok(blocked("live_lease", Refusal::OpenSession)),
+            None => {
+                return Ok(blocked(
+                    "indeterminate_lease",
+                    Refusal::SessionEvidenceUnclear,
+                ))
+            }
         }
     }
-    Ok(true)
+    Ok(None)
 }
 
 pub(in crate::store::sandbox_maintenance) fn projection() -> Document {
@@ -134,9 +153,9 @@ fn stamp_ms(stamp: &str) -> Option<i64> {
         .checked_mul(1000)
 }
 
-fn blocked(reason: &'static str) -> bool {
+fn blocked(reason: &'static str, refusal: Refusal) -> Option<Refusal> {
     tracing::debug!(parent: None, reason, "desktop session evidence prevents inactivity pause");
-    false
+    Some(refusal)
 }
 
 #[cfg(test)]

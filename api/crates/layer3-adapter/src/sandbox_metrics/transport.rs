@@ -1,5 +1,6 @@
 use super::{
-    decode_export, decode_raw_export, selector, PhysicalSeries, RawPhysicalSeries, Selection,
+    decode_export, decode_raw_export, export::decode_reporting_export, selector, PhysicalSeries,
+    RawPhysicalSeries, ReportingExport, Selection,
 };
 use crate::{AdapterError, Result};
 use futures_util::StreamExt;
@@ -51,6 +52,10 @@ impl MetricsClient {
     }
     pub async fn export(&self, selection: &Selection) -> Result<Vec<PhysicalSeries>> {
         self.export_decoded(selection, decode_export).await
+    }
+    pub async fn export_reporting(&self, selection: &Selection) -> Result<ReportingExport> {
+        self.export_decoded(selection, decode_reporting_export)
+            .await
     }
     pub async fn export_raw(&self, selection: &Selection) -> Result<Vec<RawPhysicalSeries>> {
         self.export_decoded(selection, decode_raw_export).await
