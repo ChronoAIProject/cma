@@ -4,6 +4,136 @@ use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn prepared_open_ready_fences_each_supported_parent_envelope() {
+    use layer2_core::sandbox::store::WorkAuthorityProtocol::RenewedV1;
+
+    for (sandbox_version, workspace_version) in
+        [(1_i64, 1_i64), (3, 1), (1, 3), (3, 3), (4, 1), (4, 3)]
+    {
+        let (client, name, store, agent, mut observed) = fixture().await;
+        if sandbox_version != 1 {
+            let sandbox = &mut observed.sandbox;
+            let previous = sandbox.revision;
+            if sandbox_version == 3 {
+                sandbox.work.authority_protocol = Some(RenewedV1);
+            } else {
+                let reservation = store
+                    .native_prepared
+                    .find_one(doc! {"_id": sandbox.id.as_str(), "state": "claimed"})
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let payload = reservation
+                    .get_document("record")
+                    .unwrap()
+                    .get_document("payload")
+                    .unwrap();
+                sandbox.work.prepared_installation_digest = Some(
+                    payload
+                        .get_str("installed_request_sha256")
+                        .unwrap()
+                        .to_owned(),
+                );
+            }
+            sandbox.revision += 1;
+            store.save_sandbox(previous, sandbox.clone()).await.unwrap();
+        }
+        if workspace_version == 3 {
+            let workspace = &mut observed.workspace;
+            let previous = workspace.revision;
+            workspace.work.authority_protocol = Some(RenewedV1);
+            workspace.revision += 1;
+            store
+                .save_workspace(previous, workspace.clone())
+                .await
+                .unwrap();
+        }
+        let done = completion(&agent, &observed.worktree);
+        assert!(store
+            .commit_prepared_agent_open_ready(done.clone(), observed.clone())
+            .await
+            .unwrap());
+        assert!(!store
+            .commit_prepared_agent_open_ready(done.clone(), observed.clone())
+            .await
+            .unwrap());
+        assert_eq!(
+            store.get_agent(&agent.id).await.unwrap().unwrap(),
+            done.agent
+        );
+        for (collection, id, schema) in [
+            (
+                &store.sandboxes,
+                observed.sandbox.id.as_str(),
+                sandbox_version,
+            ),
+            (
+                &store.workspaces,
+                observed.workspace.id.as_str(),
+                workspace_version,
+            ),
+            (&store.worktrees, observed.worktree.id.as_str(), 1),
+            (&store.native_prepared, observed.sandbox.id.as_str(), 1),
+        ] {
+            let row = collection
+                .find_one(doc! {"_id": id})
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.get_i64("document_schema_version").unwrap(), schema);
+            assert_eq!(row.get_i64("agent_prepared_open_ready_fence").unwrap(), 1);
+        }
+        client.database(&name).drop().await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn prepared_open_ready_cannot_publish_after_its_sandbox_begins_pause() {
+    let (client, name, store, agent, observed) = fixture().await;
+    let mut paused = observed.sandbox.clone();
+    paused
+        .begin_pause(layer2_core::now_rfc3339(), None)
+        .unwrap();
+    store
+        .save_sandbox(observed.sandbox.revision, paused.clone())
+        .await
+        .unwrap();
+    let done = completion(&agent, &observed.worktree);
+    let stale = store
+        .commit_prepared_agent_open_ready(done.clone(), observed.clone())
+        .await;
+    assert!(matches!(
+        stale,
+        Err(SandboxStoreError::Conflict) | Ok(false)
+    ));
+    let current = PreparedAgentOpenContext {
+        sandbox: paused,
+        ..observed
+    };
+    assert!(!store
+        .commit_prepared_agent_open_ready(done, current.clone())
+        .await
+        .unwrap());
+    assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
+    for (collection, id) in [
+        (&store.sandboxes, current.sandbox.id.as_str()),
+        (&store.workspaces, current.workspace.id.as_str()),
+        (&store.worktrees, current.worktree.id.as_str()),
+        (&store.native_prepared, current.sandbox.id.as_str()),
+    ] {
+        let row = collection
+            .find_one(doc! {"_id": id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!row.contains_key("agent_prepared_open_ready_fence"));
+    }
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
 async fn prepared_open_ready_preserves_an_independent_parent_renewal() {
     use layer2_core::sandbox::store::SandboxWorkerStore;
     let (client, name, store, agent, mut observed) = fixture().await;
