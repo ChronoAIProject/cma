@@ -1,6 +1,7 @@
 use layer1_public::rest::creation_outcomes::lower_hex;
 
 const TERMINAL_SETTLEMENT: &str = "CHRONO_SANDBOX_CREATION_TERMINAL_SETTLEMENT_ENABLED";
+const VALIDATION_SETTLEMENT: &str = "CHRONO_SANDBOX_CREATION_VALIDATION_SETTLEMENT_ENABLED";
 
 #[derive(Clone)]
 pub(crate) struct CreationOutcomesConfig {
@@ -9,6 +10,7 @@ pub(crate) struct CreationOutcomesConfig {
     pub(crate) first_day: i64,
     pub(crate) legacy_custody: bool,
     pub(crate) terminal_settlement: bool,
+    pub(crate) validation_settlement: bool,
 }
 
 impl CreationOutcomesConfig {
@@ -55,12 +57,14 @@ impl CreationOutcomesConfig {
             Some("false") => false,
             _ => return Err(format!("{TERMINAL_SETTLEMENT} must be true or false")),
         };
+        let validation_settlement = super::features::flag(lookup, VALIDATION_SETTLEMENT)?;
         Ok(Some(Self {
             deployment,
             epoch,
             first_day,
             legacy_custody,
             terminal_settlement,
+            validation_settlement,
         }))
     }
 }
@@ -91,7 +95,10 @@ mod tests {
                 })
             })
             .unwrap();
-            assert_eq!(config.map(|config| config.terminal_settlement), expected);
+            assert_eq!(
+                config.map(|config| (config.terminal_settlement, config.validation_settlement)),
+                expected.map(|enabled| (enabled, false))
+            );
         }
     }
 

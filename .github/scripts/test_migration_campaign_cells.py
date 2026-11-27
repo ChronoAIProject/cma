@@ -30,6 +30,30 @@ def evidence(plan, outcome="UNVERIFIED", stages=None, extra=None):
             "commands": [{"argv": ["kubectl", "private-argument"]}]}
 
 
+def release_plan():
+    plan = json.loads(plan_bytes())
+    recovery = migration_plan.identity("c" * 40, IMAGE + "3" * 64)
+    plan["readers"][-1]["artifact"] = recovery
+    return json.dumps(plan, sort_keys=True).encode()
+
+
+def release_evidence(plan, policy):
+    value = evidence(plan)
+    artifacts = {row["role"]: row["artifact"] for row in json.loads(plan)["readers"]}
+    controls = []
+    for fixture in value["fixtures"]:
+        stage = fixture["stage"]
+        role = cells.STAGE_ROLES[stage]
+        selection = artifacts[role]
+        fixture.update(selection)
+        fixture["checks"].pop("skipped")
+        controls.append({"stage": stage, **selection,
+                         "writer_policy": policy if role == "candidate" else "disabled"})
+    value["release_probe"] = {"writer_policy": policy, "artifacts": artifacts, "stage_controls": controls}
+    value["cleanup"] = {"cluster_absent": True}
+    return value
+
+
 class CampaignCellTests(unittest.TestCase):
     def derived(self, value, fixture="api-custody"):
         with tempfile.TemporaryDirectory() as directory:
@@ -86,6 +110,71 @@ class CampaignCellTests(unittest.TestCase):
         value["release_probe"] = {"writer_policy": "enabled"}
         with self.assertRaisesRegex(ValueError, "per-role execution evidence"):
             self.derived(value)
+
+    def test_release_credit_binds_each_role_and_the_original_writer_policy(self):
+        plan = release_plan()
+        record = self.derived(release_evidence(plan, "enabled"))
+        self.assertNotIn(IMAGE, json.dumps(record))
+        report = cells.aggregate(plan, [record])
+        self.assertEqual(report["counts"], {"EXECUTED": 8, "EXECUTED_POLICY_UNATTRIBUTED": 0, "NOT_RUN": 28})
+        self.assertEqual(report["certified_cells"], 0)
+        status = {row["id"]: row for row in report["cells"]}
+        self.assertEqual(status["recovery-collection-agents-enabled"]["stages"],
+                         ["api-custody:enabled:old-read-new-write"])
+        for cell in ("recovery-collection-agents-disabled", "historical-collection-agents-enabled",
+                     "candidate-collection-agents-retained"):
+            self.assertEqual(status[cell]["status"], "NOT_RUN")
+        second = self.derived(release_evidence(plan, "disabled"))
+        combined = cells.aggregate(plan, [record, second])
+        self.assertEqual(combined["counts"]["EXECUTED"], 12)
+
+    def test_release_reader_credit_requires_the_matching_writer_collection(self):
+        plan = release_plan()
+        value = release_evidence(plan, "enabled")
+        collections = {
+            "old-write": ["agents"],
+            "new-read-old-write": ["agents", "auth_api_bearers"],
+            "new-write": ["agents"],
+            "old-read-new-write": ["agents", "auth_api_bearers"],
+        }
+        for row in value["fixtures"]:
+            row["collections"] = collections[row["stage"]]
+        record = self.derived(value)
+        report = cells.aggregate(plan, [record])
+        self.assertEqual(report["counts"], {"EXECUTED": 4,
+                                             "EXECUTED_POLICY_UNATTRIBUTED": 0,
+                                             "NOT_RUN": 32})
+        status = {row["id"]: row for row in report["cells"]}
+        self.assertEqual(status["current-collection-auth-api-bearers-retained"]["status"], "NOT_RUN")
+        self.assertEqual(status["candidate-collection-auth-api-bearers-enabled"]["status"], "NOT_RUN")
+        self.assertEqual(status["recovery-collection-auth-api-bearers-enabled"]["status"], "NOT_RUN")
+
+    def test_release_refuses_wrong_reader_or_policy_and_incomplete_success(self):
+        plan = release_plan()
+        for expected, corrupt in (
+            ("stage reader differs", lambda value: value["release_probe"]["stage_controls"][-1].update(source=OLD)),
+            ("stage policy differs", lambda value: value["release_probe"]["stage_controls"][2].update(writer_policy="disabled")),
+            ("fixture reader or stage differs", lambda value: value["fixtures"][-1].update(source=OLD)),
+            ("incomplete release campaign", lambda value: value["fixtures"].pop()),
+            ("fixture checks did not pass", lambda value: value["fixtures"][0]["checks"].update(decode=False)),
+            ("release cleanup missing", lambda value: value["cleanup"].update(cluster_absent=False)),
+        ):
+            with self.subTest(expected=expected):
+                value = release_evidence(plan, "enabled")
+                corrupt(value)
+                with self.assertRaisesRegex(ValueError, expected):
+                    self.derived(value)
+
+    def test_explicit_plan_refuses_pairwise_or_different_artifacts(self):
+        plan = release_plan()
+        with self.assertRaisesRegex(ValueError, "pairwise coverage requires a pairwise plan"):
+            cells.aggregate(plan, [self.derived(evidence(plan))])
+        value = release_evidence(plan, "disabled")
+        value["release_probe"]["artifacts"]["recovery"]["image"] = IMAGE + "4" * 64
+        value["release_probe"]["stage_controls"][-1]["image"] = IMAGE + "4" * 64
+        value["fixtures"][-1]["image"] = IMAGE + "4" * 64
+        with self.assertRaisesRegex(ValueError, "artifact binding differs from plan"):
+            cells.aggregate(plan, [self.derived(value)])
 
     def test_unsafe_collection_names_are_refused_at_derive(self):
         plan = plan_bytes()

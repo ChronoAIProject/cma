@@ -87,6 +87,21 @@ fn refusal(code: RefusalCode) -> Document {
     doc! {"$set":{"state":{"kind":"refused","code":code}}}
 }
 
+pub(super) async fn refuse_validation(
+    records: &Collection<Document>,
+    owner: &SubjectId,
+    fence: &CreationFence,
+    session: &mut ClientSession,
+) -> Result<bool, mongodb::error::Error> {
+    let mut filter = live_direct(pending(owner.as_str(), fence));
+    filter.insert("operation", "agent_bootstrap");
+    records
+        .update_one(filter, refusal(RefusalCode::CreationFailed))
+        .session(session)
+        .await
+        .map(|result| result.matched_count == 1)
+}
+
 pub(super) async fn refuse_direct(
     database: &Database,
     owner: &SubjectId,

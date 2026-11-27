@@ -319,6 +319,7 @@ async fn pre_proof_manifest_reconciles_without_capturing_live_creation_evidence(
             first_day: day,
             legacy_custody: false,
             terminal_settlement: true,
+            validation_settlement: false,
         },
     )
     .await

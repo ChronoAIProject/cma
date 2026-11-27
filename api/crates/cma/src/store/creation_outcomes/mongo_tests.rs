@@ -22,6 +22,7 @@ async fn fixture() -> (CreationOutcomes, CreationOutcomes, i64) {
         first_day: today - 3,
         legacy_custody: true,
         terminal_settlement: true,
+        validation_settlement: false,
     };
     let id = format!("coverage:{}:{}", config.deployment, config.epoch);
     database.collection::<Document>(COLLECTION).insert_one(doc! {

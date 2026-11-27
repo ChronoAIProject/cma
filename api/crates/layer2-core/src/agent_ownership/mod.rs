@@ -12,6 +12,7 @@ pub use policy::{MaintenancePolicy, MaintenanceStep, RetirementIntent, Settlemen
 mod authority;
 pub use authority::{execution_authority, execution_owner, Authority};
 mod cleanup_pacing;
+pub use cleanup_pacing::BackgroundHandoffError;
 mod coordinator;
 mod observations;
 mod receiver_binding;

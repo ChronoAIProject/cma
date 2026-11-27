@@ -1137,6 +1137,18 @@
           "cause": "operator",
           "next": "An operator must confirm which AM and runtime versions serve staging."
         },
+        "dependency-changed": {
+          "title": "Deployment dependency changed",
+          "meaning": "A dependency's spec, generation or revision changed during the release. The controller withheld automatic rollback.",
+          "cause": "operator",
+          "next": "Identify the serving revision and verify it against the current dependency state before any promotion or recovery."
+        },
+        "dependency-unverified": {
+          "title": "Deployment dependency unverified",
+          "meaning": "The controller could not prove a dependency's captured state and withheld automatic rollback.",
+          "cause": "operator",
+          "next": "Identify the serving revision and verify it against the current dependency state before deciding on recovery."
+        },
         "serving": {
           "title": "Service not serving",
           "meaning": "The new release did not serve requests successfully.",

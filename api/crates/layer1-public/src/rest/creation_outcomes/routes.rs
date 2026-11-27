@@ -37,6 +37,14 @@ pub trait Backend: Send + Sync {
 
     fn terminal_settlement_enabled(&self) -> bool;
 
+    fn validation_settlement_enabled(&self) -> bool;
+
+    async fn refuse_validation(
+        &self,
+        identity: &Identity<'_>,
+        refusal: ValidationRefusal,
+    ) -> Result<(), StatusCode>;
+
     async fn lookup(
         &self,
         identity: &Identity<'_>,
