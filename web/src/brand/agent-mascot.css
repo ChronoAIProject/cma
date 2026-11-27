@@ -15,7 +15,18 @@
   image-rendering: pixelated;
 }
 
+.agent-mascot__sprite {
+  display: grid;
+  overflow: hidden;
+}
+
+.agent-mascot__sprite img {
+  max-inline-size: none;
+  image-rendering: pixelated;
+}
+
 .agent-mascot__fallback {
+  place-self: center;
   inline-size: 50%;
   block-size: 50%;
   outline: 1px solid currentColor;
