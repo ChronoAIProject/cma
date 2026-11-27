@@ -241,7 +241,7 @@ impl AgentWorkerStore for MongoSandboxStore {
         match apply_agent_connection_recovery(&current, &request)? {
             AgentConnectionRecoveryApplication::Complete(outcome) => Ok(outcome),
             AgentConnectionRecoveryApplication::Persist(agent) => {
-                match self.save_agent(current.revision, *agent).await {
+                match super::agents::save::save_connection_recovery(self, &current, *agent).await {
                     Ok(()) => Ok(AgentConnectionRecoveryOutcome::Scheduled),
                     Err(SandboxStoreError::Conflict) => {
                         let current = self

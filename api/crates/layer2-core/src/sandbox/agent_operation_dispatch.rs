@@ -388,7 +388,21 @@ impl AgentOperationService {
         target: &AgentRuntimeTarget,
         required: &[RuntimeCapability],
     ) -> Result<(), AgentOperationError> {
-        let connection = self.runtimes.resolve(target).await.map_err(runtime_error)?;
+        let connection = match self.runtimes.resolve(target).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                if self.command_claim.is_some()
+                    && matches!(
+                        error,
+                        super::AgentRuntimeError::NotFound
+                            | super::AgentRuntimeError::StaleGeneration
+                    )
+                {
+                    self.runtimes.recover_missing_attachment(target).await;
+                }
+                return Err(runtime_error(error));
+            }
+        };
         connection
             .capabilities
             .require(required.iter().copied())

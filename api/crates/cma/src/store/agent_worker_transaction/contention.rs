@@ -13,13 +13,7 @@ pub(super) fn exhausted(
     mutation: &AgentWorkMutation,
     last: Option<&mongodb::error::Error>,
 ) -> SandboxStoreError {
-    let code = last.and_then(|error| match error.kind.as_ref() {
-        mongodb::error::ErrorKind::Command(error) => Some(error.code),
-        mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(error)) => {
-            Some(error.code)
-        }
-        _ => None,
-    });
+    let code = last.and_then(driver_code);
     tracing::warn!(
         agent_id = %mutation.agent.id,
         authority_fence = mutation.fence,
@@ -30,6 +24,29 @@ pub(super) fn exhausted(
     // aborted the transaction. Unknown commits retain their reconciliation
     // path and must never acquire this retry/release classification.
     SandboxStoreError::Conflict
+}
+
+fn driver_code(error: &mongodb::error::Error) -> Option<i32> {
+    match error.kind.as_ref() {
+        mongodb::error::ErrorKind::Command(error) => Some(error.code),
+        mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(error)) => {
+            Some(error.code)
+        }
+        _ => None,
+    }
+}
+
+pub(super) fn phase(
+    mutation: &AgentWorkMutation,
+    phase: &'static str,
+    error: ApplyError,
+) -> ApplyError {
+    if matches!(&error, ApplyError::Driver(driver) if driver_code(driver) == Some(112)) {
+        tracing::warn!(agent_id = %mutation.agent.id, authority_fence = mutation.fence, phase,
+            work_step = ?mutation.agent.work.step, driver_code = 112,
+            "Agent work publication write conflict");
+    }
+    error
 }
 
 /// Diagnose slow publications without logging documents or driver error bodies.
