@@ -8,6 +8,7 @@ use super::sandbox_mongo::{
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 use super::sandboxes::{read_sandbox, sandbox_replacement_fields};
+use super::work_claim_authority::without_ledger_maintenance;
 use super::work_lease_update::replacement;
 use super::workspace_removal::apply_removal;
 use super::workspaces::{read_workspace, workspace_document};
@@ -372,12 +373,12 @@ pub(super) async fn lock_sandbox(
     let locked = store
         .sandboxes
         .update_one(
-            crate::store::work_schema::query(doc! {
+            crate::store::work_schema::query(without_ledger_maintenance(doc! {
                 "_id": sandbox_id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "channel_reuse_cleanup_execution": { "$exists": false },
                 super::native_retirement_action::FIELD: { "$exists": false },
-            }),
+            })),
             doc! { "$inc": { "workspace_admission_fence": 1_i64 } },
         )
         .session(session)

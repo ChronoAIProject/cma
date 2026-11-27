@@ -2,6 +2,147 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn ledger_maintenance_refuses_workspace_creation_removal_and_recovery() {
+    use crate::store::work_claim_authority::LEDGER_MAINTENANCE_FIELD;
+    use layer2_core::sandbox::ProvisioningExecution;
+
+    let (client, name) = database("workspace_hold").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (independent, _) = database("workspace_hold_peer").await;
+    let parent_rows = independent
+        .database(&name)
+        .collection::<Document>(SANDBOXES);
+    let parent = sandbox("sbx_workspace_hold");
+    store.create_sandbox(parent.clone()).await.unwrap();
+    let filter = doc! {"_id": parent.id.as_str()};
+    let removable = workspace(&parent, "wks_removable", "removable");
+    store.create_workspace(removable.clone()).await.unwrap();
+    let mut failed = workspace(&parent, "wks_failed", "failed");
+    failed.profile.digest = layer2_core::profiles::content_digest(&failed.profile.content).unwrap();
+    failed.work.execution = Some(ProvisioningExecution::default());
+    store.create_workspace(failed.clone()).await.unwrap();
+    let expected = failed.revision;
+    failed.work.schedule(WorkspaceWorkStep::None, NOW.into());
+    failed
+        .transition(
+            WorkspaceStatus::Failed,
+            NOW.into(),
+            Some(TypedFailure {
+                class: "prepare_failed".into(),
+                detail: "fixture preparation failed".into(),
+            }),
+        )
+        .unwrap();
+    store
+        .save_workspace(expected, failed.clone())
+        .await
+        .unwrap();
+    let caller = Caller::new(
+        parent.owner.clone(),
+        Authorization::new([Capability::UseOwnSandboxes]),
+    );
+    let candidate = workspace(&parent, "wks_new", "new-project");
+    let admission = workspace_admission(candidate.clone());
+    let removable_filter = doc! {"_id": removable.id.as_str()};
+    let failed_filter = doc! {"_id": failed.id.as_str()};
+    let original_removable = store
+        .workspaces
+        .find_one(removable_filter.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let original_failed = store
+        .workspaces
+        .find_one(failed_filter.clone())
+        .await
+        .unwrap()
+        .unwrap();
+
+    for hold in [Bson::Document(doc! {"phase": "requested"}), Bson::Null] {
+        parent_rows
+            .update_one(
+                filter.clone(),
+                doc! {"$set": {LEDGER_MAINTENANCE_FIELD: hold.clone()}},
+            )
+            .await
+            .unwrap();
+        let held_parent = parent_rows.find_one(filter.clone()).await.unwrap().unwrap();
+        assert_eq!(held_parent.get(LEDGER_MAINTENANCE_FIELD), Some(&hold));
+        assert_eq!(
+            store.admit_workspace(admission.clone()).await,
+            Err(SandboxStoreError::SandboxNotReady),
+        );
+        assert_eq!(
+            store
+                .begin_workspace_removal(&removable.id, &parent.owner, NOW.into())
+                .await,
+            Err(SandboxStoreError::SandboxNotReady),
+        );
+        assert_eq!(
+            store
+                .begin_workspace_prepare_recovery(&failed.id, &caller, "recover", NOW.into())
+                .await,
+            Err(SandboxStoreError::SandboxNotReady),
+        );
+        assert_eq!(
+            parent_rows.find_one(filter.clone()).await.unwrap(),
+            Some(held_parent)
+        );
+        assert_eq!(store.get_workspace(&candidate.id).await.unwrap(), None);
+        assert_eq!(
+            store
+                .workspaces
+                .find_one(removable_filter.clone())
+                .await
+                .unwrap()
+                .as_ref(),
+            Some(&original_removable)
+        );
+        assert_eq!(
+            store
+                .workspaces
+                .find_one(failed_filter.clone())
+                .await
+                .unwrap()
+                .as_ref(),
+            Some(&original_failed)
+        );
+        assert!(store
+            .sandbox_events(&parent.id, 0, 10)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    parent_rows
+        .update_one(filter, doc! {"$unset": {LEDGER_MAINTENANCE_FIELD: ""}})
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.admit_workspace(admission).await.unwrap(),
+        WorkspaceAdmissionResult::Created(_)
+    ));
+    assert_eq!(
+        store
+            .begin_workspace_removal(&removable.id, &parent.owner, NOW.into())
+            .await
+            .unwrap()
+            .status,
+        WorkspaceStatus::Removing,
+    );
+    assert_eq!(
+        store
+            .begin_workspace_prepare_recovery(&failed.id, &caller, "recover", NOW.into())
+            .await
+            .unwrap()
+            .status,
+        WorkspaceStatus::Preparing,
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn sandbox_profile_workspace_origin_replays_the_existing_admission() {
     let (client, name) = database("workspace_origin").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
