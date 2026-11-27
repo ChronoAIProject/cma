@@ -8,6 +8,7 @@ import {ExtendedAdminMatrix} from './features/admin_extended.mjs';
 import {ADMIN_PERMISSIONS} from './features/admin_matrix.mjs';
 import {userCases} from './features/user.mjs';
 import {documentCases} from './features/documents.mjs';
+import {createDocumentAfterLostReply} from './features/document_creation_browser.mjs';
 import {busyConfigurationCase, competingSystemPrompts, configurationCases, heldConfigurationCases, assertWriterTitle,
   verifyLifecycleReplay} from './features/agent_configuration.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
@@ -120,7 +121,9 @@ async function accountBrowserCases(ams, witness) {
     ['user.account_build_version', page => accountBuildVersion(page, config.expected_api_source)],
     ['user.account_documentation', page => accountDocumentation(page, witness.agentId)],
     ['user.navigation_legacy_routes', legacyNavigation],
-    ['user.navigation_tasks', page => taskNavigation(page, witness)]];
+    ['user.navigation_tasks', page => taskNavigation(page, witness)],
+    ['user.documents_browser_create_after_lost_reply', (page, ingress) =>
+      createDocumentAfterLostReply({page, ingress, user, ownerId: config.owner_id})]];
   if (config.eg_origin) cases.push(['eg.public_documentation', gatewayDocumentation]);
   async function exercise(am, iteration, name, run) {
     const start = performance.now();
@@ -134,7 +137,7 @@ async function accountBrowserCases(ams, witness) {
       for (const am of ['a', 'b']) {
         await browser.forIngress(am, async ({page}) => {
           for (const [name, run] of cases) {
-            await exercise(am, iteration, name, () => run(page));
+            await exercise(am, iteration, name, () => run(page, am));
           }
         });
         await browser.forIngress(am, async ({page}) => {
