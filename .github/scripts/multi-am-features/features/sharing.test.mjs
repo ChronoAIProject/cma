@@ -4,22 +4,47 @@ import test from 'node:test';
 import {artifactCommittedWithoutAcknowledgement, artifactUnknownPublication, revokeWhileRedemptionRetries,
   shareAgentArtifact} from './sharing.mjs';
 
-function scenario({duplicateRedemption = false, divergingArtifact = false, aborts = 1} = {}) {
+const fixtureTime = '2026-01-01T00:00:00Z';
+
+function scenario({duplicateRedemption = false, divergingArtifact = false, aborts = 1,
+  advancedRevision = true, lostRevision = false, publicationSettlesEarly = false} = {}) {
   const agentId = 'fixture-agent';
   const calls = [];
   const link = {id: 'fixture-link', agent_id: agentId, mode: 'view', revision: 2};
   let redeemed = 0, revoked = false;
-  const artifact = {id: 'fixture-artifact', agent_id: agentId, created_at: 'fixture-time'};
-  let published;
+  const artifact = {id: 'fixture-artifact', agent_id: agentId, created_at: fixtureTime};
+  let published, finishPublication;
+  let preferences = {title: 'Original', revision: 3};
   const firstAdmission = new Map();
   const actions = [];
   const adapter = {ownerOf: async () => ({am: 'a', epoch: 2, agent_id: agentId, pod_uid: 'pod-a'}),
-    artifactPublicationAbort: async ({arm}) => {
-      actions.push(arm);
-      return {count: 8 + (arm ? 0 : aborts)};
+    artifactPublicationRace: async ({action, count, agentId: target}) => {
+      actions.push(action);
+      assert.equal(target, agentId);
+      if (action === 'wait') {
+        assert.equal(count, 8);
+        assert.equal(typeof finishPublication, 'function');
+        return {entered: true};
+      }
+      if (action === 'disarm') finishPublication?.();
+      return {count: 8 + (action === 'arm' ? 0 : aborts)};
     }};
   const user = {request: async (am, method, route, options) => {
     calls.push([am, method, route]);
+    if (route.endsWith('/preferences')) {
+      if (method === 'GET') return {body: lostRevision && am === 'b' ? {...preferences, revision: 3} : preferences};
+      assert.equal(method, 'PATCH');
+      assert.equal(am, 'a');
+      assert.equal(options.body.expected_revision, preferences.revision);
+      if (publicationSettlesEarly) {
+        finishPublication();
+        await new Promise(resolve => setImmediate(resolve));
+      } else {
+        setImmediate(finishPublication);
+      }
+      preferences = {title: options.body.title, revision: preferences.revision + Number(advancedRevision)};
+      return {body: preferences};
+    }
     if (method === 'POST' && route.endsWith('/artifacts')) {
       if (options.allowed.includes(409)) return {status: 409};
       const input = JSON.stringify(options.body);
@@ -27,7 +52,8 @@ function scenario({duplicateRedemption = false, divergingArtifact = false, abort
       else firstAdmission.set(options.key, input);
       const data = Buffer.from(options.body.content_base64, 'base64');
       const id = divergingArtifact && am === 'a' ? 'duplicate-artifact' : artifact.id;
-      published = {...artifact, id, name: options.body.name, size_bytes: data.length,
+      if (!published) await new Promise(resolve => { finishPublication = resolve; });
+      published = {...artifact, id, name: options.body.name, media_type: options.body.media_type, size_bytes: data.length,
         sha256: createHash('sha256').update(data).digest('hex')};
       return {body: published};
     }
@@ -68,8 +94,11 @@ function scenario({duplicateRedemption = false, divergingArtifact = false, abort
 test('both ingresses share one artifact receipt and redeem the same link only once', async () => {
   const {run, failures, calls, actions, isRevoked} = scenario();
   await run();
-  assert.deepEqual(calls.slice(0, 2).map(row => row[0]), ['b', 'a']);
-  assert.deepEqual(actions, [true, false]);
+  assert.deepEqual(calls.slice(0, 8).map(([am, method, route]) => [am, method, route.split('/').at(-1)]),
+    [['a', 'GET', 'preferences'], ['b', 'POST', 'artifacts'], ['a', 'PATCH', 'preferences'],
+      ['a', 'GET', 'preferences'], ['a', 'GET', 'artifacts'], ['b', 'GET', 'preferences'], ['b', 'GET', 'artifacts'],
+      ['a', 'POST', 'artifacts']]);
+  assert.deepEqual(actions, ['arm', 'wait', 'disarm']);
   assert.deepEqual(failures, []);
   assert(isRevoked());
 });
@@ -78,25 +107,33 @@ test('a clean receipt still fails without one observed artifact transaction abor
   for (const aborts of [0, 2]) {
     const {run, actions, calls} = scenario({aborts});
     await assert.rejects(run, /artifact_publication_abort_not_consumed_once/);
-    assert.deepEqual(actions, [true, false]);
-    assert(calls.every(([, , route]) => route.endsWith('/artifacts')));
+    assert.deepEqual(actions, ['arm', 'wait', 'disarm']);
+    assert.equal(calls.length, 3);
   }
 });
 
 test('duplicate redemption fails the case and still revokes the owned fixture link', async () => {
-  const {run, failures, calls, isRevoked} = scenario({duplicateRedemption: true});
+  const {run, failures, isRevoked} = scenario({duplicateRedemption: true});
   await assert.rejects(run, /share_redemption_replayed_twice/);
   assert.deepEqual(failures, [['primary', 'share_redemption_replayed_twice']]);
-  assert.deepEqual(calls.slice(0, 2).map(row => row[0]), ['b', 'a']);
   assert(isRevoked());
 });
 
-test('competing uploads must return one artifact before any share is created', async () => {
+test('the retry and peer replay must return one artifact before any share is created', async () => {
   const {run, failures, calls, isRevoked} = scenario({divergingArtifact: true});
-  await assert.rejects(run, /artifact_concurrent_receipt_diverged/);
-  assert.deepEqual(calls.map(row => row[0]), ['b', 'a']);
+  await assert.rejects(run, /artifact_replay_changed_receipt/);
+  assert.deepEqual(calls.filter(row => row[1] === 'POST' && row[2].endsWith('/artifacts')).map(row => row[0]), ['b', 'a']);
   assert.deepEqual(failures, []);
   assert.equal(isRevoked(), false);
+});
+
+test('artifact publication requires a changed owner revision before retry and both peer readbacks', async () => {
+  for (const options of [{advancedRevision: false}, {publicationSettlesEarly: true}]) {
+    const {run, actions} = scenario(options);
+    await assert.rejects(run, /artifact_owner_revision_did_not_advance_before_retry/);
+    assert.deepEqual(actions, ['arm', 'wait', 'disarm']);
+  }
+  await assert.rejects(scenario({lostRevision: true}).run(), /artifact_retry_lost_owner_revision/);
 });
 
 function unknownPublication({publishedBeforeRetry = false, wrongProblem = false, divergingReceipt = false} = {}) {
@@ -151,7 +188,7 @@ test('unknown artifact publication rejects an extra effect or incorrect uncertai
   }
 });
 
-function committedPublication({duplicate = false, changedReceipt = false} = {}) {
+function committedPublication({duplicate = false, changedReceipt, wrongOriginal} = {}) {
   const agentId = 'fixture-agent';
   const calls = [];
   let initial, published;
@@ -166,11 +203,13 @@ function committedPublication({duplicate = false, changedReceipt = false} = {}) 
     assert.equal(method, 'POST');
     if (!initial) {
       initial = options;
-      published = {id: 'artifact-first', name: options.body.name, agent_id: agentId, created_at: 'fixture-time',
-        sha256: createHash('sha256').update(Buffer.from(options.body.content_base64, 'base64')).digest('hex')};
+      const data = Buffer.from(options.body.content_base64, 'base64');
+      published = {id: 'artifact-first', name: options.body.name, agent_id: agentId, created_at: fixtureTime,
+        media_type: options.body.media_type, size_bytes: data.length,
+        sha256: createHash('sha256').update(data).digest('hex'), ...wrongOriginal};
     } else {
       assert.deepEqual(options, initial);
-      if (changedReceipt) return {status: 201, body: {...published, id: 'altered-replay'}};
+      if (changedReceipt) return {status: 201, body: {...published, ...changedReceipt}};
     }
     return {status: 201, body: published};
   }};
@@ -187,9 +226,15 @@ test('a lost acknowledgement fails if the commit duplicates the effect or the re
   const duplicate = committedPublication({duplicate: true});
   await assert.rejects(duplicate.run(), /artifact_acknowledgement_effect_missing_or_duplicated/);
   assert.deepEqual(duplicate.calls, [['b', 'POST'], ['a', 'GET']]);
-  const replay = committedPublication({changedReceipt: true});
-  await assert.rejects(replay.run(), /artifact_acknowledgement_replay_changed_receipt/);
-  assert.deepEqual(replay.calls, [['b', 'POST'], ['a', 'GET'], ['a', 'POST']]);
+  for (const changedReceipt of [{id: 'altered-replay'}, {agent_id: 'other-agent'}, {name: 'other.txt'},
+    {media_type: 'application/octet-stream'}, {size_bytes: 1}]) {
+    const replay = committedPublication({changedReceipt});
+    await assert.rejects(replay.run(), /artifact_acknowledgement_replay_changed_receipt/);
+    assert.deepEqual(replay.calls, [['b', 'POST'], ['a', 'GET'], ['a', 'POST']]);
+  }
+  const original = committedPublication({wrongOriginal: {media_type: 'application/octet-stream'}});
+  await assert.rejects(original.run(), /artifact_acknowledgement_commit_unbound/);
+  assert.deepEqual(original.calls, [['b', 'POST']]);
 });
 
 function revocationRace({wrongDenial = false, count = 1} = {}) {

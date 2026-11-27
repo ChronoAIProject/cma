@@ -261,7 +261,7 @@
       "feature": "Sharing/access/artifact metadata",
       "requirement": "No raw conflict for internal contention; fresh authorization and policy snapshot checked on retry, immutable receipt recovered on unknown outcome, denied/revoked caller never admitted. Some share redemption retry already exists; preserve it.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The journey checks one known abort under competing artifact publications, both sides of acknowledgement loss, and revocation during a pending redemption retry. Same-source Mongo controls prove fresh lineage reads, rejection after policy authority changes, and distinct known-abort and unknown-outcome behavior. Exact-image execution remains pending.",
+      "remaining": "The journey holds one artifact publication while the owner advances the Agent's title revision. Both Managers must see the rename and exactly one artifact after retry. It also compares complete public metadata after acknowledgement loss and checks revocation during a pending redemption retry. Same-source Mongo controls cover fresh lineage reads and changed policy authority. Exact-image execution remains pending.",
       "trigger": "Agent-target share create/revoke/redemption, access request transitions and artifact publication concurrent with owner revision change",
       "required_assertions": [
         {"case": "writer.artifact_unknown_publication", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "both"},

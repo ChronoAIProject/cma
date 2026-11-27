@@ -331,6 +331,33 @@ class OwnershipTests(unittest.TestCase):
             fixture.artifactPublicationAbort(True)
         self.assertEqual(fixture.mongo.call_count, 2)
 
+    def test_held_artifact_count_targets_one_feature_transaction_for_the_exact_agent(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        fixture.mongo = Mock(side_effect=[{'count': 7}, {'entered': True}, {'entered': True}])
+        self.assertEqual(fixture.artifactPublicationRace('arm', agentId='fixture-agent'), {'count': 7})
+        script = fixture.mongo.call_args.args[0]
+        command, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
+        self.assertEqual(command, {'configureFailPoint': 'failCommand', 'mode': {'times': 1}, 'data': {
+            'failCommands': ['aggregate'], 'namespace': 'cma_native_am.agent_artifacts',
+            'appName': FEATURES_MONGO_APP, 'errorCode': 112, 'errorLabels': ['TransientTransactionError'],
+            'blockConnection': True, 'blockTimeMS': 12000,
+        }})
+        self.assertEqual(fixture.artifactPublicationRace('wait', 7, 'fixture-agent'), {'entered': True})
+        script = fixture.mongo.call_args.args[0]
+        self.assertIn('"command.autocommit": false', script)
+        self.assertIn('const target = "fixture-agent"', script)
+        self.assertIn('command.pipeline?.[0]?.$match?.agent_id === target', script)
+        with self.assertRaisesRegex(ValueError, 'publication_evidence_lineage_required'):
+            fixture.artifactPublicationRace('arm', agentId='../foreign-agent')
+        fixture.ready['fixture'] = 'prepared'
+        with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
+            fixture.artifactPublicationRace('arm', agentId='fixture-agent')
+        self.assertEqual(fixture.mongo.call_count, 3)
+
     def test_rename_abort_and_evidence_are_scoped_to_the_feature_fixture_and_agent(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12

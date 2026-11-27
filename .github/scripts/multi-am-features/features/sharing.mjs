@@ -1,7 +1,8 @@
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
 import {once} from 'node:events';
 import {createServer} from 'node:http';
-import {assertOwner, check, other, poll} from '../cma/core.mjs';
+import {isDeepStrictEqual as equal} from 'node:util';
+import {assertOwner, check, id, other, poll} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 
 async function competingRequests(...requests) {
@@ -9,6 +10,13 @@ async function competingRequests(...requests) {
   const failure = results.find(result => result.status === 'rejected');
   if (failure) throw failure.reason;
   return results.map(result => result.value.body);
+}
+
+function matchesArtifact(artifact, agentId, input, data) {
+  return id(artifact?.id) && artifact.agent_id === agentId && artifact.name === input.name
+    && artifact.media_type === input.media_type && artifact.size_bytes === data.length
+    && artifact.sha256 === createHash('sha256').update(data).digest('hex')
+    && Number.isFinite(Date.parse(artifact.created_at));
 }
 
 export async function shareAgentArtifact({adapter, user, outsider, record, recordFailure, recordState = async () => {}}) {
@@ -23,26 +31,51 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
   const artifactInput = {name: `fixture-${randomUUID()}.txt`, media_type: 'text/plain',
     content_base64: data.toString('base64')};
   const artifactIntent = {body: artifactInput, key: randomUUID(), allowed: [201]};
-  let published, armed, disarmed;
+  const preferences = agentPath + '/preferences';
+  const {body: before} = await user.rawRequest(owner.am, 'GET', preferences);
+  check(Number.isSafeInteger(before?.revision), 'artifact_race_baseline_unbound');
+  const title = `Artifact retry ${randomUUID()}`;
+  const fault = (action, count) => adapter.artifactPublicationRace({action, count, agentId});
+  let pending, armed, disarmed, advanced, artifact;
+  let settled = false;
   await withRestoration(async () => {
-    armed = await adapter.artifactPublicationAbort({arm: true});
-    // Bypass ordinary pacing so a peer request overlaps the transaction retry.
-    published = await competingRequests(user.rawRequest(ingress, 'POST', artifacts, artifactIntent),
-      user.rawRequest(owner.am, 'POST', artifacts, artifactIntent));
+    armed = await fault('arm');
+    check(Number.isSafeInteger(armed?.count), 'artifact_race_fault_count_missing');
+    pending = user.rawRequest(ingress, 'POST', artifacts, artifactIntent)
+      .then(response => ({response}), error => ({error})).finally(() => { settled = true; });
+    await poll(() => fault('wait', armed.count), value => value.entered === true,
+      {timeout: 12000, interval: 100, code: 'artifact_publication_transaction_not_held'});
+    const rename = await user.rawRequest(owner.am, 'PATCH', preferences, {
+      key: randomUUID(), body: {title, expected_revision: before.revision},
+    });
+    advanced = rename.body;
+    check(advanced?.title === title && advanced.revision === before.revision + 1 && !settled,
+      'artifact_owner_revision_did_not_advance_before_retry');
+    const published = await pending;
+    if (published.error) throw published.error;
+    artifact = published.response.body;
   }, async () => {
-    disarmed = await adapter.artifactPublicationAbort({arm: false});
+    try { disarmed = await fault('disarm'); }
+    finally { await pending; }
   }, recordFailure);
   check(Number.isSafeInteger(armed?.count) && disarmed?.count === armed.count + 1,
     'artifact_publication_abort_not_consumed_once');
-  const [artifact, contender] = published;
-  check(artifact.agent_id === agentId && typeof artifact.id === 'string' &&
-    artifact.size_bytes === data.length && artifact.sha256 === createHash('sha256').update(data).digest('hex'),
-  'artifact_admission_identity');
-  check(contender.id === artifact.id && contender.created_at === artifact.created_at &&
-    contender.sha256 === artifact.sha256, 'artifact_concurrent_receipt_diverged');
+  check(matchesArtifact(artifact, agentId, artifactInput, data), 'artifact_admission_identity');
+  const readArtifact = async am => {
+    const {body: listing} = await user.request(am, 'GET', artifacts);
+    check(Array.isArray(listing?.items) && listing.next === undefined, 'artifact_retry_listing_unbound');
+    const matches = listing.items.filter(row => row.id === artifact.id || row.name === artifactInput.name);
+    check(matches.length === 1 && equal(matches[0], artifact), 'artifact_effect_missing_or_duplicated');
+  };
+  for (const am of [owner.am, ingress]) {
+    const {body: current} = await user.rawRequest(am, 'GET', preferences);
+    check(current?.revision === advanced.revision && current.title === title,
+      'artifact_retry_lost_owner_revision');
+    await readArtifact(am);
+  }
   const artifactPath = artifacts + '/' + encodeURIComponent(artifact.id);
   const {body: replay} = await user.request(owner.am, 'POST', artifacts, artifactIntent);
-  check(replay.id === artifact.id && replay.created_at === artifact.created_at, 'artifact_replay_changed_receipt');
+  check(equal(replay, artifact), 'artifact_replay_changed_receipt');
   await user.request(owner.am, 'POST', artifacts,
     {...artifactIntent, body: {...artifactInput, name: 'changed.txt'}, allowed: [409]});
   await outsider.request(ingress, 'GET', access, {allowed: [404]});
@@ -87,11 +120,9 @@ export async function shareAgentArtifact({adapter, user, outsider, record, recor
     await outsider.request(owner.am, 'POST', redeem, {body: {token}, allowed: [404]});
     await publicationDenied(owner.am);
   }, recordFailure);
-  const {body: listing} = await user.request(owner.am, 'GET', artifacts);
-  const matches = listing.items.filter(row => row.id === artifact.id || row.name === artifactInput.name);
-  check(matches.length === 1 && matches[0].id === artifact.id && matches[0].sha256 === artifact.sha256,
-    'artifact_effect_missing_or_duplicated');
-  await recordState('artifact_publication_retry', {known_aborts: 1, artifacts: matches.length});
+  await readArtifact(ingress);
+  await recordState('artifact_publication_retry', {known_aborts: 1, artifacts: 1,
+    owner: owner.am, ingress, before_revision: before.revision, confirmed_revision: advanced.revision});
 }
 
 export async function artifactUnknownPublication({adapter, user, record, recordFailure, recordState = async () => {}}) {
@@ -144,7 +175,6 @@ export async function artifactCommittedWithoutAcknowledgement({adapter, user, re
   const data = Buffer.from('Synthetic artifact with a disconnected caller\n');
   const intent = {key: randomUUID(), body: {name: `fixture-${randomUUID()}.txt`, media_type: 'text/plain',
     content_base64: data.toString('base64')}, allowed: [201]};
-  const digest = createHash('sha256').update(data).digest('hex');
   let original;
   // The loopback relay observes the upstream response and cuts the caller's
   // connection before delivering the acknowledgement. It forwards one write.
@@ -170,7 +200,7 @@ export async function artifactCommittedWithoutAcknowledgement({adapter, user, re
     check(callerError?.cause?.code === 'UND_ERR_SOCKET' && response.status === 201,
       'artifact_acknowledgement_disconnect_unproven');
     committed = response.body;
-    check(typeof committed?.id === 'string' && committed.agent_id === agentId && committed.sha256 === digest,
+    check(matchesArtifact(committed, agentId, intent.body, data),
       'artifact_acknowledgement_commit_unbound');
   }, async () => {
     if (!relay.listening) return;
@@ -180,12 +210,12 @@ export async function artifactCommittedWithoutAcknowledgement({adapter, user, re
     const {body} = await user.rawRequest(am, 'GET', path);
     check(Array.isArray(body?.items) && body.next === undefined, 'artifact_acknowledgement_listing_unbound');
     const rows = body.items.filter(row => row.name === intent.body.name || row.id === committed.id);
-    check(rows.length === 1 && rows[0].id === committed.id && rows[0].sha256 === digest,
+    check(rows.length === 1 && equal(rows[0], committed),
       'artifact_acknowledgement_effect_missing_or_duplicated');
   };
   await readOnce(owner.am);
   const {body: recovered} = await user.rawRequest(owner.am, 'POST', path, intent);
-  check(recovered?.id === committed.id && recovered.created_at === committed.created_at && recovered.sha256 === digest,
+  check(equal(recovered, committed),
     'artifact_acknowledgement_replay_changed_receipt');
   await readOnce(ingress);
   await recordState('artifact_committed_without_acknowledgement', {upstream_commits_observed: 1, recovered_artifacts: 1});

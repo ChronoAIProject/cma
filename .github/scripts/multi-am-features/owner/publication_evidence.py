@@ -35,6 +35,26 @@ def artifact_publication_abort(fixture, arm=None, outcome='known'):
                              unknown=outcome == 'unknown')
 
 
+def artifact_publication_race(fixture, action=None, count=None, agentId=None):
+    require_feature_fixture(fixture)
+    agent_digest(agentId)
+    if action not in ('arm', 'wait', 'disarm'):
+        raise ValueError('artifact_publication_race_action_required')
+    # Hold the count after its authorization snapshot and before the first
+    # lineage write. An insert barrier would already hold the Agent write lock.
+    result = timed_publication_abort(fixture, action, count, 'agent_artifacts', operation='aggregate')
+    if action != 'wait' or not result.get('entered'):
+        return result
+    criteria = {'appName': FEATURES_MONGO_APP, 'active': True,
+                'command.aggregate': 'agent_artifacts', 'command.autocommit': False}
+    return fixture.mongo(f'const rows = admin.aggregate([{{$currentOp:{{allUsers:true}}}},'
+        f'{{$match:{json.dumps(criteria)}}},{{$limit:8}}]).toArray();'
+        f'const target = {json.dumps(agentId)};'
+        'const matching = rows.filter(({command}) => command.lsid && command.txnNumber != null && '
+        'command.pipeline?.[0]?.$match?.agent_id === target);'
+        'print(JSON.stringify({entered: matching.length === 1}));')
+
+
 def writer_publication_abort(fixture, arm=None):
     require_feature_fixture(fixture)
     if type(arm) is not bool:
@@ -90,9 +110,9 @@ def share_redemption_publication_abort(fixture, action=None, count=None):
     return timed_publication_abort(fixture, action, count, 'sandbox_admissions')
 
 
-def timed_publication_abort(fixture, action, count, collection):
+def timed_publication_abort(fixture, action, count, collection, *, operation='update'):
     if action in ('arm', 'disarm') and count is None:
-        return publication_abort(fixture, action == 'arm', 'update', collection, FEATURES_MONGO_APP,
+        return publication_abort(fixture, action == 'arm', operation, collection, FEATURES_MONGO_APP,
                                  block_ms=12000)
     if action != 'wait' or type(count) is not int or not 0 <= count < 2**53 - 1:
         raise ValueError('timed_publication_abort_action_required')
