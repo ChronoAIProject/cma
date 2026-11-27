@@ -20,13 +20,6 @@ FEATURES_MONGO_APP = 'cma-two-am-features-fixture'
 SCHEMA_RACE = Path(__file__).with_name('prepared_schema_race.js')
 
 
-def prepared_publication_abort(fixture, arm=None):
-    require_feature_fixture(fixture, kind='prepared')
-    if type(arm) is not bool:
-        raise ValueError('prepared_publication_abort_action_required')
-    return publication_abort(fixture, arm, 'update', 'worktrees', PREPARED_MONGO_APP)
-
-
 def artifact_publication_abort(fixture, arm=None, outcome='known'):
     require_feature_fixture(fixture)
     if type(arm) is not bool or outcome not in ('known', 'unknown'):
@@ -263,7 +256,9 @@ def prepared_schema_barrier(fixture, arm=None):
 
 def prepared_schema_race(fixture, action=None, operationId=None, reservations=None, barrier='worktree_schema'):
     require_feature_fixture(fixture, kind='prepared')
-    if (action not in ('inject', 'read', 'restore') or barrier not in ('worktree_schema', 'worktree_cleanup', 'work_lease')
+    supported = ('worktree_schema', 'worktree_cleanup', 'work_lease', 'publication_conflict')
+    if (action not in ('inject', 'read', 'restore') or barrier not in supported
+            or (action == 'read' and barrier == 'publication_conflict')
             or not isinstance(reservations, list)
             or not 1 <= len(reservations) <= 2 or any(not isinstance(value, str)
             or not re.fullmatch(r'[A-Za-z0-9_-]{1,128}', value) for value in [operationId, *reservations])):

@@ -46,16 +46,36 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       const ingressMember = initialManagers[ingress];
       const nativeBefore = new Map(await Promise.all(ready.map(async sandboxId =>
         [sandboxId, await adapter.preparedRuntimeEvidence({sandboxId})])));
-      let opening, record, armed, disarmed;
-      const createAndOpen = () => create(ingress, false, {}, ({agentId}) => {
+      let opening, record, collision;
+      const createAndOpen = onAdmission => create(ingress, false, {}, ({agentId}) => {
         opening = page.openStarting(agentId).then(started => ({started}), error => ({error}));
-      });
+      }, onAdmission);
       if (ingress === 'b') {
+        let admission, pending;
+        const race = action => adapter.preparedSchemaRace({
+          action, operationId: admission.operationId, reservations: ready, barrier: 'publication_conflict',
+        });
+        const disarm = () => adapter.preparedSchemaBarrier({arm: false});
         await withRestoration(async () => {
-          armed = await adapter.preparedPublicationAbort({arm: true});
-          record = await createAndOpen();
+          await adapter.preparedSchemaBarrier({arm: true});
+          record = await createAndOpen(admitted => {
+            admission = admitted;
+            pending = withRestoration(async () => {
+              collision = await poll(() => race('inject'), value => value !== null,
+                {timeout: 120000, interval: 100, code: 'prepared_publication_transaction_not_observed'});
+            }, disarm, recordFailure).then(() => ({}), error => ({error}));
+          });
+          check(pending, 'prepared_publication_admission_unobserved');
+          const outcome = await pending;
+          if (outcome.error) throw outcome.error;
+          check(collision?.agentId === record.agentId && collision?.sandboxId === record.sandboxId,
+            'prepared_publication_collision_lineage_unbound');
         }, async () => {
-          disarmed = await adapter.preparedPublicationAbort({arm: false});
+          if (!admission) return disarm();
+          await pending;
+          const marker = await race('restore');
+          check(marker.restored === 1 || (!collision && marker.restored === 0),
+            'prepared_publication_collision_restore_unproven');
         }, recordFailure);
       } else {
         record = await createAndOpen();
@@ -110,13 +130,10 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       const publicationDiagnostics = await adapter.publicationEvidence({agentId: record.agentId});
       if (ingress === 'b') {
         const aborts = am => publicationDiagnostics[am]?.known_aborted_cas?.publish_connection ?? 0;
-        const count = sample => Number.isSafeInteger(sample?.count) && sample.count >= 0 ? sample.count : null;
         recordAbortEvidence({ingress, owner: owner.am, owner_epoch: owner.epoch,
           owner_instance_sha256: hash(owner.instance_id), agent_sha256: hash(record.agentId),
-          lifecycle_operation_sha256: hash(record.operationId), armed_count: count(armed), disarmed_count: count(disarmed),
+          lifecycle_operation_sha256: hash(record.operationId), exact_reservation_conflict: true,
           publication_diagnostics: publicationDiagnostics});
-        check(count(armed) !== null && count(disarmed) === count(armed) + 1,
-          'prepared_publication_abort_not_consumed_once');
         check(aborts(owner.am) === 1 && aborts(owner.am === 'a' ? 'b' : 'a') === 0,
           'prepared_publication_abort_not_attributed');
       }

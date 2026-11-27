@@ -6,9 +6,12 @@
   const cleanup = 'owned_workspace_cleanup_admission_v1';
   const schemaChange = scope.barrier === 'worktree_schema';
   const leaseChange = scope.barrier === 'work_lease';
+  const publicationConflict = scope.barrier === 'publication_conflict';
+
   const field = schemaChange ? schema : cleanup;
   const successor = schemaChange ? NumberLong('999') : true;
   const operationId = scope.operationId;
+  const claim = {'record.ownership.operation_id': operationId, kind: 'reservation', state: 'claimed'};
 
   async function lineage(database) {
     const agent = await database.agents.findOne({'record.origin.operation_id': operationId,
@@ -20,8 +23,7 @@
     const tree = await database.worktrees.findOne({_id: agent.worktree_id, sandbox_id: agent.sandbox_id,
       workspace_id: agent.workspace_id, owner: agent.owner});
     const reservation = await database.native_prepared_sandboxes.findOne({_id: agent.sandbox_id,
-      kind: 'reservation', state: 'claimed', 'record.ownership.owner': agent.owner,
-      'record.ownership.operation_id': operationId});
+      ...claim, 'record.ownership.owner': agent.owner});
     if (!sandbox || !workspace || !tree || !reservation) return null;
     const workspaces = reservation.record.payload.workspaces;
     if (!Array.isArray(workspaces) || workspaces.length !== 1 || workspaces[0].id !== workspace._id) return null;
@@ -81,6 +83,18 @@
         if (!pending(before) || before.schema !== 1 || before.cleanup_marked || rows.tree.status !== 'creating') {
           throw Error('prepared_schema_race_startup_precondition');
         }
+        if (publicationConflict) {
+          const reservation = rows.reservation;
+          // The transaction read this reservation before the held Worktree write.
+          // A marker changes the snapshot without changing prepared authority.
+          const changed = await d.native_prepared_sandboxes.updateOne({
+            ...claim, _id: reservation._id, revision: reservation.revision,
+            'record.ownership.owner': rows.agent.owner, [marker]: {$exists: false},
+            agent_prepared_open_ready_fence: {$exists: false},
+          }, {$set: {[marker]: {operation: operationId, barrier: scope.barrier}}}, {maxTimeMS: 700});
+          if (changed.modifiedCount !== 1) throw Error('prepared_publication_conflict_write_missed');
+          return before;
+        }
         if (leaseChange) {
           await replaceLease(rows.agent);
           return before;
@@ -139,6 +153,13 @@
 
   async function restore() {
     if (leaseChange) return restoreLease();
+    if (publicationConflict) {
+      const restored = await d.native_prepared_sandboxes.updateOne({
+        ...claim, _id: {$in: scope.reservations},
+        [`${marker}.operation`]: operationId, [`${marker}.barrier`]: scope.barrier,
+      }, {$unset: {[marker]: ''}}, {maxTimeMS: 700});
+      return {restored: restored.modifiedCount};
+    }
     const rows = await d.worktrees.find({[`${marker}.operation`]: operationId,
       sandbox_id: {$in: scope.reservations}}).limit(2).toArray();
     if (!rows.length) return {restored: 0};

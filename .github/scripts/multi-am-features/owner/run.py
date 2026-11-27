@@ -27,7 +27,7 @@ import legacy_manifests as old
 from identity import ADMIN
 from login import login
 from prepared_runtime import prepared_runtime_evidence
-from publication_evidence import (artifact_publication_abort, artifact_publication_race, prepared_publication_abort, prepared_schema_barrier, prepared_schema_race,
+from publication_evidence import (artifact_publication_abort, artifact_publication_race, prepared_schema_barrier, prepared_schema_race,
                                   prepared_schema_refusals, publication_evidence,
                                   runtime_loss_evidence, runtime_loss_publication_abort,
                                   share_redemption_publication_abort,
@@ -59,7 +59,6 @@ class Fixture:
     runtimeLossPublicationAbort = runtime_loss_publication_abort
     runtimeLossEvidence = runtime_loss_evidence
     shareRedemptionPublicationAbort = share_redemption_publication_abort
-    preparedPublicationAbort = prepared_publication_abort
     preparedRuntimeEvidence = prepared_runtime_evidence
     preparedSchemaBarrier = prepared_schema_barrier
     preparedSchemaRace = prepared_schema_race
@@ -427,7 +426,7 @@ class Fixture:
                              'drainOwner','restartDrained','peerWriteEvidence','preparedReady','preparedEvidence','preparedRuntimeEvidence',
                              'observeScale','observeNeverReady','liveOwnerLease','lifecycleSnapshot',
                              'organizationMembership','configurationLog','configurationDispatch','publicationEvidence',
-                             'retirementPurge','removeRuntimePod','artifactPublicationAbort','artifactPublicationRace','preparedPublicationAbort','preparedSchemaBarrier',
+                             'retirementPurge','removeRuntimePod','artifactPublicationAbort','artifactPublicationRace','preparedSchemaBarrier',
                              'preparedSchemaRace','preparedSchemaRefusals','writerPublicationAbort','writerPublicationEvidence',
                              'runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
                              'shareRedemptionPublicationAbort']

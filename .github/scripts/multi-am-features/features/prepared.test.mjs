@@ -9,20 +9,21 @@ import {hash} from '../cma/core.mjs';
 function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], repeatReservation = false,
   schemas = [4, 3, 1], readyFences = [1, 1, 1, 1], startupReceipts = [1, 1, 1],
   starting = true, ready = true, effects = 1, changedOwner = false, changedIngress = false,
-  admissionRequest = 'fixture-admission', repeatRequest = false, injected = 1, observed = 1,
+  admissionRequest = 'fixture-admission', repeatRequest = false, collisionMatches = true, observed = 1,
   failCreation = false, abortManager = 'b', createToReadyMs = 5000, reservationBound = true,
   changedNativeReceipt = false} = {}) {
   const actions = [];
   const records = [];
   let ownerReads = 0;
   let topologyReads = 0;
-  const create = async (am, desktop, overrides, onAgentId) => {
+  const create = async (am, desktop, overrides, onAgentId, onAdmission) => {
     assert.equal(desktop, false);
     const sandboxId = overrides?.profile ? 'cold-' + am : 'candidate-' + (repeatReservation ? 'a' : am);
     const record = {agentId: 'fixture-agent', sandboxId, operationId: 'fixture-operation', am, admissionRequest,
       createToReadyMs, runtime: {pod_uid: 'fixture-runtime-pod-' + sandboxId}};
     records.push(record);
     actions.push('create-' + am + '-' + sandboxId);
+    onAdmission?.(record);
     if (failCreation && am === 'b' && onAgentId) throw new Error('fixture_admission_failed');
     onAgentId?.(record);
     return record;
@@ -54,9 +55,16 @@ function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], re
       instance_id: 'fixture-manager', pod_uid: 'fixture-pod'}),
     publicationEvidence: async () => ({a: {}, b: {},
       [abortManager]: {known_aborted_cas: {publish_connection: observed}}}),
-    preparedPublicationAbort: async ({arm}) => {
-      actions.push(arm ? 'arm-publication-abort' : 'disarm-publication-abort');
-      return {count: arm ? 0 : injected};
+    preparedSchemaBarrier: async ({arm}) => {
+      actions.push(arm ? 'arm-worktree-hold' : 'disarm-worktree-hold');
+    },
+    preparedSchemaRace: async ({action, operationId, reservations, barrier}) => {
+      assert.equal(operationId, 'fixture-operation');
+      assert.deepEqual(reservations, readyIds);
+      assert.equal(barrier, 'publication_conflict');
+      actions.push(action + '-reservation-marker');
+      const sandboxId = collisionMatches ? records.at(-1).sandboxId : 'different-reservation';
+      return action === 'inject' ? {agentId: 'fixture-agent', sandboxId} : {restored: 1};
     },
   };
   const results = [];
@@ -89,7 +97,8 @@ test('cold comparison and two ingress checks join the exact prepared reservation
     'create-a-cold-a', 'cleanup-cold-a',
     'create-a-candidate-a', 'starting-a', 'open-both', 'reply-a', 'cleanup-candidate-a',
     'create-b-cold-b', 'cleanup-cold-b',
-    'arm-publication-abort', 'create-b-candidate-b', 'starting-b', 'disarm-publication-abort',
+    'arm-worktree-hold', 'create-b-candidate-b', 'inject-reservation-marker', 'starting-b',
+    'disarm-worktree-hold', 'restore-reservation-marker',
     'open-both', 'reply-b', 'cleanup-candidate-b',
   ]);
   assert.equal(context.results[1].atomic_publication_fence_count, 4);
@@ -113,8 +122,9 @@ test('cold comparison and two ingress checks join the exact prepared reservation
   assert.deepEqual(context.results[1].parent_schema_versions, [4, 3, 1]);
 });
 
-test('prepared publication proves a consumed and attributed abort and always removes the failpoint', async () => {
-  await assert.rejects(preparedJourney(fixture({injected: 0})), /prepared_publication_abort_not_consumed_once/);
+test('prepared publication binds the collision to admission and retains the owner attribution', async () => {
+  await assert.rejects(preparedJourney(fixture({collisionMatches: false})),
+    /prepared_publication_collision_lineage_unbound/);
   await assert.rejects(preparedJourney(fixture({observed: 0})), /prepared_publication_abort_not_attributed/);
   const wrongManager = fixture({abortManager: 'a'});
   const diagnostics = [];
@@ -122,11 +132,11 @@ test('prepared publication proves a consumed and attributed abort and always rem
     /prepared_publication_abort_not_attributed/);
   assert.deepEqual(diagnostics, [{ingress: 'b', owner: 'b', owner_epoch: 1,
     owner_instance_sha256: hash('fixture-manager'), agent_sha256: hash('fixture-agent'),
-    lifecycle_operation_sha256: hash('fixture-operation'), armed_count: 0, disarmed_count: 1,
+    lifecycle_operation_sha256: hash('fixture-operation'), exact_reservation_conflict: true,
     publication_diagnostics: {a: {known_aborted_cas: {publish_connection: 1}}, b: {}}}]);
   const failed = fixture({failCreation: true});
   await assert.rejects(preparedJourney(failed), /fixture_admission_failed/);
-  assert.equal(failed.actions.at(-1), 'disarm-publication-abort');
+  assert.deepEqual(failed.actions.slice(-2), ['disarm-worktree-hold', 'restore-reservation-marker']);
 });
 
 test('prepared publication retry must preserve the Runtime receipts present before the claim', async () => {

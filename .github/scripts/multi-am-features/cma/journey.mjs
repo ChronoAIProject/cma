@@ -72,9 +72,10 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     record.admissionRequest = receipt.timing.request_id;
     return record;
   }
-  async function create(am, desktop, overrides = {}, onAgentId) {
+  async function create(am, desktop, overrides = {}, onAgentId, onAdmission) {
     const start = performance.now();
     const record = await admit(am, desktop, overrides);
+    onAdmission?.(record);
     let op, lastOperation;
     try {
       op = await poll(async () => {

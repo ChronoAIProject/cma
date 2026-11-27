@@ -286,34 +286,25 @@ class OwnershipTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'publication_evidence_invalid_diagnostic'):
             fixture.publicationEvidence('fixture-agent')
 
-    def test_prepared_publication_abort_is_one_exact_fixture_write(self):
+    def test_prepared_publication_conflict_requires_disposable_lineage(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12
         fixture.client = SimpleNamespace(namespace='cma-native-am')
         fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
                          'server': 'https://127.0.0.1:12345'}
-        commands = []
-
-        def mongo(script):
-            command, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
-            commands.append(command)
-            return {'count': 0}
-
-        fixture.mongo = mongo
-        fixture.preparedPublicationAbort(True)
-        fixture.preparedPublicationAbort(False)
-        self.assertEqual(commands, [
-            {'configureFailPoint': 'failCommand', 'mode': {'times': 1}, 'data': {
-                'failCommands': ['update'], 'namespace': 'cma_native_am.worktrees', 'appName': PREPARED_MONGO_APP,
-                'errorCode': 112, 'errorLabels': ['TransientTransactionError']}},
-            {'configureFailPoint': 'failCommand', 'mode': 'off'},
-        ])
-        with self.assertRaisesRegex(ValueError, 'prepared_publication_abort_action_required'):
-            fixture.preparedPublicationAbort(1)
+        fixture.mongo = Mock()
+        fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'publication_conflict')
+        script = fixture.mongo.call_args.args[0]
+        scope, _ = json.JSONDecoder().raw_decode(script.removeprefix('const scope = '))
+        self.assertEqual(scope, {'action': 'inject', 'operationId': 'exact-operation',
+                                 'reservations': ['exact-reservation'], 'barrier': 'publication_conflict',
+                                 'app': PREPARED_MONGO_APP})
+        with self.assertRaisesRegex(ValueError, 'prepared_schema_race_lineage_required'):
+            fixture.preparedSchemaRace('inject', '../operation', ['exact-reservation'], 'publication_conflict')
         fixture.ready['fixture'] = 'features'
         with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
-            fixture.preparedPublicationAbort(True)
-        self.assertEqual(len(commands), 2)
+            fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'publication_conflict')
+        fixture.mongo.assert_called_once()
 
     def test_artifact_abort_targets_only_the_feature_fixture_insert(self):
         fixture = Fixture.__new__(Fixture)
