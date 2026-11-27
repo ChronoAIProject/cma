@@ -246,15 +246,14 @@ impl AgentCommandService {
                     .await
                     .map_err(|_| CommandLedgerError::Unavailable)??;
                     if fresh.scope() != expected.scope()
+                        || fresh.envelope.authorization != expected.envelope.authorization
                         || fresh.policy != expected.policy
-                        || !refresh.matches(&authorized, &fresh_authorized, &expected, &fresh)
+                        || !refresh.matches(&authorized, &fresh_authorized, &fresh)
                     {
                         return Err(CommandLedgerError::Conflict.into());
                     }
-                    fresh.envelope = AgentCommandEnvelope {
-                        authorization: fresh.envelope.authorization,
-                        ..expected.envelope.clone()
-                    };
+                    fresh.envelope.clone_from(&expected.envelope);
+                    fresh.key_sha256.clone_from(&expected.key_sha256);
                     fresh.response_id = expected.response_id.clone();
                     fresh.admitted_at = expected.admitted_at.clone();
                     fresh.queue_deadline = expected.queue_deadline.clone();

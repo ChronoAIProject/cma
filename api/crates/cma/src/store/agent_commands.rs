@@ -10,8 +10,8 @@ use layer2_core::sandbox::agent_io::{
 use mongodb::bson::doc;
 
 use super::sandbox_mongo::{
-    abort_with_acknowledgment, commit_transaction, is_duplicate_key, is_transient,
-    start_transaction, CommitOutcome, MongoSandboxStore,
+    abort_with_acknowledgment, commit_transaction, is_confirmed_body_retry, start_transaction,
+    CommitOutcome, MongoSandboxStore,
 };
 
 pub(super) mod audit;
@@ -269,7 +269,7 @@ impl AgentCommandStore for MongoSandboxStore {
                     }
                     Err(ApplyError::Driver(error)) => {
                         let _ = session.abort_guarded().await;
-                        if is_transient(&error) || is_duplicate_key(&error) {
+                        if is_confirmed_body_retry(&error) {
                             continue;
                         }
                         return Err(CommandLedgerError::Unavailable);

@@ -8,6 +8,25 @@ async fn reservation_requires_acknowledged_abort_and_recovers_unknown_commit_by_
     let admin = Client::with_uri_str(&uri).await.unwrap().database("admin");
     let mut options = ClientOptions::parse(&uri).await.unwrap();
     options.app_name = Some(name.clone());
+    let attempts = Arc::new(AtomicU64::new(0));
+    let observed_attempts = attempts.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        let CommandEvent::Started(event) = event else {
+            return;
+        };
+        if event.command_name == "find"
+            && event
+                .command
+                .get_str("find")
+                .is_ok_and(|name| name == "agent_commands")
+            && matches!(event.command.get_bool("autocommit"), Ok(false))
+            && event.command.get_document("filter").is_ok_and(|filter| {
+                filter.contains_key("scope") && filter.contains_key("key_sha256")
+            })
+        {
+            observed_attempts.fetch_add(1, Ordering::Relaxed);
+        }
+    }));
     let client = Client::with_options(options).unwrap();
     let (store, agent, parent) = fixture(&name, &client).await;
     let original = request(&agent, &parent, "same-key");
@@ -36,6 +55,28 @@ async fn reservation_requires_acknowledged_abort_and_recovers_unknown_commit_by_
         .unwrap();
     assert_eq!(lost_abort, Err(CommandLedgerError::Unavailable));
     assert_eq!(store.get_admitted_command(&scope, key).await.unwrap(), None);
+
+    admin
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": { "times": 1_i32 },
+            "data": {
+                "failCommands": ["insert"],
+                "appName": &name,
+                "errorCode": 11000_i32,
+                "errorLabels": ["UnknownTransactionCommitResult"],
+            },
+        })
+        .await
+        .unwrap();
+    let before = attempts.load(Ordering::Relaxed);
+    let mixed_error = store.reserve_command(original.clone()).await;
+    admin
+        .run_command(doc! { "configureFailPoint": "failCommand", "mode": "off" })
+        .await
+        .unwrap();
+    assert_eq!(mixed_error, Err(CommandLedgerError::Unavailable));
+    assert_eq!(store.get_admitted_command(&scope, key).await.unwrap(), None);
+    assert_eq!(attempts.load(Ordering::Relaxed), before + 1);
 
     admin
         .run_command(doc! {

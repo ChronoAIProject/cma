@@ -72,17 +72,12 @@ impl RevisionRefresh {
         self,
         previous: &AuthorizedResource,
         next: &AuthorizedResource,
-        expected: &CommandReservation,
         fresh: &CommandReservation,
     ) -> bool {
         match self {
             Self::Disabled => false,
             Self::Creation => true,
-            Self::Retained => {
-                fresh.binding.is_none()
-                    && fresh.envelope.authorization == expected.envelope.authorization
-                    && same_retained_target(previous, next)
-            }
+            Self::Retained => fresh.binding.is_none() && same_retained_target(previous, next),
         }
     }
 }
