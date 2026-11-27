@@ -2,7 +2,7 @@ use super::*;
 use axum::{
     body::Body,
     extract::Request,
-    http::{HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, StatusCode},
     response::Response,
 };
 use futures_util::StreamExt as _;
@@ -26,7 +26,7 @@ pub(super) fn send(
     destination: Destination,
     request: &Request,
     body: &[u8],
-    browser_claim: Option<HeaderValue>,
+    browser_claim: Option<file_identity::ProjectedIdentity>,
     deadline: Instant,
     diagnostic: Option<&mut RelayDiagnostic>,
 ) -> impl std::future::Future<Output = Result<reqwest::Response, Failure>> + use<> {
@@ -54,7 +54,7 @@ fn prepare(
     destination: Destination,
     request: &Request,
     body: &[u8],
-    browser_claim: Option<HeaderValue>,
+    browser_claim: Option<file_identity::ProjectedIdentity>,
     diagnostic: Option<&mut RelayDiagnostic>,
 ) -> Result<(RequestBuilder, Option<authentication::WriteNotEntered>), Failure> {
     let mut headers = HeaderMap::new();
@@ -67,20 +67,24 @@ fn prepare(
             headers.append(name, value.clone());
         }
     }
-    if let Some(claim) = browser_claim {
-        headers.insert(file_identity::HEADER, claim);
-    }
-    let headers = relay
-        .authentication
-        .signed_headers(
+    let headers = match browser_claim {
+        Some(claim) => relay.authentication.signed_file_preview_headers(
+            &relay.coordinator.instance_id,
+            &destination.token,
+            request.uri(),
+            headers,
+            claim,
+        ),
+        None => relay.authentication.signed_headers(
             &relay.coordinator.instance_id,
             &destination.token,
             request.method(),
             request.uri(),
             headers,
             body,
-        )
-        .map_err(|_| Failure::Signature)?;
+        ),
+    }
+    .map_err(|_| Failure::Signature)?;
     if let Some(diagnostic) = diagnostic {
         diagnostic.correlate_hop(headers[PROOF].as_bytes());
     }
