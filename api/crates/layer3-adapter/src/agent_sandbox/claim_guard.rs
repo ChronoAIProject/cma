@@ -1,9 +1,11 @@
 //! Bounded create readiness observations never grant replacement authority.
 use super::{model, pods, AgentSandboxClient, PodBinding};
 use crate::{AdapterError, Result, RuntimeHandle};
-use k8s_openapi::api::core::v1::Pod;
+use k8s_openapi::api::core::v1::{Pod, PodCondition};
 use kube::{api::DynamicObject, api::ListParams, ResourceExt};
 use std::{future::Future, time::Duration};
+
+mod scheduling;
 
 pub(super) const BUDGET: Duration = Duration::from_secs(2);
 const POLL: Duration = Duration::from_millis(100);
@@ -35,7 +37,10 @@ pub(super) fn sample(member: &DynamicObject, pod: &Pod) -> Result<Sample> {
         .uid()
         .filter(|uid| !uid.is_empty())
         .ok_or_else(|| super::rejected("guarded Pod has no UID"))?;
-    if member.metadata.deletion_timestamp.is_none() && is_unschedulable(pod) {
+    if let Some(condition) = unschedulable_condition(member, pod) {
+        if let Some(message) = condition.message.as_deref() {
+            scheduling::report(message);
+        }
         return Err(AdapterError::NativeClaimNotReady(
             NativeClaimGuardReason::Unschedulable,
         ));
@@ -76,22 +81,27 @@ pub(super) fn sample(member: &DynamicObject, pod: &Pod) -> Result<Sample> {
     })
 }
 
-fn is_unschedulable(pod: &Pod) -> bool {
+fn unschedulable_condition<'a>(member: &DynamicObject, pod: &'a Pod) -> Option<&'a PodCondition> {
     // A bound or terminating Pod can retain an earlier scheduler condition.
     // Use the condition only while this exact Pod is still awaiting placement.
-    pod.metadata.deletion_timestamp.is_none()
-        && pod
+    if member.metadata.deletion_timestamp.is_some()
+        || pod.metadata.deletion_timestamp.is_some()
+        || !pod
             .spec
             .as_ref()
             .is_some_and(|spec| spec.node_name.as_deref().is_none_or(str::is_empty))
-        && pod.status.as_ref().is_some_and(|status| {
-            status.phase.as_deref() == Some("Pending")
-                && status.conditions.iter().flatten().any(|condition| {
-                    condition.type_ == "PodScheduled"
-                        && condition.status == "False"
-                        && condition.reason.as_deref() == Some("Unschedulable")
-                })
-        })
+    {
+        return None;
+    }
+    let status = pod.status.as_ref()?;
+    if status.phase.as_deref() != Some("Pending") {
+        return None;
+    }
+    status.conditions.as_ref()?.iter().find(|condition| {
+        condition.type_ == "PodScheduled"
+            && condition.status == "False"
+            && condition.reason.as_deref() == Some("Unschedulable")
+    })
 }
 
 pub(super) async fn wait<F, Fut>(stage: &'static str, mut observe: F) -> Result<PodBinding>
