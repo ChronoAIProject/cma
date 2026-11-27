@@ -5,7 +5,10 @@ use super::{
     WorkspaceStatus, WorkspaceWorkStep,
 };
 use crate::{profiles::content_digest, Caller, Capability, SubjectId};
-use layer3_adapter::{WorkspaceReceipt, WorkspaceRequest, WorkspaceSource as RuntimeSource};
+use layer3_adapter::{
+    WorkspacePrepareRecoveryRequest, WorkspaceReceipt, WorkspaceRequest,
+    WorkspaceSource as RuntimeSource,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -27,6 +30,8 @@ pub struct WorkspacePrepareRecoveryAttempt {
     pub failed: Option<TypedFailure>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub completion: Option<WorkspacePrepareRecoveryCompletion>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub observations: Option<Box<super::WorkspacePrepareObservations>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +40,18 @@ pub struct WorkspacePrepareRecovery {
     pub binding_sha256: String,
     pub original: WorkspaceRequest,
     pub attempts: Vec<WorkspacePrepareRecoveryAttempt>,
+}
+
+impl WorkspacePrepareRecovery {
+    pub fn current_request(&self) -> Option<WorkspacePrepareRecoveryRequest> {
+        let mut attempts = self.attempts.iter().rev();
+        let current = attempts.next()?;
+        Some(WorkspacePrepareRecoveryRequest::new(
+            current.operation_id.clone(),
+            self.original.clone(),
+            attempts.next().map(|attempt| attempt.operation_id.clone()),
+        ))
+    }
 }
 
 impl Workspace {
@@ -270,6 +287,7 @@ impl Workspace {
             original_failure: failure,
             failed: None,
             completion: None,
+            observations: None,
         });
         self.work.prepare_recovery = Some(Box::new(recovery));
         self.work.schedule(WorkspaceWorkStep::RecoverPrepare, now);

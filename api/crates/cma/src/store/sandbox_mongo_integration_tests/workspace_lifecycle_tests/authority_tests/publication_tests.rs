@@ -134,7 +134,23 @@ async fn save(store: &MongoSandboxStore, claim: &ClaimedWork) -> Result<(), Sand
         }
         ClaimedWork::Workspace(row) => {
             let mut next = row.as_ref().clone();
+            use layer2_core::sandbox::WorkspacePrepareObservation;
+            use layer3_adapter::workspace_prepare_observation::{Code, Observation, Stage};
+
             next.name = "authorized-publication".into();
+            next.work.execution.get_or_insert_default();
+            next.record_prepare_observation(
+                WorkspacePrepareObservation::new(
+                    Observation {
+                        stage: Stage::PrepareRpc,
+                        code: Code::RepositorySourceUnavailable,
+                        wire_retryable: Some(true),
+                    },
+                    row.work.attempts,
+                    None,
+                ),
+                false,
+            );
             next.revision += 1;
             store.save_workspace(row.revision, next).await
         }
@@ -206,6 +222,14 @@ async fn predecessor_cannot_publish_successor_snapshot_under_original_scope() {
             .run(save(&successor, &next), || renew(&successor, &next))
             .await
             .unwrap();
+        if let ClaimedWork::Workspace(before) = next {
+            assert!(before.work.prepare_observations.is_none());
+            let after = successor.get_workspace(&before.id).await.unwrap().unwrap();
+            assert_eq!(
+                after.work.prepare_observations.unwrap().operation_id,
+                before.operation_id(WorkspaceWorkStep::Prepare)
+            );
+        }
     }
     client.database(&name).drop().await.unwrap();
 }

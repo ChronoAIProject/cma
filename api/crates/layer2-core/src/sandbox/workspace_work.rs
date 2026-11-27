@@ -48,6 +48,8 @@ pub struct WorkspaceWorkState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepare_recovery: Option<Box<super::WorkspacePrepareRecovery>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prepare_observations: Option<Box<super::WorkspacePrepareObservations>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub execution: Option<super::ProvisioningExecution>,
     pub step: WorkspaceWorkStep,
     pub ready_at: String,
@@ -62,6 +64,7 @@ impl WorkspaceWorkState {
         Self {
             authority_protocol: None,
             prepare_recovery: None,
+            prepare_observations: None,
             execution: None,
             step,
             ready_at,
