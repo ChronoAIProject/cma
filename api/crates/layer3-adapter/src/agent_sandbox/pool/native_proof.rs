@@ -11,6 +11,21 @@ impl AgentSandboxPools {
         &self,
         home: &HomeVolumeAttachment,
     ) -> Result<DynamicObject> {
+        self.read_native_home(home, false).await
+    }
+
+    pub(crate) async fn prove_native_home_before_runtime_validation(
+        &self,
+        home: &HomeVolumeAttachment,
+    ) -> Result<DynamicObject> {
+        self.read_native_home(home, true).await
+    }
+
+    async fn read_native_home(
+        &self,
+        home: &HomeVolumeAttachment,
+        runtime_validation_follows: bool,
+    ) -> Result<DynamicObject> {
         home.validate_for(&home.request.sandbox_id)?;
         let origin = home
             .receipt
@@ -63,7 +78,12 @@ impl AgentSandboxPools {
             .map_err(api_error)?
             .ok_or_else(|| unavailable("native Sandbox no longer exists"))?;
         self.member_owned(&member, &origin.claim)?;
-        if !self.member_spec(&member, origin, false)? {
+        let exact_member = if runtime_validation_follows {
+            self.member_spec_before_runtime_validation(&member, origin)?
+        } else {
+            self.member_spec(&member, origin, false)?
+        };
+        if !exact_member {
             return Err(rejected("native Sandbox home authority changed"));
         }
         let volume = volume

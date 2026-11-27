@@ -37,7 +37,10 @@ impl AgentSandboxClient {
     ) -> Result<DynamicObject> {
         let origin = self.native_runtime_home_origin(runtime, home)?;
         let (name, _) = parse_handle(runtime)?;
-        let actual = self.pools.prove_native_home(home).await?;
+        let actual = self
+            .pools
+            .prove_native_home_before_runtime_validation(home)
+            .await?;
         let desired = self
             .pools
             .runtime_desired_for_member(origin, home, request, name, &actual)?;
