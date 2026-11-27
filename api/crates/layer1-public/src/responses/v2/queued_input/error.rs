@@ -21,7 +21,7 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
             layer2_core::sandbox::AgentOperationError::ModelFundingUnsupported
             | layer2_core::sandbox::AgentOperationError::ModelFunding(_),
         ) => error::admission(value),
-        CommandAdmissionError::Ledger(CommandLedgerError::Conflict | CommandLedgerError::NotAdmissible | CommandLedgerError::StaleClaim) => error::error(StatusCode::CONFLICT,
+        CommandAdmissionError::Ledger(CommandLedgerError::Conflict | CommandLedgerError::KnownAborted | CommandLedgerError::NotAdmissible | CommandLedgerError::StaleClaim) => error::error(StatusCode::CONFLICT,
             "queued_input_conflict",
             "The source command or current authority changed. Recover an uncertain edit with the original key and body.", None),
         CommandAdmissionError::Ledger(CommandLedgerError::Invalid) | CommandAdmissionError::Input(_) => invalid(),

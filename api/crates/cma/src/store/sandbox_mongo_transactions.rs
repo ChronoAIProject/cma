@@ -1,5 +1,6 @@
 //! Agent Manager transaction isolation, publication fencing and terminal commands.
 use crate::store::transaction_terminal::GuardedTerminal as _;
+use crate::store::transaction_terminal::KillOnDrop;
 use cma_am_mongo_primitives::transactions::{
     commit_with, CommitFailure, CommitOperation, CommitResolution,
 };
@@ -65,32 +66,32 @@ pub(in crate::store) async fn commit_transaction_with_refusal(
     session: &mut ClientSession,
 ) -> Result<CommitOutcome, PrecommitRefusal> {
     if let Err(refusal) = layer2_core::sandbox::store::WorkAuthority::current() {
-        // The driver's convenience abort suppresses command failures. Observe
-        // the reply on this same session/transaction and pinned route first.
-        let reply = session
-            .client()
-            .database("admin")
-            .run_command(mongodb::bson::doc! {"abortTransaction":1_i32})
-            .session(&mut *session)
-            .await;
-        // Close local driver state; this second best-effort abort proves nothing
-        // about an uncertain first reply and cannot release the durable marker.
-        if session.abort_guarded().await.is_err() {
-            tracing::warn!(
-                stage = "precommit_refusal",
-                outcome = "local_abort_failed",
-                "publication custody remains governed by the original abort reply"
-            );
-        }
-        return Err(match reply {
-            Ok(reply) if acknowledged_abort_reply(&reply) => PrecommitRefusal::Aborted(refusal),
-            Ok(_) => PrecommitRefusal::AbortUnacknowledged(Error::custom(
-                "precommit abort acknowledgment is uncertain",
-            )),
+        return Err(match abort_with_acknowledgment(session).await {
+            Ok(()) => PrecommitRefusal::Aborted(refusal),
             Err(error) => PrecommitRefusal::AbortUnacknowledged(error),
         });
     }
     Ok(commit_with(&mut GuardedCommit(session)).await)
+}
+
+pub(in crate::store) async fn abort_with_acknowledgment(
+    session: &mut ClientSession,
+) -> Result<(), Error> {
+    // The driver's convenience abort suppresses command failures. Observe the
+    // reply on the same session and pinned route, then close local driver state.
+    let guard = KillOnDrop::arm(session);
+    let reply = session
+        .client()
+        .database("admin")
+        .run_command(mongodb::bson::doc! {"abortTransaction":1_i32})
+        .session(&mut *session)
+        .await;
+    guard.disarm();
+    let _ = session.abort_guarded().await;
+    if acknowledged_abort_reply(&reply?) {
+        return Ok(());
+    }
+    Err(Error::custom("precommit abort acknowledgment is uncertain"))
 }
 
 fn acknowledged_abort_reply(reply: &mongodb::bson::Document) -> bool {

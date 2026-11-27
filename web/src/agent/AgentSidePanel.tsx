@@ -180,6 +180,7 @@ export function AgentSidePanel({
     agentId: string;
     subject?: string;
     runtimeVersion?: string;
+    runtime?: { incarnation: string; revision: number };
     listingAllowed?: boolean;
   }>();
   const sameFileEnvironment =
@@ -188,6 +189,12 @@ export function AgentSidePanel({
     fileEnvironment.subject === subject &&
     fileEnvironment.runtimeVersion === runtimeVersion;
   const listingAllowed = sameFileEnvironment ? fileEnvironment.listingAllowed : undefined;
+  const previousRuntime = sameFileEnvironment ? fileEnvironment.runtime : undefined;
+  const incarnation = features?.runtime_incarnation;
+  const runtime =
+    incarnation && incarnation !== previousRuntime?.incarnation
+      ? { incarnation, revision: previousRuntime ? previousRuntime.revision + 1 : 0 }
+      : previousRuntime;
   const environmentReady = environment.state.status === 'ready';
   const environmentAllowsListing = !features || features.files.state === 'available';
   const transientEnvironment =
@@ -197,12 +204,13 @@ export function AgentSidePanel({
     : environment.state.status === 'error'
       ? transientEnvironment && listingAllowed !== false
       : listingAllowed;
-  if (!sameFileEnvironment || listingAllowed !== nextListingAllowed)
+  if (!sameFileEnvironment || listingAllowed !== nextListingAllowed || runtime !== previousRuntime)
     setFileEnvironment({
       client,
       agentId,
       subject,
       runtimeVersion,
+      runtime,
       listingAllowed: nextListingAllowed,
     });
   const keepFilesActiveDuringEnvironmentCheck =
@@ -391,7 +399,7 @@ export function AgentSidePanel({
               initialDirectory={homeFilePath(workingDirectory ?? '')}
               navigationMemory={currentObservation?.fileNavigation}
               changes={changedFiles(operations?.toolCalls, workingDirectory)}
-              key={`${agentId}:${shared}:${subject}:${currentObservation?.scope.authEpoch}:${visitedScope?.generation}`}
+              key={`${agentId}:${shared}:${subject}:${currentObservation?.scope.authEpoch}:${visitedScope?.generation}:${runtime?.revision ?? 0}`}
               panel
               embedded
               active={mayRead}
