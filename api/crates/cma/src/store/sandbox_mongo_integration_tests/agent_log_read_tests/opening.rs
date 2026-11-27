@@ -18,6 +18,68 @@ fn first(limit: u16) -> AgentTranscriptPageRequest {
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
+async fn privacy_export_pages_legacy_history_without_the_opening_index() {
+    let fixture = Fixture::new(50, 1, true).await;
+    let indexed = fixture
+        .store
+        .agent_log_export_page(&fixture.agent, &first(7))
+        .await
+        .unwrap()
+        .unwrap();
+    fixture
+        .store
+        .agent_log
+        .drop_index("agent_log_kind_sequence")
+        .await
+        .unwrap();
+    let mut request = first(7);
+    let mut messages = Vec::new();
+    loop {
+        let page = fixture
+            .store
+            .agent_log_export_page(&fixture.agent, &request)
+            .await
+            .unwrap()
+            .unwrap();
+        if request.turn.is_none() {
+            assert_eq!(page, indexed);
+        }
+        assert_eq!(
+            page.transcript.through_seq,
+            fixture.agent.conversation.last_seq
+        );
+        messages.extend(
+            page.transcript
+                .turns
+                .into_iter()
+                .flat_map(|turn| turn.messages),
+        );
+        let Some(next) = page.next else {
+            break;
+        };
+        request = next;
+    }
+    assert_eq!(messages, fixture.expected().turns.remove(0).messages);
+    fixture
+        .store
+        .agent_log
+        .delete_one(doc! {
+            "agent_id": fixture.agent.id.as_str(), "seq": 5_i64,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .store
+            .agent_log_export_page(&fixture.agent, &first(7))
+            .await,
+        Err(SandboxStoreError::SequenceConflict)
+    );
+    fixture.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
 async fn opening_first_window_and_usage_are_bounded_with_real_prefix_proof() {
     for messages in [1_000, 9_000] {
         let fixture = Fixture::new(messages, 1, true).await;

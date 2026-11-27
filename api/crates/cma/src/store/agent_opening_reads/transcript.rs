@@ -1,8 +1,53 @@
 use super::*;
 use layer2_core::sandbox::{
-    AgentLogKind, AgentLogProjectionState, AgentTranscript, AgentTranscriptMessage,
-    AgentTranscriptPage, AgentTranscriptPageRequest, AgentTranscriptRole, AgentTranscriptWindow,
+    AgentLogKind, AgentLogProjectionState, AgentTranscript, AgentTranscriptFold,
+    AgentTranscriptMessage, AgentTranscriptPage, AgentTranscriptPageRequest, AgentTranscriptRole,
+    AgentTranscriptWindow,
 };
+
+// Preserve the indexed reader for qualified histories. For a legacy history
+// without that optional index or proof, verify a bounded source snapshot.
+pub(in crate::store) async fn export_page(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    session: &mut ClientSession,
+    request: &AgentTranscriptPageRequest,
+) -> Result<Option<AgentTranscriptPage>, SandboxStoreError> {
+    use crate::store::agent_log_integrity::{
+        read::read_proven_agent, scan_collection, ScanOptions, TransactionLogError,
+    };
+    use crate::store::agent_log_telemetry::ScanCaller;
+
+    if let Some(page) = page(store, agent, session, request).await? {
+        return Ok(Some(page));
+    }
+    let (observed, _) = read_proven_agent(store, &agent.id, session)
+        .await?
+        .ok_or(SandboxStoreError::NotFound)?;
+    if observed != *agent {
+        return Err(SandboxStoreError::SequenceConflict);
+    }
+    let mut fold = AgentTranscriptFold::default();
+    scan_collection(
+        ScanCaller::PublicWindowPrefix,
+        &store.agent_log,
+        &agent.id,
+        agent.conversation.last_seq,
+        session,
+        ScanOptions::new(true, store.scan_cooperation).with_limits(1_024, 8 * 1024 * 1024),
+        |entry| fold.push(agent, entry).map_err(SandboxStoreError::Corrupt),
+    )
+    .await
+    .map_err(|error| match error {
+        TransactionLogError::Domain(error) => error,
+        TransactionLogError::Driver(error) => unavailable(error),
+    })?;
+    fold.finish(agent)
+        .map_err(SandboxStoreError::Corrupt)?
+        .into_page(request)
+        .map(Some)
+        .map_err(|_| SandboxStoreError::InvalidPage)
+}
 
 pub(in crate::store) async fn page(
     store: &MongoSandboxStore,
