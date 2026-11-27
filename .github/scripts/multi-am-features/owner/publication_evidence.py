@@ -28,6 +28,13 @@ def artifact_publication_abort(fixture, arm=None, outcome='known'):
                              unknown=outcome == 'unknown')
 
 
+def access_proposal_abort(fixture, arm=None):
+    require_feature_fixture(fixture)
+    if type(arm) is not bool:
+        raise ValueError('access_proposal_abort_action_required')
+    return publication_abort(fixture, arm, 'insert', 'agent_access_requests', FEATURES_MONGO_APP)
+
+
 def artifact_publication_race(fixture, action=None, count=None, agentId=None):
     require_feature_fixture(fixture)
     agent_digest(agentId)

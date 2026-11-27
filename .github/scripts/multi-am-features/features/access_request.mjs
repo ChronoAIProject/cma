@@ -5,7 +5,8 @@ import {withRestoration} from '../failure.mjs';
 
 const SERVICE = 'fixture-access-service';
 
-export async function accessRequest({api, adapter, user, outsider, record, recordFailure}, approve = false) {
+export async function accessRequest({api, adapter, user, outsider, record, recordFailure,
+  recordState = async () => {}}, approve = false) {
   const {agentId} = record;
   const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
   const ingress = other(owner.am);
@@ -53,7 +54,20 @@ export async function accessRequest({api, adapter, user, outsider, record, recor
     }, async () => { if (stream) { stream.abort(); await stream.done; } }, recordFailure);
     return receipt;
   };
-  const toolPending = await propose(ingress);
+  let toolPending;
+  if (approve) {
+    toolPending = await propose(ingress);
+  } else {
+    let armed, disarmed;
+    await withRestoration(async () => {
+      armed = await adapter.accessProposalAbort({arm: true});
+      toolPending = await propose(ingress);
+    }, async () => {
+      disarmed = await adapter.accessProposalAbort({arm: false});
+    }, recordFailure);
+    check(Number.isSafeInteger(armed?.count) && disarmed?.count === armed.count + 1,
+      'agent_access_proposal_abort_not_consumed_once');
+  }
   const pending = await read(owner.am);
   check(pending?.status === 'pending' && isDeepStrictEqual(pending, await read(ingress)),
     'agent_access_pending_receipt_unbound');
@@ -82,6 +96,8 @@ export async function accessRequest({api, adapter, user, outsider, record, recor
     check(isDeepStrictEqual(await read(am), denied), 'agent_access_reproposal_reopened_denied_request');
     check(isDeepStrictEqual(await readScope(am), baseline), 'agent_access_denial_changed_service_scope');
   }
+  await recordState('access_proposal_retry', {known_aborts: 1, retained_requests: 1,
+    denied_request_sha256: hash(pending.id)});
 }
 
 async function approveAccess({adapter, user, outsider, record, recordFailure, list, read, readScope,

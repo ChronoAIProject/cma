@@ -366,6 +366,25 @@ class OwnershipTests(unittest.TestCase):
             fixture.artifactPublicationRace('arm', agentId='fixture-agent')
         self.assertEqual(fixture.mongo.call_count, 5)
 
+    def test_access_proposal_abort_targets_only_feature_request_inserts(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        fixture.mongo = Mock(return_value={'count': 7})
+        fixture.accessProposalAbort(True)
+        script = fixture.mongo.call_args.args[0]
+        command, _ = json.JSONDecoder().raw_decode(script.removeprefix('const result = admin.runCommand('))
+        self.assertEqual(command, {'configureFailPoint': 'failCommand', 'mode': {'times': 1}, 'data': {
+            'failCommands': ['insert'], 'namespace': 'cma_native_am.agent_access_requests',
+            'appName': FEATURES_MONGO_APP, 'errorCode': 112, 'errorLabels': ['TransientTransactionError'],
+        }})
+        fixture.ready['fixture'] = 'prepared'
+        with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
+            fixture.accessProposalAbort(True)
+        fixture.mongo.assert_called_once()
+
     def test_rename_abort_and_evidence_are_scoped_to_the_feature_fixture_and_agent(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12

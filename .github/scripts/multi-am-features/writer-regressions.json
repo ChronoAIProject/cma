@@ -215,10 +215,11 @@
       "feature": "Metadata writers",
       "requirement": "Each runs on owner where routable; non-routable known conflict has bounded fresh snapshot retry. Immutable title-effect custody prevents LLM/native replay; optional pacing hints may be safely superseded. Fences remain present.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The journey checks immutable creation provenance through both Managers during automatic title generation and after restart. Same-source Mongo controls exercise provenance contention and ambiguous commits, and consent lineage abort and receipt recovery. Those barriers still need exact-image observations.",
+      "remaining": "The journey checks immutable creation provenance during automatic title generation and requires the original consent proposal to survive one known-aborted insert. Exact-image provenance backfill contention and ambiguous commit controls remain pending.",
       "trigger": "Title claim/completion, suggestions, resource-access lineage guards or provenance backfill overlap stream/lifecycle publication",
       "required_assertions": [
         {"case": "writer.automatic_title_custody", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
+        {"case": "writer.agent_access_request_denial", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "both"},
         {"case": "writer.suggestions_publish_once", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
         {"case": "writer.suggestions_expire_after_rename", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"}
       ]

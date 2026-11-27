@@ -1,5 +1,6 @@
 import {randomUUID} from 'node:crypto';
 import {check, id} from '../cma/core.mjs';
+import {withRestoration} from '../failure.mjs';
 
 const timeout = 15000;
 
@@ -182,6 +183,84 @@ export async function agentOpen(page, {agentId}, {input, answer}) {
     await send.click({trial: true, timeout});
     await message.fill('', {timeout});
   }
+}
+
+export async function agentRename({page, api, ingress, agentId, input, answer, recordFailure}) {
+  check(id(agentId), 'browser_rename_agent_required');
+  const path = '/agents/' + agentId;
+  const preferencesPath = '/api/v1' + path + '/preferences';
+  const peer = ingress === 'a' ? 'b' : 'a';
+  const read = async am => (await api.request(am, 'GET', preferencesPath, {direct: true})).body;
+  const rename = async (am, revision, title) => (await api.request(am, 'PATCH', preferencesPath, {
+    direct: true, key: randomUUID(), body: {expected_revision: revision, title},
+  })).body;
+  const before = await read(peer);
+  check(typeof before.title === 'string' && before.title.length > 0 && Number.isSafeInteger(before.revision),
+    'browser_rename_original_preferences_unbound');
+  const concurrentTitle = 'Peer rename ' + randomUUID();
+  const newTitle = 'Browser rename ' + randomUUID();
+  const dialog = page.getByRole('dialog', {name: 'Rename Agent', exact: true});
+  const name = dialog.getByRole('textbox', {name: 'Agent name', exact: true});
+  const revision = value => dialog.getByText(`Current preferences revision: ${value}.`, {exact: true});
+  const save = async (status, expectedRevision) => {
+    const [response] = await Promise.all([
+      page.waitForResponse(response => new URL(response.url()).pathname === preferencesPath
+        && response.request().method() === 'PATCH', {timeout}),
+      dialog.getByRole('button', {name: 'Save', exact: true}).click({timeout}),
+    ]);
+    check(response.status() === status, 'browser_rename_unexpected_patch_status');
+    const submitted = response.request().postDataJSON();
+    check(submitted?.title === newTitle && submitted.expected_revision === expectedRevision,
+      'browser_rename_submitted_different_intent');
+    return response.json();
+  };
+  const transcript = async () => {
+    await page.getByText(input, {exact: true}).waitFor({timeout});
+    await page.getByText(answer, {exact: true}).waitFor({timeout});
+  };
+  await withRestoration(async () => {
+    await page.waitForURL(url => url.pathname === path, {timeout});
+    await page.getByRole('button', {name: 'More Agent actions', exact: true}).click({timeout});
+    await page.getByRole('menuitem', {name: 'Rename', exact: true}).click({timeout});
+    await revision(before.revision).waitFor({timeout});
+    await name.fill(newTitle, {timeout});
+    const changed = await rename(peer, before.revision, concurrentTitle);
+    check(changed.title === concurrentTitle && changed.revision === before.revision + 1,
+      'browser_rename_peer_update_missing');
+    const stale = await save(409, before.revision);
+    check(stale.settings_update_reason === 'stale_revision', 'browser_rename_stale_result_untyped');
+    await dialog.getByRole('alert').getByText(/Preferences changed before this update/).waitFor({timeout});
+    const refused = await read(peer);
+    check(refused.title === concurrentTitle && refused.revision === changed.revision,
+      'browser_rename_stale_write_changed_title');
+
+    await dialog.getByRole('button', {name: 'Reload preferences', exact: true}).click({timeout});
+    await revision(changed.revision).waitFor({timeout});
+    await name.fill(newTitle, {timeout});
+    const {title, revision: acknowledged} = await save(200, changed.revision);
+    check(title === newTitle && acknowledged === changed.revision + 1, 'browser_rename_receipt_changed');
+    await dialog.waitFor({state: 'hidden', timeout});
+    await page.getByRole('heading', {name: newTitle, exact: true}).waitFor({timeout});
+    await transcript();
+
+    await page.reload({waitUntil: 'domcontentloaded', timeout});
+    await page.waitForURL(url => url.pathname === path, {timeout});
+    await page.getByRole('heading', {name: newTitle, exact: true}).waitFor({timeout});
+    await page.getByRole('treeitem').locator(`a[href="${path}"]`).getByText(newTitle, {exact: true}).waitFor({timeout});
+    await transcript();
+    const retained = await read(peer);
+    check(retained.title === newTitle && retained.revision === acknowledged, 'browser_rename_peer_readback_changed');
+  }, async () => {
+    const current = await read(peer);
+    if (current.title === before.title) return;
+    check([concurrentTitle, newTitle].includes(current.title), 'browser_rename_restore_foreign_title');
+    const restored = await rename(peer, current.revision, before.title);
+    check(restored.title === before.title && restored.revision === current.revision + 1,
+      'browser_rename_restore_not_acknowledged');
+    const observed = await read(ingress);
+    check(observed.title === restored.title && observed.revision === restored.revision,
+      'browser_rename_restore_not_visible');
+  }, recordFailure);
 }
 
 export async function copyAgentResponse(page, {answer, code, markdown}) {

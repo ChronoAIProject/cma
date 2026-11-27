@@ -63,6 +63,33 @@ async function openAccount(page, reload = false) {
   await account(page).click({timeout});
 }
 
+export async function accountOperationsDenied(page, owner) {
+  const operationsRequests = [];
+  const observe = request => {
+    if (new URL(request.url()).pathname.startsWith('/api/v1/admin/')) operationsRequests.push(request.method());
+  };
+  page.on('request', observe);
+  try {
+    await openAccount(page);
+    await browserSession(page, 200, owner);
+    await page.getByRole('menuitem', {name: 'Sign out', exact: true}).waitFor({timeout});
+    check(await page.getByRole('menuitem', {name: 'Operations', exact: true}).count() === 0,
+      'browser_non_operator_has_operations_menu_item');
+    await page.goto('/operations', {waitUntil: 'domcontentloaded', timeout});
+    await page.waitForURL(url => url.pathname === '/operations', {timeout});
+    await page.getByRole('heading', {name: 'Operations unavailable', exact: true}).waitFor({timeout});
+    await browserSession(page, 200, owner);
+    check(await page.getByRole('tablist', {name: 'Operations views', exact: true}).count() === 0,
+      'browser_non_operator_has_operations_controls');
+    check(operationsRequests.length === 0, 'browser_non_operator_requested_admin_data');
+    await page.getByRole('link', {name: 'Return to Agent Manager', exact: true}).click({timeout});
+    await page.waitForURL(url => url.pathname === '/', {timeout});
+    await account(page).waitFor({timeout});
+  } finally {
+    page.off('request', observe);
+  }
+}
+
 async function select(page, group, label) {
   await choice(page, group, label).click({timeout});
   await choice(page, group, label, {checked: true}).waitFor({timeout});

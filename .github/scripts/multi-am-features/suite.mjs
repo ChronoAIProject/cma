@@ -35,8 +35,8 @@ import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
 import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_custody.mjs';
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
 import {accountAppearance, accountBuildVersion, accountDocumentation, accountSignIn, accountSignOut,
-  accountTextSize, gatewayDocumentation, gatewayNavigation, legacyNavigation} from './features/account_browser.mjs';
-import {agentOpen, commandSearch, copyAgentResponse, taskDraft, taskNavigation} from './features/task_navigation.mjs';
+  accountTextSize, accountOperationsDenied, gatewayDocumentation, gatewayNavigation, legacyNavigation} from './features/account_browser.mjs';
+import {agentOpen, agentRename, commandSearch, copyAgentResponse, taskDraft, taskNavigation} from './features/task_navigation.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -144,6 +144,7 @@ async function browserCase(am, iteration, name, run) {
 async function accountBrowserCases(ams, witness) {
   const cases = [['user.account_appearance', accountAppearance], ['user.account_text_size', accountTextSize],
     ['user.account_build_version', page => accountBuildVersion(page, config.expected_api_source)],
+    ['user.navigation_admin_denied', page => accountOperationsDenied(page, config.owner_id)],
     ['user.account_documentation', page => accountDocumentation(page, witness.agentId)],
     ['user.navigation_legacy_routes', legacyNavigation],
     ['user.navigation_tasks', page => taskNavigation(page, witness)],
@@ -374,6 +375,9 @@ try {
               await browser.forIngress(am, async ({page}) => {
                 await browserCase(am, iteration, 'user.agent_open', () => agentOpen(page, context.record, transcriptWitness));
                 await browserCase(am, iteration, 'user.agent_copy_response', () => copyAgentResponse(page, transcriptWitness));
+                await browserCase(am, iteration, 'user.agent_rename', () => agentRename({page, ingress: am, api: user,
+                  agentId: context.record.agentId, ...transcriptWitness, recordFailure: (stage, error) =>
+                    retainFailure(config.matrix_output, stage, error, {case: 'user.agent_rename', phase, iteration})}));
               });
             }
           }, 'user.agent_open');

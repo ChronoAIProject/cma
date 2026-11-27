@@ -370,11 +370,11 @@
   },
   "cma-user.agent.rename": {
     "cases": [
-      "user.rename_cas"
+      "user.agent_rename"
     ],
-    "blocked": "Idle and held-turn changed-title API assertions implemented, with acknowledged title readback after owner restart; browser and deterministic publication-conflict barrier remain incomplete",
-    "minimum_runs": 3,
-    "routing": "non_owner",
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
     "phases": [
       "before_restart",
       "after_restart"
@@ -1131,8 +1131,9 @@
     ]
   },
   "cma-user.navigation.admin-denied": {
-    "cases": [],
-    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "cases": ["user.navigation_admin_denied"],
+    "browser": true,
+    "routing": "both",
     "minimum_runs": 3,
     "phases": [
       "before_restart",
