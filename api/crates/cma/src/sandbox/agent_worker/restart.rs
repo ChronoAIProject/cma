@@ -1,6 +1,6 @@
 //! Reopen a retained conversation under its admitted runtime and current work lease.
 use super::{
-    support::{claimed_fence, runtime_options, AgentContext, WorkerFailure},
+    support::{claimed_fence, runtime_options, AgentContext, PublicationParents, WorkerFailure},
     AgentWorker,
 };
 use crate::sandbox::worker::lifecycle::reopen_output;
@@ -151,12 +151,6 @@ impl AgentWorker {
         {
             return self.retry_restart(current, now + started.elapsed()).await;
         }
-        let proposal = owner_restart_ready(
-            &current,
-            &self.config.holder,
-            fence,
-            rfc3339_at(now + started.elapsed()),
-        )?;
         let attachment = match self.attach(
             &current,
             guard.native_conversation_id,
@@ -167,10 +161,24 @@ impl AgentWorker {
             Ok(attachment) => attachment,
             Err(_) => return self.retry_restart(current, now + started.elapsed()).await,
         };
+        // The native Open and retained output are already confirmed. Rebuild
+        // only the Ready publication if compatible parent revisions moved.
+        let parents = PublicationParents {
+            sandbox: context.sandbox,
+            workspace: context.workspace,
+            worktree: context.worktree,
+        };
         match self
-            .dependencies
-            .store
-            .try_publish_agent_work(proposal, context.publication_parents())
+            .try_publish_lifecycle_work(
+                current.clone(),
+                Some(parents),
+                now + started.elapsed(),
+                |agent, at, parents| async move {
+                    let proposal =
+                        owner_restart_ready(&agent, &self.config.holder, fence, rfc3339_at(at))?;
+                    self.commit_lifecycle_publication(proposal, parents).await
+                },
+            )
             .await
         {
             Ok(AgentWorkPublication::Published) => {
