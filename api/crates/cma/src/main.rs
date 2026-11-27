@@ -70,9 +70,7 @@ mod worker_supervision;
 
 use std::sync::Arc;
 
-#[cfg(test)]
-use projections::REST_LINKS;
-pub(crate) use projections::{rest_links, rest_router};
+pub(crate) use projections::{rest_links, rest_router, REST_LINKS};
 use startup::serve;
 
 use axum::{
