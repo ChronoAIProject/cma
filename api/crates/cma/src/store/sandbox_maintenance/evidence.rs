@@ -6,6 +6,7 @@ use mongodb::ClientSession;
 
 use super::super::agent_capacity_recovery::source::{capture_segmented, fence_agent};
 use super::super::agent_log_integrity::{scan_complete_log_with_policy, IntegrityFailurePolicy};
+use super::super::connection_recovery_activity::{self, COMPLETED};
 use super::super::sandbox_mongo::{signed, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::transaction::ApplyError;
 
@@ -18,6 +19,7 @@ pub(super) struct LogValidation<'a> {
     pub(super) failure_policy: IntegrityFailurePolicy,
     pub(super) certified_legacy: Option<&'a certified_legacy::CertifiedHeads>,
     pub(super) legacy_formats_checked: bool,
+    pub(super) use_recovery_activity: bool,
 }
 
 // Historical legacy-only fixture entry; production requires captured sources.
@@ -37,6 +39,7 @@ pub(super) async fn live_activities(
         LogValidation {
             failure_policy: IntegrityFailurePolicy::Quarantine,
             legacy_formats_checked: false,
+            use_recovery_activity: true,
             certified_legacy: None,
         },
         false,
@@ -98,6 +101,23 @@ pub(super) async fn live_activities_with_sources(
             .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
         if let Some(certified) = certified {
             activity.newest_log = Some(certified.clone());
+        } else if let Some(entry) = newest.as_ref().filter(|entry| {
+            log_validation.use_recovery_activity
+                && connection_recovery_activity::is_connection_completion(entry)
+        }) {
+            let row = store
+                .agents
+                .find_one(doc! { "_id": agent.id.as_str() })
+                .projection(doc! { COMPLETED: 1 })
+                .session(&mut *session)
+                .await
+                .map_err(ApplyError::Driver)?;
+            if let Some(row) = row {
+                activity.newest_log = Some(connection_recovery_activity::project_head(
+                    entry,
+                    connection_recovery_activity::activity_time(&row, agent, entry),
+                ));
+            }
         }
         // A durable command receipt may arrive before the Agent checkpoint.
         // Keep every nonterminal UI/API/channel/trigger command visible to the
