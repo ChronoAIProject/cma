@@ -14,8 +14,9 @@
       status: 1, owner: 1, 'record.origin.operation_id': 1,
     }).limit(admissions.length + 1).toArray();
     const expected = new Map(admissions.map(row => [row.agentId, row.operationId]));
-    const exactChildren = children.length === expected.size && children.every(row => row.owner === owner
-      && row.status === 'deleted' && expected.get(row._id) === row.record?.origin?.operation_id);
+    const exactChildren = children.length === expected.size && children.every(row => expected.has(row._id)
+      && row.owner === owner && row.status === 'deleted'
+      && expected.get(row._id) === row.record?.origin?.operation_id);
     const tail = collection => snapshot.getCollection(collection).findOne({sandbox_id: sandboxId}, {_id: 1});
     const event = await tail('sandbox_events');
     const workspace = await tail('workspaces');

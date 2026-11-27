@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {readFile} from 'node:fs/promises';
 import test from 'node:test';
+import {runInNewContext} from 'node:vm';
 import {retirementRetention} from './retirement_retention.mjs';
 
 function fixture({foreignDeleteWrites = false, deadlineFuture = true, duplicateRetirement = false,
@@ -156,4 +159,34 @@ test('a foreign side effect, early purge deadline or duplicate retirement fails'
     const {context} = fixture(input);
     await assert.rejects(retirementRetention(context), expected);
   }
+});
+
+test('an equal-count unlisted child cannot authorize or pass a purge observation', async () => {
+  const script = await readFile(new URL('../owner/retirement_purge.js', import.meta.url), 'utf8');
+  const owner = 'native-am-fixture-owner';
+  const agentId = 'fixture-agent', sandboxId = 'fixture-sandbox', operationId = 'fixture-operation';
+  const future = new Date(Date.now() + 60000).toISOString();
+  const sandbox = {status: 'retired', purge_after: future, work_ready_at: future,
+    record: {runtime: null, work: {step: 'wait_for_purge'}}};
+  const rows = [{_id: agentId, owner, status: 'deleted', record: {origin: {operation_id: operationId}}},
+    {_id: 'unlisted', owner, status: 'deleted'}];
+  let writes = 0;
+  const receipt = {findOne: async () => ({_id: 'fixture-receipt'})};
+  const snapshot = {
+    sandboxes: {findOne: async () => sandbox, updateOne: async () => { writes++; return {modifiedCount: 1}; }},
+    agents: {find: () => ({limit: () => ({toArray: async () => rows})})},
+    agent_log: receipt, agent_creation_provenance: receipt,
+    getCollection: () => receipt,
+  };
+  const d = {getName: () => 'fixture', getMongo: () => ({
+    startSession: async () => ({startTransaction: async () => {}, getDatabase: () => snapshot,
+      commitTransaction: async () => {}, endSession: async () => {}}),
+  })};
+  const admissions = [{agentId, operationId}, {agentId: 'expected', operationId: 'expected-operation'}];
+  for (const [arm, expected] of [[true, /retirement_purge_terminal_lineage_required/],
+    [false, /retirement_purge_changed_admission_set/]]) {
+    await assert.rejects(runInNewContext(script, {scope: {agentId, sandboxId, operationId, admissions, arm},
+      d, EJSON: JSON, require: createRequire(import.meta.url), print: () => {}}), expected);
+  }
+  assert.equal(writes, 0);
 });

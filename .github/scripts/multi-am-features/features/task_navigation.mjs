@@ -220,6 +220,9 @@ export async function agentRename({page, api, ingress, agentId, input, answer, r
   };
   await withRestoration(async () => {
     await page.waitForURL(url => url.pathname === path, {timeout});
+    await transcript();
+    const composer = page.getByRole('form', {name: 'Message Agent', exact: true});
+    const originalComposer = await composer.elementHandle({timeout});
     await page.getByRole('button', {name: 'More Agent actions', exact: true}).click({timeout});
     await page.getByRole('menuitem', {name: 'Rename', exact: true}).click({timeout});
     await revision(before.revision).waitFor({timeout});
@@ -241,6 +244,8 @@ export async function agentRename({page, api, ingress, agentId, input, answer, r
     check(title === newTitle && acknowledged === changed.revision + 1, 'browser_rename_receipt_changed');
     await dialog.waitFor({state: 'hidden', timeout});
     await page.getByRole('heading', {name: newTitle, exact: true}).waitFor({timeout});
+    check(await composer.evaluate((node, original) => node === original && original.isConnected,
+      originalComposer, {timeout}), 'browser_rename_remounted_conversation');
     await transcript();
 
     await page.reload({waitUntil: 'domcontentloaded', timeout});
