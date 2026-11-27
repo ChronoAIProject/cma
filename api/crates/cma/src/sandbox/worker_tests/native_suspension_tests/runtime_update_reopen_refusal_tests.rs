@@ -218,7 +218,20 @@ async fn at_reopen(
 ) -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime) {
     let (mut f, active, mut now) = active().await;
     f.reopen_output_refusal = enabled;
-    let agent = lifecycle_recovery_tests::prepare_agent(&f.harness, &active, now, 1).await;
+    let agent = lifecycle_recovery_tests::prepare_agent_with_conversation(
+        &f.harness,
+        &active,
+        now,
+        1,
+        Some(uuid::Uuid::new_v4().to_string()),
+        None,
+    )
+    .await;
+    f.harness
+        .store
+        .create_workspace(lifecycle_recovery_tests::workspace_for(&agent, now))
+        .await
+        .unwrap();
     update(&f, &active, TARGET, now).await;
     for _ in 0..12 {
         let mut parent = f.harness.stored(&active.id).await;
