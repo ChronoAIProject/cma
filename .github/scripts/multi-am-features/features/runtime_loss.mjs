@@ -51,10 +51,12 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
     return value.status === 'active' && id(value.boot_id) && value.boot_id !== before.boot_id
       && advanced === agents.length && value.children.every(candidate => candidate.status === 'ready');
   };
-  const observeAbort = () => adapter.runtimeLossEvidence({sandboxId});
+  const observeRecovery = () => adapter.runtimeLossEvidence({sandboxId});
   const initialTopology = await adapter.topology();
   const managers = ['a', 'b'];
-  const priorAborts = await observeAbort();
+  const priorRecovery = await observeRecovery();
+  check(managers.every(am => priorRecovery[am]?.known_aborts === 0
+    && priorRecovery[am]?.recovery_scheduled === 0), 'runtime_loss_prior_recovery');
   const preferencePath = `/api/v1/agents/${sibling.agentId}/preferences`;
   const preferences = await read(siblingOwner.am, preferencePath);
   check(Number.isSafeInteger(preferences?.revision), 'runtime_loss_writer_baseline_unbound');
@@ -62,7 +64,7 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
   let writer;
   let writerProof;
   const router = new NonOwnerRouter({adapter, record: proof => { writerProof = proof; }});
-  let armed, disarmed, observedAborts;
+  let armed, disarmed, observedRecovery;
   await withRestoration(async () => {
     armed = await adapter.runtimeLossPublicationAbort({action: 'arm'});
     check(Number.isSafeInteger(armed?.count), 'runtime_loss_abort_count_unbound');
@@ -80,20 +82,27 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
     const ingressEvidence = await adapter.peerWriteEvidence({am: writerProof.ingress,
       requestHash: hash(writerProof.request_id), epoch: writerProof.owner_epoch, operation: 'preferences'});
     check(ingressEvidence?.matches === 0, 'runtime_loss_writer_executed_on_ingress');
-    check(equal(await observeAbort(), priorAborts), 'runtime_loss_writer_missed_transaction_window');
-    observedAborts = await waitFor(observeAbort, value => ['a', 'b'].some(am => value[am] > priorAborts[am]),
+    check(equal(await observeRecovery(), priorRecovery), 'runtime_loss_writer_missed_transaction_window');
+    observedRecovery = await waitFor(observeRecovery, value => managers.some(am => value[am]?.known_aborts > 0),
       {timeout: 90000, code: 'runtime_loss_abort_not_observed'});
   }, async () => {
     disarmed = await adapter.runtimeLossPublicationAbort({action: 'disarm'});
   });
   check(Number.isSafeInteger(armed?.count) && disarmed?.count === armed.count + 1,
     'runtime_loss_abort_not_consumed_once');
-  const aborts = managers.map(am => observedAborts[am] - priorAborts[am]);
+  const aborts = managers.map(am => observedRecovery[am]?.known_aborts);
   check(aborts.every(count => count === 0 || count === 1) && aborts[0] + aborts[1] === 1,
     'runtime_loss_abort_count_unbound');
-  const recoveryAm = managers[aborts.indexOf(1)];
+  const abortAm = managers[aborts.indexOf(1)];
   const recovered = await waitFor(snapshot, recoveredSnapshot, {timeout: 240000, code: 'runtime_loss_recovery_timeout'});
-  check(equal(await observeAbort(), observedAborts), 'runtime_loss_abort_repeated_after_retry');
+  const publication = await waitFor(observeRecovery, value => managers.some(am => value[am]?.recovery_scheduled > 0),
+    {timeout: 10000, code: 'runtime_loss_successful_publication_unattributed'});
+  check(managers.every((am, index) => publication[am]?.known_aborts === aborts[index]),
+    'runtime_loss_abort_repeated_after_retry');
+  const scheduled = managers.map(am => publication[am]?.recovery_scheduled);
+  check(scheduled.every(count => count === 0 || count === 1) && scheduled[0] + scheduled[1] === 1,
+    'runtime_loss_successful_publication_not_unique');
+  const recoveryAm = managers[scheduled.indexOf(1)];
   const finalTopology = await adapter.topology();
   check(managers.every(am => {
     const initial = initialTopology.ams?.[am];
@@ -142,7 +151,8 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
   return {previous_pod_sha256: hash(runtime.pod_uid), replacement_pod_sha256: hash(replacement.pod_uid),
     recovered_agents: agents.length, retained_runtime_image: true, retained_home: true,
     retained_conversations: true, known_recovery_aborts: 1, competing_metadata_publications: titleEffects.length,
-    recovery_abort_manager: recoveryAm, recovery_abort_instance_sha256: hash(finalTopology.ams[recoveryAm].instance_id),
+    recovery_abort_manager: abortAm, recovery_abort_instance_sha256: hash(finalTopology.ams[abortAm].instance_id),
+    recovery_commit_manager: recoveryAm, recovery_commit_instance_sha256: hash(finalTopology.ams[recoveryAm].instance_id),
     metadata_writer_manager: writerProof.owner, metadata_writer_instance_sha256: writerProof.owner_instance_sha256,
     metadata_ingress_manager: writerProof.ingress, metadata_ingress_instance_sha256: writerProof.ingress_instance_sha256,
     metadata_request_sha256: hash(writerProof.request_id),

@@ -195,7 +195,7 @@
       "feature": "Connection recovery, runtime-loss reconciliation and sandbox lifecycle",
       "requirement": "Background path re-reads/rebuilds plan after known CAS conflict within a finite budget, preserving exact parent/Agent/log/ownership fences and all-or-none transition. No endless identical scheduler error or partially advanced hierarchy.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The image journey commits a peer-ingress metadata write while the recovery publication is held, then requires one classified abort and atomic recovery with the write preserved. Hosted execution and separately attributed recovery and mutation workers remain pending.",
+      "remaining": "The image journey attributes the known abort, committed recovery and competing metadata write to observed Manager processes. Hosted execution and evidence that the recovery and mutation ran on distinct processes remain pending.",
       "trigger": "Two AM workers race an Agent log/metadata mutation with connection repair or atomic multi-Agent sandbox transition",
       "required_assertions": [
         {"case": "native_runtime_loss_preserves_agents", "minimum_runs": 1, "phases": [], "routing": "journey"},

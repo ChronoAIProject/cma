@@ -5,6 +5,7 @@ import {runtimeLoss} from './runtime_loss.mjs';
 
 function fixture({changeHome = false, changeConversation = false, loseHistory = false,
   postEvents = 1, mixedGenerations = false, aborts = {a: 1, b: 0}, consumedAborts = 1,
+  scheduled = {a: 0, b: 1},
   missWindow = false, loseTitle = false, titleSeq = 23, transactionEntered = true,
   writerOnIngress = false, writerNotLogged = false, replaceManager = false, repeatAbort = false} = {}) {
   const record = {agentId: 'agent', sandboxId: 'sandbox', operationId: 'create', runtime: {image: 'image'}};
@@ -52,10 +53,13 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
     },
     runtimeLossEvidence: async scope => {
       assert.deepEqual(scope, {sandboxId: 'sandbox'});
-      if (!title) return {a: 0, b: 0};
-      const visible = missWindow || ++observationsWithWriter > 1;
-      if (repeatAbort && observationsWithWriter > 2) return {a: aborts.a + 1, b: aborts.b};
-      return visible ? aborts : {a: 0, b: 0};
+      if (title) observationsWithWriter += 1;
+      const visible = title && (missWindow || observationsWithWriter > 1);
+      const repeated = repeatAbort && observationsWithWriter > 2;
+      return Object.fromEntries(['a', 'b'].map(am => [am, {
+        known_aborts: (visible ? aborts[am] : 0) + Number(am === 'a' && repeated),
+        recovery_scheduled: observationsWithWriter > 2 ? scheduled[am] : 0,
+      }]));
     },
     runtimeLossPublicationAbort: async ({action, count}) => {
       faultActions.push(action);
@@ -117,6 +121,8 @@ test('runtime loss retains both Agents with one replacement and a working peer S
   assert.equal(result.competing_metadata_publications, 1);
   assert.equal(result.recovery_abort_manager, 'a');
   assert.equal(result.recovery_abort_instance_sha256, hash('manager-a'));
+  assert.equal(result.recovery_commit_manager, 'b');
+  assert.equal(result.recovery_commit_instance_sha256, hash('manager-b'));
   assert.equal(result.metadata_ingress_instance_sha256, hash('manager-a'));
   assert.equal(result.metadata_writer_instance_sha256, hash('manager-b'));
   assert.equal(result.metadata_request_sha256, hash('preferences-request'));
@@ -139,6 +145,8 @@ test('runtime loss disarms the fault and rejects unbound or repeated aborts', as
     [{writerNotLogged: true}, /verified_owner_write_missing_or_duplicated/],
     [{replaceManager: true}, /runtime_loss_manager_process_changed/],
     [{repeatAbort: true}, /runtime_loss_abort_repeated_after_retry/],
+    [{scheduled: {a: 0, b: 0}}, /runtime_loss_successful_publication_unattributed/],
+    [{scheduled: {a: 1, b: 1}}, /runtime_loss_successful_publication_not_unique/],
   ]) {
     const context = fixture(input);
     await assert.rejects(runtimeLoss(context), error);

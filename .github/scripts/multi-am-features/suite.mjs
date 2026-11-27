@@ -375,6 +375,8 @@ try {
       competing_metadata_publications: runtimeLoss.competing_metadata_publications,
       recovery_abort_manager: runtimeLoss.recovery_abort_manager,
       recovery_abort_instance_sha256: runtimeLoss.recovery_abort_instance_sha256,
+      recovery_commit_manager: runtimeLoss.recovery_commit_manager,
+      recovery_commit_instance_sha256: runtimeLoss.recovery_commit_instance_sha256,
       metadata_writer_manager: runtimeLoss.metadata_writer_manager,
       metadata_writer_instance_sha256: runtimeLoss.metadata_writer_instance_sha256,
       metadata_ingress_manager: runtimeLoss.metadata_ingress_manager,

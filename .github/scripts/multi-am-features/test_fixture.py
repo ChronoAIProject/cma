@@ -328,7 +328,7 @@ class OwnershipTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
             fixture.writerPublicationEvidence('fixture-agent', 'rename')
 
-    def test_runtime_loss_abort_evidence_requires_the_recovery_transaction_and_sandbox(self):
+    def test_runtime_loss_evidence_binds_abort_and_committed_recovery_to_each_manager(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12
         fixture.client = Mock(namespace='cma-native-am')
@@ -337,11 +337,20 @@ class OwnershipTests(unittest.TestCase):
         digest = hashlib.sha256(b'fixture-sandbox').hexdigest()
         line = ('cma::agent_manager::writer_publication: transaction aborted '
                 f'sandbox_sha256={digest} operation="runtime_loss" failure="known_aborted_cas"')
+        scheduled = ('cma::sandbox::reconciliation::loss_observation: runtime loss reconciliation outcome '
+                     'sandbox_id=fixture-sandbox outcome="recovery_scheduled" elapsed_ms=13')
         fixture.client.k.side_effect = ['\n'.join([
             line.replace(digest, 'f' * 64), line.replace('sandbox_sha256', 'agent_sha256'),
-            line.replace('"runtime_loss"', '"retirement"'),
-        ]), line]
-        self.assertEqual(fixture.runtimeLossEvidence('fixture-sandbox'), {'a': 0, 'b': 1})
+            line.replace('"runtime_loss"', '"retirement"'), scheduled,
+        ]), '\n'.join([
+            line, scheduled.replace('fixture-sandbox', 'other-sandbox'),
+            scheduled.replace('recovery_scheduled', 'superseded'),
+            scheduled.replace('loss_observation', 'unrelated'),
+        ])]
+        self.assertEqual(fixture.runtimeLossEvidence('fixture-sandbox'), {
+            'a': {'known_aborts': 0, 'recovery_scheduled': 1},
+            'b': {'known_aborts': 1, 'recovery_scheduled': 0},
+        })
         self.assertTrue(all('--since=6m' in call.args[0] for call in fixture.client.k.call_args_list))
 
     def test_runtime_loss_publication_fault_is_one_scoped_write_with_bounded_wait(self):

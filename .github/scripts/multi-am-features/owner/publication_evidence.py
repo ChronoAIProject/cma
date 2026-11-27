@@ -13,6 +13,7 @@ STARTUP_STEPS = frozenset(('install_skill', 'wait_for_workspace', 'add_worktree'
 LOG_BOUND_BYTES = 2 * 1024 * 1024
 LOG_TARGET = ' agent_scheduler_failure: '
 FIELDS = re.compile(r'(?<!\S)(phase|failure|next_step|agent_sha256|cause_class|origin|agent_hash|operation|sandbox_sha256)="?([a-z0-9_]+)"?(?=\s|$)')
+RECOVERY_FIELDS = re.compile(r'(?<!\S)(sandbox_id|outcome)="?([-A-Za-z0-9_]+)"?(?=\s|$)')
 PREPARED_MONGO_APP = 'cma-two-am-prepared-fixture'
 FEATURES_MONGO_APP = 'cma-two-am-features-fixture'
 SCHEMA_RACE = Path(__file__).with_name('prepared_schema_race.js')
@@ -108,25 +109,42 @@ def writer_publication_evidence(fixture, agentId=None, operation=None):
 
 def runtime_loss_evidence(fixture, sandboxId=None):
     require_feature_fixture(fixture)
-    return writer_abort_counts(fixture, 'sandbox_sha256', agent_digest(sandboxId), 'runtime_loss', since='6m')
-
-
-def writer_abort_counts(fixture, identity_field, digest, operation, since='2m'):
-    counts = {}
+    digest = agent_digest(sandboxId)
+    observations = {}
     for manager in ('a', 'b'):
-        raw = fixture.client.k(['logs', f'am-{manager}-0', f'--since={since}',
-                                f'--limit-bytes={LOG_BOUND_BYTES}'], timeout=8)
-        if len(raw.encode()) >= LOG_BOUND_BYTES:
-            raise RuntimeError('writer_publication_evidence_log_bound')
-        counts[manager] = 0
-        for entry in raw.splitlines():
-            line = re.sub(r'\x1b\[[0-9;]*m', '', entry)
-            if 'cma::agent_manager::writer_publication:' in line:
-                fields = dict(FIELDS.findall(line))
-                if (fields.get(identity_field) == digest and fields.get('operation') == operation
-                        and fields.get('failure') == 'known_aborted_cas'):
-                    counts[manager] += 1
-    return counts
+        events = manager_log_lines(fixture, manager, '6m')
+        aborts = scheduled = 0
+        for line in events:
+            if is_writer_abort(line, 'sandbox_sha256', digest, 'runtime_loss'):
+                aborts += 1
+            if ('cma::sandbox::reconciliation::loss_observation: runtime loss reconciliation outcome ' in line
+                    and dict(RECOVERY_FIELDS.findall(line)) == {
+                        'sandbox_id': sandboxId, 'outcome': 'recovery_scheduled'}):
+                scheduled += 1
+        observations[manager] = {'known_aborts': aborts, 'recovery_scheduled': scheduled}
+    return observations
+
+
+def manager_log_lines(fixture, manager, since):
+    raw = fixture.client.k(['logs', f'am-{manager}-0', f'--since={since}',
+                            f'--limit-bytes={LOG_BOUND_BYTES}'], timeout=8)
+    if len(raw.encode()) >= LOG_BOUND_BYTES:
+        raise RuntimeError('writer_publication_evidence_log_bound')
+    return (re.sub(r'\x1b\[[0-9;]*m', '', line) for line in raw.splitlines())
+
+
+def is_writer_abort(line, identity_field, digest, operation):
+    if 'cma::agent_manager::writer_publication:' not in line:
+        return False
+    fields = dict(FIELDS.findall(line))
+    return (fields.get(identity_field) == digest and fields.get('operation') == operation
+            and fields.get('failure') == 'known_aborted_cas')
+
+
+def writer_abort_counts(fixture, identity_field, digest, operation):
+    return {manager: sum(is_writer_abort(line, identity_field, digest, operation)
+                         for line in manager_log_lines(fixture, manager, '2m'))
+            for manager in ('a', 'b')}
 
 
 def publication_evidence(fixture, agentId=None):
