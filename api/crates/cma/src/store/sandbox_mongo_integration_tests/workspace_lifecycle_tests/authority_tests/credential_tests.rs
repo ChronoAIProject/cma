@@ -49,6 +49,14 @@ impl Fixture {
     }
 
     async fn new_mode(suffix: &str, enabled: bool) -> Self {
+        Self::new_with_image_origin(suffix, enabled, None).await
+    }
+
+    async fn new_with_image_origin(
+        suffix: &str,
+        enabled: bool,
+        origin: Option<layer2_core::sandbox::SandboxRuntimeImageOrigin>,
+    ) -> Self {
         use base64::Engine;
         use ring::rand::{SecureRandom, SystemRandom};
         let (client, name) = database(suffix).await;
@@ -63,11 +71,41 @@ impl Fixture {
             .unwrap()
             .with_renewable_work(enabled);
         let mut row = provisioning_sandbox(Kind::Sandbox.id());
-        row.status = SandboxStatus::Installing;
-        row.work = SandboxWorkState::new(SandboxWorkStep::MintInitialCredential, at(-1));
         row.credential.reaches = vec![layer2_core::ServiceId::new("fixture-service")];
         row.profile.content.nyxid_services = row.credential.reaches.clone();
-        store.create_sandbox(row).await.unwrap();
+        let mint_step = SandboxWorkState::new(SandboxWorkStep::MintInitialCredential, at(-1));
+        if let Some(origin) = origin {
+            row.origin = layer2_core::sandbox::SandboxOrigin::Lifecycle {
+                operation_id: "fixture-operation".into(),
+            };
+            row.profile.content.runtime_image = Some(format!(
+                "registry.example/runtime@sha256:{}",
+                "a".repeat(64)
+            ));
+            row.lifecycle.runtime_image_origin = Some(origin);
+            row.profile.digest =
+                layer2_core::profiles::content_digest(&row.profile.content).unwrap();
+            let name = SandboxAdmissionName::Exact(row.name.clone());
+            let mut admission = SandboxAdmission::new(row, name, 1, at(0)).unwrap();
+            admission.sandbox.status = SandboxStatus::Installing;
+            admission.sandbox.work = mint_step;
+            let document = crate::store::sandboxes::admitted_sandbox_document(
+                &admission.sandbox,
+                0,
+                &admission.name,
+                &admission.admission_fingerprint,
+            )
+            .unwrap();
+            Kind::Sandbox
+                .rows(&store)
+                .insert_one(document)
+                .await
+                .unwrap();
+        } else {
+            row.status = SandboxStatus::Installing;
+            row.work = mint_step;
+            store.create_sandbox(row).await.unwrap();
+        }
         let claim = store
             .claim_sandbox_work(
                 &SandboxId(Kind::Sandbox.id().into()),
