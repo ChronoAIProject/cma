@@ -158,7 +158,7 @@ export async function documentFormat({page, ingress, user, documentId, recordFai
     'document_format_save_unbound');
     const saved = await response.json();
     check(saved.id === documentId && saved.revision === original.revision + 1
-      && saved.source_revision === original.source_revision + 1 && saved.sha256 === hash(source),
+      && saved.source_revision === saved.revision && saved.sha256 === hash(source),
     'document_format_revision_unbound');
     for (const am of [peer, ingress]) {
       check(equal(await read(am), saved) && equal(await read(am, '/source'),
@@ -184,6 +184,9 @@ export async function documentFormat({page, ingress, user, documentId, recordFai
       'document_format_restore_foreign_revision');
       const {body: restored} = await user.request(peer, 'PATCH', path, {key: randomUUID(),
         body: {expected_revision: current.revision, title: original.title, markdown: originalSource.markdown}});
+      check(restored.id === documentId && restored.revision === current.revision + 1
+        && restored.source_revision === restored.revision && restored.sha256 === original.sha256,
+      'document_format_restore_receipt_unbound');
       for (const am of [peer, ingress]) {
         check(equal(await read(am), restored) && equal(await read(am, '/source'),
           {...originalSource, revision: restored.source_revision}), 'document_format_original_source_not_restored');
