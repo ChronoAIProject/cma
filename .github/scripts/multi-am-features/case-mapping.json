@@ -1688,9 +1688,9 @@
   },
   "ADM-072": {
     "cases": [
-      "admin.admission_read"
+      "admin.admission_read",
+      "admin.admission_read_nonadmin_denial"
     ],
-    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
     "minimum_runs": 3,
     "routing": "both",
     "phases": [

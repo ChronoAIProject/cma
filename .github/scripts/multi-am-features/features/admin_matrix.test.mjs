@@ -5,6 +5,26 @@ const SOURCE = '1'.repeat(40), MANIFEST = 'sha256:' + '2'.repeat(64);
 const fixture=()=>({scope:'LOCAL_DISPOSABLE_TWO_AM',source:SOURCE,manifest:MANIFEST,database_disposable:true,
   single_matrix_writer:true,am_origins:{a:'http://127.0.0.1:8001',b:'http://127.0.0.1:8002'},
   admin_permissions:ADMIN_PERMISSIONS,ordinary_user_has_admin:false,run_id:'offline-test'});
+
+test('admission reads require bounded contiguous history and the same durable state on both Managers', async () => {
+  const stop = {revision: 1, since: 100, actor: 'fixture', reason: 'fixture stop'};
+  const changes = [
+    {revision: 2, at: 101, actor: 'fixture', reason: 'fixture resume', old_stop: stop, new_stop: null},
+    {revision: 1, at: 100, actor: 'fixture', reason: 'fixture stop', old_stop: null, new_stop: stop},
+  ];
+  const state = {revision: 2, operator_stop: null, last_change: changes[0], writes_available: true, history: changes};
+  const fixtureRead = async peer => {
+    const m = new AdminMatrix({fixture: fixture(), record: () => {}, request: async (_role, am, _method, path) => {
+      const common = {items: [], next: null, runtimes: [], observed_at: 'now', available: true, candidates: 0,
+        revision: 0, settings: {limits: {}, retention: {}}, metering_enabled: false};
+      return {status: 200, body: path.endsWith('/admission') ? (am === 'a' ? state : peer) : common};
+    }});
+    await m.reads(1);
+  };
+  await fixtureRead({...state, capacity_status: 'different'});
+  await assert.rejects(fixtureRead({...state, writes_available: false}), /admission_history_peer_mismatch/);
+  await assert.rejects(fixtureRead({...state, history: [changes[0], {...changes[1], revision: 2}]}), /admission_read_shape/);
+});
 function settingsServer({loseAck=false,stalePeer=false,foreignValue=false}={}) {
   let state={revision:1,settings:{retention:{agent_log_days:7},limits:{visitor_max_launches_per_day:3}}};
   const original=structuredClone(state),requests=[],rows=[];

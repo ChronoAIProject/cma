@@ -17,6 +17,24 @@ const settings = v => revision(v?.revision) && v.settings && v.settings.limits &
 const plain = v => v !== null && typeof v === 'object' && !Array.isArray(v);
 const sid = v => {check(typeof v === 'string' && /^[-a-zA-Z0-9_]{1,160}$/.test(v),'invalid_fixture_id'); return encodeURIComponent(v);};
 
+function admissionSnapshot({revision, operator_stop, last_change, writes_available, history}) {
+  return {revision, operator_stop, last_change, writes_available, history};
+}
+
+function admissionHistory(value) {
+  if (!revision(value?.revision) || typeof value.writes_available !== 'boolean'
+      || !Array.isArray(value.history) || value.history.length > 20) return false;
+  if (value.revision === 0) {
+    return value.operator_stop === null && value.last_change === null && value.history.length === 0;
+  }
+  return value.history.length > 0
+    && value.history.every((change, index) => change?.revision === value.revision - index
+      && change.revision > 0 && revision(change.at) && typeof change.actor === 'string'
+      && typeof change.reason === 'string')
+    && isDeepStrictEqual(value.last_change, value.history[0])
+    && isDeepStrictEqual(value.operator_stop, value.last_change.new_stop);
+}
+
 export function validateFixture(f) {
   check(f?.scope === 'LOCAL_DISPOSABLE_TWO_AM' && /^[a-f0-9]{40}$/.test(f.source) && /^sha256:[a-f0-9]{64}$/.test(f.manifest),'exact_local_image_required');
   check(f.database_disposable === true && f.single_matrix_writer === true,'disposable_single_writer_required');
@@ -40,7 +58,7 @@ export const READ_CASES = [
   ['settings_audit',`${P}/activity?action=configure&limit=2`,page],
   ['warm_pool_inventory',`${P}/warm-pools`,v=>Array.isArray(v?.items) && typeof v.available==='boolean'],
   ['auto_pause_preview',`${P}/auto-pause/preview`,v=>Number.isSafeInteger(v?.candidates)],
-  ['admission_read',`${P}/admission`,v=>revision(v?.revision) && typeof v.writes_available==='boolean' && Array.isArray(v.history)],
+  ['admission_read',`${P}/admission`,admissionHistory],
   ['platform_spend_read',`${P}/spend`,v=>typeof v?.metering_enabled==='boolean'],
 ];
 
@@ -86,7 +104,12 @@ export class AdminMatrix {
   }
   async reads(iteration) {
     for (const [id,path,shape] of READ_CASES) await this.runCase(id,iteration,async()=>{
-      for(const am of ['a','b']) check(shape(await this.call(am,'GET',path)),id+'_shape');
+      const first = await this.call('a', 'GET', path);
+      const second = await this.call('b', 'GET', path);
+      check(shape(first) && shape(second), id + '_shape');
+      if (id === 'admission_read') {
+        check(isDeepStrictEqual(admissionSnapshot(first), admissionSnapshot(second)), 'admission_history_peer_mismatch');
+      }
     });
   }
   async denials(iteration) {
