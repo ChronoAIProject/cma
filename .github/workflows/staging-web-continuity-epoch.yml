@@ -120,6 +120,7 @@ jobs:
           CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
           GH_TOKEN: ${{ github.token }}
           CD_WEB_RETENTION_ROLLOUTS: ${{ vars.CMA_STAGING_WEB_CONTINUITY_RETAIN_ROLLOUTS }}
+          CD_WEB_PRODUCTION_IMAGES: ${{ vars.CMA_STAGING_WEB_CONTINUITY_PRODUCTION_IMAGES }}
         run: '"$RUNNER_TEMP/cma-deploy-tools/venv/bin/python" -B .github/scripts/staging_cd_web_preimage.py'
       - name: Remove private checkout
         if: always()

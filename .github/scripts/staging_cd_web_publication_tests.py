@@ -13,6 +13,7 @@ from image_secret_gate import checksum
 from staging_cd_common import Refusal
 from staging_cd_publication_diagnostics import ImageCommandRefusal, run_publication
 from staging_cd_receipts_tests import fixture_identity
+from staging_cd_web_continuity import production_inputs
 from staging_cd_web_overlay import REPOSITORY, encoded
 from staging_cd_web_overlay_tests import fixture_archive
 from staging_cd_web_publication import publish, resume
@@ -106,6 +107,17 @@ class WebPublicationTests(unittest.TestCase):
         self.assertEqual(self.tags[self.identity["version"]][0], receipt["digest"])
         self.assertNotEqual(receipt["digest"], self.candidate.digest)
         self.assertFalse(list(self.root.rglob("web-registry-auth.json")))
+
+    def test_bootstrap_resets_the_age_for_a_shared_production_incumbent(self):
+        incumbent = self.incumbent
+        receipt = {
+            "repository": REPOSITORY, "digest": self.previous.digest,
+            "source": self.previous.source, "identity": {"version": self.previous.version},
+        }
+        self.scope["inputs"].extend(production_inputs([receipt], [incumbent["image"]], 6).values())
+        result = self.protected_publish()
+        [row] = [row for row in result["asset_proof"]["inputs"] if row["image"] == incumbent["image"]]
+        self.assertEqual(row["completed_rollouts"], 0)
 
     def test_denied_pull_cleans_auth_before_any_registry_write(self):
         self.fail_pull = True
