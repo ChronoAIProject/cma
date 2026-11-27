@@ -11,6 +11,7 @@ use axum::http::HeaderMap;
 use layer2_core::resource_access::CredentialSource;
 use layer2_core::{Authorization, StoreError, SubjectId};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use super::{cookie_authorization, refresh, AuthMode, AuthState, RequestAuth};
 
@@ -105,6 +106,7 @@ impl AuthState {
     pub(super) async fn proxy_request(
         &self,
         headers: &HeaderMap,
+        personal_agent_inventory: bool,
     ) -> Result<Option<RequestAuth>, StoreError> {
         let token = match jwt::identity_token(headers) {
             Ok(Some(token)) => token,
@@ -136,24 +138,28 @@ impl AuthState {
         let subject = SubjectId::new(identity.subject.clone());
         let authorization =
             crate::permissions::capabilities_from_permissions(identity.permissions.iter().cloned());
+        let assertion_only = || RequestAuth {
+            binding: None,
+            credential_source: CredentialSource::Independent {
+                expires_at: Some(identity.expires_at),
+            },
+            subject: subject.clone(),
+            authorization: authorization.clone(),
+            profile: identity.profile,
+            delegated_credential: None,
+        };
         let Some(mut owner) = self.store.subject(&subject).await? else {
-            // Resource reads and ordinary synchronous APIs do not require CMA
-            // enrollment. Managed runtime creation has its existing setup gate.
-            return Ok(Some(RequestAuth {
-                binding: None,
-                credential_source: CredentialSource::Independent {
-                    expires_at: Some(identity.expires_at),
-                },
-                subject,
-                authorization,
-                profile: identity.profile,
-                delegated_credential: None,
-            }));
+            // Renewable CMA credentials are optional for synchronous resources.
+            return Ok(Some(assertion_only()));
         };
         if owner.subject != subject {
             return Err(StoreError::Malformed("proxy owner mismatch".into()));
         }
         refresh::refresh_if_needed(self, &mut owner).await?;
+        if personal_agent_inventory && owner.usable_tokens(SystemTime::now()).is_none() {
+            // Personal inventory needs the signed permission and no execution custody.
+            return Ok(Some(assertion_only()));
+        }
         let mut request =
             cookie_authorization::request_for_cookie(self, &subject, owner.clone()).await?;
         request.authorization = intersect(&authorization, &request.authorization);
