@@ -1,7 +1,7 @@
 import {createHash, randomBytes, randomUUID} from 'node:crypto';
 import {once} from 'node:events';
 import {createServer} from 'node:http';
-import {assertOwner, check, other} from '../cma/core.mjs';
+import {assertOwner, check, other, poll} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 
 async function competingRequests(...requests) {
@@ -189,4 +189,61 @@ export async function artifactCommittedWithoutAcknowledgement({adapter, user, re
     'artifact_acknowledgement_replay_changed_receipt');
   await readOnce(ingress);
   await recordState('artifact_committed_without_acknowledgement', {upstream_commits_observed: 1, recovered_artifacts: 1});
+}
+
+export async function revokeWhileRedemptionRetries({adapter, user, outsider, record, recordFailure,
+  recordState = async () => {}}) {
+  const {agentId} = record;
+  const owner = assertOwner(await adapter.ownerOf({agentId}), agentId);
+  const ingress = other(owner.am);
+  const links = `/api/v1/agents/${encodeURIComponent(agentId)}/share-links`;
+  const access = `/api/v1/resource-access/agent/${encodeURIComponent(agentId)}`;
+  const token = randomBytes(32).toString('hex');
+  const {body: link} = await user.request(ingress, 'POST', links, {
+    body: {audience: {kind: 'public'}, mode: 'view', token}, key: randomUUID(),
+  });
+  check(typeof link?.id === 'string' && Number.isSafeInteger(link.revision), 'share_revocation_link_unbound');
+  const path = `${links}/${encodeURIComponent(link.id)}`;
+  const redeemPath = `/api/v1/agent-share-links/${encodeURIComponent(link.id)}/redeem`;
+  const revoke = (am, revision, key) => user.rawRequest(am, 'DELETE', `${path}?expected_revision=${revision}`, {key});
+  const fault = (action, count) => adapter.shareRedemptionPublicationAbort({action, count});
+  let revoked = false;
+  const revokeKey = randomUUID();
+  await withRestoration(async () => {
+    check(link.agent_id === agentId && link.accepted_count === 0 && !link.revoked_at, 'share_revocation_baseline_unbound');
+    let pending, settled = false, armed, disarmed;
+    await withRestoration(async () => {
+      armed = await fault('arm');
+      check(Number.isSafeInteger(armed?.count), 'share_revocation_fault_count_missing');
+      pending = outsider.rawRequest(ingress, 'POST', redeemPath, {body: {token}, allowed: [404]})
+        .then(response => ({response}), error => ({error})).finally(() => { settled = true; });
+      await poll(() => fault('wait', armed.count), value => value.entered === true,
+        {timeout: 12000, interval: 100, code: 'share_redemption_transaction_not_held'});
+      const {body: result} = await revoke(owner.am, link.revision, revokeKey);
+      revoked = result?.id === link.id && Boolean(result.revoked_at);
+      check(revoked && result.revision === link.revision + 1 && result.accepted_count === 0 && !settled,
+        'share_revocation_did_not_win_before_retry');
+      const denial = await pending;
+      if (denial.error) throw denial.error;
+      check(denial.response?.status === 404 && denial.response.body?.code === 'resource_not_found',
+        'share_redemption_retry_wrong_outcome');
+    }, async () => {
+      try { disarmed = await fault('disarm'); }
+      finally { await pending; }
+    }, recordFailure);
+    check(disarmed?.count === armed.count + 1, 'share_redemption_fault_not_consumed_once');
+    for (const am of [ingress, owner.am]) {
+      await outsider.rawRequest(am, 'GET', access, {allowed: [404]});
+      await outsider.rawRequest(am, 'POST', redeemPath, {body: {token}, allowed: [404]});
+    }
+    const {body: replay} = await revoke(ingress, link.revision, revokeKey);
+    check(replay?.id === link.id && replay.revision === link.revision + 1 && replay.accepted_count === 0
+      && replay.revoked_at, 'share_revocation_replay_diverged');
+    await recordState('share_revoked_before_redemption_retry', {known_aborts: 1, accepted_recipients: 0});
+  }, async () => {
+    if (revoked) return;
+    const {body: listing} = await user.request(owner.am, 'GET', links);
+    const current = listing.items.find(row => row.id === link.id);
+    if (current && !current.revoked_at) await revoke(owner.am, current.revision, randomUUID());
+  }, recordFailure);
 }

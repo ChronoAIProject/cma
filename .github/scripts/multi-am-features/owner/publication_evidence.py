@@ -42,11 +42,22 @@ def writer_publication_abort(fixture, arm=None):
 
 def runtime_loss_publication_abort(fixture, action=None, count=None):
     require_feature_fixture(fixture)
+    return timed_publication_abort(fixture, action, count, 'agents')
+
+
+def share_redemption_publication_abort(fixture, action=None, count=None):
+    require_feature_fixture(fixture)
+    # A link redemption fences the recipient first. Revocation does not
+    # write this collection and can commit while the recipient is waiting.
+    return timed_publication_abort(fixture, action, count, 'sandbox_admissions')
+
+
+def timed_publication_abort(fixture, action, count, collection):
     if action in ('arm', 'disarm') and count is None:
-        return publication_abort(fixture, action == 'arm', 'update', 'agents', FEATURES_MONGO_APP,
+        return publication_abort(fixture, action == 'arm', 'update', collection, FEATURES_MONGO_APP,
                                  block_ms=12000)
     if action != 'wait' or type(count) is not int or not 0 <= count < 2**53 - 1:
-        raise ValueError('runtime_loss_abort_action_required')
+        raise ValueError('timed_publication_abort_action_required')
     command = {'waitForFailPoint': 'failCommand', 'timesEntered': count + 1, 'maxTimeMS': 4000}
     return fixture.mongo('let entered = false;'
                          f'try {{ entered = admin.runCommand({json.dumps(command)}).ok === 1; }}'

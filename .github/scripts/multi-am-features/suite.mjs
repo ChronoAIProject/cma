@@ -19,7 +19,8 @@ import {writerCoverage} from './writer_coverage.mjs';
 import {queuedCommandCase} from './features/queued_commands.mjs';
 import {configurationDenials} from './features/configuration_denials.mjs';
 import {installSkillCase} from './features/skills.mjs';
-import {artifactCommittedWithoutAcknowledgement, artifactUnknownPublication, shareAgentArtifact} from './features/sharing.mjs';
+import {artifactCommittedWithoutAcknowledgement, artifactUnknownPublication, revokeWhileRedemptionRetries,
+  shareAgentArtifact} from './features/sharing.mjs';
 import {organizationShare} from './features/organization_share.mjs';
 import {accessRequest} from './features/access_request.mjs';
 import {retirementRetention} from './features/retirement_retention.mjs';
@@ -273,6 +274,8 @@ try {
             () => artifactUnknownPublication({...caseContext, user}));
           await caseContext.runCase('writer.artifact_committed_without_acknowledgement',
             () => artifactCommittedWithoutAcknowledgement({...caseContext, user}));
+          await caseContext.runCase('writer.share_revoked_before_redemption_retry',
+            () => revokeWhileRedemptionRetries({...caseContext, user, outsider}));
           await caseContext.runCase('writer.organization_share_membership',
             () => organizationShare({...caseContext, user, outsider}));
           await caseContext.runCase('writer.agent_access_request_denial',

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import test from 'node:test';
-import {artifactCommittedWithoutAcknowledgement, artifactUnknownPublication, shareAgentArtifact} from './sharing.mjs';
+import {artifactCommittedWithoutAcknowledgement, artifactUnknownPublication, revokeWhileRedemptionRetries,
+  shareAgentArtifact} from './sharing.mjs';
 
 function scenario({duplicateRedemption = false, divergingArtifact = false, aborts = 1} = {}) {
   const agentId = 'fixture-agent';
@@ -189,4 +190,61 @@ test('a lost acknowledgement fails if the commit duplicates the effect or the re
   const replay = committedPublication({changedReceipt: true});
   await assert.rejects(replay.run(), /artifact_acknowledgement_replay_changed_receipt/);
   assert.deepEqual(replay.calls, [['b', 'POST'], ['a', 'GET'], ['a', 'POST']]);
+});
+
+function revocationRace({wrongDenial = false, count = 1} = {}) {
+  const actions = [];
+  const link = {id: 'fixture-link', agent_id: 'fixture-agent', revision: 3, accepted_count: 0};
+  const denied = {status: 404, body: {code: wrongDenial ? 'fixture_failure' : 'resource_not_found'}};
+  let resolveRedemption, revoked, revokeKey;
+  const adapter = {
+    ownerOf: async () => ({am: 'a', epoch: 2, agent_id: link.agent_id, pod_uid: 'pod-a'}),
+    shareRedemptionPublicationAbort: async ({action, count: prior}) => {
+      actions.push(action);
+      if (action === 'wait') {
+        assert.equal(prior, 9);
+        assert.equal(typeof resolveRedemption, 'function');
+        return {entered: true};
+      }
+      return {count: action === 'arm' ? 9 : 9 + count};
+    },
+  };
+  const user = {
+    request: async () => ({body: link}),
+    rawRequest: async (am, method, path, {key}) => {
+      actions.push(`${am}_${method}`);
+      assert.match(path, /fixture-link\?expected_revision=3$/);
+      if (!revoked) {
+        revokeKey = key;
+        revoked = {...link, revoked_at: 'fixture-time', revision: 4};
+        setImmediate(() => resolveRedemption(denied));
+      }
+      assert.equal(key, revokeKey);
+      return {body: revoked};
+    },
+  };
+  const outsider = {rawRequest: async (am, method) => {
+    actions.push(`${am}_outsider_${method}`);
+    if (!resolveRedemption) return new Promise(resolve => { resolveRedemption = resolve; });
+    assert(revoked);
+    return denied;
+  }};
+  return {actions, run: () => revokeWhileRedemptionRetries({adapter, user, outsider,
+    record: {agentId: link.agent_id}})};
+}
+
+test('the held redemption is refused after revocation and both Managers keep the revoked receipt', async () => {
+  const fixture = revocationRace();
+  await fixture.run();
+  assert.deepEqual(fixture.actions, ['arm', 'b_outsider_POST', 'wait', 'a_DELETE', 'disarm',
+    'b_outsider_GET', 'b_outsider_POST', 'a_outsider_GET', 'a_outsider_POST', 'b_DELETE']);
+});
+
+test('revocation during redemption needs the typed denial and one observed transaction abort', async () => {
+  for (const [input, failure] of [[{wrongDenial: true}, /share_redemption_retry_wrong_outcome/],
+    [{count: 2}, /share_redemption_fault_not_consumed_once/]]) {
+    const fixture = revocationRace(input);
+    await assert.rejects(fixture.run(), failure);
+    assert.deepEqual(fixture.actions, ['arm', 'b_outsider_POST', 'wait', 'a_DELETE', 'disarm']);
+  }
 });

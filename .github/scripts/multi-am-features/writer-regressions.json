@@ -255,11 +255,12 @@
       "feature": "Sharing/access/artifact metadata",
       "requirement": "No raw conflict for internal contention; fresh authorization and policy snapshot checked on retry, immutable receipt recovered on unknown outcome, denied/revoked caller never admitted. Some share redemption retry already exists; preserve it.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The journey checks one known abort under competing artifact publications, a precommit uncertain result and a committed write whose caller loses the acknowledgement before same-key recovery. Hosted execution and deterministic authorization changes at retry remain pending.",
+      "remaining": "The journey checks one known abort under competing artifact publications, both sides of acknowledgement loss, and revocation during a pending redemption retry. The exact-image hosted execution remains pending.",
       "trigger": "Agent-target share create/revoke/redemption, access request transitions and artifact publication concurrent with owner revision change",
       "required_assertions": [
         {"case": "writer.artifact_unknown_publication", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "both"},
         {"case": "writer.artifact_committed_without_acknowledgement", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "both"},
+        {"case": "writer.share_revoked_before_redemption_retry", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "both"},
         {
           "case": "writer.share_and_artifact_receipts",
           "minimum_runs": 1,
