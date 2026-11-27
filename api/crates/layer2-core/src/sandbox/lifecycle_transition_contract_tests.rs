@@ -3,6 +3,9 @@ use std::fmt::Debug;
 use super::*;
 use crate::sandbox::store::{SandboxSessionStore, SandboxStoreError, WorkspaceWorkerStore};
 
+#[path = "lifecycle_transition_contract_tests/workspace_prerequisites_tests.rs"]
+mod workspace_prerequisites_tests;
+
 const TRANSITION_AT: &str = "2026-09-05T00:01:00Z";
 
 use SandboxStatus as S;
