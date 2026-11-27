@@ -82,7 +82,7 @@ pub(super) async fn activate(store: &MongoNativeWarmPools, id: &str) -> Result<(
     Ok(())
 }
 
-async fn machine_selection_ambiguous(
+pub(super) async fn machine_selection_ambiguous(
     store: &MongoNativeWarmPools,
     selected: &PoolTarget,
 ) -> Result<bool, WarmPoolError> {

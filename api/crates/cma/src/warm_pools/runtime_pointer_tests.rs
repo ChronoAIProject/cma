@@ -137,6 +137,10 @@ impl Fixture {
     }
 
     async fn replica_pinned_to(&self, release: char) -> Replica {
+        self.replica_with_capacity(release, capacity()).await
+    }
+
+    async fn replica_with_capacity(&self, release: char, capacity: SandboxCapacity) -> Replica {
         let mut options = self.mongo.clone();
         let mongo_app_name = format!("pointer-replica-{}", uuid::Uuid::new_v4().simple());
         options.app_name = Some(mongo_app_name.clone());
@@ -156,7 +160,7 @@ impl Fixture {
             Arc::new(adapter),
             image(Lane::Agent, release),
             Some(home_policy()),
-            capacity(),
+            capacity,
             TARGET,
             Some((image(Lane::Machine, '1'), TARGET)),
         )

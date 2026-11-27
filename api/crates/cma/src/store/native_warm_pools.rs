@@ -160,10 +160,13 @@ impl PoolTargetStore for MongoNativeWarmPools {
                     .sort(retirement::release_order(true))
                     .await
                     .map_err(|_| WarmPoolError::Unavailable)?;
-                if latest.is_some_and(|row| {
-                    row.machine_plan_activated_at.is_some() && row.id != exact.id
-                }) {
-                    return Ok(true);
+                if let Some(row) = latest {
+                    if row.machine_plan_activated_at.is_some()
+                        && (row.id != exact.id
+                            || retirement::machine_selection_ambiguous(self, &row).await?)
+                    {
+                        return Ok(true);
+                    }
                 }
             }
         }

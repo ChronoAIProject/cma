@@ -75,6 +75,70 @@ async fn first_pointer_startup_holds_ambiguous_pool_authority_without_bootstrapp
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn held_agent_lane_holds_tied_machine_selections() {
+    let fixture = Fixture::new().await;
+    let fixed = fixture.replica_pinned_to('b').await;
+    fixed.seed_defaults().await;
+    let initial = fixed
+        .target_for(&fixture.plan(Lane::Machine, '1', capacity()))
+        .await;
+    let second_size = SandboxCapacity {
+        memory_mib: 4096,
+        ..capacity()
+    };
+    let mut tied = initial.clone();
+    tied.id = "tied-machine-sizing".into();
+    tied.plan = fixture.plan(Lane::Machine, '1', second_size);
+    tied.requested.memory_mib = second_size.memory_mib;
+    fixed.store.insert(tied.clone()).await.unwrap();
+
+    // The configured plan must be the one the single-row sort returns, so
+    // the ambiguity check is necessary even though that plan appears latest.
+    let selected = fixture
+        .database
+        .collection::<PoolTarget>("native_warm_pool_targets")
+        .find_one(
+            doc! {"plan.deployment":DEPLOYMENT,"machine":true,"activated_at":{"$type":"date"}},
+        )
+        .sort(doc! {"activated_at":-1,"machine_plan_activated_at":-1})
+        .await
+        .unwrap()
+        .unwrap();
+    let stale = fixture
+        .replica_with_capacity(
+            'a',
+            SandboxCapacity {
+                cpu_millis: selected.requested.cpu_millis,
+                memory_mib: selected.requested.memory_mib,
+            },
+        )
+        .await;
+    let before = fixed.store.list().await.unwrap();
+    let publisher = bind_controller(&stale, |_| panic!("bootstrap reads MongoDB"), true).await;
+    publisher.controller.register_boot().await.unwrap();
+    publisher.controller.bootstrap().await.unwrap();
+    assert!(publisher.pools.default_held(false));
+    assert!(publisher.pools.default_held(true));
+    for lane in [ReleasedLane::Agent, ReleasedLane::Machine] {
+        assert!(publisher
+            .controller
+            .release
+            .lanes
+            .load(lane)
+            .await
+            .unwrap()
+            .is_none());
+    }
+    let after = fixed.store.list().await.unwrap();
+    assert_eq!(
+        mongodb::bson::serialize_to_bson(&before).unwrap(),
+        mongodb::bson::serialize_to_bson(&after).unwrap()
+    );
+    fixture.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn first_pointer_startup_rechecks_a_release_activated_after_preflight() {
     for published in [false, true] {
         let fixture = Fixture::new().await;
