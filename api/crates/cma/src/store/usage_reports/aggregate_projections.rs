@@ -453,17 +453,26 @@ impl ReportingStore {
         fence.insert(INVALIDATED_FIELD, doc! {"$exists":false});
         fence.insert("row_count", source_counts.0);
         fence.insert("chart_count", source_counts.1);
-        let current = crate::store::durability::majority_collection::<Document>(&self.db, JOBS)
-            .find_one(fence)
-            .max_time(DB_DEADLINE)
-            .await
-            .map_err(unavailable)?;
-        if current.as_ref().is_some_and(|job| {
-            job.get_i64(GENERATION_FIELD).ok() == Some(lease.generation)
-                && job.get_document(MANIFEST_FIELD).ok() == Some(manifest)
-        }) {
-            return Ok(true);
+        let jobs = crate::store::durability::majority_collection::<Document>(&self.db, JOBS);
+        let confirmed = tokio::time::timeout(DB_DEADLINE, async {
+            loop {
+                let Some(job) = jobs.find_one(fence.clone()).max_time(DB_DEADLINE).await? else {
+                    return Ok::<_, mongodb::error::Error>(false);
+                };
+                if job.contains_key(GENERATION_FIELD) || job.contains_key(MANIFEST_FIELD) {
+                    return Ok(job.get_i64(GENERATION_FIELD).ok() == Some(lease.generation)
+                        && job.get_document(MANIFEST_FIELD).ok() == Some(manifest));
+                }
+                // The primary can have applied the commit while the majority
+                // snapshot still shows the previous version of this job.
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await;
+        match confirmed {
+            Ok(Ok(true)) => Ok(true),
+            Ok(Err(error)) => Err(unavailable(error)),
+            Ok(Ok(false)) | Err(_) => result,
         }
-        result
     }
 }
