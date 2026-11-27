@@ -73,9 +73,10 @@ export async function generatedTitleCustody({adapter, api, record, recordFailure
       check(current.title === newTitle && current.revision === renamed.revision, 'owner_title_readback_changed');
     }
     const ownerEffects = await adapter.titleEffects({agentId, title: newTitle});
-    check(ownerEffects?.length === 1, 'owner_title_effect_missing_or_repeated');
+    check(ownerEffects?.length === 1 && Number.isSafeInteger(ownerEffects[0]) && ownerEffects[0] > 0,
+      'owner_title_effect_missing_or_repeated');
     await readCreationProvenance(api, agentId, provenance);
-    record.generatedTitleProof = proof;
+    record.generatedTitleProof = {...proof, ownerTitle: newTitle, ownerEffect: ownerEffects[0]};
     record.generatedTitleProvenance = provenance;
   }, async () => {
     try { await adapter.releaseTurn({caseId, title: true}); }
@@ -85,7 +86,10 @@ export async function generatedTitleCustody({adapter, api, record, recordFailure
 
 export async function titleCustodyAfterRestart({adapter, api, record}) {
   check(record.generatedTitleProof && record.generatedTitleProvenance, 'pre_restart_title_evidence_missing');
-  await confirmCustody(adapter, record.agentId, record.generatedTitleProof);
+  const proof = record.generatedTitleProof;
+  await confirmCustody(adapter, record.agentId, proof);
+  const effects = await adapter.titleEffects({agentId: record.agentId, title: proof.ownerTitle});
+  check(equal(effects, [proof.ownerEffect]), 'owner_title_effect_changed_after_restart');
   await readCreationProvenance(api, record.agentId, record.generatedTitleProvenance);
   const current = (await api.request('a', 'GET', preferences(record.agentId))).body;
   check(typeof current?.title === 'string' && current.title !== generated, 'generated_title_overwrote_owner');

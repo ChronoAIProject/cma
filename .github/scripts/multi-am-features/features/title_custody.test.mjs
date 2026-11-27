@@ -3,7 +3,7 @@ import test from 'node:test';
 import {generatedTitleCustody, titleCustodyAfterRestart} from './title_custody.mjs';
 
 function fixture() {
-  const record = {agentId: 'agent'}, custody = {digest: 'a'.repeat(64), requestCount: 1};
+  const record = {agentId: 'agent'}, custody = {digest: 'a'.repeat(64), requestCount: 1, effects: [6]};
   let armed, released = false, sent = false, scope;
   let preferences = {title: 'Original', revision: 1};
   const provenance = {agent_id: 'agent', creation_origin: 'manual', created_at: '2026-11-26T00:00:00Z',
@@ -46,7 +46,7 @@ function fixture() {
       return {request_sha256: custody.digest, turn_sequence: 4}; },
     async titleEffects({agentId, title}) {
       assert.equal(agentId, scope.agentId);
-      return title === preferences.title ? [6] : [];
+      return title === preferences.title ? custody.effects : [];
     },
   };
   return {api, adapter, record, custody, provenance};
@@ -57,6 +57,9 @@ test('first title attempt remains the one retained provider effect across owner 
   await generatedTitleCustody(input);
   assert.equal(input.record.generatedTitleProof.turnSequence, 4);
   await titleCustodyAfterRestart(input);
+  input.custody.effects = [9];
+  await assert.rejects(titleCustodyAfterRestart(input), /owner_title_effect_changed_after_restart/);
+  input.custody.effects = [6];
   input.custody.requestCount += 1;
   await assert.rejects(titleCustodyAfterRestart(input), /title_model_effect_changed_or_repeated/);
 });
