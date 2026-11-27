@@ -38,7 +38,7 @@ class AllocationSnapshotTests(unittest.TestCase):
         store.commit()
         return matrix
 
-    def test_one_snapshot_one_push_and_no_older_owner_read(self):
+    def test_one_snapshot_one_push_with_only_the_latest_web_owner_read(self):
         for component in sorted(DEPLOYABLES):
             with self.subTest(component=component):
                 server, store = self.fixture(25, latency=0.001, components=(component,))
@@ -52,8 +52,9 @@ class AllocationSnapshotTests(unittest.TestCase):
                 # The reservation and its claim; a started predecessor keeps its outcome ref.
                 self.assertEqual(len([arg for arg in pushes[0] if ":refs/tags/" in arg]), 2)
                 self.assertFalse(any("cma-allocation-outcome/" in arg for arg in pushes[0]))
+                latest_web = "actions/runs/34/attempts/1"
                 self.assertEqual([path for path in server.calls if path.startswith("actions/")],
-                                 [])
+                                 [latest_web, latest_web + "/jobs?per_page=100"] if component == "web" else [])
                 self.assertFalse(any("matching-refs" in path for path in server.calls))
                 self.assertGreater(server.peak, 1)
                 self.assertLessEqual(server.peak, 8)
@@ -442,7 +443,9 @@ class AllocationSnapshotTests(unittest.TestCase):
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(len([args for args in server.commands if args[1] == "ls-remote"]), 1)
         self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 5)
-        self.assertEqual(len([path for path in server.calls if path.startswith("actions/")]), 0)
+        latest_web = "actions/runs/13/attempts/1"
+        self.assertEqual([path for path in server.calls if path.startswith("actions/")],
+                         [latest_web, latest_web + "/jobs?per_page=100"])
         for group in matrix["include"]:
             expected = "0.10.6" if group["component"] == "runtime" else "0.10.5"
             self.assertEqual(json.loads(group["tasks"])[0]["reservation"]["version"], expected)
