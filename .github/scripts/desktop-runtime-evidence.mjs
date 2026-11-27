@@ -74,7 +74,7 @@ try {
     name, 'python3', '/opt/desktop-shell-probe.py']).trim());
   result.proof = JSON.parse(docker(['exec', '--env', 'DISPLAY=:99', '--env', `CMA_DESKTOP_TEST_TOKEN=${token}`,
     name, 'node', '/opt/desktop-native-probe.cjs']).trim());
-  result.lifecycle = JSON.parse(docker(['exec', '--env', 'DISPLAY=:99',
+  result.lifecycle = JSON.parse(docker(['exec', '--env', 'DISPLAY=:99', '--env', `CMA_DESKTOP_TEST_TOKEN=${token}`,
     name, 'python3', '/opt/desktop-lifecycle-probe.py']).trim());
   writeFileSync(destination + '.browser-closed.png', execFileSync('docker',
     ['exec', name, 'cat', '/tmp/cma-desktop-browser-closed.png'],

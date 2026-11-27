@@ -45,14 +45,17 @@ impl MeasuredInput {
                         s.samples
                             .iter()
                             .map(|s| {
-                                [
+                                let value = s
+                                    .value
+                                    .ok_or_else(|| unavailable("invalid measured input"))?;
+                                Ok([
                                     format!("{:016x}", s.at.to_bits()),
-                                    format!("{:016x}", s.value.to_bits()),
-                                ]
+                                    format!("{:016x}", value.to_bits()),
+                                ])
                             })
-                            .collect()
+                            .collect::<Result<Vec<_>, SandboxStoreError>>()
                     })
-                    .collect();
+                    .collect::<Result<Vec<_>, SandboxStoreError>>()?;
                 (
                     None,
                     series,

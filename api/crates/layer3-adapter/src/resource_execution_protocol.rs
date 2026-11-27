@@ -4,6 +4,7 @@
 
 mod identity;
 mod receipts;
+pub mod sender;
 pub use identity::*;
 pub use receipts::*;
 

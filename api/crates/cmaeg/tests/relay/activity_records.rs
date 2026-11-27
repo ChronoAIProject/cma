@@ -83,6 +83,9 @@ async fn write(
     Json(body): Json<Put>,
 ) -> Response {
     let status = records.status.load(Ordering::SeqCst) as u16;
+    if status == 504 {
+        tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    }
     if status != 200 {
         return StatusCode::from_u16(status).unwrap().into_response();
     }

@@ -64,14 +64,20 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
                     <IconCheckOutline16 />
                   </span>
                   <div>
-                    <strong>Received</strong>
+                    <strong>{event.source_refusal ? 'Refused at source' : 'Received'}</strong>
                     <p>
                       The original event is recorded ·{' '}
                       <ActivityTimestamp value={event.received_at} />
                     </p>
                   </div>
                 </div>
-                {event.consumers.length === 0 ? (
+                {event.source_refusal ? (
+                  <p className="channel-activity__notice">
+                    {event.source_refusal === 'attachment_unsupported'
+                      ? 'This attachment could not be processed.'
+                      : 'This message content could not be processed.'}
+                  </p>
+                ) : event.consumers.length === 0 ? (
                   <p className="channel-activity__notice">
                     No Agent response or recipient delivery receipt is recorded.
                   </p>

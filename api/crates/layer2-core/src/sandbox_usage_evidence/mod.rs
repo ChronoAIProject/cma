@@ -4,6 +4,7 @@ mod measured;
 mod measured_model;
 mod measured_support;
 mod quantize;
+pub mod shadow;
 
 pub use allocated::{project, MinuteFact, Projection, MAX_FACTS};
 pub use measured::freeze_measured;

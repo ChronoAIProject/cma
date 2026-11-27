@@ -17,10 +17,16 @@ export function useAccessRequests(
   }>();
   const observer = useRef<ReturnType<typeof observeAccessRequests> | undefined>(undefined);
   const observedRevision = useRef(eventRevision);
+  const currentRunning = useRef(running);
+  useEffect(() => {
+    const started = !currentRunning.current && running;
+    currentRunning.current = running;
+    if (started) observer.current?.refresh();
+  }, [running]);
   useEffect(() => {
     if (!enabled) return;
     const next = observeAccessRequests({
-      running,
+      running: () => currentRunning.current,
       read: (signal) => accessRequests.list(scope.agentId, signal),
       publish: (requests) => setState({ scope, requests }),
       failed: (cause) =>
@@ -36,7 +42,7 @@ export function useAccessRequests(
       next.dispose();
       observer.current = undefined;
     };
-  }, [scope, enabled, running]);
+  }, [scope, enabled]);
   useEffect(() => {
     if (observedRevision.current !== eventRevision) {
       observedRevision.current = eventRevision;

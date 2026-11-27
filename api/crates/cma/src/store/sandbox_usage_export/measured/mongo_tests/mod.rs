@@ -224,11 +224,11 @@ impl Fixture {
             samples: vec![
                 Sample {
                     at: self.minute as f64,
-                    value: 10.0,
+                    value: Some(10.0),
                 },
                 Sample {
                     at: (self.minute + 60) as f64,
-                    value: 10.0 + delta,
+                    value: Some(10.0 + delta),
                 },
             ],
         }]

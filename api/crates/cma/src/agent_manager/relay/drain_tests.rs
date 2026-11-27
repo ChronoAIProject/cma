@@ -1,12 +1,14 @@
 use super::super::*;
 use crate::{agent_manager::AgentManager, sandbox::LiveAgentRegistry};
 use layer3_adapter::owner_protocol::{ReceiverRevocation, TransportAuthority};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tower::ServiceExt;
 
 struct Receiver {
     revoked: Arc<AtomicBool>,
     lifecycle_exited: Arc<AtomicBool>,
+    attempts: AtomicUsize,
+    acknowledgement_delay: Option<Duration>,
 }
 
 struct LifecycleExit(Arc<AtomicBool>);
@@ -26,6 +28,15 @@ impl ReceiverRevocation for Receiver {
             self.lifecycle_exited.load(Ordering::Acquire),
             "receiver revoked before lifecycle join"
         );
+        let attempt = self.attempts.fetch_add(1, Ordering::Relaxed);
+        if let Some(delay) = self.acknowledgement_delay {
+            if attempt == 0 {
+                return Err(layer3_adapter::AdapterError::Unavailable(
+                    "synthetic first revoke transport failure".into(),
+                ));
+            }
+            tokio::time::sleep(delay).await;
+        }
         self.revoked.store(true, Ordering::Release);
         Ok(())
     }
@@ -117,12 +128,14 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
             .unwrap()
             .unwrap();
         let revoked = Arc::new(AtomicBool::new(false));
-        authority
-            .register_receiver(Arc::new(Receiver {
-                revoked: revoked.clone(),
-                lifecycle_exited: lifecycle_exits[owner].clone(),
-            }))
-            .unwrap();
+        let receiver = Arc::new(Receiver {
+            revoked: revoked.clone(),
+            lifecycle_exited: lifecycle_exits[owner].clone(),
+            attempts: AtomicUsize::new(0),
+            // Exercise a valid reply beyond the independent store-operation limit.
+            acknowledgement_delay: Some(Duration::from_millis(2_500)),
+        });
+        authority.register_receiver(receiver.clone()).unwrap();
         let waiting = tokio::spawn({
             let authority = authority.clone();
             async move { authority.run(std::future::pending::<()>()).await }
@@ -149,6 +162,7 @@ async fn authenticated_prestop_drains_actual_managers_before_peer_takeover() {
         assert!(managers[owner].is_ready());
         control::drain_local(ports[owner], key()).await.unwrap();
         assert!(revoked.load(Ordering::Acquire));
+        assert_eq!(receiver.attempts.load(Ordering::Relaxed), 2);
         assert!(waiting.await.unwrap().is_err());
         assert_eq!(
             client()
@@ -242,6 +256,8 @@ async fn prestop_and_main_retain_ownership_until_blocked_lifecycle_has_joined() 
         .register_receiver(Arc::new(Receiver {
             revoked: revoked.clone(),
             lifecycle_exited: exited.clone(),
+            attempts: AtomicUsize::new(0),
+            acknowledgement_delay: None,
         }))
         .unwrap();
     let updates = DurableAgentUpdateRecorder::new(Arc::new(InMemorySandboxStore::default()));

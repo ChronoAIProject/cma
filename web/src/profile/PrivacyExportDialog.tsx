@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Cma } from '@cma/client';
+import { ApiError, Cma, TimeoutError } from '@cma/client';
 import type { PrivacyExportInventory } from '../api-client/privacy-export';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -64,9 +64,9 @@ export function PrivacyExportDialog({
       const blob = await client.retainedConversation(owner, selected, operation.signal);
       operation.signal.throwIfAborted();
       saveDownload(blob);
-    } catch {
+    } catch (error) {
       if (!operation.signal.aborted) {
-        setError('The conversation could not be verified or downloaded. Try again.');
+        setError(downloadError(error));
       } else if (download.current === operation) {
         setError('The download timed out.');
       }
@@ -136,6 +136,28 @@ export function PrivacyExportDialog({
       {error !== undefined && <p role="alert">{error}</p>}
     </Modal>
   );
+}
+
+function downloadError(error: unknown): string {
+  if (error instanceof TimeoutError) return 'The download timed out. Try again.';
+  if (!(error instanceof ApiError)) {
+    return 'The conversation could not be verified or downloaded. Try again.';
+  }
+  const code = error.code && /^[a-z0-9_]{1,80}$/.test(error.code) ? error.code : undefined;
+  const reference = code ? `HTTP ${error.status}, ${code}` : `HTTP ${error.status}`;
+  if (code === 'account_deletion_in_progress') {
+    return `Account deletion is in progress. Conversation export is unavailable (${reference}).`;
+  }
+  if (error.status === 401 || code === 'privacy_export_owner_session_required') {
+    return `Sign in again as the Agent owner, then retry (${reference}).`;
+  }
+  if (error.status === 403 || error.status === 404) {
+    return `Reopen account export and select an Agent you own (${reference}).`;
+  }
+  if (error.status === 409) {
+    return `The conversation changed during export. Wait for the turn to finish, then retry (${reference}).`;
+  }
+  return `CMA could not prepare the conversation. Try again later (${reference}).`;
 }
 
 function saveDownload(blob: Blob) {

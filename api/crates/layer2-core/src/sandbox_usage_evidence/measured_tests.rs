@@ -60,7 +60,10 @@ fn series(metric: SourceMetric, values: &[(f64, f64)]) -> PhysicalSeries {
         ]),
         samples: values
             .iter()
-            .map(|&(at, value)| Sample { at, value })
+            .map(|&(at, value)| Sample {
+                at,
+                value: Some(value),
+            })
             .collect(),
     }
 }

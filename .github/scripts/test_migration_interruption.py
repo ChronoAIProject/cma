@@ -114,7 +114,7 @@ class MigrationInterruptionTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in self.campaign.boot.call_args_list],
                          ["old", "new", "old"])
 
-    def test_release_probe_refuses_pairwise_only_overlays(self):
+    def test_release_probe_binds_overlays_to_declared_reader_roles(self):
         old = {"image": self.args.old_image, "source": self.args.old_source}
         new = {"image": self.args.new_image, "source": self.args.new_source}
         plan = json.loads(self.args.plan.read_text())
@@ -126,10 +126,20 @@ class MigrationInterruptionTests(unittest.TestCase):
         ]
         self.args.plan.write_text(json.dumps(plan))
         self.args.writer_policy = "enabled"
-        self.args.membership_fixture = True
-        with self.assertRaisesRegex(runner.RunnerError, "requires pairwise reader aliases"):
-            runner.run(self.args)
-        self.campaign.create.assert_not_called()
+        for overlay in ("membership_fixture", "rate_fixture"):
+            with self.subTest(overlay=overlay):
+                setattr(self.args, overlay, True)
+                self.args.output = self.args.output.parent / overlay
+                self.campaign.boot.side_effect = lambda image, source, stage, config, **control: {"stage": stage}
+                with patch('migration_fixture_dependencies.configure', return_value=[{
+                        'kind': 'Deployment', 'metadata': {'name': 'api'},
+                        'spec': {'template': {'spec': {'containers': [{'name': 'api'}]}}}}]), \
+                        patch('migration_fixture_dependencies.capture', return_value=None):
+                    result = runner.run(self.args)
+                self.assertEqual(len(result['boots']), 4)
+                self.assertEqual(self.campaign.reader_artifacts, {role: artifact for role, artifact in
+                                 zip(("historical", "current", "candidate", "recovery"), (old, new, new, old))})
+                setattr(self.args, overlay, False)
 
 
 if __name__ == '__main__':

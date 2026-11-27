@@ -16,6 +16,9 @@ impl AgentObservationService {
         agent: &Agent,
         turn: Option<u64>,
     ) -> Result<Option<OutputFlight<'_>>, SandboxStoreError> {
+        if durable_read_fallback() {
+            return Ok(None);
+        }
         let lane = self
             .registry
             .lock()

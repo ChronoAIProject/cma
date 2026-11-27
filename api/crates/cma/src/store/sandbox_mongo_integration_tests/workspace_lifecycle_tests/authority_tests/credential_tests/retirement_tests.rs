@@ -9,6 +9,25 @@ async fn start_teardown(f: &Fixture) {
     f.store.save_sandbox(revision, row).await.unwrap();
 }
 
+async fn set_issuance_marker(f: &Fixture, marker: Option<i64>) {
+    let update = match marker {
+        Some(value) => doc! {"$set":{"credential_issuance_fence":value}},
+        None => doc! {"$unset":{"credential_issuance_fence":""}},
+    };
+    assert_eq!(
+        Kind::Sandbox
+            .rows(&f.store)
+            .update_one(
+                doc! {"_id":f.claim.id.as_str(),"owner":f.claim.owner.as_str()},
+                update
+            )
+            .await
+            .unwrap()
+            .matched_count,
+        1
+    );
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn retirement_retains_unresolved_issuance_before_and_after_late_result() {
@@ -57,6 +76,135 @@ async fn retirement_retains_unresolved_issuance_before_and_after_late_result() {
         assert_eq!(blocked.work.step, step);
         assert!(blocked.purge_after.is_none());
     }
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn retirement_receipt_releases_quota_and_survives_worker_replacement() {
+    let mut f = Fixture::new("retirement_receipt").await;
+    let issuing = f.issue(1);
+    f.prepare().await.respond(503, "");
+    assert!(matches!(
+        issuing.await.unwrap(),
+        Ok(Err(CredentialError::Uncertain))
+    ));
+    let intent = f.custody.issuance(&f.claim).await.unwrap().unwrap();
+    let crate::sandbox::IssuanceIdentity::Prepared { request_digest, .. } = &intent.identity else {
+        panic!("retirement receipt requires an exact mint identity");
+    };
+    let (worker, _) = retirement_fixture::begin(&f).await;
+    assert!(worker
+        .run_one(&f.claim.id, SystemTime::now())
+        .await
+        .unwrap());
+    assert!(worker
+        .run_one(&f.claim.id, SystemTime::now())
+        .await
+        .unwrap());
+    assert_eq!(f.peer.count(), 3, "the switch defaults off");
+
+    f.controller =
+        ManagedSandboxCredentials::new(f.issuer.clone(), Arc::new(Tokens), f.custody.clone())
+            .with_retirement_receipts(true);
+    // Use the same Mongo client for lifecycle publication and custody, as
+    // production does when both stores share a transaction.
+    let (worker, _) = retirement_fixture::begin_with_store(&f, Arc::new(f.store.clone())).await;
+    let before = f.store.owner_capacity(&f.claim.owner).await.unwrap();
+    assert_eq!(before.counts, vec![(SandboxStatus::Retiring, 1)]);
+    for (owner, marker_change) in [
+        ("wrong-fixture-owner", None),
+        (f.claim.owner.as_str(), Some(None)),
+        (f.claim.owner.as_str(), Some(Some(0))),
+        (f.claim.owner.as_str(), None),
+    ] {
+        let mut blocked = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
+        assert_eq!(
+            blocked.work.step,
+            SandboxWorkStep::RevokeRetirementCredentials
+        );
+        let revision = blocked.revision;
+        blocked.work.ready_at = at(-1);
+        blocked.work.attempts = 0;
+        blocked.revision += 1;
+        f.store.save_sandbox(revision, blocked).await.unwrap();
+        let worker = worker.clone();
+        let id = f.claim.id.clone();
+        let running = tokio::spawn(async move { worker.run_one(&id, SystemTime::now()).await });
+        let request = f.peer.next().await;
+        assert_eq!(request.method, axum::http::Method::GET);
+        assert_eq!(
+            request.uri.path(),
+            format!(
+                "/api/v1/api-key-issuances/{}/retirement",
+                intent.operation_id
+            )
+        );
+        assert_eq!(
+            request.uri.query(),
+            Some(format!("request_sha256={request_digest}").as_str())
+        );
+        if let Some(marker) = marker_change {
+            // The parent can lose its marker after the read preflight.
+            // Receipt publication still has to refuse the transaction.
+            set_issuance_marker(&f, marker).await;
+        }
+        request.json(json!({
+            "operation_id": intent.operation_id, "owner": owner, "request_sha256": request_digest,
+            "receipt_id": "provider-retirement-receipt", "revision": 1,
+            "state": "revoked", "key_id": "fixture-key-id"
+        }));
+        assert!(running.await.unwrap().unwrap());
+        if marker_change.is_some() {
+            let current = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
+            assert_eq!(
+                current.work.step,
+                SandboxWorkStep::RevokeRetirementCredentials
+            );
+            let parent = Kind::Sandbox
+                .rows(&f.store)
+                .find_one(doc! {"_id":f.claim.id.as_str()})
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                parent.get("credential_issuance_fence"),
+                marker_change.flatten().map(Bson::Int64).as_ref()
+            );
+            set_issuance_marker(&f, Some(1)).await;
+            assert!(!f
+                .custody
+                .has_retirement_receipt(&current, &intent)
+                .await
+                .unwrap());
+        }
+    }
+    let advanced = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
+    assert_eq!(advanced.work.step, SandboxWorkStep::TeardownRuntime);
+    assert_eq!(
+        f.custody.issuance(&advanced).await.unwrap().as_ref(),
+        Some(&intent)
+    );
+    assert!(f.custody.list(&advanced.id).await.unwrap().is_empty());
+    for invalid in [None, Some(0)] {
+        set_issuance_marker(&f, invalid).await;
+        assert!(matches!(
+            f.controller.settle_revocations(&advanced).await,
+            Err(CredentialError::Security(_))
+        ));
+    }
+    set_issuance_marker(&f, Some(2)).await;
+    // A new controller with the switch off can finish already accepted work.
+    f.controller =
+        ManagedSandboxCredentials::new(f.issuer.clone(), Arc::new(Tokens), f.custody.clone());
+    retirement_fixture::retire(&f).await;
+    let quota = f.store.owner_capacity(&f.claim.owner).await.unwrap();
+    assert!(quota.counts.is_empty());
+    assert_eq!(
+        f.peer.count(),
+        7,
+        "recovery never replays the mint or needs a second receipt"
+    );
     f.cleanup().await;
 }
 

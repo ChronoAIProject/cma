@@ -347,11 +347,10 @@ def run(args):
                                    lambda image, source: checked_identity(command, image, source))
     mongo = checked_dependency(command, args.mongo_image)
     identity = checked_identity_dependency(command, args.identity_image)
-    if policy is not None and (getattr(args, "membership_fixture", False) or
-                               getattr(args, "rate_fixture", False)):
-        raise RunnerError("selected fixture requires pairwise reader aliases")
     campaign = Campaign(output, args.kind, args.timeout, plan_bytes,
                         getattr(args, "kind_node_image", KIND_NODE))
+    campaign.reader_artifacts = {role: {key: artifact[key] for key in ("source", "image")}
+                                 for role, artifact in artifacts.items()}
     runtime_password = secrets.token_urlsafe(24)
     admin_password = secrets.token_urlsafe(24)
     campaign.mongo_password = runtime_password
@@ -388,7 +387,10 @@ def run(args):
         campaign.identity_image = identity_ref
         campaign.images = list(dict.fromkeys([*aliases.values(), mongo_ref, identity_ref]))
         objects = manifests(old_ref, runtime_password, admin_password, key, mongo_ref, role,
-                            args.runtime_image, identity_ref, identity_credentials)
+                            args.runtime_image, identity_ref, identity_credentials,
+                            runtime_stack_bytes=getattr(args, "runtime_stack_bytes", None))
+        if getattr(args, "runtime_stack_bytes", None) is not None:
+            result["runtime_stack_bytes"] = args.runtime_stack_bytes
         from migration_fixture_dependencies import configure, capture
         objects = configure(objects, args)
         if policy is not None:
@@ -469,6 +471,8 @@ def main(argv=None):
                         help="digest-pinned kindest/node image; the default keeps the local tag")
     parser.add_argument("--mongo-image", default="docker.io/library/mongo@sha256:42545cf0629db918d1a24a2df8bbca6926ed87bfabf59afc85008dd948448cc7")
     parser.add_argument("--runtime-image", default=RUNTIME)
+    parser.add_argument("--runtime-stack-bytes", type=int,
+                        help="supported application worker stack budget for the disposable reader")
     parser.add_argument("--identity-image", default=IDENTITY)
     from migration_fixture_dependencies import add_arguments
     add_arguments(parser)

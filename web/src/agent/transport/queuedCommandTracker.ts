@@ -30,6 +30,9 @@ export class QueuedCommandTracker {
   private generation = 0;
   private cursor = 0;
   private discoveryRetryAt = 0;
+  private discoveryPollAt = 0;
+  private refreshRevision = 0;
+  private queueRevision?: string;
   private discoveryNext = Infinity;
   private discoveryFailures = 0;
   private discoveryRetry = 1000;
@@ -136,8 +139,10 @@ export class QueuedCommandTracker {
     };
   }
 
-  refresh() {
-    if (this.discoveryFailures === 0) this.discoveryRetryAt = 0;
+  refresh(allowCompatibilityRetry = true) {
+    this.refreshRevision += 1;
+    this.discoveryPollAt = 0;
+    if (allowCompatibilityRetry && this.discoveryFailures === 0) this.discoveryRetryAt = 0;
   }
 
   beginMutation(item: QueuedInputRow) {
@@ -190,8 +195,10 @@ export class QueuedCommandTracker {
         entry.row = undefined;
       }
     }
-    if (Date.now() >= this.discoveryRetryAt) {
+    const discoveryAfter = Math.max(this.discoveryRetryAt, this.discoveryPollAt);
+    if (Date.now() >= discoveryAfter) {
       const generation = this.generation;
+      const refreshRevision = this.refreshRevision;
       try {
         const page = await this.session.responses.listQueuedInputs(this.session.journal.agentId, {
           signal,
@@ -232,7 +239,24 @@ export class QueuedCommandTracker {
           this.discoveryRetryAt = 0;
           this.discoveryRetry = 2000;
         }
-        this.discoveryNext = Date.now() + (page.data.length ? 2000 : active ? 10000 : Infinity);
+        const revision = JSON.stringify(
+          page.data.map(({ response, command_revision, editable }) => [
+            response.receipt.command_id,
+            command_revision,
+            editable,
+            response.status,
+            response.delivery,
+            response.failure,
+          ]),
+        );
+        const unchanged = this.queueRevision === revision;
+        this.queueRevision = revision;
+        const idle = page.data.length === 0 && !active;
+        const delay = page.data.length > 0 && !unchanged ? 2000 : 10000;
+        this.discoveryNext = idle ? Infinity : Date.now() + delay;
+        // An observer wake for another command must preserve discovery's cadence.
+        if (refreshRevision === this.refreshRevision)
+          this.discoveryPollAt = idle ? 0 : this.discoveryNext;
       } catch (error) {
         if (signal.aborted || identityChanged(error)) throw error;
         if (error instanceof ApiError && error.status === 404) {
@@ -248,7 +272,7 @@ export class QueuedCommandTracker {
       }
     } else {
       // An early refresh must retain the discovery read deferred by its cooldown.
-      this.discoveryNext = Math.min(this.discoveryNext, this.discoveryRetryAt);
+      this.discoveryNext = Math.min(this.discoveryNext, discoveryAfter);
     }
     this.remember();
     await this.reconcile(signal, identityChanged, removals, resolved, isCurrent);
@@ -336,7 +360,7 @@ export class QueuedCommandTracker {
       if (this.needsRead(entry, removals)) nextAt = Math.min(nextAt, entry.due);
     nextAt = Math.max(nextAt, this.throttleUntil);
     const next = Number.isFinite(nextAt) ? Math.max(2000, nextAt - Date.now()) : undefined;
-    return { next, cooldown: 2000 };
+    return { next, cooldown: Math.max(2000, this.discoveryPollAt - Date.now()) };
   }
 
   private needsRead(entry: KnownCommand, removals: readonly PendingRemoval[]) {

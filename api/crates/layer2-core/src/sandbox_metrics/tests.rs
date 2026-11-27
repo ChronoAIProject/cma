@@ -48,7 +48,7 @@ fn series(metric: SourceMetric, values: &[(f64, f64)]) -> PhysicalSeries {
             .iter()
             .map(|(at, value)| Sample {
                 at: *at,
-                value: *value,
+                value: Some(*value),
             })
             .collect(),
     }
@@ -122,6 +122,43 @@ fn disk_capacity_changes_and_expires_independently_of_usage() {
     assert_eq!(disk.capacity_covered_seconds, 120.);
     assert_eq!(disk.capacity_integral, 1000. * 30. + 2000. * 90.);
     assert_eq!(disk.capacity_usage_integral, 100. * 60. + 200. * 60.);
+}
+
+#[test]
+fn stale_samples_end_counter_gauge_and_disk_capacity_coverage() {
+    let mut cpu = series(
+        SourceMetric::CpuCounter,
+        &[(0., 0.), (20., 20.), (30., 0.), (40., 90.), (60., 130.)],
+    );
+    cpu.samples[2].value = None;
+    let mut memory = series(
+        SourceMetric::WorkingSet,
+        &[(0., 100.), (30., 0.), (60., 200.)],
+    );
+    memory.samples[1].value = None;
+    let disk = series(SourceMetric::PvcUsed, &[(0., 100.)]);
+    let mut capacity = series(
+        SourceMetric::PvcCapacity,
+        &[(0., 1000.), (30., 0.), (60., 2000.)],
+    );
+    capacity.samples[1].value = None;
+
+    let totals = aggregate::totals(
+        &aggregate::aggregate(
+            &[binding(BindingKind::Compute), binding(BindingKind::Home)],
+            &[cpu, memory, disk, capacity],
+            Range { from: 0, to: 90 },
+        )
+        .unwrap(),
+    );
+    assert_eq!(totals[0].covered_seconds, 40.);
+    assert_eq!(totals[0].integral, 60.);
+    assert_eq!(totals[0].display_integral, 60.);
+    assert_eq!(totals[1].covered_seconds, 60.);
+    assert_eq!(totals[1].integral, 9_000.);
+    assert_eq!(totals[2].covered_seconds, 90.);
+    assert_eq!(totals[2].capacity_covered_seconds, 60.);
+    assert_eq!(totals[2].capacity_integral, 90_000.);
 }
 #[test]
 fn shared_pvc_is_counted_once_and_conflicting_attachments_are_refused() {

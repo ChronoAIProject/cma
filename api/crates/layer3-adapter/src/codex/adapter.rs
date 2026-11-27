@@ -1,8 +1,11 @@
 use super::*;
-use crate::{desktop_ownership::DesktopOwnedRuntime, Result};
+use crate::{desktop_ownership::DesktopOwnedRuntime, stale_turn::StaleTurnProducer, Result};
 
 #[async_trait::async_trait]
 impl SandboxAdapter for CodexAdapter {
+    fn stale_turn_producer(&self, handle: &RuntimeHandle) -> Option<&dyn StaleTurnProducer> {
+        self.hosted.stale_turn_producer(handle)
+    }
     fn retained_startup_policy(&self) -> Option<&dyn crate::RetainedStartupPolicyControl> {
         self.hosted.retained_startup_policy()
     }

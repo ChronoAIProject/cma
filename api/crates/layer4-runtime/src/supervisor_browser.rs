@@ -32,8 +32,11 @@ impl Supervisor {
         let browser = browsers.get_mut(&request.agent_id).ok_or_else(|| {
             RuntimeError::rejected("browser_unsupported", "Browser control is unavailable")
         })?;
-        let receipt = browser.control(&request).await?;
-        Ok(ResponseFrame::BrowserControl(receipt))
+        let result = browser.control(&request).await;
+        if browser.transport_closed() {
+            browsers.remove(&request.agent_id);
+        }
+        Ok(ResponseFrame::BrowserControl(result?))
     }
 
     pub(super) async fn browser(&self, request: BrowserRequest) -> Result<ResponseFrame> {
@@ -82,13 +85,16 @@ impl Supervisor {
             browsers.insert(request.agent_id.clone(), browser);
         }
         let observation = if let Some(browser) = browsers.get_mut(&request.agent_id) {
-            browser.exchange(&request).await?
+            let result = browser.exchange(&request).await;
+            if browser.transport_closed()
+                || (request.operation == BrowserOperation::Disable && result.is_ok())
+            {
+                browsers.remove(&request.agent_id);
+            }
+            result?
         } else {
             BrowserObservation::idle(BrowserState::NotEnabled)
         };
-        if request.operation == BrowserOperation::Disable {
-            browsers.remove(&request.agent_id);
-        }
         Ok(ResponseFrame::Browser(BrowserReceipt {
             agent_id: request.agent_id,
             boot_id: self.boot_id.clone(),

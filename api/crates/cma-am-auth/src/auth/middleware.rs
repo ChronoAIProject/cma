@@ -63,9 +63,15 @@ async fn attach_subject_inner(
         return next.run(request).await;
     }
     let mut observation = crate::request_observation::Resolution::start(&request, "ambient");
-    // Keep the resolver's state out of each diagnostic scope's future. The
-    // accumulated stack frames can overflow even on routes that skip resolution.
-    let resolution = Box::pin(auth.resolve_request(request.headers()));
+    let personal_agent_inventory = request.method() == axum::http::Method::GET
+        && request.uri().path() == "/api/v1/agents"
+        && !request.uri().query().is_some_and(|query| {
+            url::form_urlencoded::parse(query.as_bytes()).any(|(key, _)| key == "organization")
+        });
+    // Keep the resolver's state out of each diagnostic scope's future.
+    let resolution = Box::pin(
+        auth.resolve_request_with_proxy_inventory(request.headers(), personal_agent_inventory),
+    );
     let ((resolved, failure), retry_after) = super::identity_throttle::capture(
         layer2_core::diagnostic_context::DiagnosticContext::current()
             .with_phase("identity")

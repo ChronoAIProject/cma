@@ -4,6 +4,8 @@ use crate::auth::nyxid_proxy::ProxyGrant;
 use layer2_core::sandbox::store::PageRequest;
 use sha2::{Digest as _, Sha256};
 
+#[path = "nyxid_proxy_inventory_tests.rs"]
+mod inventory;
 #[path = "nyxid_proxy_sandbox_control_tests.rs"]
 mod sandbox_controls;
 

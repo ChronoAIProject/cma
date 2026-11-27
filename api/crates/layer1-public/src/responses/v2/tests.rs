@@ -167,18 +167,27 @@ async fn fixture_mode(
         Arc::new(layer2_core::account_deletion::AvailableAccounts),
     )
     .await
+    .0
 }
 pub(crate) async fn fixture_with_standing(
     standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
 ) -> Fixture {
-    fixture_with_events_and_standing(None, false, false, standing).await
+    fixture_with_events_and_standing(None, false, false, standing)
+        .await
+        .0
 }
 async fn fixture_with_events_and_standing(
     reader: Option<Arc<dyn layer2_core::sandbox::store::AgentResponseLogStore>>,
     paged_events: bool,
     shared: bool,
     standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
-) -> Fixture {
+) -> (
+    Fixture,
+    Option<(
+        Arc<layer2_core::sandbox::agent_observation::AgentObservationAuthority>,
+        Arc<shared_tests::Facts>,
+    )>,
+) {
     let (state, store) = fixtures::conversation_fixture().await;
     fixtures::insert_agent(
         &store,
@@ -196,14 +205,14 @@ async fn fixture_with_events_and_standing(
         .reads
         .with_resource_access(access.clone())
         .with_response_logs(reader);
-    let (reads, custody) = if shared {
+    let (reads, observer) = if shared {
         let agent = store
             .get_agent(&AgentId("agt_fixture".into()))
             .await
             .unwrap()
             .unwrap();
-        let (reads, custody, _) = shared_tests::install(reads, store.clone(), &agent);
-        (reads, Some(custody))
+        let (reads, custody, facts) = shared_tests::install(reads, store.clone(), &agent);
+        (reads, Some((custody, facts)))
     } else {
         (reads, None)
     };
@@ -211,7 +220,7 @@ async fn fixture_with_events_and_standing(
         super::ResponsesV2State::new(crate::agent_page::AgentPageOrigin::test(), commands, reads)
             .with_paged_events(paged_events),
     );
-    let router = match custody {
+    let router = match observer.as_ref().map(|(custody, _)| custody.clone()) {
         Some(custody) => router.layer(axum::middleware::from_fn(
             move |request: axum::extract::Request, next: axum::middleware::Next| {
                 let custody = custody.clone();
@@ -226,11 +235,14 @@ async fn fixture_with_events_and_standing(
         )),
         None => router,
     };
-    Fixture {
-        router,
-        store,
-        access,
-    }
+    (
+        Fixture {
+            router,
+            store,
+            access,
+        },
+        observer,
+    )
 }
 fn request(
     method: Method,

@@ -61,6 +61,7 @@ fn valid_sha256(value: &str) -> bool {
 
 #[derive(Debug)]
 pub(super) struct WorkerFailure {
+    pub(super) observation: Option<layer3_adapter::workspace_prepare_observation::Observation>,
     pub(super) class: &'static str,
     pub(super) detail: &'static str,
     pub(super) retryable: bool,
@@ -69,6 +70,7 @@ pub(super) struct WorkerFailure {
 impl WorkerFailure {
     pub(super) fn retryable(detail: &'static str) -> Self {
         Self {
+            observation: None,
             class: "workspace_dependency_unavailable",
             detail,
             retryable: true,
@@ -77,6 +79,7 @@ impl WorkerFailure {
 
     pub(super) fn terminal(class: &'static str, detail: &'static str) -> Self {
         Self {
+            observation: None,
             class,
             detail,
             retryable: false,

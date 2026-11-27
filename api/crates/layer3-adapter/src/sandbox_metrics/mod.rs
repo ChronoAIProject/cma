@@ -51,7 +51,8 @@ impl SourceMetric {
 #[serde(deny_unknown_fields)]
 pub struct Sample {
     pub at: f64,
-    pub value: f64,
+    /// The source can mark a series stale at this timestamp.
+    pub value: Option<f64>,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
