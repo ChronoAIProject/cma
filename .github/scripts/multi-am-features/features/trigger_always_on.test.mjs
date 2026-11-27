@@ -87,15 +87,15 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
         return {status: 422, body: {code: 'idempotency_key_reused'}};
       } else {
         assert.equal(options.key, createKey);
-        calls.push('replay-create');
+        calls.push('replay-create-' + am);
       }
       return {status: 201, body: initial};
     }
     if (path.endsWith('/start')) {
-      assert.equal(am, 'b');
+      if (!startKey) assert.equal(am, 'b');
       assert.deepEqual(options.body, {trust_confirmed_digest: 'fixture-trust'});
       if (startKey) assert.equal(options.key, startKey);
-      calls.push(startKey ? 'replay-start' : 'start');
+      calls.push(startKey ? 'replay-start-' + am : 'start');
       startKey = options.key;
       return {status: 202, body: admitted};
     }
@@ -164,9 +164,11 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
   }};
   const result = await triggerAlwaysOn({adapter, user, admin, outsider, browser,
     config: {owner_id: subject, public_origin: 'https://fixture.example'}});
-  assert.deepEqual(calls, ['enable-triggers', 'create', 'start', 'enable', 'replay-create', 'replay-start',
+  assert.deepEqual(calls, ['enable-triggers', 'create', 'start', 'enable',
+    'replay-create-a', 'replay-start-a', 'replay-create-b', 'replay-start-b',
     'owner-self-approval-refused', 'stale-owner-relinquishment-refused', 'foreign-relinquishment-refused',
-    'owner-relinquishment', 'owner-relinquishment-replay', 'replay-create', 'replay-start',
+    'owner-relinquishment', 'owner-relinquishment-replay',
+    'replay-create-a', 'replay-start-a', 'replay-create-b', 'replay-start-b',
     'stop-agent', 'delete-agent', 'retire-sandbox', 'retire-trigger',
     'restore-triggers']);
   assert.equal(result.owner_relinquishment.ingress, 'b');

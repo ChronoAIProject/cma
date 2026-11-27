@@ -97,19 +97,19 @@ async function exerciseTrigger({adapter, user, admin, outsider, config, browser}
           && provenance.details.trigger.launch_id === launch.id, 'trigger_agent_provenance_changed');
         const current = await readSandbox(am);
         check(current.id === sandbox.id && current.profile.always_on === desired, 'trigger_sandbox_always_on_not_visible');
+        const {body: denied} = await user.request(am, 'POST', admission, {
+          body: {...request, start_if_ready: true}, key: launchKey, allowed: [422],
+        });
+        check(denied.code === 'idempotency_key_reused', 'trigger_changed_payload_refusal_mismatch');
+        const {body: replay} = await user.request(am, 'POST', admission, {body: request, key: launchKey, allowed: [201]});
+        check(replay.id === launch.id && replay.revision_digest === launch.revision_digest,
+          'trigger_always_on_changed_original_admission');
+        const {body: startReplay} = await user.request(am, 'POST', launchPath + '/start', {
+          body: startBody, key: startKey, allowed: [202],
+        });
+        check(startReplay.id === launch.id && startReplay.revision_digest === launch.revision_digest,
+          'trigger_always_on_changed_start_receipt');
       }
-      const {body: denied} = await user.request(peer, 'POST', admission, {
-        body: {...request, start_if_ready: true}, key: launchKey, allowed: [422],
-      });
-      check(denied.code === 'idempotency_key_reused', 'trigger_changed_payload_refusal_mismatch');
-      const {body: replay} = await user.request(owner.am, 'POST', admission, {body: request, key: launchKey, allowed: [201]});
-      check(replay.id === launch.id && replay.revision_digest === launch.revision_digest,
-        'trigger_always_on_changed_original_admission');
-      const {body: startReplay} = await user.request(peer, 'POST', launchPath + '/start', {
-        body: startBody, key: startKey, allowed: [202],
-      });
-      check(startReplay.id === launch.id && startReplay.revision_digest === launch.revision_digest,
-        'trigger_always_on_changed_start_receipt');
     };
     const original = await readSandbox(owner.am);
     check(Number.isSafeInteger(original.revision) && original.profile.always_on !== true,
