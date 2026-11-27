@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -13,6 +13,7 @@ import { catalogSha256 } from '../lib/catalog.mjs';
 import { hash } from '../lib/checks.mjs';
 import { verifyLocalCohort } from '../lib/local-cohort.mjs';
 import { runLocalWorkload } from '../lib/local-workload.mjs';
+import { localHpaSelection, localLossSelection, runLocalResilience } from '../lib/local-resilience.mjs';
 
 const sourceSha = 'a'.repeat(40);
 const incarnation = 'b'.repeat(64);
@@ -232,4 +233,143 @@ test('the scale CLI records the blocked workload and protects the evidence direc
   ]);
   await assert.rejects(launch(), { code: 2 });
   assert.equal(await readFile(file, 'utf8'), retained);
+});
+
+
+async function boundHooks(t, config, implementation) {
+  const directory = await realpath(await mkdtemp(join(tmpdir(), 'local-resilience-')));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'hooks.mjs');
+  const contents = 'export const createLocalHooks = null;';
+  await writeFile(path, contents, { mode: 0o600 });
+  config.localResilience = { hookModule: path, hookSha256: hash(contents) };
+  const custody = [];
+  let captureRun;
+  const hooks = {
+    async preflight({ namespaceHash }) {
+      return { ready: true, namespaceHash, sourceHash: config.sourceHash, evidenceHash: hash('fixture') };
+    },
+    async beginCapture({ runHash }) { captureRun = runHash; custody.push('begin'); },
+    async finishCapture({ runHash }, { acceptedHashes }) {
+      assert.equal(runHash, captureRun);
+      custody.push('finish');
+      const captures = {};
+      const rows = {
+        admissions: { accepted: true, observedSequence: 2 },
+        authority: { fromSequence: 1, throughSequence: 6 },
+        durable: { observedSequence: 3, terminal: true },
+        receiver: { observedSequence: 4, terminal: true },
+      };
+      for (const [role, fields] of Object.entries(rows)) {
+        const ids = Array.from({ length: 100 }, (_, n) => `cmd_example_${n}`);
+        const records = acceptedHashes.map((commandHash) => ({
+          commandHash, commandId: ids.find((id) => hash(id) === commandHash), ownerHash: hash('owner'),
+          runtimeGeneration: 1, authorityEpoch: 1, ...fields,
+        }));
+        const path = join(directory, role + '.json');
+        const bytes = JSON.stringify({ schema: 'cma-local-outcome-capture-v1', role, runHash,
+          sourceHash: hash(role), complete: true, records });
+        await writeFile(path, bytes, { mode: 0o600 });
+        captures[role] = { path, sha256: hash(bytes) };
+      }
+      return captures;
+    },
+    async closeCapture() { custody.push('close-capture'); },
+    async close() { custody.push('close-hooks'); },
+    ...implementation,
+  };
+  return { custody, importer: async () => ({ createLocalHooks: async () => hooks }) };
+}
+
+function clusterResources(config, phase) {
+  const resource = (role, kind) => `${role}-${kind}`;
+  config.localResilience.hpa = Object.fromEntries(['am', 'eg'].map((role) =>
+    [role, Object.fromEntries(['deployment', 'hpa', 'pdb'].map((kind) => [kind, hash(resource(role, kind))]))]));
+  return async (file, args) => {
+    const stage = phase();
+    const count = stage === 'up' ? 4 : 2;
+    const scaleTime = stage === 'up' ? '2026-01-01T00:00:01Z'
+      : stage === 'down' ? '2026-01-01T00:00:02Z' : null;
+    const build = (kind, content) => ({ stdout: JSON.stringify({ items: ['am', 'eg'].map((role) => ({
+      metadata: { uid: resource(role, kind), name: resource(role, kind), generation: 1 },
+      ...content(role),
+    })) }) });
+    if (args.includes('deployments')) return build('deployment', (role) => ({
+      spec: { replicas: count, template: { metadata: { labels: { role } } } },
+      status: { observedGeneration: 1, replicas: count, updatedReplicas: count, readyReplicas: count },
+    }));
+    if (args.includes('horizontalpodautoscalers')) return build('hpa', (role) => ({
+      spec: { minReplicas: 2, maxReplicas: 5, scaleTargetRef: { kind: 'Deployment', name: resource(role, 'deployment') } },
+      status: { desiredReplicas: count, lastScaleTime: scaleTime, currentMetrics: [{}],
+        conditions: [{ type: 'ScalingActive', status: 'True' }] },
+    }));
+    if (args.includes('poddisruptionbudgets')) return build('pdb', (role) => ({
+      spec: { selector: { matchLabels: { role } } },
+      status: { observedGeneration: 1, expectedPods: count, desiredHealthy: 1 },
+    }));
+    return cluster(file, args);
+  };
+}
+
+test('HPA orchestration holds the cohort through both controller changes and reconciles independent captures', async (t) => {
+  const { config, env, seen } = await fixture(t, 100);
+  config.localWorkload = { durationMs: 60_000 };
+  let phase = 'initial';
+  const { custody, importer } = await boundHooks(t, config, {
+    async startStress() { phase = 'up'; return 'synthetic-stress'; },
+    async stopStress(receipt) { assert.equal(receipt, 'synthetic-stress'); phase = 'down'; },
+  });
+  const command = clusterResources(config, () => phase);
+  const result = await runLocalResilience(config, localHpaSelection, { env, command, importer, time: acceleratedClock() });
+  assert.equal(result.status, 'PASS', result.code);
+  assert.equal(result.scale.up.am.ready, 4);
+  assert.equal(result.scale.down.eg.ready, 2);
+  assert.equal(result.workload.reconciliation.commands, 20);
+  assert.equal(seen.openAtFinalBuild, 100);
+  assert.deepEqual(custody, ['begin', 'finish', 'close-capture', 'close-hooks']);
+});
+
+test('replica loss requires actual process death before recovery can be scored', async (t) => {
+  const config = configFor('http://127.0.0.1:31991', 2);
+  const ownerHash = hash('process');
+  const { custody, importer } = await boundHooks(t, config, {
+    async beginInFlight() { return { accepted: true, inFlight: true, leaseJustRenewed: true, ownerHash,
+      commandHash: hash('cmd_example_0'), evidenceHash: hash('admission') }; },
+    async injectLoss() { return { ownerHash, evidenceHash: hash('api') }; },
+    async observeDeath() { return { ownerHash, abrupt: true, processDeathObserved: false, evidenceHash: hash('runtime') }; },
+    async observeRecovery() { assert.fail('recovery cannot be scored before independent process death'); },
+    async confirmStream() {},
+    async cleanupFault() { custody.push('close-fault'); },
+  });
+  config.localResilience.lossMode = 'am_command';
+  const result = await runLocalResilience(config, localLossSelection, { command: cluster, importer });
+  assert.equal(result.code, 'abrupt_process_death_unproven');
+  assert.deepEqual(custody, ['begin', 'close-fault', 'close-capture', 'close-hooks']);
+});
+
+
+test('replica-loss orchestration binds death, recovery, and independent effects to the admitted turn', async (t) => {
+  const config = configFor('http://127.0.0.1:31991', 2);
+  const ownerHash = hash('process');
+  const commandId = 'cmd_example_0';
+  const { custody, importer } = await boundHooks(t, config, {
+    async beginInFlight() { return { accepted: true, inFlight: true, leaseJustRenewed: true, ownerHash,
+      commandHash: hash(commandId), evidenceHash: hash('admission') }; },
+    async injectLoss() { return { ownerHash, evidenceHash: hash('api') }; },
+    async observeDeath() { return { ownerHash, abrupt: true, processDeathObserved: true, evidenceHash: hash('runtime') }; },
+    async observeRecovery() { return { accounted: true, clientRecovered: true, sustainedSuccess: true }; },
+    async confirmStream() { return { liveEvent: true, durableContinuity: true }; },
+    async cleanupFault() { custody.push('close-fault'); },
+  });
+  config.localResilience.lossMode = 'am_stream';
+  const fetchImpl = async (url, options) => {
+    assert.equal(url, `${config.endpoints.am}/api/v2/commands/${commandId}`);
+    assert.equal(options.method, 'GET');
+    return new Response(JSON.stringify({ receipt: { command_id: commandId }, status: 'completed' }));
+  };
+  const result = await runLocalResilience(config, localLossSelection, { command: cluster, importer, fetchImpl });
+  assert.equal(result.status, 'PASS', result.code);
+  assert.equal(result.fault.commands, 1);
+  assert.equal(result.fault.observations, 1);
+  assert.deepEqual(custody, ['begin', 'finish', 'close-fault', 'close-capture', 'close-hooks']);
 });

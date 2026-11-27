@@ -83,7 +83,7 @@ function score(report) {
   'local_workload_rate_missed');
 }
 
-export async function runLocalWorkload(config, { time = clock, ...dependencies } = {}) {
+export async function runLocalWorkload(config, { time = clock, capture, onRunning, ...dependencies } = {}) {
   const report = { schema: 'cma-local-workload-v1', runHash: hash(randomUUID()),
     startedAt: null, finishedAt: null, status: 'BLOCKED', attempts: [], samples: [] };
   const terminals = new Map();
@@ -98,6 +98,8 @@ export async function runLocalWorkload(config, { time = clock, ...dependencies }
 
     await withLocalCohort(config, async ({ clients, signal, sourceSha, fixtureHash }) => {
       Object.assign(report, { sourceSha, fixtureHash, workloadHash: config.workloadHash, openStreams: clients.length });
+      const identity = { runHash: report.runHash, sourceSha, fixtureHash, workloadHash: config.workloadHash };
+      await capture?.begin(identity, { signal });
       report.startedAt = new Date().toISOString();
       const started = time.now();
       const now = () => time.now() - started;
@@ -138,9 +140,37 @@ export async function runLocalWorkload(config, { time = clock, ...dependencies }
           });
         }),
       });
-      await run.done;
-      signal.throwIfAborted();
-      score(report);
+      try {
+        await onRunning?.({
+          signal,
+          done: run.done,
+          status: () => ({
+            openStreams: signal.aborted ? 0 : clients.length,
+            failedRequests: report.samples.filter((sample) => !sample.ok && sample.code !== 'generator_overloaded').length,
+            droppedRequests: report.samples.filter((sample) => sample.code === 'generator_overloaded').length,
+            attemptedRequests: report.attempts.length,
+          }),
+        });
+        await run.done;
+        signal.throwIfAborted();
+        score(report);
+        if (capture) {
+          const ownersByCommand = new Map(report.attempts.filter(({ kind }) => kind === 'turn')
+            .map(({ commandHash, owner }) => [commandHash, owner]));
+          report.reconciliation = await capture.finish(identity, [...ownersByCommand.keys()], {
+            signal,
+            readCommand: (id) => {
+              const owner = ownersByCommand.get(hash(id));
+              check(owner !== undefined && idPattern.test(id), 'local_workload_capture_command_unknown');
+              return clients[owner].json(`/api/v2/commands/${id}`,
+                AbortSignal.any([signal, AbortSignal.timeout(readTimeoutMs)]));
+            },
+          });
+        }
+      } finally {
+        run.abort();
+        await run.done;
+      }
     }, { ...dependencies, onEvent: (owner, event) => {
       const kind = event.kind;
       if (['turn_completed', 'turn_failed', 'turn_cancelled'].includes(kind?.type)) {

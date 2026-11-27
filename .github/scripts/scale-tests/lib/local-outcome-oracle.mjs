@@ -170,7 +170,7 @@ export async function readLocalOutcomeOracle({ runHash, captures }, { readComman
 
 // Read-only driver for a real, isolated local fixture. The independent receiver
 // and durable captures must have been recorded before the oracle is invoked.
-export async function verifyLocalOutcomes(config, { fetchImpl, command } = {}) {
+export async function verifyLocalOutcomes(config, { fetchImpl, command, expectedWorkload, readCommand } = {}) {
   validateConfig(config);
   check(config.outcome?.origin === config.endpoints.am && config.outcome.cluster,
     'oracle_local_fixture_missing', true);
@@ -180,9 +180,9 @@ export async function verifyLocalOutcomes(config, { fetchImpl, command } = {}) {
   const http = new LocalHttp(config.outcome.origin, {
     bearer: process.env.CMA_LOCAL_ORACLE_BEARER, fetchImpl,
   });
-  const workload = config.outcome.workloadReport ? await readConnectedWorkload(config) : undefined;
+  const workload = expectedWorkload ?? (config.outcome.workloadReport ? await readConnectedWorkload(config) : undefined);
   return readLocalOutcomeOracle(config.outcome, {
     workload,
-    readCommand: async (id) => (await http.command(id)).value,
+    readCommand: readCommand ?? (async (id) => (await http.command(id)).value),
   });
 }
