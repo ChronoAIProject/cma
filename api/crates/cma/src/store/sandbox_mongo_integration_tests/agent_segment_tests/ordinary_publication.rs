@@ -9,6 +9,7 @@ use layer2_core::sandbox::agent_io::*;
 use layer2_core::sandbox::{AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder};
 use std::sync::Arc;
 mod settlement;
+mod settlement_campaign;
 mod support;
 mod uncertain;
 mod writer_caller_tests;

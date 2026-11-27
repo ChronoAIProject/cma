@@ -117,9 +117,7 @@ pub async fn verify_with_timeout(
     if &state.subject != owner {
         return Err(unavailable());
     }
-    let Some(tokens) = state.tokens.as_ref().filter(|tokens| {
-        tokens.expires_at > SystemTime::now() && !tokens.access_token.expose().trim().is_empty()
-    }) else {
+    let Some(tokens) = state.usable_tokens(SystemTime::now()) else {
         return Ok(Some(RequestAuth {
             binding: None,
             credential_source: layer2_core::resource_access::CredentialSource::Retained,
