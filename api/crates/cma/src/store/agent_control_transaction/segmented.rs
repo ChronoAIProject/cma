@@ -11,7 +11,8 @@ pub(super) async fn schedule(
     store: &MongoSandboxStore,
     operation: &ControlOperation,
 ) -> Result<AgentControlResult, AgentControlStoreError> {
-    for _ in 0..CONTROL_ATTEMPTS {
+    for attempt in 0..CONTROL_ATTEMPTS {
+        crate::store::contention::backoff(attempt).await;
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if is_transient(&error) => continue,
@@ -26,7 +27,6 @@ pub(super) async fn schedule(
             Ok(value) => value,
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
                 let _ = session.abort_guarded().await;
-                tokio::task::yield_now().await;
                 continue;
             }
             Err(error) => {

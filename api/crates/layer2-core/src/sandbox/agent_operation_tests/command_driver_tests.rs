@@ -129,6 +129,77 @@ impl Execution {
 }
 
 #[tokio::test]
+async fn peer_without_agent_ownership_leaves_queued_command_for_the_owner() {
+    use crate::agent_ownership::{
+        test_support::MemoryOwnershipStore, Member, OwnershipCoordinator, DEFAULT_MAX_OWNED_AGENTS,
+        PROTOCOL_VERSION,
+    };
+
+    let (store, agent, parent) = fixture(AgentStatus::Ready).await;
+    let admitted = admit(
+        &store,
+        &agent,
+        &parent,
+        "queued",
+        AgentCommand::message("one"),
+    )
+    .await;
+    let original_log = store.agent_log(&agent.id, 0, 20).await.unwrap();
+    let owners = Arc::new(MemoryOwnershipStore::default());
+    let member = |id: &str| Member {
+        instance_id: id.into(),
+        protocol: PROTOCOL_VERSION,
+        relay_address: format!("http://{id}.invalid"),
+        expires_at_ms: 0,
+        draining: false,
+        owned_agents: 0,
+        max_owned_agents: DEFAULT_MAX_OWNED_AGENTS,
+    };
+    let owner = OwnershipCoordinator::register(owners.clone(), member("owner"))
+        .await
+        .unwrap();
+    let _authority = owner.acquire(&agent.id).await.unwrap().unwrap();
+    let peer = OwnershipCoordinator::register(owners.client(), member("peer"))
+        .await
+        .unwrap();
+    let (sender, inputs) = recording_sender(Ok(()));
+    let operations = AgentOperationService::new(
+        store.clone(),
+        TestRuntimeRegistry::new(full_capabilities(), sender),
+    );
+    let execution = Execution::new(store.clone(), operations, Behavior::Execute);
+    let id = &admitted.receipt.envelope.command_id;
+
+    let delay = execution
+        .worker("peer")
+        .with_ownership(Some(peer))
+        .run_scheduled(id)
+        .await
+        .unwrap();
+    assert_eq!(delay, Duration::from_secs(15));
+    assert_eq!(execution.checks.load(Ordering::SeqCst), 1);
+    assert_eq!(execution.preparations.load(Ordering::SeqCst), 0);
+    assert_eq!(execution.attempts.load(Ordering::SeqCst), 0);
+    assert!(inputs.lock().unwrap().is_empty());
+    assert_eq!(store.get_command(id).await.unwrap(), Some(admitted.clone()));
+    assert_eq!(
+        store.agent_log(&agent.id, 0, 20).await.unwrap(),
+        original_log
+    );
+
+    execution
+        .worker("owner")
+        .with_ownership(Some(owner))
+        .run_scheduled(id)
+        .await
+        .unwrap();
+    let dispatched = store.get_command(id).await.unwrap().unwrap();
+    assert_eq!(dispatched.receipt, admitted.receipt);
+    assert!(dispatched.work.dispatch.is_some());
+    assert_eq!(inputs.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn concurrent_workers_and_restarts_send_exactly_once_and_recover_completion() {
     for ambiguous in [false, true] {
         let (store, agent, parent) = fixture(AgentStatus::Ready).await;
