@@ -13,7 +13,7 @@ for (const admin of [false, true]) {
       request,
     }, info) => {
       const settledAssets = async () => {
-        await expect(page.locator('.character-avatar').first()).toBeVisible();
+        await expect(page.locator('img.sidebar__mark')).not.toHaveJSProperty('naturalWidth', 0);
         await expect(page.locator('.character-avatar[data-status="loading"]')).toHaveCount(0);
         await page.evaluate(() => window.document.fonts.ready.then(() => undefined));
       };
