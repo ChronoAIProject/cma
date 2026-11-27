@@ -269,7 +269,7 @@ export function FileExplorer({
     if (!selected) return;
     const file = selected;
     void run(async (signal) => {
-      const reportInterruption = beginInterruptionNotice();
+      const finishInterruption = beginInterruptionNotice(signal);
       setDownloading(true);
       setNotice(undefined);
       try {
@@ -277,8 +277,8 @@ export function FileExplorer({
         signal.throwIfAborted();
         saveAgentDownload(blob, file.name);
       } finally {
+        finishInterruption();
         setDownloading(false);
-        if (signal.aborted) reportInterruption();
       }
     }, true);
   };

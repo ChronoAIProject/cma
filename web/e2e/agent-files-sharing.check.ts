@@ -407,7 +407,16 @@ for (const { access, unavailable } of [
       await page.route('**/api/v1/resource-access/agent/agt_contract', (route) =>
         route.fulfill(
           accessUnavailable
-            ? { status: 503, json: { code: 'temporarily_unavailable' } }
+            ? {
+                status: 503,
+                contentType: 'application/problem+json',
+                json: {
+                  type: 'about:blank',
+                  title: 'Unavailable',
+                  status: 503,
+                  code: 'temporarily_unavailable',
+                },
+              }
             : {
                 json: {
                   capabilities: [
@@ -557,6 +566,8 @@ for (const { access, unavailable } of [
         };
         await downloadDotfile();
         if (access === 'reader') {
+          const interrupted = 'Download was interrupted. Try downloading the file again.';
+          const notice = page.getByRole('main').getByRole('alert').filter({ hasText: interrupted });
           const holdDownload = hold();
           const holdAccess = hold();
           await page.route(
@@ -575,15 +586,18 @@ for (const { access, unavailable } of [
             await page.clock.fastForward(31_000);
             await expect(computer.getByText('Checking file access…')).toBeVisible();
             holdAccess.release();
-            const interrupted = 'Download was interrupted. Try downloading the file again.';
-            await expect(computer.getByRole('alert')).toContainText(interrupted);
+            await expect(notice).toBeVisible();
+            await expect(preview).toHaveValue(dotfile);
           } finally {
             holdAccess.release();
             holdDownload.release();
           }
           await downloadDotfile();
+          await expect(notice).toHaveCount(0);
           const heldResponse = hold();
           const lateResponse = hold();
+          const consoleAccess = hold();
+          const consoleRefreshStarted = hold();
           const downloadEvents: string[] = [];
           const recordDownload = (download: Download) =>
             downloadEvents.push(download.suggestedFilename());
@@ -597,8 +611,6 @@ for (const { access, unavailable } of [
             },
             { times: 1 },
           );
-          const interrupted = 'Download was interrupted. Try downloading the file again.';
-          const notice = page.getByRole('alert').filter({ hasText: interrupted });
           try {
             const [request] = await Promise.all([
               page.waitForRequest(downloadPath),
@@ -608,26 +620,61 @@ for (const { access, unavailable } of [
             const failed = page.waitForEvent('requestfailed', {
               predicate: (item) => item === request,
             });
+            // Console subscribed to foreground refresh before the shared panels mounted.
+            await page.route(
+              '**/api/v1/agents/agt_contract',
+              async (route) => {
+                consoleRefreshStarted.release();
+                await consoleAccess.promise;
+                await route.fallback();
+              },
+              { times: 1 },
+            );
             accessUnavailable = true;
             await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-            await expect(page.getByRole('heading', { name: 'Agent unavailable' })).toBeVisible();
-            await expect(computer).toHaveCount(0);
+            await consoleRefreshStarted.promise;
+            await expect(
+              computer.getByText('Checking file access. Your unsaved changes are kept.'),
+            ).toBeVisible();
+            await expect(computer.getByRole('navigation', { name: 'File explorer' })).toHaveCount(
+              0,
+            );
             expect((await failed).failure()?.errorText).toContain('ABORTED');
+            const unavailableHeading = page.getByRole('heading', { name: 'Agent unavailable' });
+            await expect(unavailableHeading).toHaveCount(0);
+            await expect(notice).toBeVisible();
+            expect(downloadEvents).toEqual([]);
+            consoleAccess.release();
+            await expect(unavailableHeading).toBeVisible();
+            await expect(computer).toHaveCount(0);
             await expect(notice).toBeVisible();
             await expect(notice.getByRole('button', { name: 'Dismiss' })).toBeEnabled();
             expect(downloadEvents).toEqual([]);
             accessUnavailable = false;
             await page.getByRole('button', { name: 'Check access again', exact: true }).click();
+            await expect(filesTab).toBeVisible();
+            await expect(filesTab).toHaveAttribute('aria-selected', 'true');
+            await expect(notice).toBeVisible();
+            await computer.getByRole('button', { name: 'Close computer', exact: true }).click();
+            await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+            await filesTab.click();
             await computer.getByRole('checkbox', { name: 'Show hidden' }).check();
             await computer.getByRole('button', { name: '.dockerignore', exact: true }).click();
             await expect(preview).toHaveValue(dotfile);
+            await expect(preview).toHaveAttribute('readonly', '');
             await downloadDotfile();
             await expect(notice).toHaveCount(0);
             heldResponse.release();
             await lateResponse.promise;
             await expect(notice).toHaveCount(0);
             expect(downloadEvents).toHaveLength(1);
+            await computer.getByRole('button', { name: 'Close computer', exact: true }).click();
+            await expect(notice).toHaveCount(0);
+            await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+            await filesTab.click();
+            await expect(downloadButton).toBeEnabled();
           } finally {
+            consoleAccess.release();
             heldResponse.release();
             page.off('download', recordDownload);
           }
@@ -642,6 +689,7 @@ for (const { access, unavailable } of [
           const denied =
             'File access is no longer available. Ask the Agent owner to check your access.';
           await expect(page.getByRole('alert').filter({ hasText: denied })).toBeVisible();
+          await expect(notice).toHaveCount(0);
           await expect(preview).toHaveCount(0);
           expect(unexpectedDownloads).toEqual([]);
         }
