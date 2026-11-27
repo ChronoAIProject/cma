@@ -3,6 +3,40 @@ use layer2_core::sandbox::store::SandboxStoreError;
 
 #[tokio::test]
 #[ignore = "requires a disposable replica set"]
+async fn legacy_response_format_probe_allows_a_newer_revision() {
+    let (client, name) = database("response_legacy_revision").await;
+    let db = client.database(&name);
+    schema::migrate(&db).await.unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let mut authorized = agent();
+    authorized.id.0 = "agt_legacy_response_fixture".into();
+    authorized.worktree_id.0 = "wkt_legacy_response_fixture".into();
+    authorized.creation_key = "legacy-response-fixture".into();
+    let mut current = authorized.clone();
+    current.revision += 1;
+    store.create_agent(current.clone()).await.unwrap();
+    assert_eq!(
+        store.get_agent(&authorized.id).await.unwrap(),
+        Some(current)
+    );
+    assert!(store
+        .agent_output_reader(&authorized, Some(3))
+        .await
+        .unwrap()
+        .is_none());
+
+    let (indexed, _) = segmented(&store, 2).await;
+    let mut mismatched = indexed.clone();
+    mismatched.title = Some("Different captured title".into());
+    assert!(matches!(
+        store.agent_output_reader(&mismatched, Some(3)).await,
+        Err(SandboxStoreError::SequenceConflict)
+    ));
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable replica set"]
 async fn compatibility_vectors_refuse_total_bounds_while_requested_pages_succeed() {
     let (client, name) = database("compat_bounds").await;
     let db = client.database(&name);

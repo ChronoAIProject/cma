@@ -42,11 +42,15 @@ pub(super) async fn open<'a>(
         .await
         .map_err(driver)?
         .ok_or(SandboxStoreError::NotFound)?;
-    if crate::store::agents::read_agent(&row)? != *agent {
-        return Err(SandboxStoreError::SequenceConflict);
-    }
+    let snapshot_agent = crate::store::agents::read_agent(&row)?;
     if read_format(&row)?.is_none() {
+        // The legacy reader independently checks lineage and reads the
+        // authorized prefix. A newer legacy revision does not affect the
+        // format decision; indexed reads require an exact captured Agent.
         return Ok(None);
+    }
+    if snapshot_agent != *agent {
+        return Err(SandboxStoreError::SequenceConflict);
     }
     let captured = capture::capture(store, agent, &mut session, capture::CaptureMode::Snapshot)
         .await
