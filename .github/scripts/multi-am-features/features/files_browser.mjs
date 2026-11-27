@@ -164,6 +164,10 @@ async function deleteFiles({page, dialog, api, ingress, path, directory, file, r
     const {status, body} = await read(am, neighbor, [200, 404]);
     return status === 404 && body?.code === 'file_not_found';
   };
+  const intact = async am => {
+    const {body} = await read(am, neighbor, [200, 404]);
+    return body?.path === neighbor && body.sha256 === hash(neighborText) && body.content_base64 === neighborBody;
+  };
   check((await Promise.all([ingress, peer].map(absent))).every(Boolean), 'browser_files_delete_neighbor_present');
   await withRestoration(async () => {
     const {body} = await api.request(peer, 'POST', path, {direct: true,
@@ -182,15 +186,14 @@ async function deleteFiles({page, dialog, api, ingress, path, directory, file, r
         'browser_files_delete_changed_unselected_sibling');
     }
 
+    check((await Promise.all([ingress, peer].map(intact))).every(Boolean), 'browser_files_delete_neighbor_baseline_changed');
     await confirmDelete('Delete folder', directory, true);
     await button('Refresh files').click({timeout});
     await button(directory).waitFor({state: 'hidden', timeout});
     for (const am of [ingress, peer]) {
       check(!await findRootEntry(api, path, am, directory), 'browser_files_deleted_directory_still_visible');
       check((await read(am, sibling, [404])).body?.code === 'file_not_found', 'browser_files_recursive_delete_left_child');
-      const {body} = await read(am, neighbor, [200, 404]);
-      check(body?.path === neighbor && body.sha256 === hash(neighborText) && body.content_base64 === neighborBody,
-        'browser_files_recursive_delete_changed_neighbor');
+      check(await intact(am), 'browser_files_recursive_delete_changed_neighbor');
     }
   }, async () => {
     const {status, body} = await api.request(peer, 'DELETE', `${path}?path=${encodeURIComponent(neighbor)}&recursive=false`,
