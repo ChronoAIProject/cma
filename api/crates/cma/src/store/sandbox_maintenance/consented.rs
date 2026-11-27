@@ -211,7 +211,7 @@ async fn apply(
             event: None,
             outcome,
             refusal: None,
-            unproven_logs: Vec::new(),
+            next_legacy_proof: None,
         },
         access,
     };
@@ -424,7 +424,7 @@ async fn apply(
             event: Some(event),
             outcome: SandboxMaintenanceOutcome::Scheduled,
             refusal: None,
-            unproven_logs: Vec::new(),
+            next_legacy_proof: None,
         },
         access: record,
     })

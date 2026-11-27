@@ -34,8 +34,6 @@ struct Progress {
     through: u64,
     bytes: usize,
     tail_hash: [u8; HASH_BYTES],
-    tail_bytes: usize,
-    tail_appended_at: String,
     state: Preparation,
     integrity: Option<[u8; HASH_BYTES]>,
 }
@@ -49,8 +47,6 @@ impl Progress {
             through: 0,
             bytes: 0,
             tail_hash: [0; HASH_BYTES],
-            tail_bytes: 0,
-            tail_appended_at: String::new(),
             state: Preparation::Pending,
             integrity,
         }
@@ -71,14 +67,7 @@ impl Progress {
             || proof.through > proof.head
             || proof.head > PHYSICAL_AGENT_LOG_ENTRIES
             || proof.bytes > PHYSICAL_AGENT_LOG_BYTES
-            || proof.tail_bytes > PAGE_BYTES
-            || proof.tail_bytes > proof.bytes
-            || proof.tail_appended_at.len() > 128
-            || (proof.through == 0
-                && (proof.bytes != 0
-                    || proof.tail_hash != [0; HASH_BYTES]
-                    || !proof.tail_appended_at.is_empty()))
-            || (proof.through > 0 && proof.tail_bytes == 0)
+            || (proof.through == 0 && (proof.bytes != 0 || proof.tail_hash != [0; HASH_BYTES]))
             || (proof.state == Preparation::Certified
                 && (proof.through == 0 || proof.through != proof.head))
         {
@@ -112,14 +101,26 @@ pub(in crate::store) async fn current(
         Preparation::ByteLimit => return Ok(Proof::Budget),
         Preparation::Certified => {}
     }
-    // The complete structural audit is pinned to this exact immutable log
-    // head and Agent revision. Validate that head in the deciding transaction
-    // without transferring or decoding any event payloads.
-    tip::require_latest(store, agent, &progress, session).await?;
+    tip::require_tip(store, agent, session).await?;
+    // The structural audit pins the exact content as well as the position.
+    // The same revision may still have locally damaged persisted BSON.
+    let mut anchor_bytes = PAGE_BYTES;
+    let Some(entry) = anchor(
+        store,
+        agent,
+        progress.through,
+        progress.tail_hash,
+        &mut anchor_bytes,
+        session,
+    )
+    .await?
+    else {
+        return Err(invalid().into());
+    };
     Ok(Proof::Latest(SandboxAgentLogActivity {
-        agent_id: agent.id.clone(),
-        seq: progress.through,
-        appended_at: progress.tail_appended_at,
+        agent_id: entry.agent_id,
+        seq: entry.seq,
+        appended_at: entry.appended_at,
     }))
 }
 
@@ -409,13 +410,8 @@ async fn read_page(
             return Err(invalid().into());
         }
         let entry = decode(raw, agent, progress.through + 1)?;
-        if entry.appended_at.len() > 128 {
-            return Err(invalid().into());
-        }
         progress.through = entry.seq;
         progress.tail_hash = hash_raw(raw.as_bytes());
-        progress.tail_bytes = *size;
-        progress.tail_appended_at = entry.appended_at;
         progress.bytes = progress
             .bytes
             .checked_add(*size)

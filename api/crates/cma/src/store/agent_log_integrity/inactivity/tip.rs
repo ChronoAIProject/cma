@@ -1,54 +1,5 @@
-//! Validate the structural certificate against the current immutable log tip.
-use crate::store::sandbox_mongo::DOCUMENT_SCHEMA_VERSION;
-
+//! Validate the indexed log tip without loading its event payload.
 use super::*;
-
-pub(super) async fn require_latest(
-    store: &MongoSandboxStore,
-    agent: &Agent,
-    proof: &Progress,
-    session: &mut ClientSession,
-) -> Result<(), TransactionLogError> {
-    require_tip(store, agent, session).await?;
-    let seq = signed(proof.through, "certified inactivity sequence")
-        .map_err(SandboxStoreError::Corrupt)?;
-    let mut cursor = store
-        .agent_log
-        .aggregate([
-            doc! { "$match": {
-                "_id": log_id(&agent.id, proof.through),
-                "agent_id": agent.id.as_str(),
-                "seq": seq,
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            }},
-            doc! { "$project": {
-                "_id": 0,
-                "bytes": { "$toLong": { "$bsonSize": "$$ROOT" } },
-                "matches": {"$and": [
-                    {"$eq": ["$record.agent_id", {"$literal": agent.id.as_str()}]},
-                    {"$eq": ["$record.seq", seq]},
-                    {"$eq": ["$record.appended_at", {"$literal": &proof.tail_appended_at}]},
-                ]},
-            }},
-        ])
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?;
-    if !cursor
-        .advance(session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-    {
-        return Err(invalid().into());
-    }
-    let row = cursor
-        .deserialize_current()
-        .map_err(TransactionLogError::Driver)?;
-    if row.get_bool("matches").ok() != Some(true) || row_bytes(&row)? != proof.tail_bytes {
-        return Err(invalid().into());
-    }
-    Ok(())
-}
 
 pub(super) async fn require_tip(
     store: &MongoSandboxStore,

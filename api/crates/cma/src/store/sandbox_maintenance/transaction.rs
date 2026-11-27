@@ -33,7 +33,7 @@ pub(super) struct MaintenanceReceipt {
     pub(super) event: Option<SandboxEvent>,
     pub(super) outcome: SandboxMaintenanceOutcome,
     pub(super) refusal: Option<Refusal>,
-    pub(super) unproven_logs: Vec<Agent>,
+    pub(super) next_legacy_proof: Option<Box<Agent>>,
 }
 
 impl MaintenanceReceipt {
@@ -43,7 +43,7 @@ impl MaintenanceReceipt {
             event: None,
             outcome: SandboxMaintenanceOutcome::NotEligible,
             refusal: Some(refusal),
-            unproven_logs: Vec::new(),
+            next_legacy_proof: None,
         }
     }
 }
@@ -156,7 +156,7 @@ pub(super) async fn apply_with_sources(
                 event: None,
                 outcome: SandboxMaintenanceOutcome::AlreadyScheduled,
                 refusal: None,
-                unproven_logs: Vec::new(),
+                next_legacy_proof: None,
             });
         }
     }
@@ -192,7 +192,7 @@ pub(super) async fn apply_with_sources(
                         Ok(heads) => certified = Some(heads),
                         Err(unproven) => {
                             let mut receipt = MaintenanceReceipt::refused(current, unproven.reason);
-                            receipt.unproven_logs = unproven.agents;
+                            receipt.next_legacy_proof = unproven.next_agent;
                             return Ok(receipt);
                         }
                     }
@@ -314,7 +314,7 @@ pub(super) async fn apply_with_sources(
                 event: None,
                 outcome,
                 refusal: inactivity_refusal,
-                unproven_logs: Vec::new(),
+                next_legacy_proof: None,
             });
         }
         SandboxMaintenanceApplication::Persist {
@@ -456,6 +456,6 @@ pub(super) async fn apply_with_sources(
         event: Some(event),
         outcome: SandboxMaintenanceOutcome::Scheduled,
         refusal: None,
-        unproven_logs: Vec::new(),
+        next_legacy_proof: None,
     })
 }

@@ -97,8 +97,12 @@ impl SandboxMaintenanceStore for MongoSandboxStore {
             && request.cause == layer2_core::sandbox::store::InactivityPauseCause::Inactivity;
         let result = schedule_receipt(self, MaintenanceRequest::Inactivity(request)).await;
         if prepare {
-            if let Ok(receipt) = &result {
-                evidence::certified_legacy::prepare_next(self, &receipt.unproven_logs).await;
+            if let Some(agent) = result
+                .as_ref()
+                .ok()
+                .and_then(|receipt| receipt.next_legacy_proof.as_deref())
+            {
+                evidence::certified_legacy::prepare_next(self, agent).await;
             }
         }
         let result = result.map(|receipt| receipt.outcome);

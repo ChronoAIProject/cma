@@ -260,11 +260,13 @@ async fn two_certified_legacy_heads_above_the_payload_budget_can_pause() {
             .count(),
         2
     );
-    assert!(
-        !commands
+    assert_eq!(
+        commands
             .iter()
-            .any(|command| command.contains_key("find")
+            .filter(|command| command.contains_key("find")
                 && command.get_document("projection").is_err())
+            .count(),
+        2
     );
     assert_unchanged(&f.store, &sandbox).await;
     assert_eq!(
@@ -279,5 +281,55 @@ async fn two_certified_legacy_heads_above_the_payload_budget_can_pause() {
             .len(),
         1
     );
+    f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn certified_legacy_inactivity_refuses_same_length_tail_damage() {
+    use crate::store::agent_log::log_id;
+    use layer2_core::sandbox::store::SandboxStoreError;
+
+    let f = TestStore::open().await;
+    let (sandbox, agent) = seed(&f, "sbx_dormant_corrupt_tail", 257, |entries| {
+        entries[256].kind = AgentLogKind::AgentMessage {
+            content: "before".into(),
+        };
+    })
+    .await;
+    for _ in 0..3 {
+        assert_eq!(
+            automatic(&f, &sandbox).await,
+            SandboxMaintenanceOutcome::NotEligible
+        );
+    }
+    assert_eq!(refusal(&f, &sandbox).await, None);
+    let changed = f
+        .store
+        .agent_log
+        .update_one(
+            doc! { "_id": log_id(&agent.id, agent.conversation.last_seq) },
+            doc! { "$set": { "record.kind.content": "tamper" } },
+        )
+        .await
+        .unwrap();
+    assert_eq!(changed.modified_count, 1);
+    let request = f.request(&sandbox);
+    assert!(matches!(
+        f.store
+            .preview_inactivity_pause_with_reason(request.clone())
+            .await,
+        Err(SandboxStoreError::Corrupt(_))
+    ));
+    assert!(matches!(
+        f.store
+            .schedule_inactivity_pause(SandboxInactivityPauseRequest {
+                expected_policy_revision: None,
+                ..request
+            })
+            .await,
+        Err(SandboxStoreError::Corrupt(_))
+    ));
+    assert_unchanged(&f.store, &sandbox).await;
     f.cleanup().await;
 }
