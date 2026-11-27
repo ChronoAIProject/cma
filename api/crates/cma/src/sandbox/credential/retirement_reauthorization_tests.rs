@@ -90,6 +90,9 @@ async fn missing_owner_token_uses_exact_issuance_scope_on_revoke() {
     assert!(provider.revoked.lock().unwrap().is_empty());
     *tokens.0.lock().unwrap() = Some(admitted);
     controller.revoke(&row, id).await.unwrap();
-    assert_eq!(*provider.revoked.lock().unwrap(), [id.clone()]);
+    assert_eq!(
+        provider.revoked.lock().unwrap().as_slice(),
+        std::slice::from_ref(id)
+    );
     server.abort();
 }
