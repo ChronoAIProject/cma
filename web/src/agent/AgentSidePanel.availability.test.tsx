@@ -814,7 +814,7 @@ it('replaces the pending Files tree when revalidation finds a new boot of the sa
   render(panel(agentClient({ files: { ...fileClient, list } })));
   await act(async () => {});
   expect(list).toHaveBeenCalledTimes(1);
-  const oldSignal = list.mock.calls[0][2]?.signal;
+  const oldSignal = list.mock.calls[0]?.[2]?.signal;
 
   await act(() => vi.advanceTimersByTimeAsync(1000));
   expect(fileClient.environment).toHaveBeenCalledTimes(2);
