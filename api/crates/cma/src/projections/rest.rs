@@ -1,8 +1,35 @@
 use super::AgentProjectionServices;
-use axum::Router;
-use layer1_public::rest::{agent_router, AgentRoutesState};
+use axum::{
+    extract::Request,
+    http::{header, HeaderValue},
+    middleware::Next,
+    response::Response,
+    routing::any,
+    Router,
+};
+use layer1_public::rest::{agent_router, AgentRoutesState, HttpProblem};
 use layer2_core::OperationStore;
 use std::sync::Arc;
+
+pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
+    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", <https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
+);
+
+pub(crate) fn rest_router(resource_routes: Router) -> Router {
+    layer1_public::rest::router()
+        .merge(resource_routes)
+        .route("/api/v1", any(|| async { HttpProblem::NotFound }))
+        .route("/api/v1/", any(|| async { HttpProblem::NotFound }))
+        .route("/api/v1/{*path}", any(|| async { HttpProblem::NotFound }))
+        .method_not_allowed_fallback(|| async { HttpProblem::MethodNotAllowed })
+        .layer(axum::middleware::from_fn(rest_links))
+}
+
+pub(crate) async fn rest_links(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response.headers_mut().append(header::LINK, REST_LINKS);
+    response
+}
 
 impl AgentProjectionServices {
     #[cfg(feature = "qualification-hooks")]
