@@ -4,16 +4,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {API} from '../cma/core.mjs';
 import {requestPacer} from '../pacing.mjs';
-import {sharedIngressReceipt, verifyRecoveredReceipt} from './conversation_ingress.mjs';
+import {observeHeldCommand, sharedIngressReceipt, verifyRecoveredReceipt} from './conversation_ingress.mjs';
 
-function recovered({replayedCommand = 'fixture-command', epoch = 3, effects = 1} = {}) {
+function recovered({replayedCommand = 'fixture-command', epoch = 3, effects = 1, changedReceipt = false} = {}) {
   const agentId = 'fixture-agent', commandId = 'fixture-command', responseId = 'fixture-response';
   const owner = {am: 'b', epoch: 3, pod_uid: 'surviving-pod', agent_id: agentId};
+  const receipt = {agent_id: agentId, command_id: commandId, response_id: responseId,
+    admitted_at: '2026-11-26T00:00:00Z', agent_order: 5, event_cursor: 9};
   const turn = {caseId: 'fixture-case', input: 'synthetic message',
+    controls: {response: {receipt}, target: {turn_sequence: 7}},
     stream: {commandId, responseId, timing: {request_id: 'original-request'}}};
   const completed = {id: responseId, conversation: {id: agentId}, status: 'completed'};
-  const command = {status: 'completed', failure: null,
-    receipt: {agent_id: agentId, command_id: commandId, response_id: responseId}};
+  const command = {status: 'completed', failure: null, turn_sequence: 7,
+    receipt: changedReceipt ? {...receipt, event_cursor: 10} : receipt};
   const read = [], closed = [];
   const api = {
     rawRequest: async (am, method, route) => {
@@ -56,6 +59,19 @@ test('recovery replay fails on a second command, another owner epoch or a second
     await assert.rejects(verifyRecoveredReceipt(context), error);
     assert.deepEqual(context.closed, ['a']);
   }
+});
+
+test('the held command has the original receipt until the survivor can settle it', async () => {
+  const {agentId, turn} = recovered();
+  const held = {status: 'in_progress', failure: null, turn_sequence: 7, receipt: turn.controls.response.receipt};
+  const api = {rawRequest: async (am, method, path) => {
+    assert.deepEqual([am, method, path], ['b', 'GET', '/api/v2/commands/fixture-command']);
+    return {body: held};
+  }};
+  await observeHeldCommand({api, agentId, ingress: 'b', turn});
+  held.status = 'completed';
+  await assert.rejects(observeHeldCommand({api, agentId, ingress: 'b', turn}), /held_command_settled_or_replaced/);
+  await assert.rejects(verifyRecoveredReceipt(recovered({changedReceipt: true})), /recovered_command_receipt_unbound/);
 });
 
 async function fixture(t, {wrongRun = false, wrongReplay = false, recoveredRun = false} = {}) {
@@ -146,7 +162,8 @@ async function fixture(t, {wrongRun = false, wrongReplay = false, recoveredRun =
     },
   };
   return {api, adapter, record: {agentId}, calls, failures, outcomes, released: () => released,
-    priorTurn: recoveredRun ? {caseId: armed.caseId, input, stream: {commandId, responseId,
+    priorTurn: recoveredRun ? {caseId: armed.caseId, input,
+      controls: {response: {receipt: command.receipt}, target: {turn_sequence: command.turn_sequence}}, stream: {commandId, responseId,
       timing: {request_id: 'original-request'}}} : undefined,
     completed: recoveredRun ? readResponse() : undefined,
     recordState: async (stage, row) => { outcomes.push({stage, ...row}); },

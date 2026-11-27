@@ -4,6 +4,19 @@ import {assertOracle, assertOwner, assertResponse, check, hash, id, other, poll,
 import {withRestoration} from '../failure.mjs';
 import {requestPacer} from '../pacing.mjs';
 
+export async function observeHeldCommand({api, agentId, ingress, turn}) {
+  const {commandId, responseId} = turn.stream;
+  const {receipt} = turn.controls.response;
+  const turnSequence = turn.controls.target.turn_sequence;
+  check(id(commandId) && id(responseId) && receipt?.agent_id === agentId && receipt.command_id === commandId
+    && receipt.response_id === responseId && Number.isSafeInteger(receipt.agent_order)
+    && Number.isSafeInteger(receipt.event_cursor) && Number.isFinite(Date.parse(receipt.admitted_at))
+    && Number.isSafeInteger(turnSequence), 'held_command_receipt_unbound');
+  const {body} = await api.rawRequest(ingress, 'GET', '/api/v2/commands/' + commandId);
+  check(['queued', 'in_progress', 'waiting_action'].includes(body?.status) && body.failure === null && equal(body.receipt, receipt)
+    && body.turn_sequence === turnSequence, 'held_command_settled_or_replaced');
+}
+
 export async function verifyRecoveredReceipt({api, adapter, agentId, owner, turn, completed}) {
   const ingress = other(owner.am);
   const {commandId, responseId} = turn.stream;
@@ -13,7 +26,9 @@ export async function verifyRecoveredReceipt({api, adapter, agentId, owner, turn
   const read = async (am, path) => (await api.rawRequest(am, 'GET', path)).body;
   const command = await read(owner.am, commandPath);
   check(command?.status === 'completed' && command.failure === null && command.receipt?.agent_id === agentId
-    && command.receipt.command_id === commandId && command.receipt.response_id === responseId,
+    && command.receipt.command_id === commandId && command.receipt.response_id === responseId
+    && equal(command.receipt, turn.controls.response.receipt)
+    && command.turn_sequence === turn.controls.target.turn_sequence,
   'recovered_command_receipt_unbound');
   const replay = await api.send(ingress, agentId, turn.input, turn.caseId);
   try {
@@ -36,7 +51,7 @@ export async function verifyRecoveredReceipt({api, adapter, agentId, owner, turn
     const request = replay.timing?.request_id;
     check(typeof request === 'string' && request.trim().length > 0 && request !== turn.stream.timing?.request_id,
       'recovered_replay_request_identity_unbound');
-    return {ingress, command_sha256: hash(commandId), request_sha256: hash(request)};
+    return {ingress, command_sha256: hash(commandId), request_sha256: hash(request), retained_admission_receipt: true};
   } finally {
     replay.abort();
     await replay.done;

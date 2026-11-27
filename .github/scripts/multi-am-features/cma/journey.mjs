@@ -5,7 +5,7 @@ import {randomUUID} from 'node:crypto';
 import {performance} from 'node:perf_hooks';
 import {API, check, hash, id, normalizeConfig, runtimeBindings, assertRuntimeBindings, poll, other, assertOwner, assertRecovery, assertResponse, assertOracle, observeServingDuringRestart, observeTwoAmServingHold, awaitInitialIdle, wait, terminal, lineage, safeError} from './core.mjs';
 import {NonOwnerRouter} from '../routing.mjs';
-import {verifyRecoveredReceipt} from '../features/conversation_ingress.mjs';
+import {observeHeldCommand, verifyRecoveredReceipt} from '../features/conversation_ingress.mjs';
 import {desktopFrame, closeDesktop} from './desktop.mjs';
 import {cleanupFixture} from './cleanup.mjs';
 import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
@@ -233,9 +233,11 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       phase: 'before_restart', turn});
     api.routingEnabled = false; // Survivor reads exercise the ordinary takeover path.
     const before = assertOwner(await adapter.ownerOf({agentId: record.agentId}), record.agentId);
+    const survivor = other(before.am);
+    await observeHeldCommand({api, agentId: record.agentId, ingress: before.am, turn});
+    await observeHeldCommand({api, agentId: record.agentId, ingress: survivor, turn});
     const kill = await adapter.killAm({agentId: record.agentId, owner: before}); killedAm = before.am;
     check(kill.killed_am === before.am && kill.actual_container_exited === true, 'actual_owner_exit_unproven');
-    const survivor = other(before.am);
     const after = await poll(async () => {
       // The real public response read on the survivor triggers the normal recovery path.
       await readResponse(survivor, record, turn.stream.responseId);
@@ -243,6 +245,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       return current===null?null:assertOwner(current,record.agentId);
     }, value => value!==null && value.am === survivor && value.epoch > before.epoch, {timeout: 150000, code: 'owner_recovery_timeout'});
     assertRecovery(before, after, record.agentId);
+    await observeHeldCommand({api, agentId: record.agentId, ingress: survivor, turn});
     const held = await observeOracle(turn.caseId);
     check(held.request_count === 1 && held.completed_effect_count === 0 && held.active_streams === 1, 'runtime_turn_not_preserved');
     const completed = await settleReply(record, survivor, turn);
