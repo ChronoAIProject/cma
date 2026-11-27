@@ -80,8 +80,15 @@ impl Harness {
         Self::with_request(request, true).await
     }
     pub(super) async fn with_request(
+        request: crate::ingress::launch::LaunchRequest,
+        media: bool,
+    ) -> Self {
+        Self::with_http_request(request, media, None).await
+    }
+    pub(super) async fn with_http_request(
         mut request: crate::ingress::launch::LaunchRequest,
         media: bool,
+        http: Option<(&crate::tools::fake_cma::FakeCma, AgentCaller)>,
     ) -> Self {
         let database = Fixture::new().await;
         if media {
@@ -94,6 +101,27 @@ impl Harness {
             .open(&fixture::keys(), fixture::NOW)
             .unwrap()
             .payload;
+        if let Some((backend, caller)) = http {
+            let records =
+                crate::records::RecordClient::new(&backend.base_url, "cma-service").unwrap();
+            let channel = Arc::get_mut(&mut request.channel).unwrap();
+            channel.pointer.record_url = records
+                .record_url(channel.pointer.record_id.as_str())
+                .unwrap()
+                .to_string();
+            channel.id = channel.pointer.seal_id(&keys).unwrap();
+            channel.agent_key_hash = caller.key_hash;
+            event.channel_id = channel.id.clone();
+            backend.seed(
+                channel.pointer.record_id.as_str(),
+                &channel.definition.owner.subject,
+                cmaeg_core::seal::seal_blob(
+                    &keys,
+                    channel.definition.to_blob_json().to_string().as_bytes(),
+                )
+                .unwrap(),
+            );
+        }
         event.expires_at = now + 900;
         event.conversation_id =
             ConversationId::derive(&keys, &request.channel.id, 1, &event.partition_key);
@@ -119,7 +147,9 @@ impl Harness {
         };
         let nodes = vec![database.node(21).await, database.node(22).await];
         let plan = nodes[0].plans().admit(&candidate).await.unwrap();
-        Arc::get_mut(&mut request.channel).unwrap().agent_key_hash = [9; 32];
+        if http.is_none() {
+            Arc::get_mut(&mut request.channel).unwrap().agent_key_hash = [9; 32];
+        }
         let current = Arc::new(Current {
             channel: Mutex::new(request.channel),
             calls: AtomicUsize::new(0),

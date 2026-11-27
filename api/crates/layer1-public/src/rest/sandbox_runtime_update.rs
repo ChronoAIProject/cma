@@ -123,9 +123,11 @@ impl SandboxRuntimeUpdateView {
         let blocked_reason = if image_origin == RuntimeUpdateImageOrigin::UserSelected {
             Some("This Sandbox uses a custom image. Automatic CMA runtime updates do not replace custom images.".into())
         } else if image_origin == RuntimeUpdateImageOrigin::Unknown {
-            Some("The original source of this Sandbox image is unknown. Managed runtime updates require a confirmed origin.".into())
+            Some("The original source of this Sandbox image is unknown. Managed runtime updates require a confirmed origin. If you used the platform's default image, contact the deployment operator to check this Sandbox's image origin and update eligibility.".into())
         } else if !same_home {
             Some("Runtime updates require a retained managed home and its original runtime identity.".into())
+        } else if sandbox.requires_retained_runtime_transition() {
+            Some("Runtime updates for this retained startup policy require a deployment operator grant.".into())
         } else if pending.is_some_and(|request| request.failure.is_none()) {
             Some(
                 if state == SandboxRuntimeUpdateStatus::Queued {

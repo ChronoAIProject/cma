@@ -110,6 +110,7 @@ export type QuotedContextSummary = Output<typeof QuotedContextSummarySchema>;
 export const ChannelActivitySchema = object({
   quoted_context: optional(nullable(QuotedContextSummarySchema)),
   event_id: text,
+  source_refusal: optional(nullable(text)),
   /** Payload category only; absent on historical receipts. */
   kind: optional(nullable(text)),
   /** CloudEvent type; event data is never included. */

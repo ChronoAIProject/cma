@@ -5,6 +5,13 @@ use layer2_core::sandbox_metrics::{
 use layer3_adapter::sandbox_metrics::{PhysicalSeries, Selection, SourceMetric};
 use std::collections::{BTreeMap, BTreeSet};
 
+#[derive(Default)]
+struct SourceRead {
+    samples: Vec<PhysicalSeries>,
+    ambiguous_sandboxes: BTreeSet<String>,
+    complete: bool,
+}
+
 #[cfg(test)]
 pub(crate) async fn collect_fixture(
     store: Arc<ReportingStore>,
@@ -12,23 +19,60 @@ pub(crate) async fn collect_fixture(
     ids: &[String],
     range: Range,
 ) -> Result<()> {
+    let worker = fixture_worker(store.clone(), source);
     let holder = "measured-usage-fixture";
     if !store.lease("rollups", holder, 70).await? {
         return Err(MetricsError::Busy);
     }
-    let worker = MetricsWorkers {
-        measured: None,
-        store: store.clone(),
-        source: Some(source),
-        native: None,
-        cluster: "fixture".into(),
-        enabled: true,
-    };
     let collected = worker
         .collect_page("rollups", holder, ids, range, false)
         .await;
     store.release("rollups", holder).await?;
     collected
+}
+
+#[cfg(test)]
+pub(crate) async fn replay_fixture(
+    store: Arc<ReportingStore>,
+    source: MetricsClient,
+    range: Range,
+) -> Result<()> {
+    let holder = "measured-replay-fixture";
+    let key = "replay";
+    if !store.lease(key, holder, 70).await? {
+        return Err(MetricsError::Busy);
+    }
+    let collected = async {
+        store
+            .save_progress(
+                key,
+                holder,
+                &crate::store::usage_reports::Progress {
+                    from: range.from,
+                    to: range.to,
+                    after: None,
+                },
+            )
+            .await?;
+        fixture_worker(store.clone(), source)
+            .collect(holder, true)
+            .await
+    }
+    .await;
+    store.release(key, holder).await?;
+    collected
+}
+
+#[cfg(test)]
+fn fixture_worker(store: Arc<ReportingStore>, source: MetricsClient) -> MetricsWorkers {
+    MetricsWorkers {
+        measured: None,
+        store,
+        source: Some(source),
+        native: None,
+        cluster: "fixture".into(),
+        enabled: true,
+    }
 }
 
 impl MetricsWorkers {
@@ -106,17 +150,27 @@ impl MetricsWorkers {
         let cutoff = range.to;
         let mapping = self.store.mapping_revision().await?;
         let bindings = self.store.bindings(ids, range).await?;
-        let (samples, complete) = self
-            .raw(
+        let source = self
+            .read_source(
                 &bindings,
                 Range {
                     from: from.saturating_sub(120),
                     to: (range.to + 120).min(now),
                 },
+                false,
             )
             .await?;
-        if !complete {
+        if !source.complete {
             return Err(MetricsError::Unavailable);
+        }
+        if !source.ambiguous_sandboxes.is_empty() {
+            tracing::info!(
+                task = key,
+                ambiguous_sandboxes = source.ambiguous_sandboxes.len(),
+                range_from = from,
+                range_to = cutoff,
+                "sandbox metric source names were ambiguous"
+            );
         }
         let previous_live = if include_live {
             self.store.live_readings(ids).await?
@@ -126,6 +180,11 @@ impl MetricsWorkers {
         let mut rollups = Vec::new();
         let mut readings = Vec::new();
         for id in ids {
+            // A name reused across label sets has no unique physical source.
+            // Leave its existing observations in place and advance the page.
+            if source.ambiguous_sandboxes.contains(id) {
+                continue;
+            }
             let own: Vec<_> = bindings
                 .iter()
                 .filter(|b| &b.sandbox_id == id)
@@ -137,7 +196,7 @@ impl MetricsWorkers {
             if own.iter().any(|b| b.owner_subject != owner) {
                 continue;
             }
-            let minutes = aggregate::aggregate(&own, &samples, Range { from, to: cutoff })?;
+            let minutes = aggregate::aggregate(&own, &source.samples, Range { from, to: cutoff })?;
             let mut chunks = BTreeMap::<u64, Vec<_>>::new();
             for minute in minutes {
                 chunks
@@ -156,7 +215,7 @@ impl MetricsWorkers {
                     chunk: ((hour % 86_400) / 3600) as u16,
                     mapping_revision: mapping,
                     cutoff: cutoff.min(hour + 3600),
-                    source_complete: complete,
+                    source_complete: true,
                     minutes,
                 });
             }
@@ -165,7 +224,7 @@ impl MetricsWorkers {
             }
             let mut live = aggregate::totals(&aggregate::aggregate(
                 &own,
-                &samples,
+                &source.samples,
                 Range {
                     from: now.saturating_sub(120),
                     to: now,
@@ -202,10 +261,32 @@ impl MetricsWorkers {
         bindings: &[Binding],
         range: Range,
     ) -> Result<(Vec<PhysicalSeries>, bool)> {
+        let read = self.read_source(bindings, range, false).await?;
+        Ok((
+            read.samples,
+            read.complete && read.ambiguous_sandboxes.is_empty(),
+        ))
+    }
+
+    pub(super) async fn raw_for_measured_evidence(
+        &self,
+        bindings: &[Binding],
+        range: Range,
+    ) -> Result<(Vec<PhysicalSeries>, bool)> {
+        let read = self.read_source(bindings, range, true).await?;
+        Ok((read.samples, read.complete))
+    }
+
+    async fn read_source(
+        &self,
+        bindings: &[Binding],
+        range: Range,
+        strict: bool,
+    ) -> Result<SourceRead> {
         let Some(source) = &self.source else {
-            return Ok((Vec::new(), false));
+            return Ok(SourceRead::default());
         };
-        let mut groups = BTreeMap::<(String, String, SourceMetric), BTreeSet<String>>::new();
+        let mut groups = BTreeMap::<_, BTreeMap<String, BTreeSet<&str>>>::new();
         for b in bindings {
             for metric in SourceMetric::ALL {
                 if (metric.is_pvc() && b.kind != BindingKind::Home)
@@ -222,19 +303,23 @@ impl MetricsWorkers {
                     groups
                         .entry((b.cluster.clone(), b.namespace.clone(), metric))
                         .or_default()
-                        .insert(name.clone());
+                        .entry(name.clone())
+                        .or_default()
+                        .insert(b.sandbox_id.as_str());
                 }
             }
         }
-        let mut result = Vec::new();
-        let mut complete = true;
+        let mut result = SourceRead {
+            complete: true,
+            ..SourceRead::default()
+        };
         for ((cluster, namespace, metric), names) in groups {
-            for names in names.into_iter().collect::<Vec<_>>().chunks(100) {
+            for batch in names.keys().cloned().collect::<Vec<_>>().chunks(100) {
                 let selection = Selection {
                     cluster: cluster.clone(),
                     namespace: namespace.clone(),
                     metric,
-                    names: names.to_vec(),
+                    names: batch.to_vec(),
                     from: range.from,
                     to: range.to,
                 };
@@ -254,16 +339,34 @@ impl MetricsWorkers {
                 };
                 match tokio::time::timeout(
                     Duration::from_secs(self.store.budgets.source_seconds),
-                    source.export(&selection),
+                    source.export_reporting(&selection),
                 )
                 .await
                 {
-                    Ok(Ok(values)) => result.extend(values),
-                    _ => complete = false,
+                    Ok(Ok(export)) => {
+                        let refuses_evidence = strict
+                            && (!export.ambiguous_names.is_empty()
+                                || export.series.iter().any(|series| {
+                                    series.samples.iter().any(|sample| sample.value.is_none())
+                                }));
+                        if refuses_evidence {
+                            result.complete = false;
+                        } else {
+                            for name in export.ambiguous_names {
+                                if let Some(ids) = names.get(&name) {
+                                    result
+                                        .ambiguous_sandboxes
+                                        .extend(ids.iter().map(|id| (*id).to_owned()));
+                                }
+                            }
+                            result.samples.extend(export.series);
+                        }
+                    }
+                    _ => result.complete = false,
                 }
                 self.store.release(slot, &holder).await?;
             }
         }
-        Ok((result, complete))
+        Ok(result)
     }
 }

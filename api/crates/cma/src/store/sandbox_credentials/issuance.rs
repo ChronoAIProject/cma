@@ -10,6 +10,7 @@ use mongodb::ClientSession;
 
 pub(in crate::store) const COLLECTION: &str = "sandbox_credential_issuance";
 pub(in crate::store) mod legacy;
+pub(super) mod retirement;
 mod transactions;
 
 fn document(intent: &CredentialIssuance) -> Result<Document, CredentialCustodyError> {

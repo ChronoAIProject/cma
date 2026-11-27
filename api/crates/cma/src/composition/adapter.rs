@@ -197,9 +197,10 @@ pub(super) async fn production_adapter(
             None => transport,
         };
         let transport = register_owner_control(config, "native", transport, &mut owner_controls);
-        backends.agent_sandbox = Some(Arc::new(layer3_adapter::hosted::AgentSandboxBackend::new(
-            client, transport,
-        )));
+        backends.agent_sandbox = Some(Arc::new(
+            layer3_adapter::hosted::AgentSandboxBackend::new(client, transport)
+                .with_single_exchange_file_reads(config.features.agent_file_single_exchange),
+        ));
     }
     let mut home_store: Option<Arc<dyn layer3_adapter::HomeVolumeStore>> = None;
     let mut local_homes = None;

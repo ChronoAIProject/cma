@@ -18,6 +18,8 @@ use tokio::sync::{broadcast, Mutex};
 mod batch;
 #[path = "history_backfill.rs"]
 mod history_backfill;
+#[path = "receipt.rs"]
+mod receipt;
 #[path = "refresh.rs"]
 mod refresh;
 #[cfg(test)]
@@ -162,36 +164,9 @@ impl ActivityStore {
         activity: &cmaeg_core::activity::Activity,
         received: time::OffsetDateTime,
     ) -> Result<(), RecordError> {
-        let _guard = self.writes[stripe(record)].lock().await;
-        let mut day = received.unix_timestamp().div_euclid(86400);
-        if day < today() - RETENTION_DAYS + 1 {
-            return Err(malformed());
-        }
         let received_at = received
             .format(&time::format_description::well_known::Rfc3339)
             .map_err(invalid)?;
-        // Source retries may cross midnight. Find the retained first receipt
-        // before choosing a daily bucket, so replay never looks newly received.
-        let retained = try_join_all(
-            (0..RETENTION_DAYS).map(|offset| self.read(owner, record, today() - offset)),
-        )
-        .await?;
-        let legacy = retained
-            .into_iter()
-            .flatten()
-            .find(|(bucket, _)| {
-                bucket
-                    .items
-                    .iter()
-                    .any(|row| row.event_id == activity.event_id.as_str())
-            })
-            .and_then(|(bucket, _)| {
-                day = bucket.day;
-                bucket
-                    .items
-                    .into_iter()
-                    .find(|row| row.event_id == activity.event_id.as_str())
-            });
         let mut actor = activity.actor.clone();
         actor.id = bounded(&actor.id, 512);
         actor.display_name = actor.display_name.map(|v| bounded(&v, 256));
@@ -210,55 +185,19 @@ impl ActivityStore {
         };
         let row = ChannelActivity {
             quoted_context: super::model::QuotedContextSummary::from_activity(activity),
-            event_id: activity.event_id.to_string(),
             kind: Some(kind.into()),
             event_type,
             source_occurred_at,
-            source: activity.source.clone(),
-            actor,
-            conversation,
-            occurred_at: activity.occurred_at.clone(),
-            received_at,
-            consumers: Vec::new(),
+            ..ChannelActivity::metadata(
+                activity.event_id.to_string(),
+                activity.source.clone(),
+                actor,
+                conversation,
+                activity.occurred_at.clone(),
+                received_at,
+            )
         };
-        if self.history.capturing() {
-            if let Some(original) = legacy {
-                self.history
-                    .import_legacy(owner, record, original, (day + RETENTION_DAYS) * 86_400_000)
-                    .await
-                    .map_err(history_error)?;
-            } else {
-                self.history
-                    .received(owner, record, row.clone())
-                    .await
-                    .map_err(history_error)?;
-            }
-        }
-        self.modify_inner(owner, record, day, move |bucket| {
-            if let Some(existing) = bucket.items.iter_mut().find(|r| r.event_id == row.event_id) {
-                for consumer in &row.consumers {
-                    if !existing
-                        .consumers
-                        .iter()
-                        .any(|c| c.consumer_id == consumer.consumer_id)
-                    {
-                        existing.consumers.push(consumer.clone());
-                    }
-                }
-            } else {
-                bucket.items.push(row.clone());
-            }
-        })
-        .await?;
-        let mut contexts = self.contexts.lock().unwrap();
-        if contexts.len() >= 4096 {
-            contexts.pop_first();
-        }
-        contexts.insert(
-            (record.into(), activity.event_id.to_string()),
-            (owner.into(), day),
-        );
-        Ok(())
+        self.persist_receipt(owner, record, row, received).await
     }
 
     pub(crate) async fn observe(&self, record: &str, event: &str, change: &Change) {

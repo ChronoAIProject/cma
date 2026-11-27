@@ -7,6 +7,7 @@ import stat
 
 from migration_catalog import STAGES
 from migration_membership_validation import compare, require, validate
+from migration_release_probe import STAGE_ROLES
 
 
 def read_bounded(path):
@@ -31,10 +32,8 @@ def begin(campaign, stage, source, image):
     require([item['receipt']['stage'] for item in history] == list(STAGES[:STAGES.index(stage)]),
             'membership stages skipped or repeated')
     require(source == campaign.active_reader.get('source'), 'source differs from booted reader')
-    same_artifact_stage = {'new-write': 'new-read-old-write', 'old-read-new-write': 'old-write'}.get(stage)
-    if same_artifact_stage:
-        previous = next(item['receipt'] for item in history if item['receipt']['stage'] == same_artifact_stage)
-        require((source, image) == (previous['source'], previous['image']), 'reader artifact changed')
+    require(campaign.reader_artifacts[STAGE_ROLES[stage]] == {'source': source, 'image': image},
+            'reader artifact changed')
     return history
 
 

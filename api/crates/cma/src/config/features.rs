@@ -62,6 +62,8 @@ pub(crate) struct FeatureFlags {
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
     pub native_retirement_capture_enabled: bool,
+    pub credential_retirement_receipts: bool,
+    pub workspace_prepare_observations: bool,
     pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
@@ -112,6 +114,7 @@ pub(crate) struct FeatureFlags {
     pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
     pub agent_file_read_timings: bool,
+    pub agent_file_single_exchange: bool,
     pub bounded_response_reads: bool,
     pub active_log_proofs: bool,
     pub bounded_transcript_reads: bool,
@@ -214,6 +217,8 @@ impl FeatureFlags {
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
             native_retirement_capture_enabled: flag(lookup, gates::RETIREMENT_CAPTURE)?,
+            credential_retirement_receipts: flag(lookup, gates::CREDENTIAL_RETIREMENT_RECEIPTS)?,
+            workspace_prepare_observations: flag(lookup, gates::WORKSPACE_PREPARE_OBSERVATIONS)?,
             reviewed_sandbox_retirement_enabled: flag(
                 lookup,
                 "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",
@@ -265,6 +270,7 @@ impl FeatureFlags {
                 "CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED",
             )?,
             agent_file_read_timings: flag(lookup, "CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED")?,
+            agent_file_single_exchange: flag(lookup, "CHRONO_AGENT_FILE_SINGLE_EXCHANGE_ENABLED")?,
             sandbox_agent_projection: flag(lookup, "CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED")?,
             sandbox_profile_readability: flag(
                 lookup,
@@ -415,7 +421,6 @@ impl FeatureFlags {
         Ok(flags)
     }
 }
-
 #[cfg(test)]
 #[path = "admission_control_tests.rs"]
 mod admission_control_tests;
@@ -429,6 +434,7 @@ mod close_retry_tests;
 mod discovery_tests;
 #[cfg(test)]
 mod document_maintenance_tests;
+mod launch_admission;
 #[cfg(test)]
 mod live_buffer_tests;
 #[cfg(test)]
@@ -485,14 +491,10 @@ mod usage_cursors;
 #[cfg(test)]
 mod work_retry_tests;
 
-mod launch_admission;
-
+#[cfg(test)]
+mod bot_effect_tests;
 #[cfg(test)]
 mod pending_homes_tests;
-
 #[cfg(test)]
 #[path = "features/visitor_defaults_tests.rs"]
 mod visitor_defaults_tests;
-
-#[cfg(test)]
-mod bot_effect_tests;

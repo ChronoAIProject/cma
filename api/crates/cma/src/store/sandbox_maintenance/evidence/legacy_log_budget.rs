@@ -2,7 +2,7 @@
 
 use layer2_core::sandbox::{
     store::{SandboxStoreError, MAX_SANDBOX_LIFECYCLE_AGENTS},
-    Agent,
+    Agent, InactivityPauseRefusal as Refusal,
 };
 use mongodb::{bson::doc, options::Hint, ClientSession};
 
@@ -17,6 +17,15 @@ pub(in crate::store::sandbox_maintenance) async fn within(
     sources: Option<&CapturedActivities>,
     session: &mut ClientSession,
 ) -> Result<bool, ApplyError> {
+    Ok(refusal(store, agents, sources, session).await?.is_none())
+}
+
+pub(in crate::store::sandbox_maintenance) async fn refusal(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    sources: Option<&CapturedActivities>,
+    session: &mut ClientSession,
+) -> Result<Option<Refusal>, ApplyError> {
     let mut ids = Vec::new();
     let mut expected_rows = 0_u64;
     for agent in agents.iter().filter(|agent| agent.status.is_live()) {
@@ -27,16 +36,16 @@ pub(in crate::store::sandbox_maintenance) async fn within(
         // must reach the existing format refusal before any legacy head cap.
         capture_segmented(store, agent, session).await?;
         if ids.len() == MAX_SANDBOX_LIFECYCLE_AGENTS {
-            return Ok(exceeded("legacy_agents"));
+            return Ok(exceeded("legacy_agents", Refusal::LegacyLogAgentCount));
         }
         expected_rows = expected_rows.saturating_add(agent.conversation.last_seq);
         ids.push(agent.id.as_str());
     }
     if expected_rows > MAX_LEGACY_ROWS as u64 {
-        return Ok(exceeded("expected_rows"));
+        return Ok(exceeded("expected_rows", Refusal::LegacyLogExpectedRows));
     }
     if ids.is_empty() {
-        return Ok(true);
+        return Ok(None);
     }
     // Count retained rows too. A stale head cannot bound an integrity scan.
     // The shared transaction keeps this input bound through the actual proof.
@@ -56,7 +65,7 @@ pub(in crate::store::sandbox_maintenance) async fn within(
         .await
         .map_err(ApplyError::Driver)?;
     if !totals.advance(session).await.map_err(ApplyError::Driver)? {
-        return Ok(true);
+        return Ok(None);
     }
     let row = totals.deserialize_current().map_err(ApplyError::Driver)?;
     let total = |field| {
@@ -72,16 +81,16 @@ pub(in crate::store::sandbox_maintenance) async fn within(
     let rows = total("rows")?;
     let bytes = total("bytes")?;
     if rows > MAX_LEGACY_ROWS {
-        return Ok(exceeded("retained_rows"));
+        return Ok(exceeded("retained_rows", Refusal::LegacyLogRetainedRows));
     }
     if bytes > MAX_LEGACY_BYTES {
-        return Ok(exceeded("bytes"));
+        return Ok(exceeded("bytes", Refusal::LegacyLogBytes));
     }
-    Ok(true)
+    Ok(None)
 }
 
-fn exceeded(reason: &'static str) -> bool {
+fn exceeded(reason: &'static str, refusal: Refusal) -> Option<Refusal> {
     metrics::counter!("cma_auto_pause_legacy_log_budget_total", "reason" => reason).increment(1);
     tracing::debug!(parent: None, reason, "legacy Agent log budget prevents inactivity pause");
-    false
+    Some(refusal)
 }

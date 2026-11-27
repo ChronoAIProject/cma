@@ -95,6 +95,12 @@ pub struct SubjectAuthState {
 }
 
 impl SubjectAuthState {
+    pub(crate) fn usable_tokens(&self, now: SystemTime) -> Option<&DurableSubjectTokens> {
+        self.tokens.as_ref().filter(|tokens| {
+            tokens.expires_at > now && !tokens.access_token.expose().trim().is_empty()
+        })
+    }
+
     pub fn new(
         subject: SubjectId,
         authorization: Authorization,

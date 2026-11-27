@@ -35,6 +35,8 @@ pub enum Begin {
 pub trait Backend: Send + Sync {
     fn deployment(&self) -> &str;
 
+    fn terminal_settlement_enabled(&self) -> bool;
+
     async fn lookup(
         &self,
         identity: &Identity<'_>,

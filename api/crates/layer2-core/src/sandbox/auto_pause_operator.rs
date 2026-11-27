@@ -1,10 +1,10 @@
 //! Bounded operator decisions share ordinary inactivity evidence and fences.
 use std::{sync::Arc, time::Duration};
 
-use super::{store::*, OperatorError};
+use super::{store::*, InactivityPauseRefusal, OperatorError};
 use crate::{
     ActivityAction, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget, Caller,
-    Capability, DetailKey, PlatformSettingsService,
+    Capability, DetailKey, PlatformSettingsService, SandboxId,
 };
 
 pub const AUTO_PAUSE_BATCH_LIMIT: u16 = 25;
@@ -13,6 +13,7 @@ pub const AUTO_PAUSE_MAX_BATCH: u16 = 100;
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct AutoPauseBatch {
     pub candidates: u64,
+    pub refusals: Vec<AutoPauseSandboxRefusal>,
     pub scheduled: u64,
     pub already_satisfied: u64,
     pub skipped: u64,
@@ -21,6 +22,12 @@ pub struct AutoPauseBatch {
     pub next: Option<String>,
     pub policy_revision: u64,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AutoPauseSandboxRefusal {
+    pub sandbox_id: SandboxId,
+    pub reason: InactivityPauseRefusal,
 }
 
 pub struct SandboxAutoPauseService {
@@ -135,30 +142,56 @@ impl SandboxAutoPauseService {
                     self.maintenance
                         .schedule_inactivity_pause(request.clone())
                         .await
+                        .map(|outcome| InactivityPausePreview {
+                            outcome,
+                            refusal: None,
+                        })
                 } else {
                     self.maintenance
-                        .preview_inactivity_pause(request.clone())
+                        .preview_inactivity_pause_with_reason(request.clone())
                         .await
                 };
                 if let Some(intent) = intent {
                     let status = match &result {
-                        Ok(outcome) => outcome_code(*outcome),
+                        Ok(result) => outcome_code(result.outcome),
                         Err(_) => "uncertain",
                     };
                     self.audit(caller, &request, status, Some(intent)).await?;
                 }
-                result.map_err(|_| unavailable())
+                Ok::<_, OperatorError>(result)
             };
             let result = tokio::time::timeout_at(deadline, attempt).await;
             match result {
-                Ok(Ok(outcome)) => match outcome {
+                Ok(Ok(Ok(result))) => match result.outcome {
                     SandboxMaintenanceOutcome::Scheduled if pause_now => batch.scheduled += 1,
                     SandboxMaintenanceOutcome::Scheduled => batch.candidates += 1,
                     SandboxMaintenanceOutcome::AlreadyScheduled => batch.already_satisfied += 1,
-                    SandboxMaintenanceOutcome::NotEligible => batch.skipped += 1,
+                    SandboxMaintenanceOutcome::NotEligible => {
+                        batch.skipped += 1;
+                        if !pause_now {
+                            batch.refusals.push(AutoPauseSandboxRefusal {
+                                sandbox_id: id.clone(),
+                                reason: result
+                                    .refusal
+                                    .unwrap_or(InactivityPauseRefusal::EvidenceUnavailable),
+                            });
+                        }
+                    }
                 },
-                _ => {
+                failure => {
                     batch.failed += 1;
+                    if !pause_now {
+                        let reason = match failure {
+                            Ok(Ok(Err(
+                                SandboxStoreError::Corrupt(_) | SandboxStoreError::SequenceConflict,
+                            ))) => InactivityPauseRefusal::InvalidStoredEvidence,
+                            _ => InactivityPauseRefusal::EvidenceUnavailable,
+                        };
+                        batch.refusals.push(AutoPauseSandboxRefusal {
+                            sandbox_id: id,
+                            reason,
+                        });
+                    }
                     batch.next = Some(cursor.unwrap_or_default());
                     metrics::counter!("cma_auto_pause_operator_batches_total", "mode" => if pause_now { "pause" } else { "preview" }, "outcome" => "partial").increment(1);
                     return Ok(batch);

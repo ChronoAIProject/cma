@@ -105,6 +105,7 @@ impl AuthState {
     pub(super) async fn proxy_request(
         &self,
         headers: &HeaderMap,
+        personal_inventory: bool,
     ) -> Result<Option<RequestAuth>, StoreError> {
         let token = match jwt::identity_token(headers) {
             Ok(Some(token)) => token,
@@ -136,26 +137,47 @@ impl AuthState {
         let subject = SubjectId::new(identity.subject.clone());
         let authorization =
             crate::permissions::capabilities_from_permissions(identity.permissions.iter().cloned());
+        let assertion_only = || RequestAuth {
+            binding: None,
+            credential_source: CredentialSource::Independent {
+                expires_at: Some(identity.expires_at),
+            },
+            subject: subject.clone(),
+            authorization: authorization.clone(),
+            profile: identity.profile,
+            delegated_credential: None,
+        };
         let Some(mut owner) = self.store.subject(&subject).await? else {
-            // Resource reads and ordinary synchronous APIs do not require CMA
-            // enrollment. Managed runtime creation has its existing setup gate.
-            return Ok(Some(RequestAuth {
-                binding: None,
-                credential_source: CredentialSource::Independent {
-                    expires_at: Some(identity.expires_at),
-                },
-                subject,
-                authorization,
-                profile: identity.profile,
-                delegated_credential: None,
-            }));
+            // Renewable CMA credentials are optional for synchronous resources.
+            return Ok(Some(assertion_only()));
         };
         if owner.subject != subject {
             return Err(StoreError::Malformed("proxy owner mismatch".into()));
         }
         refresh::refresh_if_needed(self, &mut owner).await?;
-        let mut request =
-            cookie_authorization::request_for_cookie(self, &subject, owner.clone()).await?;
+        let owner_incarnation = owner.incarnation.clone();
+        let mut request = if personal_inventory {
+            let retained = cookie_authorization::verify_with_timeout(
+                self,
+                &subject,
+                owner,
+                cookie_authorization::PROVIDER_VERIFICATION_TIMEOUT,
+            )
+            .await?;
+            match retained {
+                Some(request) if request.delegated_credential.is_some() => request,
+                _ => {
+                    // The signed subject can read its own inventory when retained custody
+                    // is absent or explicitly rejected. Dependency errors still propagate.
+                    tracing::debug!(
+                        "Using signed identity for personal inventory without retained custody"
+                    );
+                    return Ok(Some(assertion_only()));
+                }
+            }
+        } else {
+            cookie_authorization::request_for_cookie(self, &subject, owner).await?
+        };
         request.authorization = intersect(&authorization, &request.authorization);
         let grant = ProxyGrant {
             id: ProxyGrant::identity(
@@ -169,7 +191,7 @@ impl AuthState {
             assertion_id: identity.jti,
             subject,
             authorization: request.authorization.clone(),
-            owner_incarnation: owner.incarnation,
+            owner_incarnation,
         };
         grant.validate()?;
         // Persist the ceiling once; a replay cannot replace its owner incarnation

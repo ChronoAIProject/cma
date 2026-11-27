@@ -28,7 +28,7 @@ pub fn validate_prepared_agent_open_ready(
     mutation: &AgentWorkMutation,
 ) -> Result<(), SandboxStoreError> {
     super::agent_work_validation::validate_common(current, tree, actual_last_seq, mutation)?;
-    validate_position(current, tree)?;
+    validate_position(current, tree, false)?;
     validate_histories(current, &mutation.agent, &mutation.appended_at)?;
     let next = &mutation.agent;
     let [add, home] = current.work.receipts.as_slice() else {

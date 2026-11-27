@@ -1,3 +1,5 @@
+import { autoPausePreview, pauseIdleNow, pauseIdleNowRequest } from './auto-pause.js';
+export type { AutoPausePreview, PauseIdleNow } from './auto-pause.js';
 import {
   pendingHomesReconciliation,
   reconcilePendingHomesRequest,
@@ -52,7 +54,6 @@ import {
   integer,
   nullable,
   object,
-  optional,
   text,
   type Output,
 } from '../schema.js';
@@ -100,26 +101,6 @@ export interface ActivityListOptions extends PageOptions {
   readonly excludeSuccessfulReads?: boolean;
 }
 
-const autoPauseBatch = {
-  failed: optional(integer),
-  next: optional(nullable(text)),
-  enabled: optional(boolean),
-  policy_revision: optional(integer),
-};
-const autoPausePreview = object({ candidates: integer, ...autoPauseBatch });
-export type AutoPausePreview = Output<typeof autoPausePreview>;
-const pauseIdleNowRequest = object({
-  confirmed: boolean,
-  cursor: optional(text),
-  limit: optional(integer),
-});
-const pauseIdleNow = object({
-  scheduled: integer,
-  already_satisfied: integer,
-  skipped: integer,
-  ...autoPauseBatch,
-});
-export type PauseIdleNow = Output<typeof pauseIdleNow>;
 const setSandboxAlwaysOnRequest = object({ always_on: boolean, expected_revision: integer });
 export type SetSandboxAlwaysOnRequest = Output<typeof setSandboxAlwaysOnRequest>;
 

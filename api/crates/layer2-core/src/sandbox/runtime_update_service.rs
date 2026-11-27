@@ -87,7 +87,10 @@ impl SandboxRuntimeUpdateService {
 
     /// `can_update` against a release the caller already captured.
     pub fn can_update_to(&self, sandbox: &Sandbox, latest: &str) -> bool {
-        if !sandbox.has_managed_runtime_image() || scoped_explicit_retry(sandbox) {
+        if !sandbox.has_managed_runtime_image()
+            || sandbox.requires_retained_runtime_transition()
+            || scoped_explicit_retry(sandbox)
+        {
             return false;
         }
         if sandbox.unpublished_recovery_candidate() {
@@ -126,6 +129,7 @@ impl SandboxRuntimeUpdateService {
     /// Whether a retry of the pinned target may recover onto the observed release.
     pub fn retry_uses_latest(&self, sandbox: &Sandbox, pinned: &str, latest: &str) -> bool {
         sandbox.has_managed_runtime_image()
+            && !sandbox.requires_retained_runtime_transition()
             && !scoped_explicit_retry(sandbox)
             && self.recovery.is_some()
             && sandbox.unpublished_recovery_candidate()
@@ -269,7 +273,7 @@ impl SandboxRuntimeUpdateService {
             let lane = sandbox
                 .managed_runtime_lane()
                 .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
-            if scoped_explicit_retry(&sandbox) {
+            if sandbox.requires_retained_runtime_transition() || scoped_explicit_retry(&sandbox) {
                 return Err(SandboxRuntimeUpdateError::NotAvailable);
             }
             let latest = lane.version_in(&released).unwrap_or_default();

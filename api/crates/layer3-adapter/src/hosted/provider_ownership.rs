@@ -37,21 +37,29 @@ impl ReceiverLease {
         agent: &AgentSlot,
     ) -> crate::Result<()> {
         let authority = current_authority().ok_or_else(rejected)?;
-        // This is a borrowed capability for one Open, not an authority cache.
-        // Even an equal token from another authority must negotiate for itself.
-        if !Arc::ptr_eq(&authority, &self.authority)
-            || authority.owner() != self.owner
-            || self.owner.agent_id != agent.as_str()
-            || self.renewal.is_finished()
-            || !self.state.ptr_eq(&Arc::downgrade(&transport.state))
-            || self.endpoint.control()? != endpoint.control()?
-            || self.endpoint.control_token() != endpoint.control_token()
-            || self.endpoint.native_identity() != endpoint.native_identity()
-            || self.endpoint.native_binding() != endpoint.native_binding()
-        {
+        if !self.matches(transport, endpoint, &authority, agent.as_str())? {
             return Err(rejected());
         }
         authority.check().await
+    }
+
+    pub(super) fn matches(
+        &self,
+        transport: &ProviderHostedControlTransport,
+        endpoint: &RuntimeEndpoint,
+        authority: &Arc<dyn TransportAuthority>,
+        agent: &str,
+    ) -> crate::Result<bool> {
+        // A matching token from a different authority cannot borrow this lease.
+        Ok(Arc::ptr_eq(authority, &self.authority)
+            && authority.owner() == self.owner
+            && self.owner.agent_id == agent
+            && !self.renewal.is_finished()
+            && self.state.ptr_eq(&Arc::downgrade(&transport.state))
+            && self.endpoint.control()? == endpoint.control()?
+            && self.endpoint.control_token() == endpoint.control_token()
+            && self.endpoint.native_identity() == endpoint.native_identity()
+            && self.endpoint.native_binding() == endpoint.native_binding())
     }
 }
 

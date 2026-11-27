@@ -21,6 +21,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   Reflect.deleteProperty(HTMLElement.prototype, 'requestFullscreen');
   Reflect.deleteProperty(document, 'fullscreenElement');
+  Reflect.deleteProperty(document, 'exitFullscreen');
 });
 const base = conversationFromTranscript({ agentId: 'agt_1', throughSeq: 0, turns: [] });
 const scope = new ArtifactPublicationScope();
@@ -112,18 +113,48 @@ it('clears fullscreen errors on tab changes, reconnect, and successful fullscree
     return draw([], false, panel, select);
   }
   render(<View />);
+  const refusal =
+    'The browser declined full screen. Allow full screen in your browser and try again.';
   const fail = async () => {
     fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
-    await screen.findByText('Full screen could not be opened.');
+    await screen.findByText(refusal);
   };
   await fail();
   fireEvent.click(screen.getByRole('tab', { name: 'Files' }));
-  expect(screen.queryByText('Full screen could not be opened.')).toBeNull();
+  expect(screen.queryByText(refusal)).toBeNull();
   fireEvent.click(screen.getByRole('tab', { name: 'Screen' }));
   await fail();
   fireEvent.click(screen.getByRole('button', { name: 'Reconnect' }));
-  expect(screen.queryByText('Full screen could not be opened.')).toBeNull();
+  expect(screen.queryByText(refusal)).toBeNull();
   await fail();
   fireEvent(document, new Event('fullscreenchange'));
-  expect(screen.queryByText('Full screen could not be opened.')).toBeNull();
+  expect(screen.queryByText(refusal)).toBeNull();
+});
+
+it('uses native fullscreen when granted and retains the panel through Escape', async () => {
+  const request = vi.fn(async function (this: HTMLElement) {
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: this });
+    document.dispatchEvent(new Event('fullscreenchange'));
+  });
+  const exit = vi.fn(async () => {
+    Object.defineProperty(document, 'fullscreenElement', { configurable: true, value: null });
+    document.dispatchEvent(new Event('fullscreenchange'));
+  });
+  Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {
+    configurable: true,
+    value: request,
+  });
+  Object.defineProperty(document, 'exitFullscreen', { configurable: true, value: exit });
+
+  render(draw());
+  await screen.findByText('Native desktop · Desktop');
+  const panel = screen.getByRole('complementary', { name: 'Agent computer' });
+  fireEvent.click(screen.getByRole('button', { name: 'Full screen' }));
+  expect(request).toHaveBeenCalledOnce();
+  expect(document.fullscreenElement).toBe(panel);
+  expect(screen.getByRole('button', { name: 'Exit full screen' })).toBeVisible();
+  fireEvent.keyDown(panel, { key: 'Escape' });
+  expect(exit).toHaveBeenCalledOnce();
+  expect(screen.getByRole('button', { name: 'Full screen' })).toBeVisible();
+  expect(screen.getByText('Native desktop · Desktop')).toBeVisible();
 });

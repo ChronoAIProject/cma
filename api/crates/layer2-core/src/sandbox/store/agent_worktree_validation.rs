@@ -35,7 +35,7 @@ pub(super) fn validate_worktree_delta(
         (
             PublicationKind::Advance,
             AgentWorkStep::EnsureProcessClosed,
-            WorktreeStatus::Ready | WorktreeStatus::Failed,
+            WorktreeStatus::Creating | WorktreeStatus::Ready | WorktreeStatus::Failed,
         ) => Some(WorktreeStatus::Removing),
         (PublicationKind::Advance, AgentWorkStep::RemoveWorktree, WorktreeStatus::Removing) => {
             Some(WorktreeStatus::Removed)

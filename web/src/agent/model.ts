@@ -73,6 +73,7 @@ export interface PlanSnapshot {
 
 export interface NativeApprovalRequest {
   readonly source?: 'native';
+  readonly runId?: string;
   readonly order?: number;
   readonly sequence?: number;
   readonly id: string;

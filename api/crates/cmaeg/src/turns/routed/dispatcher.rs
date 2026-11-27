@@ -13,6 +13,8 @@ pub use super::execution_port::{ExecutionPort, StartResult};
 
 #[path = "dispatcher_preparation.rs"]
 mod preparation;
+#[path = "readiness_acknowledgement.rs"]
+mod readiness_acknowledgement;
 #[cfg(test)]
 pub(super) use preparation::preparation_failure_code;
 
@@ -35,6 +37,7 @@ pub struct Dispatcher {
     journal: Journal,
     authority: Arc<dyn Authority>,
     port: Arc<dyn ExecutionPort>,
+    acknowledgement: Option<readiness_acknowledgement::Acknowledgement>,
 }
 impl Dispatcher {
     pub fn new(
@@ -49,6 +52,7 @@ impl Dispatcher {
             journal,
             authority,
             port,
+            acknowledgement: None,
         }
     }
     pub fn journal(&self) -> &Journal {
@@ -342,6 +346,10 @@ impl Dispatcher {
             }
             StartResult::NotAcceptedWithCode { code } => {
                 self.journal.record_non_admission(lease, &code).await?;
+                if code == "conversation_not_ready" {
+                    self.acknowledge_readiness_wait(plan, target, lease, current, &body)
+                        .await;
+                }
                 let mut change = crate::activity::Change::state(
                     target.launch.consumer.as_str(),
                     crate::activity::ConsumerState::Queued,

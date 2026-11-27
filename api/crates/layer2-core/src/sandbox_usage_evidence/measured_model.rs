@@ -194,7 +194,10 @@ impl FrozenSeries {
             samples: series
                 .samples
                 .into_iter()
-                .map(|s| Ok([ExactFloat::new(s.at)?, ExactFloat::new(s.value)?]))
+                .map(|s| {
+                    let value = s.value.ok_or(MeasuredError::Invalid)?;
+                    Ok([ExactFloat::new(s.at)?, ExactFloat::new(value)?])
+                })
                 .collect::<Result<_, MeasuredError>>()?,
         })
     }
@@ -209,7 +212,7 @@ impl FrozenSeries {
                 .iter()
                 .map(|[at, value]| Sample {
                     at: at.value(),
-                    value: value.value(),
+                    value: Some(value.value()),
                 })
                 .collect(),
         }

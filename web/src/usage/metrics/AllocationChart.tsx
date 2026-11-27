@@ -52,6 +52,8 @@ export function AllocationChart({
   reportId,
   reportCoverage,
   active,
+  metric,
+  onMetricChange,
   onFailure,
 }: {
   readonly page?: UsageMetricPage;
@@ -60,9 +62,10 @@ export function AllocationChart({
   readonly reportId: string;
   readonly reportCoverage?: AllocationCoverageEvidence;
   readonly active: boolean;
+  readonly metric: Metric;
+  readonly onMetricChange: (metric: Metric) => void;
   readonly onFailure: (failure: MetricsFailure) => void;
 }) {
-  const [metric, setMetric] = useState<Metric>('cpu');
   const [group, setGroup] = useState<'sandbox' | 'owner'>('sandbox');
   const id = useId();
   const [tableOpen, setTableOpen] = useState(false);
@@ -92,7 +95,7 @@ export function AllocationChart({
               value: value as Metric,
               label: item.label,
             }))}
-            onChange={setMetric}
+            onChange={onMetricChange}
           />
           {admin && (
             <Picker

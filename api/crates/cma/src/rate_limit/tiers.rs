@@ -12,6 +12,7 @@ pub(super) enum RequestTier {
     Create,
     Input,
     Control,
+    Recovery,
 }
 
 impl RequestTier {
@@ -22,6 +23,7 @@ impl RequestTier {
             Self::Create => "create",
             Self::Input => "input",
             Self::Control => "control",
+            Self::Recovery => "recovery",
         }
     }
 }
@@ -39,6 +41,16 @@ pub(super) fn request_tier(
         && matches!(path, "/livez" | "/ready")
     {
         return RequestTier::Health;
+    }
+    if controls
+        && matched_path.is_some()
+        && request
+            .extensions()
+            .get::<layer1_public::AuthenticatedSubject>()
+            .is_some()
+        && is_recovery_lookup(request.method(), path)
+    {
+        return RequestTier::Recovery;
     }
     if path == layer1_public::rest::creation_outcomes::LOOKUP_PATH
         || request.method() != Method::POST
@@ -102,6 +114,24 @@ pub(super) fn request_tier(
         return RequestTier::Input;
     }
     RequestTier::Create
+}
+
+fn is_recovery_lookup(method: &Method, path: &str) -> bool {
+    match *method {
+        Method::GET | Method::HEAD => matches!(
+            path,
+            "/api/v2/agents/{agent_id}/queued-inputs"
+                | "/api/v2/commands/{command_id}"
+                | "/api/v2/agents/{agent_id}/responses/{response_id}/controls"
+                | "/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation"
+        ),
+        Method::POST => matches!(
+            path,
+            "/api/v2/agents/{agent_id}/responses/receipt"
+                | layer1_public::rest::creation_outcomes::LOOKUP_PATH
+        ),
+        _ => false,
+    }
 }
 
 /// Routes that never require identity keep a network budget even when a

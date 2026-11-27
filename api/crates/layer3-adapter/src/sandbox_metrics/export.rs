@@ -33,51 +33,101 @@ pub fn selector(selection: &Selection) -> Result<String> {
 #[serde(deny_unknown_fields)]
 struct Export {
     metric: BTreeMap<String, String>,
-    values: Vec<f64>,
+    values: Vec<Option<f64>>,
     timestamps: Vec<u64>,
 }
 
+struct DecodedSeries {
+    name: String,
+    labels: BTreeMap<String, String>,
+    samples: Vec<(u64, Option<f64>)>,
+}
+
 pub fn decode_export(body: &[u8], selection: &Selection) -> Result<Vec<PhysicalSeries>> {
+    let export = decode_reporting_export(body, selection)?;
+    if !export.ambiguous_names.is_empty() {
+        return Err(invalid());
+    }
+    Ok(export.series)
+}
+
+pub(super) fn decode_reporting_export(
+    body: &[u8],
+    selection: &Selection,
+) -> Result<ReportingExport> {
     let mut named = BTreeMap::new();
+    let mut ambiguous_names = BTreeSet::new();
     for series in decode_series(body, selection, |left, right| left == right)? {
+        if ambiguous_names.contains(&series.name) {
+            continue;
+        }
         let chart = PhysicalSeries {
-            metric: series.metric,
+            metric: selection.metric,
             name: series.name,
             labels: series.labels,
             samples: series
                 .samples
                 .into_iter()
-                .map(|sample| Sample {
-                    at: sample.timestamp_ms as f64 / 1000.0,
-                    value: sample.value,
+                .map(|(timestamp_ms, value)| Sample {
+                    at: timestamp_ms as f64 / 1000.0,
+                    value,
                 })
                 .collect(),
         };
-        if named.insert(chart.name.clone(), chart).is_some() {
-            return Err(invalid());
+        let name = chart.name.clone();
+        match named.entry(name) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert(chart);
+            }
+            std::collections::btree_map::Entry::Occupied(entry) => {
+                ambiguous_names.insert(entry.remove_entry().0);
+            }
         }
     }
-    Ok(named.into_values().collect())
+    Ok(ReportingExport {
+        series: named.into_values().collect(),
+        ambiguous_names,
+    })
 }
 
 pub fn decode_raw_export(body: &[u8], selection: &Selection) -> Result<Vec<RawPhysicalSeries>> {
     decode_series(body, selection, |left, right| {
-        left.to_bits() == right.to_bits()
+        left.map(f64::to_bits) == right.map(f64::to_bits)
+    })?
+    .into_iter()
+    .map(|series| {
+        let samples = series
+            .samples
+            .into_iter()
+            .map(|(timestamp_ms, value)| {
+                Ok(RawSample {
+                    timestamp_ms,
+                    value: value.ok_or_else(invalid)?,
+                })
+            })
+            .collect::<Result<_>>()?;
+        Ok(RawPhysicalSeries {
+            metric: selection.metric,
+            name: series.name,
+            labels: series.labels,
+            samples,
+        })
     })
+    .collect()
 }
 
 fn decode_series(
     body: &[u8],
     selection: &Selection,
-    same_value: impl Fn(f64, f64) -> bool,
-) -> Result<Vec<RawPhysicalSeries>> {
+    same_value: impl Fn(Option<f64>, Option<f64>) -> bool,
+) -> Result<Vec<DecodedSeries>> {
     selection.validate()?;
     if body.len() > super::transport::MAX_RESPONSE_BYTES {
         return Err(invalid());
     }
     let from_ms = selection.from.checked_mul(1000).ok_or_else(invalid)?;
     let to_ms = selection.to.checked_mul(1000).ok_or_else(invalid)?;
-    let mut series: BTreeMap<BTreeMap<String, String>, RawPhysicalSeries> = BTreeMap::new();
+    let mut series: BTreeMap<BTreeMap<String, String>, DecodedSeries> = BTreeMap::new();
     for line in body.split(|b| *b == b'\n').filter(|line| !line.is_empty()) {
         let row: Export = serde_json::from_slice(line).map_err(|_| invalid())?;
         let name = row
@@ -102,31 +152,31 @@ fn decode_series(
         // physical incarnations can share the exported series name.
         let entry = series
             .entry(row.metric.clone())
-            .or_insert_with(|| RawPhysicalSeries {
-                metric: selection.metric,
+            .or_insert_with(|| DecodedSeries {
                 name: name.clone(),
                 labels: row.metric.clone(),
                 samples: Vec::new(),
             });
         for (timestamp_ms, value) in row.timestamps.into_iter().zip(row.values) {
-            if !value.is_finite() || value < 0.0 || timestamp_ms < from_ms || timestamp_ms > to_ms {
+            if value.is_some_and(|value| !value.is_finite() || value < 0.0)
+                || timestamp_ms < from_ms
+                || timestamp_ms > to_ms
+            {
                 return Err(invalid());
             }
-            entry.samples.push(RawSample {
-                timestamp_ms,
-                value,
-            });
+            entry.samples.push((timestamp_ms, value));
         }
     }
     for entry in series.values_mut() {
-        entry.samples.sort_by_key(|sample| sample.timestamp_ms);
-        if entry.samples.windows(2).any(|pair| {
-            pair[0].timestamp_ms == pair[1].timestamp_ms
-                && !same_value(pair[0].value, pair[1].value)
-        }) {
+        entry.samples.sort_by_key(|&(timestamp_ms, _)| timestamp_ms);
+        if entry
+            .samples
+            .windows(2)
+            .any(|pair| pair[0].0 == pair[1].0 && !same_value(pair[0].1, pair[1].1))
+        {
             return Err(invalid());
         }
-        entry.samples.dedup_by_key(|sample| sample.timestamp_ms);
+        entry.samples.dedup_by_key(|sample| sample.0);
     }
     Ok(series.into_values().collect())
 }
@@ -170,6 +220,85 @@ mod tests {
         assert!(
             decode_export(b"{\"status\":\"success\",\"isPartial\":true}", &selection()).is_err()
         );
+    }
+
+    #[test]
+    fn chart_export_keeps_stale_timestamps_and_rejects_conflicting_samples() {
+        let mut row = serde_json::json!({
+            "metric": {
+                "__name__": "container_cpu_usage_seconds_total", "cluster": "prod",
+                "namespace": "runtime", "pod": "cold-claim", "container": "runtime",
+                "job": "kubelet", "metrics_path": "/metrics/resource",
+            },
+            "timestamps": [1250, 15500, 30500],
+            "values": [2, null, 4],
+        });
+        let input = format!("{row}\n{row}");
+        let decoded = decode_export(input.as_bytes(), &selection()).unwrap();
+        assert_eq!(
+            decoded[0].samples,
+            vec![
+                Sample {
+                    at: 1.25,
+                    value: Some(2.0)
+                },
+                Sample {
+                    at: 15.5,
+                    value: None
+                },
+                Sample {
+                    at: 30.5,
+                    value: Some(4.0)
+                },
+            ]
+        );
+        assert!(decode_raw_export(input.as_bytes(), &selection()).is_err());
+
+        let stale = row.to_string();
+        row["values"][1] = 3.into();
+        assert!(decode_export(format!("{stale}\n{row}").as_bytes(), &selection()).is_err());
+        row["values"][1] = serde_json::Value::Null;
+        row["timestamps"][1] = 999.into();
+        assert!(decode_export(row.to_string().as_bytes(), &selection()).is_err());
+    }
+
+    #[test]
+    fn reporting_export_withholds_only_names_with_multiple_label_sets() {
+        let mut selected = selection();
+        selected.names.push("healthy-claim".into());
+        let row = |name, node, timestamp| {
+            serde_json::json!({
+                "metric": {
+                    "__name__": selected.metric.name(), "cluster": selected.cluster,
+                    "namespace": selected.namespace, "pod": name, "node": node,
+                    "job": "kubelet", "metrics_path": "/metrics/resource", "container": "runtime",
+                },
+                "timestamps": [timestamp], "values": [3],
+            })
+        };
+        let old = row("cold-claim", "old-node", 1200);
+        let current = row("cold-claim", "new-node", 2200);
+        let third = row("cold-claim", "third-node", 3200);
+        let healthy = row("healthy-claim", "fixture-node", 4200);
+        let input = format!("{old}\n{current}\n{third}\n{healthy}");
+        let result = decode_reporting_export(input.as_bytes(), &selected).unwrap();
+        assert_eq!(
+            result.ambiguous_names,
+            BTreeSet::from(["cold-claim".into()])
+        );
+        assert_eq!(result.series.len(), 1);
+        assert_eq!(result.series[0].name, "healthy-claim");
+        assert!(decode_export(input.as_bytes(), &selected).is_err());
+        assert_eq!(
+            decode_raw_export(input.as_bytes(), &selected)
+                .unwrap()
+                .len(),
+            4
+        );
+
+        let out_of_scope = row("unselected-claim", "fixture-node", 5200);
+        let invalid_input = format!("{input}\n{out_of_scope}");
+        assert!(decode_reporting_export(invalid_input.as_bytes(), &selected).is_err());
     }
 
     #[test]

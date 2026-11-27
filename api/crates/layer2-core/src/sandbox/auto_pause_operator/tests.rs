@@ -64,6 +64,7 @@ struct Maintenance {
     fail: Mutex<Option<String>>,
     slow: Mutex<bool>,
     discovery_fault: Mutex<Option<ReadFault>>,
+    show_refusals: Mutex<bool>,
     invalid_discovery_page: Mutex<bool>,
 }
 #[async_trait::async_trait]
@@ -132,6 +133,25 @@ impl SandboxMaintenanceStore for Maintenance {
         }
         Ok(SandboxMaintenanceOutcome::Scheduled)
     }
+    async fn preview_inactivity_pause_with_reason(
+        &self,
+        request: SandboxInactivityPauseRequest,
+    ) -> Result<InactivityPausePreview, SandboxStoreError> {
+        let refusal = match (
+            *self.show_refusals.lock().unwrap(),
+            request.sandbox_id.as_str(),
+        ) {
+            (true, "a") => Some(InactivityPauseRefusal::LegacyLogExpectedRows),
+            (true, "b") => Some(InactivityPauseRefusal::RecentAgentActivity),
+            _ => None,
+        };
+        let outcome = if refusal.is_some() {
+            SandboxMaintenanceOutcome::NotEligible
+        } else {
+            self.preview_inactivity_pause(request).await?
+        };
+        Ok(InactivityPausePreview { outcome, refusal })
+    }
     async fn set_sandbox_always_on(
         &self,
         _: crate::SandboxId,
@@ -172,6 +192,7 @@ fn fixture() -> (
         fail: Mutex::default(),
         slow: Mutex::new(false),
         discovery_fault: Mutex::default(),
+        show_refusals: Mutex::default(),
         invalid_discovery_page: Mutex::new(false),
     });
     let service = SandboxAutoPauseService::new(
@@ -482,4 +503,32 @@ async fn later_outcome_audit_failure_keeps_only_confirmed_counts_and_previous_cu
     assert_eq!(records.len(), 3);
     assert_eq!(records[2].detail.get(DetailKey::Status), Some("requested"));
     assert_eq!(records[2].at, calls[1].requested_at);
+}
+
+#[tokio::test]
+async fn preview_reports_each_refusal_with_the_sandbox_it_evaluated() {
+    let (service, store, _, audit, caller) = fixture();
+    *store.show_refusals.lock().unwrap() = true;
+    let batch = service
+        .batch(&caller, PageRequest::new(2, None).unwrap(), false)
+        .await
+        .unwrap();
+    assert_eq!(batch.candidates, 0);
+    assert_eq!(batch.failed, 0);
+    assert_eq!(batch.next.as_deref(), Some("b"));
+    assert_eq!(
+        batch.refusals,
+        vec![
+            AutoPauseSandboxRefusal {
+                sandbox_id: SandboxId("a".into()),
+                reason: InactivityPauseRefusal::LegacyLogExpectedRows,
+            },
+            AutoPauseSandboxRefusal {
+                sandbox_id: SandboxId("b".into()),
+                reason: InactivityPauseRefusal::RecentAgentActivity,
+            },
+        ]
+    );
+    assert!(store.calls.lock().unwrap().is_empty());
+    assert!(audit.records.lock().unwrap().is_empty());
 }

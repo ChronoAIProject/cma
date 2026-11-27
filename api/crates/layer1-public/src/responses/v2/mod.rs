@@ -6,6 +6,7 @@ use axum::{
 };
 use layer2_core::sandbox::{agent_io::AgentCommandService, AgentReadService};
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 #[cfg(test)]
 mod activity_tests;
@@ -57,6 +58,7 @@ pub struct ResponsesV2State {
     event_router: Option<Arc<dyn BindingEventRouter>>,
     paged_events: bool,
     retained_context_lookup: bool,
+    durable_recovery_slots: Arc<Semaphore>,
 }
 impl ResponsesV2State {
     pub fn with_paged_events(mut self, enabled: bool) -> Self {
@@ -96,6 +98,8 @@ impl ResponsesV2State {
             event_router: None,
             paged_events: false,
             retained_context_lookup: false,
+            // Independent polling costs more than a shared observation.
+            durable_recovery_slots: Arc::new(Semaphore::new(16)),
         }
     }
 }

@@ -15,13 +15,16 @@ from pathlib import Path
 from deployable_manifest import CURRENT, validate_names
 from docker_inputs import ignored, matches, stage_sources
 from policy import closure
-from publication_inputs import contract_images
+from publication_inputs import RECIPE, contract_images
 from rust_build_inputs import inputs as reviewed_build_inputs
 from uncertainty import SelectionIntegrityError
 
 MANIFEST = '.github/scripts/deployables.json'
 NAMES = frozenset(CURRENT)
 CARGO_CONFIG = {'api/Cargo.toml', 'api/Cargo.lock', 'api/rust-toolchain.toml'}
+# PR #4171 changed this exact recipe but left the previous digest in both rows.
+PRE_SEAL_RECIPE = '209e7cc60a75297f873a185081fccd7a9fefc6482d73cfa03a9735074d644562'
+SEAL_RECIPE = '1524620b368bb9e5f03790d46b6f9b41b848a1ba032e00a4a9f36629ae7acde0'
 
 
 def recipes(root, fallback=None):
@@ -131,9 +134,24 @@ def validate_recipe_sources(root, manifest):
             raise SelectionIntegrityError('Dockerfile changed; review and refresh its production-input model')
 
 
-def image_inputs(root, workspace, manifest=None):
+def historical_recipe_model(root, manifest):
+    """Model the exact reviewed #4171 bytes in archived comparisons."""
+    source = root / RECIPE
+    if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != SEAL_RECIPE:
+        return manifest
+    model = dict(manifest)
+    for name in ('cma-runtime', 'cma-runtime-omarchy'):
+        recipe = manifest.get(name)
+        if recipe and recipe['dockerfile'] == RECIPE and recipe['dockerfile_sha256'] == PRE_SEAL_RECIPE:
+            model[name] = dict(recipe, dockerfile_sha256=SEAL_RECIPE)
+    return model
+
+
+def image_inputs(root, workspace, manifest=None, *, historical=False):
     root = Path(root)
     manifest = recipes(root, manifest)
+    if historical:
+        manifest = historical_recipe_model(root, manifest)
     validate_recipe_sources(root, manifest)
     files = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() and '.git' not in p.parts}
     result, contexts, analysis, source_cache = {}, {}, {}, {}

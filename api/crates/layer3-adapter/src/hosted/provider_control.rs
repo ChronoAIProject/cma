@@ -149,6 +149,48 @@ impl ProviderHostedControlTransport {
         self.control_exchange(endpoint, request).await
     }
 
+    pub(super) async fn control_bound_file_read(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        file: crate::AgentFileReadRequest,
+    ) -> crate::Result<ResponseFrame> {
+        let request = RequestFrame::ReadAgentFile(file);
+        if let Some(_lease) = self.live_file_receiver(endpoint).await? {
+            return self.control_exchange(endpoint, &request).await;
+        }
+        self.control(endpoint, &request).await
+    }
+
+    async fn live_file_receiver(
+        &self,
+        endpoint: &RuntimeEndpoint,
+    ) -> crate::Result<Option<std::sync::Arc<ownership::ReceiverLease>>> {
+        let (Some((handle, _)), Some(authority)) = (
+            endpoint.native_binding(),
+            crate::owner_protocol::current_authority(),
+        ) else {
+            return Ok(None);
+        };
+        let owner = authority.owner();
+        let agent = crate::AgentSlot(owner.agent_id.clone());
+        let lease = self
+            .state
+            .lock()
+            .await
+            .links
+            .get(&(handle.clone(), agent))
+            .filter(|link| !link.reader.is_finished() && !link.relay.is_finished())
+            .and_then(|link| link._ownership.clone());
+        let Some(lease) = lease else {
+            return Ok(None);
+        };
+        if !lease.matches(self, endpoint, &authority, &owner.agent_id)? {
+            return Ok(None);
+        }
+        authority.check().await?;
+        Ok(Some(lease))
+    }
+
     pub(super) async fn open_on_receiver_lease(
         &self,
         endpoint: &RuntimeEndpoint,
@@ -191,16 +233,18 @@ impl ProviderHostedControlTransport {
                     let body = serde_json::to_vec(request).map_err(|_| {
                         AdapterError::Rejected("runtime request could not be encoded".into())
                     })?;
-                    let reply = self
-                        .native_http_for(
+                    let reply = crate::workspace_prepare_observation::native_rpc(
+                        request.operation(),
+                        self.native_http_for(
                             endpoint,
                             http::Method::POST,
                             url,
                             body,
                             super::super::provider_http::CONTROL_RESPONSE_BYTES,
                             (lane, request_capacity_class(request)),
-                        )
-                        .await?;
+                        ),
+                    )
+                    .await?;
                     if reads_status {
                         crate::receiver_failure::record_status(reply.status);
                     }
@@ -228,12 +272,15 @@ impl ProviderHostedControlTransport {
                         request_builder.header(crate::owner_protocol::OWNER_HEADER, owner);
                 }
                 let response = request_builder.send().await.map_err(|error| {
+                    if error.is_connect() || error.is_timeout() || error.is_request() {
+                        crate::workspace_prepare_observation::transport(request.operation());
+                    }
                     AdapterError::Unavailable(format!("runtime control request failed: {error}"))
                 })?;
                 if reads_status {
                     crate::receiver_failure::record_status(response.status());
                 }
-                super::super::provider_http::decode_control(response).await
+                super::super::provider_http::decode_control(response, request.operation()).await
             };
             let response = crate::file_read_diagnostics::transport(
                 request.operation(),
@@ -242,6 +289,7 @@ impl ProviderHostedControlTransport {
                     tokio::time::timeout(CONTROL_DEADLINE, exchange)
                         .await
                         .map_err(|_| {
+                            crate::workspace_prepare_observation::transport(request.operation());
                             AdapterError::Unavailable("runtime control request timed out".into())
                         })?
                 },

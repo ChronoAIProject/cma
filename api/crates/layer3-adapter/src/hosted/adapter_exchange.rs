@@ -52,6 +52,7 @@ impl HostedAdapter {
             if failure.operation != operation {
                 return Err(AdapterError::unexpected_reply(operation_name(operation)));
             }
+            crate::workspace_prepare_observation::wire(&failure);
             return Err(failure_error(failure));
         }
         if response_operation(&response) != operation {
