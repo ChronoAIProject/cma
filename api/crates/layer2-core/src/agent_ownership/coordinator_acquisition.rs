@@ -314,3 +314,7 @@ impl OwnershipCoordinator {
         Ok(publish_until.map(|_| authority))
     }
 }
+
+#[cfg(test)]
+#[path = "coordinator_acquisition_tests.rs"]
+mod tests;
