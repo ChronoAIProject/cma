@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 import re
 import secrets
+import ssl
 import threading
 import time
 from urllib.parse import parse_qs, urlencode, urlsplit
@@ -273,6 +274,14 @@ class Identity(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     Identity.config = json.loads(Path('/private/identity.json').read_text())
+    certificate = Path('/private/provider.crt')
+    if certificate.is_file():
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(certificate, '/private/provider.key')
+        secure = ThreadingHTTPServer(('0.0.0.0', 8443), Identity)
+        secure.socket = context.wrap_socket(secure.socket, server_side=True)
+        threading.Thread(target=secure.serve_forever, kwargs={'poll_interval': 0.2}, daemon=True).start()
     server = ThreadingHTTPServer(('0.0.0.0', 8080), Identity)
     server.daemon_threads = True
     server.serve_forever(poll_interval=0.2)

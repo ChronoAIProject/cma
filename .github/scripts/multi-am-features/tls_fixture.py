@@ -61,7 +61,7 @@ def prepare(directory):
     public_key = subprocess.check_output(['openssl', 'pkey', '-in', str(key), '-pubout'], stderr=subprocess.DEVNULL)
     if public_cert != public_key:
         raise ValueError('public_tls_key_mismatch')
-    for hostname in ['provider.localhost.direct', 'api.localhost.direct', 'storage.localhost.direct']:
+    for hostname in ['provider.localhost.direct', 'api.localhost.direct', 'storage.localhost.direct', 'identity.localhost.direct']:
         subprocess.run(['openssl', 'x509', '-in', str(certificate), '-checkhost', hostname, '-noout'],
                        check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return directory

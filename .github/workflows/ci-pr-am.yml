@@ -75,6 +75,13 @@ jobs:
       - "changes"
     if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
     uses: "./.github/workflows/ci-omarchy.yml"
+  eg-fixture-image:
+    name: "Event Gateway image for the two-Manager fixture"
+    needs: ["changes"]
+    if: "needs.changes.outputs.two_am_features == 'true'"
+    uses: "./.github/workflows/ci-images.yml"
+    with:
+      components: '["cmaeg"]'
   two-am-features:
     name: "2.10 Two Agent Managers"
     needs:
@@ -83,6 +90,7 @@ jobs:
       - "am-images"
       - "runtime-images"
       - "omarchy"
+      - "eg-fixture-image"
     if: "!cancelled() && needs.changes.outputs.two_am_features == 'true'"
     permissions:
       contents: "read"
@@ -92,6 +100,7 @@ jobs:
       am_image_result: "${{ needs.am-images.result }}"
       runtime_image_result: "${{ needs.runtime-images.result }}"
       omarchy_image_result: "${{ needs.omarchy.result }}"
+      eg_image_result: "${{ needs.eg-fixture-image.result }}"
   gate-am:
     name: "CI / Agent Manager"
     needs:
@@ -102,6 +111,7 @@ jobs:
       - "am-images"
       - "runtime-images"
       - "omarchy"
+      - "eg-fixture-image"
       - "two-am-features"
     if: "always()"
     runs-on: "ubuntu-latest"

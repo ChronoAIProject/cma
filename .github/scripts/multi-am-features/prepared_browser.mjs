@@ -19,6 +19,7 @@ export async function openPreparedBrowser(config) {
   check(typeof config.browser_session_cookie === 'string' && config.browser_session_cookie.length > 0,
     'prepared_browser_session_required');
   const ams = Object.fromEntries(['a', 'b'].map(am => [am, loopback(config.am_origins[am])]));
+  const gateway = config.eg_origin === undefined ? undefined : loopback(config.eg_origin);
   const publicOrigin = new URL(config.public_origin);
   check(publicOrigin.protocol === 'https:' && publicOrigin.host === config.host
     && publicOrigin.href === publicOrigin.origin + '/', 'prepared_browser_invalid_public_origin');
@@ -46,6 +47,10 @@ export async function openPreparedBrowser(config) {
           });
         },
       }};
+      if (gateway) proxyRoutes['^/event-gateway/openapi\\.json(?:\\?|$)'] = {
+        target: gateway,
+        rewrite: path => path.replace(/^\/event-gateway/, ''),
+      };
       if (freshSession) proxyRoutes['^/fixture/authorize(?:\\?|$)'] = {
         target: loopback(config.identity_origin),
         rewrite: path => path.replace('/fixture/authorize', '/authorize'),

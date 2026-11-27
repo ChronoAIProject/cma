@@ -150,6 +150,14 @@ export async function accountDocumentation(page, agentId) {
   await page.waitForURL('**/docs/start-a-task', {timeout});
   await page.getByRole('heading', {name: 'Write and review your task', exact: true}).waitFor({timeout});
   await page.goBack({waitUntil: 'domcontentloaded', timeout});
+  await openGatewayDocumentation(page);
+  await page.getByRole('link', {name: 'Docs', exact: true}).click({timeout});
+  await page.waitForURL('**/docs', {timeout});
+  await openResource();
+  await account(page).waitFor({timeout});
+}
+
+async function openGatewayDocumentation(page) {
   await page.getByRole('link', {name: /^Event Gateway Protocol/}).click({timeout});
   await page.waitForURL('**/docs/event-gateway', {timeout});
   await page.getByRole('heading', {name: 'Event Gateway Protocol', level: 1}).waitFor({timeout});
@@ -160,9 +168,32 @@ export async function accountDocumentation(page, agentId) {
     await page.waitForURL(`**/docs/event-gateway#${section}`, {timeout});
     await page.getByRole('region', {name: title, exact: true}).getByRole('heading').first().waitFor({timeout});
   }
-  await page.getByRole('link', {name: 'Docs', exact: true}).click({timeout});
+}
+
+export async function gatewayDocumentation(page) {
+  await page.goto('/event-gateway', {waitUntil: 'domcontentloaded', timeout});
+  const historyLength = await page.evaluate(() => history.length);
+  await account(page).click({timeout});
+  await page.getByRole('menuitem', {name: 'Docs', exact: true}).click({timeout});
   await page.waitForURL('**/docs', {timeout});
-  await openResource();
+  await openGatewayDocumentation(page);
+
+  const downloadLink = page.getByRole('link', {name: 'Download document', exact: true});
+  const [document] = await Promise.all([page.waitForEvent('download', {timeout}), downloadLink.click({timeout})]);
+  check(document.suggestedFilename() === 'agent-event-gateway.md' && await document.failure() === null,
+    'browser_gateway_document_download_unbound');
+  await document.delete();
+  const reference = page.getByRole('link', {name: 'OpenAPI JSON', exact: true});
+  check(await reference.getAttribute('href', {timeout}) === '/event-gateway/openapi.json',
+    'browser_gateway_reference_link_unbound');
+  const response = await page.request.get('/event-gateway/openapi.json', {maxRedirects: 0, timeout});
+  check(response.ok(), 'browser_gateway_openapi_unavailable');
+  const spec = await response.json();
+  check(/^3\.\d+\.\d+$/.test(spec.openapi ?? '') && Object.keys(spec.paths ?? {}).length > 0,
+    'browser_gateway_openapi_unbound');
+
+  await page.evaluate(original => history.go(original - history.length), historyLength);
+  await page.waitForURL(url => url.pathname === '/event-gateway', {timeout});
   await account(page).waitFor({timeout});
 }
 

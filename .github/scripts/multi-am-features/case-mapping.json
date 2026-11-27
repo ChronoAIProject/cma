@@ -1902,13 +1902,14 @@
     "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
   },
   "EG-004": {
-    "cases": [],
+    "cases": ["eg.public_documentation"],
+    "browser": true,
+    "routing": "both",
     "minimum_runs": 3,
     "phases": [
       "before_restart",
       "after_restart"
-    ],
-    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+    ]
   },
   "EG-005": {
     "cases": [],

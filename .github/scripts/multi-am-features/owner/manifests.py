@@ -44,6 +44,10 @@ def dependencies(secret, ready):
     private=next(o for o in objects if o['kind']=='Secret')
     private['stringData'].update({'provider-control':secret['provider_control'],
         'provider.crt':secret['provider_cert'],'provider.key':secret['provider_key']})
+    if ready.get('expected_eg_image'):
+        identity_service = next(o for o in objects if o['kind'] == 'Service' and o['metadata']['name'] == 'identity')
+        identity_service['spec']['ports'][0]['name'] = 'http'
+        identity_service['spec']['ports'].append({'name': 'https', 'port': 443, 'targetPort': 8443})
     private['stringData']['storage.json']=json.dumps({'client_id':secret['client_id'],
         'client_secret':secret['client_secret'],'access':secret['storage_access']})
     provider=old.pod('provider',old.BASELINE,old.resource('250m','256Mi','25m','32Mi'),

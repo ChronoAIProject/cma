@@ -54,7 +54,7 @@ def export(component, revision, destination):
     require(repository == "ChronoAIProject/cma", "CI repository differs")
     require(re.fullmatch(r"[1-9][0-9]*", run_id) and re.fullmatch(r"[1-9][0-9]*", attempt), "CI run identity required")
     verification = (event in ("schedule", "workflow_dispatch") and ref == "refs/heads/develop"
-                    and component in ("api", "runtime", "runtime-omarchy"))
+                    and component in ("api", "runtime", "runtime-omarchy", "cmaeg"))
     require(event in ("push", "pull_request", "merge_group") or verification, "CI event identity required")
 
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)

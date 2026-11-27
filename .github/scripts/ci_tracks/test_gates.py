@@ -7,13 +7,15 @@ from gate import EXPECTED, evaluate
 from version_label import deployables, selected_upgrade
 
 
-def needs(track, selected=True):
+def needs(track, selected=True, *, split=False):
     tracks = dict(repo=True, am=selected, eg=selected, web=selected)
     outputs = {key: json.dumps(value) for key, value in tracks.items()}
     outputs['approval_contract'] = json.dumps(selected)
     outputs['two_am_features'] = json.dumps(selected)
     outputs.update(test_tracks=json.dumps(tracks), deployables='[]', am_packages='["cma"]' if selected else '[]', eg_packages='["cmaeg"]' if selected else '[]')
     result = {job: {'result': 'success' if selected or track == 'repo' else 'skipped'} for job in EXPECTED[track]}
+    if split and track == 'am':
+        result['eg-fixture-image'] = {'result': 'success' if selected else 'skipped'}
     result['changes'] = {'result': 'success', 'outputs': outputs}
     return result
 
@@ -51,7 +53,7 @@ class GateTests(unittest.TestCase):
                 evaluate('am', data)
 
     def test_split_am_requires_runtime_images_for_eg_only_changes(self):
-        data = needs('am', False)
+        data = needs('am', False, split=True)
         outputs = data['changes']['outputs']
         tracks = json.loads(outputs['test_tracks'])
         tracks['eg'] = True
@@ -75,27 +77,54 @@ class GateTests(unittest.TestCase):
         data['rust-test-build']['result'] = 'success'
         data['approval-contract']['result'] = 'success'
         for split in (False, True):
-            self.assertEqual(evaluate('am', data, split=split), 'passed')
+            gate_data = copy.deepcopy(data)
+            if split:
+                gate_data['eg-fixture-image'] = {'result': 'skipped'}
+            self.assertEqual(evaluate('am', gate_data, split=split), 'passed')
             for job in ('rust-test-build', 'approval-contract'):
                 for status in ('failure', 'cancelled', 'skipped'):
-                    mutated = copy.deepcopy(data)
+                    mutated = copy.deepcopy(gate_data)
                     mutated[job]['result'] = status
                     with self.subTest(split=split, job=job, status=status), self.assertRaises(ValueError):
                         evaluate('am', mutated, split=split)
         data['changes']['outputs'].pop('approval_contract')
+        data['eg-fixture-image'] = {'result': 'skipped'}
         with self.assertRaises(ValueError):
             evaluate('am', data, split=True)
 
     def test_two_manager_fixture_is_required_only_when_selected(self):
-        data = needs('am')
+        data = needs('am', split=True)
         data['changes']['outputs']['two_am_features'] = 'false'
         with self.assertRaisesRegex(ValueError, 'fixture did not reach'):
             evaluate('am', data, split=True)
         data['two-am-features']['result'] = 'skipped'
+        with self.assertRaisesRegex(ValueError, 'fixture Gateway image'):
+            evaluate('am', data, split=True)
+        data['eg-fixture-image']['result'] = 'skipped'
         self.assertEqual(evaluate('am', data, split=True), 'passed')
         del data['changes']['outputs']['two_am_features']
         with self.assertRaisesRegex(ValueError, 'fixture selection'):
             evaluate('am', data, split=True)
+
+    def test_split_fixture_requires_gateway_image_from_its_own_run(self):
+        data = needs('am', split=True)
+        self.assertEqual(evaluate('am', data, split=True), 'passed')
+        for outcome in ('skipped', 'cancelled', 'failure'):
+            data['eg-fixture-image']['result'] = outcome
+            with self.assertRaisesRegex(ValueError, 'fixture Gateway image'):
+                evaluate('am', data, split=True)
+
+    def test_post_merge_gateway_image_can_be_selected_for_the_two_manager_fixture(self):
+        data = needs('eg', False)
+        outputs = data['changes']['outputs']
+        tracks = json.loads(outputs['test_tracks'])
+        tracks['am'] = True
+        outputs.update(am='true', am_packages='["cma"]', test_tracks=json.dumps(tracks), two_am_features='true')
+        data['eg-images']['result'] = 'success'
+        self.assertEqual(evaluate('eg', data), 'skipped-by-path')
+        data['eg-images']['result'] = 'failure'
+        with self.assertRaisesRegex(ValueError, 'fixture requires the Gateway image'):
+            evaluate('eg', data)
 
     def test_split_eg_expects_no_runtime_jobs(self):
         for selected in (True, False):

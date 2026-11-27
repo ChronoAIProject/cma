@@ -42,7 +42,7 @@ API_CACHE_READERS = "matrix.component == 'api' && ((github.event_name == 'push' 
 # A queue entry tests the exact commit develop becomes, so its tested images
 # are retained for exact-source CD reuse; fork PR runs still retain nothing.
 def check_merge_group_artifacts(documents)
-  [['ci-images', 'images', 'native', " && (matrix.component == 'api' || matrix.component == 'runtime')"],
+  [['ci-images', 'images', 'native', " && (matrix.component == 'api' || matrix.component == 'runtime' || matrix.component == 'cmaeg')"],
    ['ci-omarchy', 'omarchy', 'Omarchy', '']].each do |file, job, kind, component_filter|
     steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
     export, retain = %w[Export Retain].map { |action| steps.select { |s| s['name'] == "#{action} tested #{kind} image" } }
@@ -57,8 +57,9 @@ def check_merge_group_artifacts(documents)
   end
   jobs = documents.fetch('ci').fetch('jobs')
   selected = jobs.select { |_, config| config.dig('with', 'export_verification_image') }.keys.sort
-  require_check(selected == %w[am-images omarchy runtime-images],
-    'develop verification must export exactly the three two-AM fixture images')
+  require_check(selected == %w[am-images eg-images omarchy runtime-images] &&
+    jobs.dig('eg-images', 'with', 'export_verification_image') == "${{ needs.changes.outputs.two_am_features == 'true' }}",
+    'develop verification must export the two-AM fixture images')
   images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
   prepare = images.select { |s| s['name'] == 'Prepare API Cargo cache identity' }
   require_check(prepare.length == 1 && prepare.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (#{API_CACHE_READERS})",
@@ -266,6 +267,7 @@ def validate(documents, actions)
     gate_key = "gate-#{track}"
     check_name, prerequisites = required.fetch(gate_key)
     prerequisites -= %w[runtime-images omarchy] if track == 'eg'
+    prerequisites += ['eg-fixture-image'] if track == 'am'
     selector = track_jobs.fetch('changes')
     require_check(track_jobs.keys.first == 'changes' && selector['name'] == "#{number}.1 Select changes" &&
       selector['uses'] == './.github/workflows/ci-track-selection.yml', 'each workflow selects before validating')
@@ -310,15 +312,17 @@ def validate(documents, actions)
     startup_steps[2]['run'] == 'bash .github/scripts/mongo-contract-tests.sh --prepared-startup' &&
     !startup_steps[2].key?('if') && !startup_steps[2].key?('continue-on-error'),
     'two-AM startup controls must run from the shared Rust archive')
-  [jobs, documents.fetch('ci-pr-am').fetch('jobs')].each do |caller|
+  [[jobs, 'eg-images'], [documents.fetch('ci-pr-am').fetch('jobs'), 'eg-fixture-image']].each do |caller, gateway_image|
     suite = caller.fetch('two-am-features')
     require_check(suite['uses'] == './.github/workflows/ci-two-am.yml' &&
-      suite['permissions'] == two_am_permissions && suite['needs'] == %w[changes rust-test-build am-images runtime-images omarchy] &&
+      suite['permissions'] == two_am_permissions &&
+      suite['needs'] == %w[changes rust-test-build am-images runtime-images omarchy] + [gateway_image] &&
       suite['if'] == "!cancelled() && needs.changes.outputs.two_am_features == 'true'" && !suite.key?('continue-on-error') &&
       suite['with'] == {'am_image_result' => '${{ needs.am-images.result }}',
                         'runtime_image_result' => '${{ needs.runtime-images.result }}',
-                        'omarchy_image_result' => '${{ needs.omarchy.result }}'},
-                  'two-AM verification must use its own archive, three images and trusted CI events')
+                        'omarchy_image_result' => '${{ needs.omarchy.result }}',
+                        'eg_image_result' => "\${{ needs.#{gateway_image}.result }}"},
+                  'two-AM verification must use its own archive, exact images and trusted CI events')
   end
   check_version_label(ci, "!cancelled() && (#{verification_ref})")
   check_version_label(documents.fetch('ci-pr-repo'))
@@ -327,7 +331,9 @@ def validate(documents, actions)
     !selector.key?('if') && !selector.key?('continue-on-error'), 'CI-specific selection must be required')
   %w[am eg web].each do |track|
     [track, "#{track}-images"].each do |key|
-      require_check(jobs.fetch(key)['if'] == "needs.changes.outputs.#{track} == 'true'", 'product selection differs')
+      expected = "needs.changes.outputs.#{track} == 'true'"
+      expected += " || needs.changes.outputs.two_am_features == 'true'" if key == 'eg-images'
+      require_check(jobs.fetch(key)['if'] == expected, 'product selection differs')
     end
   end
   %w[am eg].each do |track|

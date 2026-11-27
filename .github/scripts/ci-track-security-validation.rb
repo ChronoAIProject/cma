@@ -112,8 +112,12 @@ def require_runtime_inventory(documents)
   end
 end
 
-IMAGE_SCAN_IF = "success() && steps.native-image-export.outcome == 'success' && (github.event_name != 'push' || github.ref != 'refs/heads/develop')"
-IMAGE_RETAIN_IF = "success() && steps.native-image-export.outcome == 'success' && (steps.native-image-scan.outcome == 'success' || (github.event_name == 'push' && github.ref == 'refs/heads/develop'))"
+IMAGE_SCAN_IF = "success() && steps.native-image-export.outcome == 'success' && " \
+  "(github.event_name != 'push' || github.ref != 'refs/heads/develop' || " \
+  "(matrix.component == 'cmaeg' && inputs.export_verification_image))"
+IMAGE_RETAIN_IF = "success() && steps.native-image-export.outcome == 'success' && " \
+  "(steps.native-image-scan.outcome == 'success' || (github.event_name == 'push' && github.ref == 'refs/heads/develop' && " \
+  "(matrix.component != 'cmaeg' || !inputs.export_verification_image)))"
 OMARCHY_SCAN_IF = "success() && (github.event_name == 'merge_group' || " \
   "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || " \
   "(github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')) || " \
@@ -132,7 +136,7 @@ def require_image_secret_scan(documents)
   require_check(install && scan && export && keep && export < install && install < scan && scan < keep,
                 'ci-images must scan the exported image before retaining it')
   [steps[install], steps[scan]].each do |step|
-    require_check(step['if'] == IMAGE_SCAN_IF && !step.key?('continue-on-error'), 'ci-images image secret scan is optional')
+    require_check(step['if'].to_s.split.join(' ') == IMAGE_SCAN_IF && !step.key?('continue-on-error'), 'ci-images image secret scan is optional')
   end
   require_check(steps[install]['run'] == "bash .github/scripts/staging_cd_transport.sh\nbash .github/scripts/install-image-gitleaks.sh\n" &&
                 steps[install]['timeout-minutes'] == 5, 'ci-images image scanner install differs')

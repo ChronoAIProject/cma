@@ -157,10 +157,11 @@ jobs:
     name: "EG images"
     needs:
       - "changes"
-    if: "needs.changes.outputs.eg == 'true'"
+    if: "needs.changes.outputs.eg == 'true' || needs.changes.outputs.two_am_features == 'true'"
     uses: "./.github/workflows/ci-images.yml"
     with:
       components: "[\"cmaeg\"]"
+      export_verification_image: "${{ needs.changes.outputs.two_am_features == 'true' }}"
   web-images:
     name: "WEB images"
     needs:
@@ -196,6 +197,7 @@ jobs:
       - "am-images"
       - "runtime-images"
       - "omarchy"
+      - "eg-images"
     if: "!cancelled() && needs.changes.outputs.two_am_features == 'true'"
     permissions:
       contents: "read"
@@ -205,6 +207,7 @@ jobs:
       am_image_result: "${{ needs.am-images.result }}"
       runtime_image_result: "${{ needs.runtime-images.result }}"
       omarchy_image_result: "${{ needs.omarchy.result }}"
+      eg_image_result: "${{ needs.eg-images.result }}"
   gate-repo:
     name: "CI / Repo"
     needs:

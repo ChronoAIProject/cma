@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'owner'))
 from common import utc, write
 from fixture_no_secrets import LocalFixture
+from gateway import initialize_gateway
 
 
 def run(args):
@@ -59,12 +60,16 @@ def run(args):
         result['stage'] = 'public_tls_fixture'
         tls_directory = prepare_tls(private / 'tls')
         result['stage'] = 'shared_cluster_and_images'
-        ready = infrastructure.setup(args.artifacts, args.revision, args.run_id, args.attempt, release_packet)
+        include_gateway = args.fixture == 'features' and release_packet is None
+        ready = infrastructure.setup(args.artifacts, args.revision, args.run_id, args.attempt,
+                                     release_packet, include_gateway=include_gateway)
         result['image_input']['manifests'] = {
             'api': ready['expected_api_image'].split('@', 1)[1],
             'runtime': ready['runtime_images']['base'].split('@', 1)[1],
             'runtime-omarchy': ready['runtime_images']['omarchy'].split('@', 1)[1],
         }
+        if include_gateway:
+            result['image_input']['manifests']['cmaeg'] = ready['expected_eg_image'].split('@', 1)[1]
         ready['tls_directory'] = str(tls_directory)
         ready['fixture'] = args.fixture
         if args.fixture == 'features':
@@ -87,6 +92,9 @@ def run(args):
             'browser_session_cookie': fixture.browser_cookie}
         if args.fixture == 'features':
             config['identity_origin'] = fixture.client.forward('identity', 8080)
+        if include_gateway:
+            result['stage'] = 'event_gateway_initialization'
+            config['eg_origin'] = initialize_gateway(fixture)
         result['processes_ready_at'] = utc()
         result['stage'] = 'feature_journey'
         script = 'prepared_suite.mjs' if args.fixture == 'prepared' else 'suite.mjs'

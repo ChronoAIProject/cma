@@ -12,6 +12,9 @@ on:
       omarchy_image_result:
         required: true
         type: string
+      eg_image_result:
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -45,14 +48,20 @@ jobs:
       matrix:
         fixture: [features, prepared]
     steps:
-      - name: Require all three image jobs
+      - name: Require the fixture images
         env:
           AM_IMAGE: "${{ inputs.am_image_result }}"
           RUNTIME_IMAGE: "${{ inputs.runtime_image_result }}"
           OMARCHY_IMAGE: "${{ inputs.omarchy_image_result }}"
+          EG_IMAGE: "${{ inputs.eg_image_result }}"
+          FIXTURE: "${{ matrix.fixture }}"
         run: |
           if [[ "$AM_IMAGE" != success || "$RUNTIME_IMAGE" != success || "$OMARCHY_IMAGE" != success ]]; then
             echo "::error::Two Agent Managers requires all three tested images from this workflow attempt."
+            exit 1
+          fi
+          if [[ "$FIXTURE" == features && "$EG_IMAGE" != success ]]; then
+            echo "::error::The feature fixture requires the tested Event Gateway image from this workflow attempt."
             exit 1
           fi
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -110,8 +119,11 @@ jobs:
         timeout-minutes: 35
         env:
           GH_TOKEN: "${{ github.token }}"
+          FIXTURE: "${{ matrix.fixture }}"
         run: |
-          for component in api runtime runtime-omarchy; do
+          components=(api runtime runtime-omarchy)
+          if [[ "$FIXTURE" == features ]]; then components+=(cmaeg); fi
+          for component in "${components[@]}"; do
             artifact="ci-native-image-${component}-${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
             python3 -B .github/scripts/ci_artifact_download.py \
               --name "$artifact" --path "$RUNNER_TEMP/multi-am-images/$artifact"

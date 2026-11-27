@@ -124,7 +124,9 @@ class Infrastructure:
             time.sleep(max(0, min(deadline - time.monotonic(), 1)))
         raise ValueError('rwop_csi_driver_missing')
 
-    def setup(self, artifacts, revision, run_id, attempt, release_packet=None):
+    def setup(self, artifacts, revision, run_id, attempt, release_packet=None, *, include_gateway=False):
+        if include_gateway and release_packet:
+            raise ValueError('gateway_requires_same_invocation_image')
         self.stage = 'checkout_binding'
         if self.command(['git', 'rev-parse', 'HEAD']).strip() != revision:
             raise ValueError('checkout_revision_mismatch')
@@ -152,7 +154,10 @@ class Infrastructure:
         if self.command(['docker', 'exec', self.node, 'uname', '-m']).strip() != 'x86_64':
             raise ValueError('native_amd64_kernel_required')
         images = {}
-        for component in ['api', 'runtime', 'runtime-omarchy']:
+        components = ['api', 'runtime', 'runtime-omarchy']
+        if include_gateway:
+            components.append('cmaeg')
+        for component in components:
             self.stage = 'image_' + component.replace('-', '_')
             if release_packet:
                 images[component] = load_release_image(self.command, self.node, self.cluster,
@@ -194,6 +199,8 @@ class Infrastructure:
         rewrites = ('\n    rewrite name exact provider.localhost.direct provider.cma-native-am.svc.cluster.local\n'
                     '    rewrite name exact storage.localhost.direct storage.cma-native-am.svc.cluster.local\n'
                     '    rewrite name exact api.localhost.direct api-proxy.cma-native-am.svc.cluster.local\n')
+        if include_gateway:
+            rewrites += '    rewrite name exact identity.localhost.direct identity.cma-native-am.svc.cluster.local\n'
         dns['data']['Corefile'] = dns['data']['Corefile'].replace('.:53 {', '.:53 {' + rewrites, 1)
         self.k(['replace', '-f', '-'], data=json.dumps(dns))
         self.k(['-n', 'kube-system', 'rollout', 'restart', 'deployment/coredns'])
@@ -202,6 +209,7 @@ class Infrastructure:
         return {'run_id': self.cluster, 'namespace': namespace, 'node_name': self.node,
                 'kubeconfig_path': str(self.kubeconfig), 'context': 'kind-' + self.cluster, 'server': server,
                 'expected_api_image': images['api'], 'api_source': revision,
+                **({'expected_eg_image': images['cmaeg']} if include_gateway else {}),
                 'mongo_image': mongo_image, 'mongo_registry_pin': MONGO,
                 'runtime_images': {'base': images['runtime'], 'omarchy': images['runtime-omarchy']},
                 'runtime_sources': {'base': release_packet['images']['runtime']['sourceRevision'] if release_packet else revision,
