@@ -155,9 +155,9 @@ pub(super) fn completed_update(
     {
         return Ok(None);
     }
-    if !seconds_from_rfc3339(&previous.appended_at)
+    if seconds_from_rfc3339(&previous.appended_at)
         .zip(seconds_from_rfc3339(&entry.appended_at))
-        .is_some_and(|(previous, completion)| previous <= completion)
+        .is_none_or(|(previous, completion)| previous > completion)
     {
         return Ok(None);
     }
