@@ -164,16 +164,7 @@ export function ActiveAgentSurface({
   if (state.status === 'idle' || state.status === 'loading')
     return <AgentOpening headingRef={headingRef} />;
   if (state.status === 'error')
-    return (
-      <AgentUnavailable
-        message={
-          state.retryAt === undefined || state.workspaceUnavailable ? state.message : undefined
-        }
-        retryAt={state.retryAt}
-        headingRef={headingRef}
-        onRetry={controller.reload}
-      />
-    );
+    return <AgentUnavailable state={state} headingRef={headingRef} onRetry={controller.reload} />;
 
   const { detail, conversation } = state;
   const inputAvailability = composerInputAvailability(
