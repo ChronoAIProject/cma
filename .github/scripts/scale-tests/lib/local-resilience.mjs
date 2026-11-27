@@ -180,8 +180,10 @@ async function runLoss(config, clusterBinding, hooks, mode, dependencies) {
         faultSignal.throwIfAborted();
         const receipt = await hooks.injectLoss(work, { ...options, runHash, signal: faultSignal });
         const injectionEvidenceHash = receipt?.evidenceHash;
+        const injectionSequence = receipt?.injectionSequence;
         check(receipt?.runHash === runHash && receipt.commandHash === work.commandHash
-          && receipt.ownerHash === work.ownerHash && isHash(injectionEvidenceHash),
+          && receipt.ownerHash === work.ownerHash && isHash(injectionEvidenceHash)
+          && Number.isSafeInteger(injectionSequence) && injectionSequence >= 0,
           'local_loss_injection_receipt_mismatch');
         faultSignal.throwIfAborted();
         const death = await hooks.observeDeath(work, { ...options, runHash, signal: faultSignal });
@@ -192,13 +194,16 @@ async function runLoss(config, clusterBinding, hooks, mode, dependencies) {
           && death.ownerHash === work.ownerHash && isHash(death.authorityOwnerHash)
           && Number.isSafeInteger(death.runtimeGeneration) && death.runtimeGeneration > 0
           && Number.isSafeInteger(death.authorityEpoch) && death.authorityEpoch > 0
-          && Number.isSafeInteger(death.faultSequence) && death.faultSequence >= 0,
+          && Number.isSafeInteger(death.faultSequence)
+          && Number.isSafeInteger(death.deathObservedSequence),
         'local_loss_death_binding_missing', true);
+        check(injectionSequence <= death.faultSequence && death.faultSequence <= death.deathObservedSequence,
+          'local_loss_observation_order_invalid');
         faultWitness = {
           runHash, commandHash: work.commandHash, processHash: work.ownerHash,
           ownerHash: death.authorityOwnerHash, runtimeGeneration: death.runtimeGeneration,
-          authorityEpoch: death.authorityEpoch, observedSequence: death.faultSequence,
-          injectionEvidenceHash, deathEvidenceHash: death.evidenceHash,
+          authorityEpoch: death.authorityEpoch, injectionSequence, faultSequence: death.faultSequence,
+          deathObservedSequence: death.deathObservedSequence, injectionEvidenceHash, deathEvidenceHash: death.evidenceHash,
         };
         return { ownerHash: work.ownerHash, abrupt: true, processDeathObserved: true, evidenceHash: death.evidenceHash };
       },
@@ -217,7 +222,9 @@ async function runLoss(config, clusterBinding, hooks, mode, dependencies) {
         return captureOracle(config, clusterBinding, captures, expected, runHash, { ...dependencies, faultWitness });
       },
     }, mode, config, time);
-    return { ...result, faultWitness };
+    return { status: 'PASS', fault: { ...result, faultWitness } };
+  } catch (error) {
+    return { ...safeFailure(error), ...(faultWitness && { fault: { mode, faultWitness } }) };
   } finally {
     await withHookDeadline(undefined, config.recoveryMs, 'local_capture_cleanup_timeout',
       (signal) => hooks.closeCapture(identity, { signal }));
@@ -276,7 +283,7 @@ export async function runLocalResilience(config, selection, dependencies = {}) {
     }
     const mode = resilience.lossMode;
     check(['am_stream', 'am_command', 'eg_inbound'].includes(mode), 'local_loss_mode_missing', true);
-    return { status: 'PASS', fault: await runLoss(config, clusterBinding, hooks, mode, dependencies) };
+    return await runLoss(config, clusterBinding, hooks, mode, dependencies);
   } catch (error) {
     return safeFailure(error);
   } finally {

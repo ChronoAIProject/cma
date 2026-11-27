@@ -103,12 +103,24 @@ function authorityTimeline(records) {
   return ordered;
 }
 
-function expectedAuthority(timeline, record, admittedAt) {
-  const sequence = observedSequence(record);
+function expectedAuthority(timeline, sequence, admittedAt) {
   check(sequence >= admittedAt, 'oracle_observation_before_admission');
   const expected = timeline.find((row) => row.fromSequence <= sequence && sequence <= row.throughSequence);
   check(expected, 'oracle_authority_at_observation_missing', true);
   return expected;
+}
+
+function checkFaultLifetime(witness, executions, admittedAt) {
+  const { injectionSequence, faultSequence, deathObservedSequence } = witness;
+  check([injectionSequence, faultSequence, deathObservedSequence].every(Number.isSafeInteger)
+    && admittedAt < injectionSequence && injectionSequence <= faultSequence && faultSequence <= deathObservedSequence,
+  'oracle_fault_lifecycle_order_invalid');
+  check(executions.length === 1 && executions[0].terminal === true, 'oracle_fault_terminal_missing', true);
+  const terminal = executions[0];
+  // The durable transition can precede the collector's read of the terminal row.
+  check(Number.isSafeInteger(terminal.terminalSequence) && terminal.terminalSequence > admittedAt
+    && terminal.terminalSequence <= observedSequence(terminal), 'oracle_fault_terminal_sequence_missing', true);
+  check(faultSequence < terminal.terminalSequence, 'oracle_fault_command_already_terminal');
 }
 
 export async function readLocalOutcomeOracle({ runHash, captures }, { readCommand, workload, faultWitness } = {}) {
@@ -142,17 +154,18 @@ export async function readLocalOutcomeOracle({ runHash, captures }, { readComman
   for (const [commandHash, admission] of accepted) {
     const admittedAt = observedSequence(admission);
     const timeline = authorityTimeline(ownershipByCommand.get(commandHash) ?? []);
-    check(authority(admission) === authority(expectedAuthority(timeline, admission, admittedAt)),
+    check(authority(admission) === authority(expectedAuthority(timeline, admittedAt, admittedAt)),
       'oracle_admission_authority_mismatch');
+    const executions = recorded.get(commandHash) ?? [];
     if (faultWitness?.commandHash === commandHash) {
-      const atFault = expectedAuthority(timeline, faultWitness, admittedAt);
+      checkFaultLifetime(faultWitness, executions, admittedAt);
+      const atFault = expectedAuthority(timeline, faultWitness.faultSequence, admittedAt);
       check(authority(faultWitness) === authority(atFault) && isHash(atFault.processHash)
         && atFault.processHash === faultWitness.processHash, 'oracle_fault_authority_mismatch');
     }
-    const executions = recorded.get(commandHash) ?? [];
     const observed = effects.get(commandHash) ?? [];
     const expectations = [...executions, ...observed].map((row) => ({
-      row, expected: expectedAuthority(timeline, row, admittedAt),
+      row, expected: expectedAuthority(timeline, observedSequence(row), admittedAt),
     }));
     const correctOwner = expectations.every(({ row, expected }) => row.ownerHash === expected.ownerHash);
     commands.push({ commandHash, accepted: true, executions: executions.length,

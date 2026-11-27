@@ -237,7 +237,7 @@ test('the scale CLI records the blocked workload and protects the evidence direc
 
 
 async function boundHooks(t, config, implementation, { captureCount = config.localWorkload ? 20 : 1,
-  authorityProcess = hash('process') } = {}) {
+  authorityProcess = hash('process'), terminalSequence = 5, durableObservedSequence = terminalSequence ?? 6 } = {}) {
   const directory = await realpath(await mkdtemp(join(tmpdir(), 'local-resilience-')));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'hooks.mjs');
@@ -259,7 +259,7 @@ async function boundHooks(t, config, implementation, { captureCount = config.loc
       const rows = {
         admissions: { accepted: true, observedSequence: 2 },
         authority: { fromSequence: 1, throughSequence: 6, processHash: authorityProcess },
-        durable: { observedSequence: 3, terminal: true },
+        durable: { observedSequence: durableObservedSequence, terminal: true, terminalSequence },
         receiver: { observedSequence: 4, terminal: true },
       };
       for (const [role, fields] of Object.entries(rows)) {
@@ -351,7 +351,9 @@ test('replica loss requires actual process death before recovery can be scored',
   const { custody, importer } = await boundHooks(t, config, {
     async beginInFlight() { return { accepted: true, inFlight: true, leaseJustRenewed: true, ownerHash,
       commandHash: hash('cmd_example_0'), evidenceHash: hash('admission') }; },
-    async injectLoss(work, { runHash }) { return { runHash, commandHash: work.commandHash, ownerHash, evidenceHash: hash('api') }; },
+    async injectLoss(work, { runHash }) {
+      return { runHash, commandHash: work.commandHash, ownerHash, injectionSequence: 3, evidenceHash: hash('api') };
+    },
     async observeDeath() { return { ownerHash, abrupt: true, processDeathObserved: false, evidenceHash: hash('runtime') }; },
     async observeRecovery() { assert.fail('recovery cannot be scored before independent process death'); },
     async confirmStream() {},
@@ -364,41 +366,60 @@ test('replica loss requires actual process death before recovery can be scored',
 });
 
 
-for (const mismatchedProcess of [false, true]) {
-  test(mismatchedProcess ? 'replica-loss refuses death of a process outside the command authority interval'
-    : 'replica-loss binds death, recovery, and independent effects to the admitted turn', async (t) => {
+for (const scenario of [
+  { title: 'binds stream recovery to the original command', mode: 'am_stream' },
+  { title: 'qualifies an effective loss before terminal even when death is observed later', mode: 'am_command' },
+  { title: 'rejects loss after the command is terminal', mode: 'am_command', terminalSequence: 3,
+    faultSequence: 5, error: 'oracle_fault_command_already_terminal' },
+  { title: 'uses the durable transition even when the terminal read arrives after death', mode: 'am_command',
+    terminalSequence: 4, durableObservedSequence: 6, faultSequence: 5, error: 'oracle_fault_command_already_terminal' },
+  { title: 'rejects an effective loss at the terminal boundary', mode: 'am_command', terminalSequence: 4,
+    error: 'oracle_fault_command_already_terminal' },
+  { title: 'requires an independently ordered terminal transition', mode: 'am_command', terminalSequence: null,
+    error: 'oracle_fault_terminal_sequence_missing' },
+  { title: 'refuses death of a process outside the command authority interval', mode: 'am_stream',
+    authorityProcess: hash('other-process'), error: 'oracle_fault_authority_mismatch' },
+]) {
+  test(`replica loss ${scenario.title}`, async (t) => {
     const config = configFor('http://127.0.0.1:31991', 2);
     const ownerHash = hash('process');
     const commandId = 'cmd_example_0';
+    const faultSequence = scenario.faultSequence ?? 4;
     const { custody, importer } = await boundHooks(t, config, {
       async beginInFlight() { return { accepted: true, inFlight: true, leaseJustRenewed: true, ownerHash,
         commandHash: hash(commandId), evidenceHash: hash('admission') }; },
-      async injectLoss(work, { runHash }) { return { runHash, commandHash: work.commandHash, ownerHash, evidenceHash: hash('api') }; },
+      async injectLoss(work, { runHash }) {
+        return { runHash, commandHash: work.commandHash, ownerHash, injectionSequence: 3, evidenceHash: hash('api') };
+      },
       async observeDeath(work, { runHash }) { return { runHash, commandHash: work.commandHash, ownerHash,
-        authorityOwnerHash: hash('owner'), runtimeGeneration: 1, authorityEpoch: 1, faultSequence: 3,
-        abrupt: true, processDeathObserved: true, evidenceHash: hash('runtime') }; },
+        authorityOwnerHash: hash('owner'), runtimeGeneration: 1, authorityEpoch: 1, faultSequence,
+        deathObservedSequence: 6, abrupt: true, processDeathObserved: true, evidenceHash: hash('runtime') }; },
       async observeRecovery() { return { accounted: true, clientRecovered: true, sustainedSuccess: true }; },
       async confirmStream() { return { liveEvent: true, durableContinuity: true }; },
       async cleanupFault() { custody.push('close-fault'); },
-    }, { authorityProcess: mismatchedProcess ? hash('other-process') : ownerHash });
-    config.localResilience.lossMode = 'am_stream';
+    }, scenario);
+    config.localResilience.lossMode = scenario.mode;
     const fetchImpl = async (url, options) => {
       assert.equal(url, `${config.endpoints.am}/api/v2/commands/${commandId}`);
       assert.equal(options.method, 'GET');
       return new Response(JSON.stringify({ receipt: { command_id: commandId }, status: 'completed' }));
     };
     const result = await runLocalResilience(config, localLossSelection, { command: cluster, importer, fetchImpl });
-    if (mismatchedProcess) {
-      assert.equal(result.status, 'FAIL');
-      assert.equal(result.code, 'oracle_fault_authority_mismatch');
+    if (scenario.error) {
+      assert.equal(result.code, scenario.error);
+      assert.notEqual(result.status, 'PASS');
     } else {
       assert.equal(result.status, 'PASS', result.code);
       assert.equal(result.fault.commands, 1);
       assert.equal(result.fault.observations, 1);
-      assert.equal(result.fault.faultWitness.commandHash, hash(commandId));
-      assert.equal(result.fault.faultWitness.injectionEvidenceHash, hash('api'));
-      assert.equal(result.fault.faultWitness.deathEvidenceHash, hash('runtime'));
     }
+    const { faultWitness } = result.fault;
+    assert.equal(faultWitness.commandHash, hash(commandId));
+    assert.equal(faultWitness.injectionSequence, 3);
+    assert.equal(faultWitness.faultSequence, faultSequence);
+    assert.equal(faultWitness.deathObservedSequence, 6);
+    assert.equal(faultWitness.injectionEvidenceHash, hash('api'));
+    assert.equal(faultWitness.deathEvidenceHash, hash('runtime'));
     assert.deepEqual(custody, ['begin', 'finish', 'close-fault', 'close-capture', 'close-hooks']);
   });
 }
