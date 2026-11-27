@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "targeted_control_approval_tests.rs"]
 mod approvals;
+#[path = "capacity_control_qualification.rs"]
+mod capacity_control_qualification;
 #[path = "targeted_control_failure_tests.rs"]
 mod failures;
 #[path = "targeted_control_fixtures.rs"]
