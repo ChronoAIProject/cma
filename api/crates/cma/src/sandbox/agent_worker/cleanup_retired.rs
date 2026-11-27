@@ -1,6 +1,7 @@
 use super::super::support::bump_log_sequence;
 use super::*;
-use layer2_core::sandbox::{Sandbox, Workspace, Worktree};
+use layer2_core::sandbox::store::retired_failed_worktree_cleanup_is_absent;
+use layer2_core::sandbox::{Sandbox, SandboxStatus, Workspace, Worktree};
 use layer2_core::{rfc3339_at, sandbox::store::AgentWorkMutation};
 
 pub(in crate::sandbox::agent_worker) enum CleanupPreflightError {
@@ -39,19 +40,25 @@ impl AgentWorker {
         }
         let unstarted = agent.has_no_runtime_effects()
             && matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed);
-        if !unstarted && !retired_sandbox_cleanup_is_absent(agent, &sandbox) {
+        if !unstarted && sandbox.status != SandboxStatus::Retired {
+            return Ok(None);
+        }
+        let worktree = self
+            .dependencies
+            .store
+            .get_worktree(&agent.worktree_id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if !unstarted
+            && !retired_sandbox_cleanup_is_absent(agent, &sandbox)
+            && !retired_failed_worktree_cleanup_is_absent(agent, &worktree, &sandbox)
+        {
             return Ok(None);
         }
         let workspace = self
             .dependencies
             .store
             .get_workspace(&agent.workspace_id)
-            .await?
-            .ok_or(SandboxStoreError::NotFound)?;
-        let worktree = self
-            .dependencies
-            .store
-            .get_worktree(&agent.worktree_id)
             .await?
             .ok_or(SandboxStoreError::NotFound)?;
         Ok(Some(RetiredCleanupParents {
@@ -131,7 +138,14 @@ impl AgentWorker {
                 worktree_id: worktree.id,
             }
         });
-        self.progress(agent.clone(), next, now, None, Vec::new(), versioned, event)
+        let mut agent = agent.clone();
+        if agent.work.step == AgentWorkStep::RemoveWorktree {
+            agent
+                .work
+                .cleanup_debt
+                .retain(|debt| debt.step != AgentWorkStep::AddWorktree);
+        }
+        self.progress(agent, next, now, None, Vec::new(), versioned, event)
             .await
     }
 

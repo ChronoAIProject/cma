@@ -17,6 +17,7 @@ import { agentReadRetryAt, errorMessage, retainHistoryOnFailure } from './contro
 import { loadAgent, transientReadFailure, type AgentLoadLineage } from './loadAgent';
 export { loadAgent, type ReadyAgent } from './loadAgent';
 import { CommandKeys, type CmaWebClient } from '../api/client';
+import { WorkspaceReadUnavailable } from '../api/rest/workspaceRead';
 import type { AgentLiveEvent } from '../api/types';
 import { accessCheckedInputAvailability, useSandboxInput } from './sandboxInput';
 import { ConversationHydration } from './transport/hydration';
@@ -227,6 +228,9 @@ export function useAgentController(
               setState({
                 status: 'error',
                 message: errorMessage(error),
+                ...(error instanceof WorkspaceReadUnavailable
+                  ? { workspaceUnavailable: true }
+                  : {}),
                 ...(schedule ? { retryAt: Date.now() + schedule.next } : {}),
               });
               return schedule;

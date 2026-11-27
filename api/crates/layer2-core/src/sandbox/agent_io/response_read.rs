@@ -1,7 +1,9 @@
 use std::collections::BTreeMap;
 
 use crate::ids::AgentResponseId;
-use crate::resource_access::{ResourceAccessError, ResourceCapability, ResourceTarget};
+use crate::resource_access::{
+    ResourceAccessError, ResourceAccessStoreError, ResourceCapability, ResourceTarget,
+};
 use crate::sandbox::{AgentEventStreamAuthorization, AgentEventStreamHeader, AgentReadError};
 
 use super::*;
@@ -39,7 +41,21 @@ impl AgentCommandService {
         let result = self
             .with_authority_bound(authorized, capability, self.store.get_response_command(id))
             .await;
-        self.fence(authorized, &target, capability).await?;
+        self.with_authority_bound(authorized, capability, async {
+            let validate = || {
+                self.access
+                    .validate_read_result(authorized, &target, capability)
+            };
+            match validate().await {
+                // An interrupted snapshot can recover within the original read
+                // budget. Release still requires fresh authorization evidence.
+                Err(ResourceAccessError::Store(ResourceAccessStoreError::Unavailable)) => {
+                    validate().await
+                }
+                result => result,
+            }
+        })
+        .await??;
         let record = result??.ok_or(CommandLedgerError::NotFound)?;
         Self::reading(authorization, id, &record)
     }

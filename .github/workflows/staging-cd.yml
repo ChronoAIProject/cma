@@ -551,13 +551,16 @@ jobs:
     name: Signal verified image publication
     needs: [allocate, release_web, protected_web, release_am, release_eg, release_runtime, release_runtime_omarchy]
     if: >-
-      ${{ !cancelled() && vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true' &&
-          needs.allocate.result == 'success' && needs.allocate.outputs.changed == 'true' }}
+      ${{ !cancelled() && needs.allocate.result == 'success' && needs.allocate.outputs.changed == 'true' &&
+          (vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true' ||
+          (vars.CMA_PUBLICATION_QUALIFICATION_PR != '' && github.run_attempt == '1' &&
+          contains(github.event.head_commit.message, format(' (#{0})', vars.CMA_PUBLICATION_QUALIFICATION_PR)))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -567,6 +570,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CD_PUBLICATION_MATRIX: ${{ needs.allocate.outputs.matrix }}
+          CD_QUALIFICATION_PR: ${{ vars.CMA_PUBLICATION_SIGNAL_ENABLED != 'true' && vars.CMA_PUBLICATION_QUALIFICATION_PR || '' }}
           CD_PUBLISH_WEB: ${{ vars.CMA_STAGING_WEB_CONTINUITY == 'true' && (needs.protected_web.outputs.publish_result || needs.protected_web.result) || needs.release_web.result }}
           CD_PUBLISH_AM: ${{ needs.release_am.result }}
           CD_PUBLISH_EG: ${{ needs.release_eg.result }}
@@ -586,6 +590,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Notify the configured publication consumer
+        if: vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true'
         env:
           PUBLICATION_CONSUMER: ${{ secrets.PUBLICATION_CONSUMER }}
           PUBLICATION_SIGNAL_TOKEN: ${{ secrets.PUBLICATION_SIGNAL_TOKEN }}

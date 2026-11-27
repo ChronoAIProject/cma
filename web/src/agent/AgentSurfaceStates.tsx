@@ -152,7 +152,7 @@ export function AgentUnavailable({
   headingRef,
   onRetry,
 }: {
-  readonly message: string;
+  readonly message?: string;
   readonly retryAt?: number;
   readonly headingRef: Ref<HTMLHeadingElement>;
   readonly onRetry: () => void;
@@ -164,7 +164,8 @@ export function AgentUnavailable({
         <h1 ref={headingRef} tabIndex={-1}>
           {retryAt ? 'Opening Agent' : 'Agent unavailable'}
         </h1>
-        <>{retryAt ? <RetryNotice at={retryAt} /> : <p>{message}</p>}</>
+        {message === undefined ? null : <p>{message}</p>}
+        {retryAt === undefined ? null : <RetryNotice at={retryAt} />}
         <Button variant="outline" onClick={onRetry} disabled={retryAt !== undefined}>
           Try again
         </Button>

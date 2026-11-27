@@ -235,11 +235,12 @@ class StagingWorkflowTest < Minitest::Test
     lock = {'group' => 'cma-staging-deploy-set', 'queue' => 'max', 'cancel-in-progress' => false}
     promote = './.github/workflows/staging-promote.yml'
     writer = './.github/workflows/staging-deploy.yml'
+    plan = './.github/workflows/staging-publication-plan.yml'
     calls = []
     Dir.glob(File.join(ROOT, 'workflows', '*.{yml,yaml}')).each do |file|
       name = File.basename(file, File.extname(file))
       WorkflowYAML.load_file(file)['jobs'].each do |id, job|
-        next unless [promote, writer].include?(job['uses'])
+        next unless [promote, writer, plan].include?(job['uses'])
         if (name == 'staging-promote' && %w[deploy redeploy].include?(id)) ||
            (name == 'staging-web-continuity-epoch' && id == 'promote')
           # Jobs inside one reusable call share the caller's slot; a nested
@@ -251,7 +252,7 @@ class StagingWorkflowTest < Minitest::Test
         end
       end
     end
-    assert_equal 7, calls.size # six automatic scopes and manual redeploy
+    assert_equal 8, calls.size # six automatic scopes and two manual operations
     automatic = workflow('staging-cd')['jobs']
     # Both components finished at t=0. A 90s writer exceeds the original 45s
     # admission window. With the lock around the reusable call, the second
@@ -362,7 +363,7 @@ class StagingWorkflowTest < Minitest::Test
     %w[staging-cd staging-release staging-promote redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|
         if %w[./.github/workflows/staging-promote.yml ./.github/workflows/staging-deploy.yml
-              ./.github/workflows/staging-web-continuity.yml].include?(job['uses'])
+              ./.github/workflows/staging-web-continuity.yml ./.github/workflows/staging-publication-plan.yml].include?(job['uses'])
           job = job.reject { |field, _| field == 'secrets' }
         end
         %w[NYXID_CHRONO_CD_KEY CD_NYXID_CLIENT_ID CD_NYXID_CLIENT_SECRET].each { |field| refute_includes job.to_s, field }
@@ -383,7 +384,7 @@ class StagingWorkflowTest < Minitest::Test
     end
     %w[staging-cd staging-promote redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|
-        next unless %w[./.github/workflows/staging-promote.yml ./.github/workflows/staging-deploy.yml].include?(job['uses'])
+        next unless %w[./.github/workflows/staging-promote.yml ./.github/workflows/staging-deploy.yml ./.github/workflows/staging-publication-plan.yml].include?(job['uses'])
         assert_equal expected, job['secrets']
       end
     end
@@ -791,7 +792,7 @@ class StagingWorkflowTest < Minitest::Test
     publishers = %w[am eg runtime runtime_omarchy]
     assert_equal ['allocate', 'release_web', 'protected_web', *publishers.map { |name| "release_#{name}" }], signal['needs']
     assert_includes signal['if'], "vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true'"
-    assert_equal({ 'contents' => 'read', 'actions' => 'read' }, signal['permissions'])
+    assert_equal({ 'contents' => 'read', 'actions' => 'read', 'pull-requests' => 'read' }, signal['permissions'])
     refute signal.key?('environment')
     checkout, verify, retain, notify = signal['steps']
     assert_equal 0, checkout['with']['fetch-depth']
@@ -851,12 +852,37 @@ class StagingWorkflowTest < Minitest::Test
     inputs = manual.fetch('on', manual[true])['workflow_dispatch']['inputs']
     refute inputs.key?('started_at')
     assert_equal 'release', inputs['mode']['default']
-    assert_equal %w[release bootstrap], inputs['mode']['options']
+    assert_equal %w[release bootstrap publication-plan], inputs['mode']['options']
     assert inputs.key?('versions')
     refute manual.to_s.match?(/staging_cd_(allocate|publish|finalize)|staging-release/)
     assert_equal '${{ inputs.started_at }}', workflow('staging-deploy')['jobs']['deploy']['env']['CD_STARTED_AT']
     assert_equal '${{ inputs.mode }}', workflow('staging-deploy')['jobs']['deploy']['env']['CD_DEPLOY_MODE']
     assert manual['jobs']['report']['if'].include?('always()')
+  end
+
+  def test_publication_plan_has_read_only_permissions_and_an_isolated_credential_step
+    manual = workflow('redeploy-staging')['jobs']
+    assert_includes manual['resolve']['if'], "inputs.mode != 'publication-plan'"
+    caller = manual.fetch('publication_plan')
+    assert_equal({'contents' => 'read', 'actions' => 'read', 'pull-requests' => 'read'}, caller['permissions'])
+    assert_equal './.github/workflows/staging-publication-plan.yml', caller['uses']
+    deploy = workflow('staging-deploy')['jobs']
+    plan = workflow('staging-publication-plan')['jobs'].fetch('publication_plan')
+    assert_equal deploy['deploy']['environment'], plan['environment']
+    assert_equal caller['permissions'], plan['permissions']
+    assert_includes plan['if'], "github.event_name == 'workflow_dispatch'"
+    commands = plan['steps'].map { |step| step['run'].to_s }
+    admission = commands.index('python3 -B .github/scripts/staging_cd_publication_plan.py admit')
+    assert_operator admission, :<, commands.index('python3 -B .github/scripts/staging_cd_tools.py install')
+    assert_operator admission, :<, commands.index('python3 -B .github/scripts/staging_cd_tools.py requirements')
+    keyed = plan['steps'].select { |step| step.fetch('env', {}).key?('CD_NYXID_CLIENT_SECRET') }
+    assert_equal ['Observe the staging release plan'], keyed.map { |step| step['name'] }
+    refute keyed.first['env'].key?('GH_TOKEN')
+    refute keyed.first['env'].key?('CD_INFRA_TOKEN')
+    signal = workflow('staging-cd')['jobs']['publication_signal']
+    assert_includes signal['if'], "github.run_attempt == '1'"
+    assert_equal 'read', signal['permissions']['pull-requests']
+    assert_equal "vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true'", signal['steps'].last['if']
   end
 
   def test_final_ruleset_pattern_excludes_deletable_pending_tags
@@ -954,6 +980,7 @@ class StagingWorkflowTest < Minitest::Test
     'redeploy-staging' => { 'resolve' => %w[infra-token] },
     'staging-cd' => { 'infrastructure' => %w[infra-token] },
     'staging-deploy' => { 'deploy' => %w[infra-token infra-checkout], 'report' => %w[evidence] },
+    'staging-publication-plan' => { 'publication_plan' => %w[infra-token infra-checkout] },
     'staging-release' => { 'publish' => %w[web-archive receipts], 'finalize' => %w[receipts-download] },
     'staging-web-continuity-epoch' => { 'observe' => %w[infra-token infra-checkout] }
   }.freeze
@@ -992,7 +1019,7 @@ class StagingWorkflowTest < Minitest::Test
         end
       end
     end
-    assert_equal 10, optional.size
+    assert_equal 12, optional.size
     # A job is never repeated or made optional, and no other step may hide its failure.
     REPEATED.each_key do |name|
       workflow(name)['jobs'].each do |job_id, job|

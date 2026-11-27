@@ -106,7 +106,7 @@ def main():
             inputs = maintainer_dispatch(env, api.request)
             started = dispatch_started(env, api.request, inputs.get("mode", "release"))
             mode, value = dispatch_set(inputs, api, registry)
-            remaining(started, mode=mode)
+            remaining(started, mode=mode, env=env)
         elif command == "automatic":
             require(env["GITHUB_EVENT_NAME"] == "push", "Automatic set requires a develop push")
             matrix = document(env["CD_PUBLICATION_MATRIX"])
@@ -144,7 +144,7 @@ def main():
                     stream.write(f"Publication-and-preparation seconds: {elapsed(publication_started):.2f}\n")
         elif command == "verify":
             started, mode = env.get("CD_STARTED_AT"), env.get("CD_DEPLOY_MODE")
-            remaining(started, mode=mode)
+            remaining(started, mode=mode, env=env)
             inputs = maintainer_dispatch(env, api.request) if env["GITHUB_EVENT_NAME"] == "workflow_dispatch" else None
             if inputs is not None:
                 # A retry retains the run-created timestamp, never run_started_at.
@@ -165,7 +165,7 @@ def main():
                                       "A newer final's run owns this deployment.\n")
                 return SKIPPED
             record_withheld(env, admitted["receipts"], value["receipts"])
-            remaining(started, mode=mode)
+            remaining(started, mode=mode, env=env)
         else:
             return False
         output(env, "release_set", canonical(value))

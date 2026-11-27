@@ -110,6 +110,56 @@ fn events(bytes: &[u8]) -> Vec<Value> {
         .collect()
 }
 
+#[tokio::test]
+#[ignore = "requires the disposable Mongo replica-set runner"]
+async fn shared_response_snapshot_remains_available_during_observer_handoff() {
+    let (f, id) = retained(100).await;
+    let replicas = servers(&f).await;
+    let initial_slots: Vec<_> = replicas
+        .iter()
+        .map(|replica| replica.relay.available_test_slots())
+        .collect();
+    let destination = replicas[0]
+        .observation
+        .destination(&f.agent.id, &f.agent.created_at)
+        .await
+        .unwrap();
+    let owner = replicas
+        .iter()
+        .position(|replica| replica.address == destination.member.relay_address)
+        .unwrap();
+    let peer = &replicas[1 - owner];
+    let client = client();
+    let path = format!("/api/v2/responses/{id}");
+    let response = request(&client, &f, peer, &path).send().await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let before: Value = response.json().await.unwrap();
+    assert_eq!(before["id"], id.as_str());
+    assert_eq!(before["conversation"]["id"], f.agent.id.as_str());
+    assert_eq!(before["status"], "in_progress");
+
+    // The observation lease still targets the previous replica when its
+    // listener stops answering. This must not make the durable receipt vanish.
+    replicas[owner]
+        .stall
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let response = request(&client, &f, peer, &path).send().await.unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    assert_eq!(response.json::<Value>().await.unwrap(), before);
+
+    let denied = client
+        .get(format!("{}{path}", peer.address))
+        .bearer_auth("observer:unrelated-subject")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), reqwest::StatusCode::NOT_FOUND);
+    assert!(!denied.text().await.unwrap().contains("retained answer"));
+    observation_capacity::available(&replicas, &initial_slots).await;
+    drop(replicas);
+    f.client.database(&f.name).drop().await.unwrap();
+}
+
 async fn measure(
     f: &Fixture,
     id: &layer2_core::ids::AgentResponseId,

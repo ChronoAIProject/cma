@@ -23,6 +23,7 @@ pub(crate) struct RuntimePointerController {
     pools: Arc<NativeWarmPools>,
     pointer: Option<Arc<dyn RuntimePointerSource>>,
     writer: BootWriter,
+    cutover_epoch: Option<uuid::Uuid>,
 }
 
 impl RuntimePointerController {
@@ -57,6 +58,11 @@ impl RuntimePointerController {
             .ok()
             .filter(|digest| super::registry::valid_digest(digest))
             .ok_or("runtime pointer requires a sha256 CHRONO_AM_BUILD_DIGEST")?;
+        let cutover_epoch = config
+            .runtime
+            .runtime_pointer
+            .as_ref()
+            .and_then(|config| config.cutover_epoch());
         Ok(Some(Arc::new(Self::new(
             release.clone(),
             stores.native_warm_pools.clone(),
@@ -67,6 +73,7 @@ impl RuntimePointerController {
                 pod_uid,
                 build_digest,
             },
+            cutover_epoch,
         ))))
     }
 
@@ -80,6 +87,7 @@ impl RuntimePointerController {
         pools: Arc<NativeWarmPools>,
         pointer: Option<Arc<dyn RuntimePointerSource>>,
         writer: BootWriter,
+        cutover_epoch: Option<uuid::Uuid>,
     ) -> Self {
         Self {
             release,
@@ -87,6 +95,7 @@ impl RuntimePointerController {
             pools,
             pointer,
             writer,
+            cutover_epoch,
         }
     }
 

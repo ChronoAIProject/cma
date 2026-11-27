@@ -94,6 +94,17 @@ impl RuntimePointerController {
                         .await
                         .map_err(|error| error.to_string())?
                         .is_some());
+            if can_publish {
+                let epoch = self.cutover_epoch.ok_or(
+                    "first runtime pointer publication requires a controller cutover epoch",
+                )?;
+                self.targets
+                    .verify_cutover(epoch, &self.writer)
+                    .await
+                    .map_err(|error| {
+                        format!("verify {lane:?} runtime pointer cutover: {error:?}")
+                    })?;
+            }
             let pool = crate::warm_pools::startup::boot_effect(writer, async {
                 if self.pools.default_held(machine) {
                     return Ok(Some(()));
@@ -101,7 +112,7 @@ impl RuntimePointerController {
                 // Only errors raised inside this effect can be pool conflicts.
                 // A failed boot-writer guard still propagates as an error.
                 match self
-                    .ensure_bootstrap_pool(image, machine, can_publish)
+                    .ensure_bootstrap_pool(lane, image, can_publish, current.is_some())
                     .await
                 {
                     Err(WarmPoolError::Conflict) => Ok(None),
@@ -111,9 +122,6 @@ impl RuntimePointerController {
             .await
             .map_err(|error| format!("configure {lane:?} startup pool: {error:?}"))?;
             if pool.is_some() {
-                if can_publish && !self.pools.default_held(machine) {
-                    self.publish_bootstrap(lane, image).await?;
-                }
                 return Ok(());
             }
 
@@ -164,28 +172,27 @@ impl RuntimePointerController {
 
     async fn ensure_bootstrap_pool(
         &self,
+        lane: ReleasedLane,
         image: &str,
-        machine: bool,
         can_publish: bool,
+        has_record: bool,
     ) -> Result<(), WarmPoolError> {
+        let machine = lane == ReleasedLane::Machine;
         self.targets.verify_bootstrap(machine, image).await?;
-        self.pools.ensure_released_image(image, machine).await?;
-        if can_publish {
-            self.targets.verify_bootstrap(machine, image).await?;
-            let target = self.pools.active_default_target(image, machine).await?;
-            self.targets.retain_release_authority(&target).await?;
+        if can_publish && !self.pools.default_held(machine) {
+            let epoch = self.cutover_epoch.ok_or(WarmPoolError::Unavailable)?;
+            let target = self.pools.prepare_released_image(image, machine).await?;
+            let record =
+                ReleasedLaneRecord::bootstrap(lane, image.into(), &layer2_core::now_rfc3339())
+                    .map_err(|_| WarmPoolError::Invalid)?;
+            self.targets
+                .publish_bootstrap(&target, &self.release.lanes, &self.writer, &record, epoch)
+                .await?;
+        } else if machine && !has_record {
+            self.pools.retain_selected_machine(image).await?;
+        } else {
+            self.pools.ensure_released_image(image, machine).await?;
         }
-        Ok(())
-    }
-
-    async fn publish_bootstrap(&self, lane: ReleasedLane, image: &str) -> Result<(), String> {
-        let record = ReleasedLaneRecord::bootstrap(lane, image.into(), &layer2_core::now_rfc3339())
-            .map_err(|error| error.to_string())?;
-        self.release
-            .lanes
-            .bootstrap(record)
-            .await
-            .map_err(|error| error.to_string())?;
         Ok(())
     }
 

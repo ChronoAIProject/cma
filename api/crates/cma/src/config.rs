@@ -49,13 +49,15 @@ mod rate_default_lease;
 mod rate_limits;
 pub use rate_limits::RateLimitConfig;
 mod inspection_refusal;
-mod open_reply_loss;
-mod startup_failure_fixture;
 pub(crate) use inspection_refusal::InspectionRefusalControl;
 mod relay_capacity;
+mod repository_runtime_images;
 mod runtime;
+mod staging_sandbox;
+mod startup_failure_fixture;
 pub(crate) mod suggestion_control;
 pub(crate) use runtime::deployment_id_from_lookup;
+pub(crate) use staging_sandbox::StagingSandboxControls;
 mod runtime_capacity;
 mod runtime_migration;
 mod shell_settings;
@@ -291,9 +293,10 @@ impl Config {
     }
 
     fn with_provider(
-        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        lookup: impl FnMut(&str) -> Result<Option<String>, String>,
         provider: runtime::Provider,
     ) -> Result<Self, String> {
+        let mut lookup = repository_runtime_images::with_bundle(lookup)?;
         let shell_settings::ServerSettings {
             bind,
             metrics_bind,
