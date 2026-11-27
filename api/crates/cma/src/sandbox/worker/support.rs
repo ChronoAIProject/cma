@@ -8,11 +8,9 @@ use layer2_core::sandbox::{
 use layer2_core::{rfc3339_at, seconds_from_rfc3339};
 use layer3_adapter::{AdapterError, RuntimeHandle};
 
+use super::{retirement_credentials::OwnerReauthorization, SandboxDependencyError, SandboxWorker};
 use crate::sandbox::credential::CredentialError;
 use crate::sandbox::funding::FundingError;
-
-use super::{SandboxDependencyError, SandboxWorker};
-
 mod credential_policy;
 pub(super) use credential_policy::{
     credential_rotation_at, credential_valid_for_delivery, material_matches,
@@ -152,7 +150,19 @@ impl SandboxWorker {
         let exhausted = sandbox.status == SandboxStatus::Retiring
             && step.is_retirement()
             && sandbox.work.attempts >= failure.retry_kind().retry_budget();
-        if exhausted {
+        let recovery = super::retirement_credentials::park_reauthorization(
+            &mut sandbox,
+            failure.reauthorization,
+            exhausted,
+            now,
+        );
+        if let Some(ready_at) = recovery {
+            sandbox
+                .work
+                .retry(&self.config.holder, fence, ready_at)
+                .map_err(|_| SandboxStoreError::Conflict)?;
+        } else if exhausted {
+            sandbox.work.retirement_credential_recovery = None;
             sandbox
                 .work
                 .stop_retirement(&self.config.holder, fence)
@@ -263,6 +273,7 @@ pub(super) struct WorkerFailure {
     detail: String,
     retryable: bool,
     retry_kind: WorkRetryFailure,
+    reauthorization: Option<OwnerReauthorization>,
     pub(super) native_claim_pending: bool,
     pub(super) startup_hold: bool,
     pub(super) credential_issuance_pending: bool,
@@ -307,6 +318,7 @@ impl WorkerFailure {
         Self {
             class,
             detail: safe_detail(detail),
+            reauthorization: None,
             retryable,
             native_claim_pending: false,
             startup_hold: false,
@@ -395,6 +407,15 @@ pub(super) use super::install_failure::install_failure;
 
 pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
     match error {
+        CredentialError::OwnerReauthorization(rejected) => {
+            let mut failure = WorkerFailure::new(
+                "owner_reauthorization_required",
+                "verified owner reauthorization is required",
+                false,
+            );
+            failure.reauthorization = Some(OwnerReauthorization { rejected });
+            failure
+        }
         CredentialError::Uncertain => {
             let mut failure = WorkerFailure::waiting(
                 "credential issuance is uncertain; reconciliation will retry",

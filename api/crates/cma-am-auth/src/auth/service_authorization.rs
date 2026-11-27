@@ -12,7 +12,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use layer2_core::{resource_access::CredentialSource, ServiceId, StoreError, SubjectId};
+use layer2_core::{
+    resource_access::CredentialSource, sandbox::RetirementAuthorityVersion, ServiceId, StoreError,
+    SubjectId,
+};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -80,6 +83,14 @@ pub trait GrantAuthority: Send + Sync {
         auth: &AuthState,
         subject: &SubjectId,
     ) -> Result<Option<VerifiedAccountGrant>, StoreError>;
+
+    async fn retirement_authority_version(
+        &self,
+        _auth: &AuthState,
+        _token: &SecretValue,
+    ) -> Result<Option<RetirementAuthorityVersion>, StoreError> {
+        Ok(None)
+    }
 
     /// Authoritative, complete missing subset for this issuer, subject and set.
     async fn missing(
@@ -168,6 +179,48 @@ impl AuthState {
                 .service_authorization = Some(provider);
         }
         self
+    }
+
+    /// Bind the provider's consent evidence to the retained credential supplied by the worker.
+    pub async fn retirement_authority_version(
+        &self,
+        owner: &SubjectId,
+        token: &SecretValue,
+    ) -> Result<Option<RetirementAuthorityVersion>, StoreError> {
+        let Some(provider) = self.service_authorization.as_ref() else {
+            return Ok(None);
+        };
+        let matches = |state: &super::persistence::SubjectAuthState| {
+            &state.subject == owner
+                && state
+                    .usable_tokens(SystemTime::now())
+                    .is_some_and(|current| current.access_token.expose() == token.expose())
+        };
+        if self
+            .standing
+            .authoritative(owner)
+            .await
+            .map_err(|_| StoreError::Unavailable("owner account standing is unavailable".into()))?
+            || !self
+                .store
+                .subject(owner)
+                .await?
+                .as_ref()
+                .is_some_and(matches)
+        {
+            return Ok(None);
+        }
+        let observed = provider.retirement_authority_version(self, token).await?;
+        if !self
+            .store
+            .subject(owner)
+            .await?
+            .as_ref()
+            .is_some_and(matches)
+        {
+            return Ok(None);
+        }
+        Ok(observed)
     }
 
     pub fn service_authorization_enabled(&self) -> bool {

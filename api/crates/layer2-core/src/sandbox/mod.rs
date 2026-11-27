@@ -383,7 +383,7 @@ pub use lifecycle::{
 pub use lifecycle_service::SandboxLifecycleCommandError;
 pub use limits::{enforce_agent_limit, enforce_workspace_limit, SandboxLimitError};
 pub use pending_approvals::PendingAgentApprovals;
-pub use provision::{SandboxWorkLease, SandboxWorkState, SandboxWorkStep};
+pub use provision::*;
 pub use queued_message::{
     QueuedAgentMessage, QueuedMessageState, MAX_AGENT_MESSAGE_BYTES, MAX_QUEUED_AGENT_MESSAGES,
     QUEUED_MESSAGE_DISPATCH_GRACE_SECONDS,

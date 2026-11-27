@@ -63,6 +63,7 @@ pub(crate) struct FeatureFlags {
     pub native_retirement_finality_enabled: bool,
     pub native_retirement_capture_enabled: bool,
     pub credential_retirement_receipts: bool,
+    pub retirement_reauthorization: bool,
     pub workspace_prepare_observations: bool,
     pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
@@ -70,8 +71,7 @@ pub(crate) struct FeatureFlags {
     pub ownership_cleanup_pacing: bool,
     pub batch_ownership_renewal: bool,
     pub am_failure_containment_enabled: bool,
-    /// Contain one receiver's transient housekeeping failure instead of
-    /// stopping the process (#3069). Default off until staging verifies it.
+    /// Contain transient receiver housekeeping failures (#3069). Default off pending staging.
     pub receiver_housekeeping_containment: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
@@ -218,6 +218,7 @@ impl FeatureFlags {
             )?,
             native_retirement_capture_enabled: flag(lookup, gates::RETIREMENT_CAPTURE)?,
             credential_retirement_receipts: flag(lookup, gates::CREDENTIAL_RETIREMENT_RECEIPTS)?,
+            retirement_reauthorization: flag(lookup, gates::RETIREMENT_REAUTHORIZATION)?,
             workspace_prepare_observations: flag(lookup, gates::WORKSPACE_PREPARE_OBSERVATIONS)?,
             reviewed_sandbox_retirement_enabled: flag(
                 lookup,
@@ -427,6 +428,8 @@ mod admission_control_tests;
 #[cfg(test)]
 mod approval_tests;
 #[cfg(test)]
+mod bot_effect_tests;
+#[cfg(test)]
 mod capacity_tests;
 #[cfg(test)]
 mod close_retry_tests;
@@ -447,6 +450,8 @@ mod ownership_retry_hint_tests;
 mod paged_event_tests;
 #[cfg(test)]
 mod parent_pacing_tests;
+#[cfg(test)]
+mod pending_homes_tests;
 #[cfg(test)]
 mod permission_bound_tests;
 #[cfg(test)]
@@ -489,12 +494,7 @@ mod transcript_tests;
 mod usage_cursor_tests;
 mod usage_cursors;
 #[cfg(test)]
-mod work_retry_tests;
-
-#[cfg(test)]
-mod bot_effect_tests;
-#[cfg(test)]
-mod pending_homes_tests;
-#[cfg(test)]
 #[path = "features/visitor_defaults_tests.rs"]
 mod visitor_defaults_tests;
+#[cfg(test)]
+mod work_retry_tests;

@@ -160,6 +160,17 @@ impl GrantAuthority for Nyxid {
         }))
     }
 
+    async fn retirement_authority_version(
+        &self,
+        auth: &AuthState,
+        token: &SecretValue,
+    ) -> Result<Option<RetirementAuthorityVersion>, StoreError> {
+        match self.consent(auth, token).await? {
+            ConsentRead::Available(Some(consent)) => consent.retirement_authority_version(),
+            ConsentRead::Available(None) | ConsentRead::UnsupportedCredential => Ok(None),
+        }
+    }
+
     async fn missing(
         &self,
         auth: &AuthState,

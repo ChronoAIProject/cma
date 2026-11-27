@@ -127,6 +127,13 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox
+            .work
+            .retirement_credential_recovery
+            .is_some_and(|recovery| recovery.admitted.is_none())
+        {
+            return self.probe_retirement_reauthorization(sandbox, now).await;
+        }
         if let Err(failure) = self.settle_retirement_credentials(&mut sandbox, now).await {
             self.suspend_credential_blocked_retirement(&mut sandbox, &failure)
                 .await?;

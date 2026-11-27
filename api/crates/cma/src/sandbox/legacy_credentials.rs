@@ -56,6 +56,13 @@ impl SandboxCredentialController for LegacySandboxCredentials {
         self.provenance.require_ordinary(&sandbox.id).await?;
         self.ordinary.revoke(sandbox, provider_key_id).await
     }
+    async fn retirement_authority_version(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<Option<layer2_core::sandbox::RetirementAuthorityVersion>, CredentialError> {
+        self.provenance.require_ordinary(&sandbox.id).await?;
+        self.ordinary.retirement_authority_version(sandbox).await
+    }
     async fn settle_revocations(&self, sandbox: &Sandbox) -> Result<(), CredentialError> {
         self.provenance.require_ordinary(&sandbox.id).await?;
         self.ordinary.settle_revocations(sandbox).await
