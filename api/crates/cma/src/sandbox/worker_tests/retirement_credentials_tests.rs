@@ -276,22 +276,8 @@ async fn verified_reauthorization_requeues_parked_retirement_once_across_workers
 
     for lose_reply in [false, true] {
         let h = Harness::new(Vec::new(), 0, Duration::from_secs(30)).await;
-        let created = h.create().await;
-        let now = start_time(&created);
-        let active = h.drive_active(&created.id, now).await;
-        h.credentials
-            .require_retirement_authority
-            .store(true, Ordering::SeqCst);
-        h.service
-            .delete(&caller("owner", [Capability::DeleteOwnSandbox]), &active.id)
-            .await
-            .unwrap();
-        h.run(&active.id, now).await;
-        for _ in 0..=layer2_core::sandbox::work_retry::WORK_RETRY_EXTERNAL_BUDGET {
-            let row = h.stored(&active.id).await;
-            h.run(&active.id, stamp_time(&row.work.ready_at)).await;
-        }
-        let parked = h.stored(&active.id).await;
+        let parked = park_for_owner_reauthorization(&h).await;
+        let id = &parked.id;
         let recovery = parked.work.retirement_credential_recovery.unwrap();
         assert!(recovery.admitted.is_none());
         assert_eq!(parked.credential.revoke_debt.len(), 1);
@@ -301,8 +287,8 @@ async fn verified_reauthorization_requeues_parked_retirement_once_across_workers
             granted_at_ms: recovery.newer_than_ms,
         };
         *h.credentials.retirement_authority.lock().unwrap() = Some(old);
-        h.run(&active.id, stamp_time(&parked.work.ready_at)).await;
-        let waiting = h.stored(&active.id).await;
+        h.run(id, stamp_time(&parked.work.ready_at)).await;
+        let waiting = h.stored(id).await;
         assert_eq!(waiting.work.retirement_credential_recovery, Some(recovery));
         assert_eq!(
             waiting.credential.revoke_debt,
@@ -317,8 +303,8 @@ async fn verified_reauthorization_requeues_parked_retirement_once_across_workers
         let due = stamp_time(&waiting.work.ready_at);
         let peer = h.worker_with("peer", h.credentials.clone(), Duration::from_secs(30));
         // The persisted acknowledgement can be observed before either worker dispatches.
-        h.run(&active.id, due).await;
-        let admitted = h.stored(&active.id).await;
+        h.run(id, due).await;
+        let admitted = h.stored(id).await;
         assert_eq!(
             admitted
                 .work
@@ -345,10 +331,7 @@ async fn verified_reauthorization_requeues_parked_retirement_once_across_workers
             .into_iter()
             .filter(|action| action.starts_with("revoke:"))
             .count();
-        let (first, second) = tokio::join!(
-            peer.run_one(&active.id, due),
-            successor.run_one(&active.id, due)
-        );
+        let (first, second) = tokio::join!(peer.run_one(id, due), successor.run_one(id, due));
         assert!(first.unwrap() || second.unwrap());
         let current_attempts = h
             .actions
@@ -357,7 +340,7 @@ async fn verified_reauthorization_requeues_parked_retirement_once_across_workers
             .filter(|action| action.starts_with("revoke:"))
             .count();
         assert_eq!(current_attempts, prior_attempts + 1);
-        let after_dispatch = h.stored(&active.id).await;
+        let after_dispatch = h.stored(id).await;
         if lose_reply {
             assert_eq!(
                 after_dispatch.credential.revoke_debt,
@@ -365,8 +348,8 @@ async fn verified_reauthorization_requeues_parked_retirement_once_across_workers
             );
             assert!(!after_dispatch.retirement_released_owner_slot());
             let retry = stamp_time(&after_dispatch.work.ready_at);
-            assert!(successor.run_one(&active.id, retry).await.unwrap());
-            let ambiguous = h.stored(&active.id).await;
+            assert!(successor.run_one(id, retry).await.unwrap());
+            let ambiguous = h.stored(id).await;
             assert_eq!(
                 ambiguous.credential.revoke_debt,
                 parked.credential.revoke_debt
@@ -376,16 +359,70 @@ async fn verified_reauthorization_requeues_parked_retirement_once_across_workers
         } else {
             assert_eq!(after_dispatch.credential.revoke_debt.len(), 0);
             for _ in 0..3 {
-                let row = h.stored(&active.id).await;
+                let row = h.stored(id).await;
                 if row.status == SandboxStatus::Retired {
                     break;
                 }
                 assert!(successor
-                    .run_one(&active.id, stamp_time(&row.work.ready_at))
+                    .run_one(id, stamp_time(&row.work.ready_at))
                     .await
                     .unwrap());
             }
-            assert_eq!(h.stored(&active.id).await.status, SandboxStatus::Retired);
+            assert_eq!(h.stored(id).await.status, SandboxStatus::Retired);
         }
     }
+}
+
+#[tokio::test]
+async fn operator_can_resume_waiting_retirement_without_clearing_debt() {
+    use layer2_core::sandbox::{SandboxRetirement, StoredSandboxRetirement};
+
+    let h = Harness::new(Vec::new(), 0, Duration::from_secs(30)).await;
+    let parked = park_for_owner_reauthorization(&h).await;
+    let retirement = StoredSandboxRetirement::new(h.store.clone());
+    let at = parked.updated_at.clone();
+    assert!(retirement
+        .retire(&parked.id, at.clone(), Some(parked.revision - 1))
+        .await
+        .is_err());
+    assert!(
+        !retirement
+            .retire(&parked.id, at.clone(), None)
+            .await
+            .unwrap()
+            .changed
+    );
+    let resumed = retirement
+        .retire(&parked.id, at, Some(parked.revision))
+        .await
+        .unwrap();
+    assert!(resumed.changed);
+    assert!(resumed
+        .sandbox
+        .work
+        .retirement_credential_recovery
+        .is_none());
+    assert_eq!(
+        resumed.sandbox.credential.revoke_debt,
+        parked.credential.revoke_debt
+    );
+}
+
+async fn park_for_owner_reauthorization(h: &Harness) -> Sandbox {
+    let created = h.create().await;
+    let now = start_time(&created);
+    let active = h.drive_active(&created.id, now).await;
+    h.credentials
+        .require_retirement_authority
+        .store(true, Ordering::SeqCst);
+    h.service
+        .delete(&caller("owner", [Capability::DeleteOwnSandbox]), &active.id)
+        .await
+        .unwrap();
+    h.run(&active.id, now).await;
+    for _ in 0..=layer2_core::sandbox::work_retry::WORK_RETRY_EXTERNAL_BUDGET {
+        let row = h.stored(&active.id).await;
+        h.run(&active.id, stamp_time(&row.work.ready_at)).await;
+    }
+    h.stored(&active.id).await
 }
