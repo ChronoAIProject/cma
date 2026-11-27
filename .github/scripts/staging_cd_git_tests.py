@@ -380,6 +380,8 @@ class GitPublicationTests(unittest.TestCase):
         active = True
         def request(path, **_kwargs):
             if path.startswith("actions/runs/"):
+                if "/jobs?" in path:
+                    return {"total_count": 0, "jobs": []}
                 return {"id": 9, "run_attempt": 1, "event": "push", "head_branch": "develop",
                         "repository": {"full_name": "ChronoAIProject/cma"},
                         "status": "in_progress" if active else "completed"}
