@@ -54,6 +54,7 @@ mod relay_capacity;
 mod runtime;
 mod staging_sandbox;
 pub(crate) use runtime::deployment_id_from_lookup;
+pub(crate) use staging_sandbox::StagingSandboxControls;
 mod runtime_capacity;
 mod runtime_migration;
 mod shell_settings;

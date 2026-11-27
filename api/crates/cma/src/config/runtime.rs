@@ -48,9 +48,8 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
     pub legacy_receiver_image: Option<layer3_adapter::hosted::LegacyReceiverImage>,
     pub stale_turn_runtime_digest: Option<String>,
-    pub(crate) open_reply_loss_sandbox: Option<String>,
+    pub(crate) staging_sandbox: super::StagingSandboxControls,
     pub(crate) inspection_refusal: Option<super::InspectionRefusalControl>,
-    pub(crate) park_runtime_update_sandbox: Option<layer2_core::SandboxId>,
     pub allocate_agent_sandbox: bool,
     pub native_prepared_target: u8,
     pub native_machine_prepared_target: u8,
@@ -334,19 +333,11 @@ impl RuntimeConfig {
             agent_sandbox_runtime_transport,
             legacy_receiver_image,
             stale_turn_runtime_digest,
-            open_reply_loss_sandbox: super::staging_sandbox::sandbox_from_lookup(
-                lookup,
-                "CHRONO_STAGING_DROP_ACP_OPEN_REPLY_FOR_SANDBOX",
-            )?,
+            staging_sandbox: super::StagingSandboxControls::from_lookup(lookup)?,
             inspection_refusal: super::InspectionRefusalControl::from_lookup(
                 lookup,
                 std::time::SystemTime::now(),
             )?,
-            park_runtime_update_sandbox: super::staging_sandbox::sandbox_from_lookup(
-                lookup,
-                "CHRONO_STAGING_PARK_RUNTIME_UPDATE_FOR_SANDBOX",
-            )?
-            .map(layer2_core::SandboxId),
             allocate_agent_sandbox,
             native_prepared_target,
             native_machine_prepared_target,
