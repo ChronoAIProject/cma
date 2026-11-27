@@ -132,6 +132,31 @@ impl ActivityObserver for ObservedActivity {
     ) {
         self.console.refused(record, source, event, reason);
     }
+    fn source_refused<'a>(
+        &'a self,
+        owner: &'a str,
+        record: &'a RecordId,
+        receipt: super::ChannelActivity,
+        received: time::OffsetDateTime,
+    ) -> BoxFuture<'a, Result<(), ()>> {
+        Box::pin(async move {
+            let write =
+                self.store
+                    .persist_receipt(owner, record.as_str(), receipt.clone(), received);
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(3), write).await;
+            // An acknowledgement can be lost after the commit. Verify the exact
+            // retained receipt, including its outcome, before confirming refusal.
+            let confirmed = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                self.store
+                    .confirms_receipt(owner, record.as_str(), &receipt),
+            )
+            .await
+            .map_err(|_| ())?
+            .map_err(|_| ())?;
+            confirmed.then_some(()).ok_or(())
+        })
+    }
     fn launched(
         &self,
         record: &RecordId,

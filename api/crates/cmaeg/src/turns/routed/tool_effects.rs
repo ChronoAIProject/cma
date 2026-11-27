@@ -12,6 +12,8 @@ mod mongo_failure_tests;
 #[cfg(test)]
 mod mongo_history_tests;
 #[cfg(test)]
+mod mongo_issue_2873;
+#[cfg(test)]
 mod mongo_lane_tests;
 #[cfg(test)]
 mod mongo_operator_expiry_tests;

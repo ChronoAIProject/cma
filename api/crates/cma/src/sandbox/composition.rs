@@ -46,6 +46,7 @@ pub(crate) struct SandboxLifecycleDependencies {
 
 pub(crate) struct SandboxLifecycleConfig {
     pub renewable_work: bool,
+    pub workspace_prepare_observations: bool,
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
@@ -233,7 +234,8 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
             )
             .with_execution(config.execution)
-            .with_replicas(config.renewable_work),
+            .with_replicas(config.renewable_work)
+            .with_prepare_observations(config.workspace_prepare_observations),
         );
         let capture_delivery = (config.native_retirement_finality_enabled
             && config.native_retirement_capture_enabled

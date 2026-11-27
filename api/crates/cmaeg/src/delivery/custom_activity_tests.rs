@@ -95,6 +95,7 @@ async fn legacy_custom_activity_keeps_mixed_webhook_receipts_and_local_buffer_di
         crate::ingress::routing_plan::fixture::message("fixture"),
     );
     let mut row = crate::activity::ChannelActivity {
+        source_refusal: None,
         quoted_context: None,
         event_id: "event".into(),
         kind: None,

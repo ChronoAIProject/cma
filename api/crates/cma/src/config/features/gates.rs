@@ -1,5 +1,8 @@
 pub(super) const RETIREMENT_CAPTURE: &str = "CHRONO_NATIVE_RETIREMENT_CAPTURE_ENABLED";
 
+pub(super) const WORKSPACE_PREPARE_OBSERVATIONS: &str =
+    "CHRONO_WORKSPACE_PREPARE_OBSERVATIONS_ENABLED";
+
 /// Rollout gates graduated to default-on after their rollout completed in
 /// every environment. Unset means enabled; an explicit `false` remains the
 /// emergency off-switch, and any other value keeps the strict-boolean error.

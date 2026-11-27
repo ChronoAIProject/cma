@@ -4,6 +4,7 @@ mod custom_delivery;
 mod delivery_checkpoint;
 mod delivery_receipt;
 mod execution_attribution;
+pub mod management;
 mod recovery;
 mod scheduler;
 mod stored_receipt;

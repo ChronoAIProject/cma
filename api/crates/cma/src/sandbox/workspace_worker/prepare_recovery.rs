@@ -26,23 +26,19 @@ impl WorkspaceWorker {
         {
             return Err(SandboxStoreError::WorkspaceRecoveryConflict);
         }
-        let previous = recovery
-            .attempts
-            .iter()
-            .rev()
-            .nth(1)
-            .map(|attempt| attempt.operation_id.clone());
-        let request = WorkspacePrepareRecoveryRequest::new(
-            attempt.operation_id.clone(),
-            recovery.original.clone(),
-            previous,
-        );
+        let request = recovery
+            .current_request()
+            .ok_or(SandboxStoreError::WorkspaceRecoveryConflict)?;
         if request.validate().is_err() {
             return Err(SandboxStoreError::WorkspaceRecoveryConflict);
         }
         let (parent, runtime) = match self.runtime(&workspace).await {
             Ok(value) => value,
-            Err(failure) => return self.handle_failure(workspace, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_failure(workspace, failure.observed(INSPECTION_FAILURE), now)
+                    .await;
+            }
         };
         if parent.status != SandboxStatus::Active
             || parent.lifecycle.operation.is_some()
@@ -60,18 +56,19 @@ impl WorkspaceWorker {
             return self
                 .handle_failure(
                     workspace,
-                    WorkerFailure::retryable("sandbox lifecycle is busy"),
+                    WorkerFailure::retryable("sandbox lifecycle is busy")
+                        .observed(INSPECTION_FAILURE),
                     now,
                 )
                 .await;
         }
         layer2_core::sandbox::store::WorkAuthority::current()?;
-        match self
+        let call = self
             .dependencies
             .adapter
-            .recover_workspace_prepare(&runtime, &request)
-            .await
-        {
+            .recover_workspace_prepare(&runtime, &request);
+        let (reply, observation) = self.observe_prepare_rpc(call).await;
+        match reply {
             Ok(receipt) if valid_receipt(&request, &receipt, &workspace.path) => {
                 if let WorkspaceSource::RepositorySnapshot { source_commit, .. }
                 | WorkspaceSource::PublicRepositorySnapshot { source_commit, .. } =
@@ -103,12 +100,20 @@ impl WorkspaceWorker {
                 // the same operation so a later exact journal replay can settle it.
                 self.handle_failure(
                     workspace,
-                    WorkerFailure::retryable("workspace recovery completion is not yet verified"),
+                    WorkerFailure::retryable("workspace recovery completion is not yet verified")
+                        .observed(INVALID_RECEIPT),
                     now,
                 )
                 .await
             }
-            Err(error) => self.handle_failure(workspace, failure(error), now).await,
+            Err(error) => {
+                self.handle_failure(
+                    workspace,
+                    failure(error).observed_rpc(observation, observations::Stage::RecoveryRpc),
+                    now,
+                )
+                .await
+            }
         }
     }
 }

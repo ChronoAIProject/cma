@@ -717,9 +717,11 @@ dependencies = [
  "axum",
  "cmaeg-core",
  "cmaeg-engine",
+ "meteroid-utoipa",
  "pulldown-cmark",
  "reqwest",
  "ring",
+ "serde",
  "serde_json",
 ]
 

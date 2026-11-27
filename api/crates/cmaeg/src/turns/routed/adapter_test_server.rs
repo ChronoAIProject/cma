@@ -22,6 +22,7 @@ pub struct Config {
     pub event_context: Option<Value>,
     pub replay_idle: bool,
     pub replay_delay: Duration,
+    pub replay_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
     pub replay_frame_delay: Duration,
     pub replay_tail: String,
     pub post_status: u16,
@@ -51,6 +52,7 @@ impl Default for Config {
             event_context: None,
             replay_idle: false,
             replay_delay: Duration::ZERO,
+            replay_barrier: None,
             replay_frame_delay: Duration::ZERO,
             replay_tail: String::new(),
             post_status: 200,
@@ -252,6 +254,10 @@ async fn handle(State(memory): State<Arc<Mutex<Memory>>>, request: Request) -> R
             .unwrap();
     }
     if !post {
+        if let Some((entered, release)) = &config.replay_barrier {
+            entered.notify_one();
+            release.notified().await;
+        }
         tokio::time::sleep(config.replay_delay).await;
     }
     let body = if post && config.post_idle {

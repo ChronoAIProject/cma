@@ -2602,6 +2602,13 @@
               "string",
               "null"
             ]
+          },
+          "source_refusal": {
+            "description": "A source refusal before any Consumer was selected or launched.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
