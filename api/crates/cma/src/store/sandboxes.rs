@@ -195,17 +195,7 @@ fn raw_sandbox_document(
     let lease_expires_at = sandbox.work.lease.as_ref().map(|lease| &lease.expires_at);
     Ok(doc! {
         "_id": sandbox.id.as_str(),
-        "document_schema_version": if sandbox.managed_runtime_lane()
-            == Some(layer2_core::released_runtime::ReleasedLane::Machine) {
-            super::work_schema::MANAGED_MACHINE_ORIGIN_VERSION
-        } else if sandbox.lifecycle.runtime_image_origin.is_some() {
-            super::work_schema::RUNTIME_IMAGE_ORIGIN_VERSION
-        } else if sandbox.lifecycle.custom_runtime.is_some() || sandbox.lifecycle.runtime_migration_admission.is_some() {
-            super::work_schema::RUNTIME_MIGRATION_VERSION
-        } else { super::work_schema::version(
-            sandbox.work.authority_protocol,
-            sandbox.work.prepared_installation_digest.is_some(),
-        ) },
+        "document_schema_version": super::work_schema::sandbox_version(sandbox),
         "owner": sandbox.owner.as_str(),
         "name": &sandbox.name,
         "origin_type": origin_type,

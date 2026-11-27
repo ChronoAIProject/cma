@@ -1,6 +1,7 @@
 //! Retained ordinary-work envelope: old version-one readers and CAS writers fail closed.
 
 use layer2_core::sandbox::store::WorkAuthorityProtocol;
+use layer2_core::{released_runtime::ReleasedLane, sandbox::Sandbox};
 use mongodb::bson::{doc, Bson, Document};
 use serde::de::DeserializeOwned;
 
@@ -24,6 +25,23 @@ pub(super) fn version(protocol: Option<WorkAuthorityProtocol>, prepared_installa
         RENEWED_VERSION
     } else {
         1
+    }
+}
+
+pub(super) fn sandbox_version(sandbox: &Sandbox) -> i64 {
+    if sandbox.managed_runtime_lane() == Some(ReleasedLane::Machine) {
+        MANAGED_MACHINE_ORIGIN_VERSION
+    } else if sandbox.lifecycle.runtime_image_origin.is_some() {
+        RUNTIME_IMAGE_ORIGIN_VERSION
+    } else if sandbox.lifecycle.custom_runtime.is_some()
+        || sandbox.lifecycle.runtime_migration_admission.is_some()
+    {
+        RUNTIME_MIGRATION_VERSION
+    } else {
+        version(
+            sandbox.work.authority_protocol,
+            sandbox.work.prepared_installation_digest.is_some(),
+        )
     }
 }
 
