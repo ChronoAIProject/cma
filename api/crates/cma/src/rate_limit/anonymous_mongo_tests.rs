@@ -1,4 +1,5 @@
 use super::*;
+use axum::extract::ConnectInfo;
 use axum::{body::Body, middleware, routing::get, Router};
 use mongodb::{
     bson::{doc, Document},
@@ -6,6 +7,7 @@ use mongodb::{
     options::ClientOptions,
     Client,
 };
+use std::net::SocketAddr;
 use std::{
     num::NonZeroU32,
     sync::{atomic::AtomicUsize, Mutex},
