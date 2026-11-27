@@ -32,6 +32,13 @@ fn classify(reason: &str) -> Option<&'static str> {
         | "node(s) didn't find available persistent volumes to bind"
         | "node(s) did not have enough free storage"
         | "node(s) exceed max volume count" => Some("volume"),
+        reason
+            if reason.starts_with("persistentvolumeclaim \"")
+                && (reason.ends_with("\" not found")
+                    || reason.ends_with("\" is being deleted")) =>
+        {
+            Some("volume")
+        }
         "node(s) didn't match Pod's node affinity/selector"
         | "node(s) didn't match pod topology spread constraints"
         | "node(s) didn't match pod affinity rules"

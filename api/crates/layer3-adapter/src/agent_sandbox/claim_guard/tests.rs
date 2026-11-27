@@ -118,7 +118,7 @@ fn scheduler_diagnostics_report_only_unique_classes_for_the_pending_pod() {
     tracing::subscriber::with_default(subscriber, || {
         let _span = tracing::warn_span!("claim", owner = "fixture-owner").entered();
         for message in [
-            "0/6 nodes are available: 2 Insufficient cpu, 2 Insufficient memory, 1 node(s) had volume node affinity conflict, 1 node(s) had untolerated taint {fixture-key: fixture-value}, 1 node(s) didn't match Pod's node affinity/selector. preemption: 1 exceeded quota: fixture-preemption.",
+            r#"0/6 nodes are available: 2 Insufficient cpu, 2 Insufficient memory, 1 persistentvolumeclaim "fixture-volume" not found, 1 node(s) had untolerated taint {fixture-key: fixture-value}, 1 node(s) didn't match Pod's node affinity/selector. preemption: 1 exceeded quota: fixture-preemption."#,
             "exceeded quota: fixture-quota, requested: requests.cpu=1",
             "node fixture-node reported an unrecognized condition",
         ] {
@@ -131,7 +131,9 @@ fn scheduler_diagnostics_report_only_unique_classes_for_the_pending_pod() {
             );
             assert!(matches!(
                 sample(&member, &pod),
-                Err(AdapterError::NativeClaimNotReady(NativeClaimGuardReason::Unschedulable))
+                Err(AdapterError::NativeClaimNotReady(
+                    NativeClaimGuardReason::Unschedulable
+                ))
             ));
         }
     });
