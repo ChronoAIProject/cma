@@ -249,7 +249,10 @@ pub(super) async fn seed_active(
     store.create_agent(child.clone()).await.unwrap();
 }
 
-pub(super) async fn run_due(worker: &SandboxWorker, sandbox: &SandboxId) {
+pub(in crate::sandbox::worker_tests::native_suspension_tests) async fn run_due(
+    worker: &SandboxWorker,
+    sandbox: &SandboxId,
+) {
     tokio::time::timeout(Duration::from_secs(8), async {
         while !worker.run_one(sandbox, SystemTime::now()).await.unwrap() {
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -259,7 +262,7 @@ pub(super) async fn run_due(worker: &SandboxWorker, sandbox: &SandboxId) {
     .expect("parent becomes eligible for the next guarded attempt");
 }
 
-pub(super) fn parent_worker(
+pub(in crate::sandbox::worker_tests::native_suspension_tests) fn parent_worker(
     f: &super::super::super::Fixture,
     store: Arc<MongoSandboxStore>,
     holder: &str,
@@ -277,7 +280,7 @@ pub(super) fn parent_worker(
             adapter.clone(),
             "test".into(),
             store.clone(),
-            true,
+            f.retirement_admission.load(Ordering::SeqCst),
         )
         .with_capture(
             store.clone(),

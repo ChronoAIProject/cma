@@ -5,6 +5,8 @@ use std::sync::atomic::AtomicUsize;
 
 #[path = "binding_authority_api.rs"]
 mod api;
+#[path = "failed_child_retirement_tests.rs"]
+mod failed_child_retirement;
 #[path = "binding_authority_fixture.rs"]
 mod fixture;
 #[path = "binding_authority_transport.rs"]
