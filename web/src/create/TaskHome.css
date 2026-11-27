@@ -197,7 +197,8 @@
   text-align: center;
 }
 .task-home__template-chip {
-  min-height: 44px;
+  height: 36px;
+  min-height: 36px;
   border-radius: var(--radius-pill);
 }
 .task-home__start-heading,
@@ -389,6 +390,10 @@
   }
 }
 @media (pointer: coarse), (max-width: 600px) {
+  .task-home__template-chip {
+    height: 44px;
+    min-height: 44px;
+  }
   .task-home button {
     min-height: 44px;
     min-width: 44px;
