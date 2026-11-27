@@ -3,7 +3,8 @@ use super::*;
 use axum::{http::StatusCode, Router};
 use futures_util::future::join_all;
 use serde_json::{json, Value};
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
+use tokio::sync::Barrier;
 
 const AGENTS: &str = "/api/v1/agents?limit=200";
 const ORGANIZATIONS: &str = "/api/v1/organizations";
@@ -65,16 +66,35 @@ async fn concurrent_reads(
     budget: usize,
 ) {
     fixture.meter.take();
-    let mut elapsed = join_all((0..READERS).map(|index| async move {
-        let (path, expected) = requests[index % requests.len()];
-        let start = Instant::now();
-        let (status, body) = public::request_cookie(app, path, cookie).await;
-        let micros = start.elapsed().as_micros();
-        assert_eq!(status, StatusCode::OK, "{path}");
-        assert_eq!(&body, expected, "{path} reader {index}");
-        micros
-    }))
-    .await;
+    let cases: Vec<_> = requests
+        .iter()
+        .map(|(path, expected)| (path.to_string(), Arc::new((**expected).clone())))
+        .collect();
+    let admission = Arc::new(Barrier::new(READERS + 1));
+    let readers: Vec<_> = (0..READERS)
+        .map(|index| {
+            let (path, expected) = cases[index % cases.len()].clone();
+            let app = app.clone();
+            let cookie = cookie.to_owned();
+            let admission = admission.clone();
+            tokio::spawn(async move {
+                admission.wait().await;
+                let start = Instant::now();
+                let (status, body) = public::request_cookie(&app, &path, &cookie).await;
+                let micros = start.elapsed().as_micros();
+                assert_eq!(status, StatusCode::OK, "{path}");
+                assert_eq!(&body, expected.as_ref(), "{path} reader {index}");
+                micros
+            })
+        })
+        .collect();
+    // Release the same reader cohort across the fixture's Tokio workers.
+    admission.wait().await;
+    let mut elapsed: Vec<_> = join_all(readers)
+        .await
+        .into_iter()
+        .map(|result| result.expect("reader task completed"))
+        .collect();
     let stats = fixture.meter.take();
     assert_budget(&stats, READERS * budget);
     elapsed.sort_unstable();
@@ -85,6 +105,19 @@ async fn concurrent_reads(
         elapsed[98],
         stats.count()
     );
+    // TC-107 scores latency with an optimized binary. The ordinary debug
+    // partitions still enforce the complete request, query and parity checks.
+    if !cfg!(debug_assertions) {
+        let p95 = elapsed[94];
+        let p99 = elapsed[98];
+        if requests[0].0 == ORGANIZATIONS {
+            assert!(p95 < 1_000_000, "organization p95 {p95} us");
+            assert!(p99 < 2_000_000, "organization p99 {p99} us");
+        } else {
+            assert!(p95 <= 500_000, "Agent p95 {p95} us");
+            assert!(p99 <= 2_000_000, "Agent p99 {p99} us");
+        }
+    }
     assert!(stats
         .commands
         .keys()

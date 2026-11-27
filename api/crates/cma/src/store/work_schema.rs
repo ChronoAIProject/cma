@@ -54,6 +54,17 @@ pub(super) fn require(document: &Document) -> Result<(), String> {
 }
 
 pub(super) fn read<T: DeserializeOwned>(document: &Document) -> Result<T, String> {
+    let record = validated_record(document)?;
+    mongodb::bson::deserialize_from_document(record.clone()).map_err(|error| error.to_string())
+}
+
+pub(super) fn read_owned<T: DeserializeOwned>(document: &mut Document) -> Result<T, String> {
+    validated_record(document)?;
+    let record = document.remove("record").ok_or("missing work record")?;
+    mongodb::bson::deserialize_from_bson(record).map_err(|error| error.to_string())
+}
+
+fn validated_record(document: &Document) -> Result<&Document, String> {
     require(document)?;
     let record = document
         .get_document("record")
@@ -108,7 +119,7 @@ pub(super) fn read<T: DeserializeOwned>(document: &Document) -> Result<T, String
     if !valid_version || (protocol.is_some() && !renewed) {
         return Err("ordinary-work writer floor disagrees with envelope".into());
     }
-    mongodb::bson::deserialize_from_document(record.clone()).map_err(|error| error.to_string())
+    Ok(record)
 }
 
 /// Only Sandbox/Workspace queries call this helper. Other aggregate schemas,

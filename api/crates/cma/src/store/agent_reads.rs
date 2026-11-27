@@ -10,7 +10,7 @@ use mongodb::{
     Collection,
 };
 
-use super::agents::read_agent;
+use super::agents::read_agent_owned;
 use super::sandbox_mongo::{record_bson, MongoSandboxStore};
 
 #[async_trait::async_trait]
@@ -107,7 +107,7 @@ pub(super) async fn query_owned_agents(
     {
         items.push(
             tracing::debug_span!(target: "cma.agent_inventory", "record_decode")
-                .in_scope(|| read_agent(&document))?,
+                .in_scope(|| read_agent_owned(document))?,
         );
     }
     let has_more = items.len() > usize::from(page.limit);

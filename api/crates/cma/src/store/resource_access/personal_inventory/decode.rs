@@ -1,11 +1,11 @@
 //! Complete source decoders are reused once per resource per snapshot.
 use super::*;
 use crate::store::{
-    agents::read_agent, resource_access::records, sandboxes::read_sandbox,
-    workspaces::read_workspace, worktrees::read_worktree,
+    agents::read_agent_owned, resource_access::records, sandboxes::read_sandbox_owned,
+    workspaces::read_workspace_owned, worktrees::read_worktree_owned,
 };
 use layer2_core::resource_access::{ResourceLineage, ResourceSelector, ResourceTarget};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy)]
 pub(super) enum Kind {
@@ -62,7 +62,7 @@ impl Sources {
         let (map, limit) = match kind {
             Kind::Agent => {
                 let agent = tracing::debug_span!(target: "cma.agent_inventory", "record_decode")
-                    .in_scope(|| read_agent(&document))
+                    .in_scope(|| read_agent_owned(document))
                     .map_err(|_| ResourceAccessStoreError::Corrupt)?;
                 if self.agents.insert(id, agent).is_some() || self.agents.len() > max_rows {
                     return Err(ResourceAccessStoreError::Corrupt);
@@ -92,14 +92,14 @@ impl Sources {
     pub fn page(self) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
         let Sources {
             agents,
-            trees: source_trees,
-            workspaces: source_workspaces,
-            sandboxes: source_sandboxes,
-            policies: source_policies,
+            trees: mut source_trees,
+            workspaces: mut source_workspaces,
+            sandboxes: mut source_sandboxes,
+            policies: mut source_policies,
             shares,
         } = self;
         let mut sandbox_shares: BTreeMap<String, Vec<_>> = BTreeMap::new();
-        let mut agent_shares: BTreeMap<(String, String), Vec<_>> = BTreeMap::new();
+        let mut agent_shares: BTreeMap<String, BTreeMap<String, Vec<_>>> = BTreeMap::new();
         for document in shares.values() {
             let parent = document
                 .get_str("sandbox_id")
@@ -111,7 +111,9 @@ impl Sources {
                 }
                 ResourceSelector::Agent { agent_id } => {
                     agent_shares
-                        .entry((parent.into(), agent_id.to_string()))
+                        .entry(parent.into())
+                        .or_default()
+                        .entry(agent_id.to_string())
                         .or_default()
                         .push(share);
                 }
@@ -123,40 +125,53 @@ impl Sources {
         let mut workspaces = BTreeMap::new();
         let mut sandboxes = BTreeMap::new();
         let mut policies = BTreeMap::new();
+        let shared_trees = shared_ids(agents.values().map(|agent| agent.worktree_id.as_str()));
+        let shared_workspaces =
+            shared_ids(agents.values().map(|agent| agent.workspace_id.as_str()));
+        let shared_sandboxes = shared_ids(agents.values().map(|agent| agent.sandbox_id.as_str()));
         for (_, agent) in agents {
-            let tree = cached(&mut trees, &source_trees, agent.worktree_id.as_str(), |d| {
-                read_worktree(d).map_err(|_| ResourceAccessStoreError::Corrupt)
-            })?;
+            let tree = cached(
+                &mut trees,
+                &mut source_trees,
+                agent.worktree_id.as_str(),
+                shared_trees.contains(agent.worktree_id.as_str()),
+                |d| read_worktree_owned(d).map_err(|_| ResourceAccessStoreError::Corrupt),
+            )?;
             let workspace = cached(
                 &mut workspaces,
-                &source_workspaces,
+                &mut source_workspaces,
                 agent.workspace_id.as_str(),
-                |d| read_workspace(d).map_err(|_| ResourceAccessStoreError::Corrupt),
+                shared_workspaces.contains(agent.workspace_id.as_str()),
+                |d| read_workspace_owned(d).map_err(|_| ResourceAccessStoreError::Corrupt),
             )?;
             let sandbox = cached(
                 &mut sandboxes,
-                &source_sandboxes,
+                &mut source_sandboxes,
                 agent.sandbox_id.as_str(),
-                |d| read_sandbox(d).map_err(|_| ResourceAccessStoreError::Corrupt),
+                shared_sandboxes.contains(agent.sandbox_id.as_str()),
+                |d| read_sandbox_owned(d).map_err(|_| ResourceAccessStoreError::Corrupt),
             )?;
-            let policy = source_policies
-                .get(agent.sandbox_id.as_str())
-                .map(|_| {
-                    cached(
-                        &mut policies,
-                        &source_policies,
-                        agent.sandbox_id.as_str(),
-                        records::read_policy,
-                    )
-                })
-                .transpose()?;
+            let policy = if source_policies.contains_key(agent.sandbox_id.as_str())
+                || policies.contains_key(agent.sandbox_id.as_str())
+            {
+                Some(cached(
+                    &mut policies,
+                    &mut source_policies,
+                    agent.sandbox_id.as_str(),
+                    shared_sandboxes.contains(agent.sandbox_id.as_str()),
+                    |d| records::read_policy(&d),
+                )?)
+            } else {
+                None
+            };
             let mut shares = sandbox_shares
                 .get(agent.sandbox_id.as_str())
                 .cloned()
                 .unwrap_or_default();
             shares.extend(
                 agent_shares
-                    .get(&(agent.sandbox_id.to_string(), agent.id.to_string()))
+                    .get(agent.sandbox_id.as_str())
+                    .and_then(|shares| shares.get(agent.id.as_str()))
                     .into_iter()
                     .flatten()
                     .cloned(),
@@ -181,16 +196,28 @@ impl Sources {
         Ok(rows)
     }
 }
+fn shared_ids<'a>(ids: impl Iterator<Item = &'a str>) -> BTreeSet<String> {
+    let mut seen = BTreeSet::new();
+    ids.filter(|id| !seen.insert(*id))
+        .map(str::to_owned)
+        .collect()
+}
+
 fn cached<T: Clone>(
     cache: &mut BTreeMap<String, T>,
-    source: &BTreeMap<String, Document>,
+    source: &mut BTreeMap<String, Document>,
     id: &str,
-    decode: impl FnOnce(&Document) -> Result<T, ResourceAccessStoreError>,
+    shared: bool,
+    decode: impl FnOnce(Document) -> Result<T, ResourceAccessStoreError>,
 ) -> Result<T, ResourceAccessStoreError> {
     if let Some(record) = cache.get(id) {
         return Ok(record.clone());
     }
-    let record = decode(source.get(id).ok_or(ResourceAccessStoreError::Corrupt)?)?;
-    cache.insert(id.to_owned(), record.clone());
+    let record = decode(source.remove(id).ok_or(ResourceAccessStoreError::Corrupt)?)?;
+    // The snapshot owns the full record. Only shared parents need a cached
+    // copy for subsequent rows within this same snapshot.
+    if shared {
+        cache.insert(id.to_owned(), record.clone());
+    }
     Ok(record)
 }

@@ -183,11 +183,21 @@ pub(super) fn agent_document(agent: &Agent) -> Result<Document, SandboxStoreErro
 pub(super) fn read_agent(document: &Document) -> Result<Agent, SandboxStoreError> {
     super::agent_log_segments::require_agent_version(document)
         .map_err(SandboxStoreError::Corrupt)?;
+    decode_agent(document, document.get("record").cloned())
+}
+
+/// A cursor-owned row can transfer its aggregate into the BSON decoder. The
+/// same projected fields and identity checks apply to both read paths.
+pub(super) fn read_agent_owned(mut document: Document) -> Result<Agent, SandboxStoreError> {
+    super::agent_log_segments::require_agent_version(&document)
+        .map_err(SandboxStoreError::Corrupt)?;
+    let record = document.remove("record");
+    decode_agent(&document, record)
+}
+
+fn decode_agent(document: &Document, record: Option<Bson>) -> Result<Agent, SandboxStoreError> {
     let mut agent: Agent = mongodb::bson::deserialize_from_bson(
-        document
-            .get("record")
-            .cloned()
-            .ok_or_else(|| SandboxStoreError::Corrupt("Agent record missing".into()))?,
+        record.ok_or_else(|| SandboxStoreError::Corrupt("Agent record missing".into()))?,
     )
     .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     super::agent_log_segments::validate_identity(document, &agent)?;
