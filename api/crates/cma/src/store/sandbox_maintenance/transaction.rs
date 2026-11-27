@@ -201,19 +201,17 @@ pub(super) async fn apply_with_sources(
             let strict_sessions = store.strict_inactivity_session_evidence
                 && request.auto_pause_enabled
                 && !platform_stop;
-            if strict_sessions
-                && !super::evidence::sessions::clear(
+            if strict_sessions {
+                if let Some(refusal) = super::evidence::sessions::refusal(
                     store,
                     &current.id,
                     &request.requested_at,
                     session,
                 )
                 .await?
-            {
-                return Ok(MaintenanceReceipt::refused(
-                    current,
-                    Refusal::SessionEvidenceUnclear,
-                ));
+                {
+                    return Ok(MaintenanceReceipt::refused(current, refusal));
+                }
             }
             let activities = live_activities_with_sources(
                 store,
