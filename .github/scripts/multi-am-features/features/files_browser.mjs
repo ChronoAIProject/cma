@@ -62,6 +62,53 @@ export async function browserFileRoundtrip({page, api, ingress, agentId, recordF
     check(original.path === file && original.sha256 === hash('') && original.content_base64 === '',
       'browser_files_created_file_missing_on_peer');
 
+    const hiddenName = '.fixture-note';
+    const hiddenPath = directory + '/' + hiddenName;
+    const hiddenText = 'Hidden fixture entry.\n';
+    const {body: hiddenReceipt} = await api.request(peer, 'POST', path, {direct: true,
+      body: {path: hiddenPath, content_base64: Buffer.from(hiddenText).toString('base64')}});
+    check(hiddenReceipt.path === hiddenPath && hiddenReceipt.sha256 === hash(hiddenText),
+      'browser_files_hidden_fixture_unbound');
+    const [listing] = await Promise.all([
+      page.waitForResponse(reply => {
+        const url = new URL(reply.url());
+        return reply.request().method() === 'GET' && url.pathname === path + '/tree'
+          && url.searchParams.get('path') === directory;
+      }, {timeout}),
+      button('Refresh files').click({timeout}),
+    ]);
+    const tree = await listing.json();
+    check(listing.status() === 200 && tree.path === directory && Array.isArray(tree.entries)
+      && tree.entries.some(entry => entry.path === hiddenPath && entry.name === hiddenName
+        && entry.hidden === true && entry.kind === 'file'), 'browser_files_refreshed_hidden_entry_unbound');
+    await button(filename).waitFor({timeout});
+    check(await button(hiddenName).count() === 0, 'browser_files_hidden_entry_visible_by_default');
+    const showHidden = dialog.getByRole('checkbox', {name: 'Show hidden', exact: true});
+    await showHidden.check({timeout});
+    await button(hiddenName).waitFor({timeout});
+    check(await button(hiddenName).getAttribute('title') === '/home/' + hiddenPath,
+      'browser_files_hidden_entry_path_changed');
+    await showHidden.uncheck({timeout});
+    await button(hiddenName).waitFor({state: 'hidden', timeout});
+    const currentDirectory = dialog.getByLabel('Current directory', {exact: true});
+    const folderButton = button(directory);
+    await folderButton.click({timeout});
+    check(await folderButton.getAttribute('aria-expanded') === 'false',
+      'browser_files_folder_did_not_collapse');
+    await home.click({timeout});
+    await currentDirectory.getByText('/home/', {exact: true}).waitFor({timeout});
+    await folderButton.click({timeout});
+    await currentDirectory.getByText('/home/' + directory, {exact: true}).waitFor({timeout});
+    await button(filename).waitFor({timeout});
+    for (const am of [ingress, peer]) {
+      for (const rejected of ['cma/.cma', '../fixture-outside-home']) {
+        const {status, body} = await api.request(am, 'GET', path + '/tree?path=' + encodeURIComponent(rejected),
+          {direct: true, allowed: [200, 400]});
+        check(status === 400 && body?.code === 'invalid_file_request' && !Object.hasOwn(body, 'entries'),
+          'browser_files_unscoped_listing_not_refused');
+      }
+    }
+
     const replacement = 'Retain these bytes on name conflict.\n';
     await api.request(peer, 'POST', path, {direct: true, body: {path: file, expected_sha256: original.sha256,
       content_base64: Buffer.from(replacement).toString('base64')}});
