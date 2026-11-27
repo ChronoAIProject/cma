@@ -10,6 +10,8 @@ export const scenarioNames = ['cross_replica', 'am_mid_stream', 'am_mid_command'
 export const haScenarioNames = ['deterministic_contract', 'replica_sweep', 'am_101_trials', 'eg_10_trials', 'ha_evidence'];
 export const sw04Selection = 'sw04-cancel';
 export const sw04Scenario = 'sw04_cancel';
+export const connectedWorkloadSelection = 'connected-workload';
+export const connectedWorkloadScenario = 'connected_workload';
 export const selections = ['all', 'baseline-n1', 'ha'];
 export const selectedScenarioNames = (selection) => selection === 'ha' ? haScenarioNames
   : selection === 'baseline-n1' ? ['n1_capture'] : scenarioNames;

@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import { catalogSha256 } from '../lib/catalog.mjs';
 import { hash } from '../lib/checks.mjs';
 import { verifyLocalCohort } from '../lib/local-cohort.mjs';
+import { runLocalWorkload } from '../lib/local-workload.mjs';
 
 const sourceSha = 'a'.repeat(40);
 const incarnation = 'b'.repeat(64);
@@ -30,10 +38,12 @@ async function cluster(_file, args) {
   return { stdout: JSON.stringify({ metadata: { name: 'cma-scale', uid: 'namespace' } }) };
 }
 
-async function fixture(t, count, { wrongSubject, wrongStream, closeEarly, changeBuild } = {}) {
+async function fixture(t, count, { wrongSubject, wrongStream, closeEarly, changeBuild, workloadFault } = {}) {
   const env = Object.fromEntries(Array.from({ length: count }, (_, index) =>
     [`CMA_LOCAL_SCALE_BEARER_${index + 1}`, `synthetic-local-owner-${index}`]));
-  const streams = new Set();
+  const streams = new Map();
+  const commands = new Map();
+  const offerKeys = new Set();
   const seen = { builds: 0, peak: 0, openAtFinalBuild: null, write: 0 };
   const server = createServer((request, response) => {
     if (request.method !== 'GET') seen.write += 1;
@@ -59,15 +69,45 @@ async function fixture(t, count, { wrongSubject, wrongStream, closeEarly, change
       agent_id: agent, incarnation, through_cursor: cursor, active_turn: null,
     });
     if (path === `${events}?after_cursor=${cursor}&follow=true`) {
-      streams.add(response);
+      streams.set(index, response);
       seen.peak = Math.max(seen.peak, streams.size);
-      response.on('close', () => streams.delete(response));
+      response.on('close', () => streams.delete(index));
       const frame = { agent_id: wrongStream && index === 1 ? 'agt_other' : agent, incarnation,
         reason: 'reconnected', frames: null, turn_sequence: null };
       response.writeHead(200, { 'Content-Type': 'text/event-stream' });
       response.write(`event: cma.agent.live_gap\ndata: ${JSON.stringify(frame)}\n\n`);
       if (closeEarly && index === 0) response.end();
       return;
+    }
+    if (path === `/api/v2/agents/${agent}/responses` && request.method === 'POST') {
+      const key = request.headers['idempotency-key'];
+      assert.match(key, /^scale-[a-f0-9]{64}$/);
+      assert.equal(offerKeys.has(key), false);
+      offerKeys.add(key);
+      assert.equal(streams.size, count);
+      const command = `cmd_example_${index}`;
+      const id = `resp_example_${index}`;
+      const responseView = { id, conversation: { id: agent }, status: 'completed' };
+      commands.set(index, { responseView, command });
+      response.writeHead(200, { 'Content-Type': 'text/event-stream',
+        'x-cma-command-id': command, 'x-cma-response-id': id });
+      response.end(`data: ${JSON.stringify({
+        type: 'response.completed', sequence_number: 1, response: responseView,
+      })}\n\n`);
+      const sequence = workloadFault === 'gap' ? 2 : 1;
+      const idCursor = `ag1.${incarnation}.${sequence}`;
+      streams.get(index).write(`event: cma.agent.event\nid: ${idCursor}\ndata: ${JSON.stringify({
+        agent_id: agent, incarnation, sequence, cursor: idCursor, kind: { type: 'turn_completed', turn_sequence: 1 },
+      })}\n\n`);
+      return;
+    }
+    const admitted = commands.get(index);
+    if (admitted && path === `/api/v2/commands/${admitted.command}`) {
+      return json({ receipt: { command_id: admitted.command, agent_id: agent, response_id: admitted.responseView.id },
+        status: 'completed', turn_sequence: 1 });
+    }
+    if (admitted && path === `/api/v2/responses/${admitted.responseView.id}`) {
+      return json(workloadFault === 'durable' ? { ...admitted.responseView, status: 'failed' } : admitted.responseView);
     }
     response.writeHead(404).end();
   });
@@ -120,4 +160,76 @@ test('refuses a changed fixture manifest and reused owner credentials before req
   await assert.rejects(verifyLocalCohort(config, { env }), { code: 'local_cohort_owner_reused' });
   config.localCohort.owners[0].subjectHash = hash('another-owner');
   await assert.rejects(verifyLocalCohort(config, { env }), { code: 'local_cohort_binding_missing' });
+});
+
+function acceleratedClock() {
+  let current = 0;
+  return { now: () => current, sleep: async (ms, value, options) => {
+    await sleep(1, value, options);
+    current += ms;
+  } };
+}
+
+test('runs the 100-owner workload at the measured rates with traceable command receipts', async (t) => {
+  const { config, env, seen } = await fixture(t, 100);
+  config.localWorkload = { durationMs: 60_000 };
+  const report = await runLocalWorkload(config, { env, command: cluster, time: acceleratedClock() });
+  assert.equal(report.status, 'PASS', report.code);
+  assert.equal(report.openStreams, 100);
+  assert.deepEqual(report.minuteRates, [{ readsPerSecond: 10, turnsPerMinute: 20 }]);
+  assert.equal(seen.openAtFinalBuild, 100);
+  assert.equal(seen.write, 20);
+  assert.equal(report.samples.length, 620);
+  const turns = report.attempts.filter(({ kind }) => kind === 'turn');
+  assert.equal(new Set(turns.map(({ commandHash }) => commandHash)).size, 20);
+  assert.ok(turns.every(({ commandHash, keyHash, status }) => commandHash.length === 64
+    && keyHash.length === 64 && status === 'PASS'));
+  assert.doesNotMatch(JSON.stringify(report), /synthetic-local-owner|agt_example|cmd_example|resp_example/);
+});
+
+for (const [workloadFault, code] of [['gap', 'local_cohort_cursor_gap'], ['durable', 'local_workload_request_failed']]) {
+  test(`retains failed attempts when the live workload sees ${workloadFault}`, async (t) => {
+    const { config, env, seen } = await fixture(t, 100, { workloadFault });
+    config.localWorkload = { durationMs: 60_000 };
+    const report = await runLocalWorkload(config, { env, command: cluster, time: acceleratedClock() });
+    assert.equal(report.status, 'FAIL');
+    assert.equal(report.code, code);
+    assert.ok(seen.write > 0);
+    assert.ok(report.attempts.length > 0);
+    if (workloadFault === 'gap') assert.equal(seen.write, 1);
+    else assert.ok(report.attempts.some(({ code }) => code === 'local_workload_durable_response_mismatch'));
+  });
+}
+
+test('checks scope and the full 100-owner fixture before the first workload request', async () => {
+  const config = configFor('https://127.0.0.1', 2);
+  config.localWorkload = { durationMs: 60_000 };
+  const fetchImpl = () => assert.fail('unexpected application request');
+  assert.equal((await runLocalWorkload(config, { fetchImpl })).code, 'local_workload_100_owners_required');
+  const remote = configFor('https://example.com', 100);
+  remote.localWorkload = config.localWorkload;
+  assert.equal((await runLocalWorkload(remote, { fetchImpl })).code, 'nonlocal_target_refused');
+});
+
+test('the scale CLI records the blocked workload and protects the evidence directory', async (t) => {
+  const temp = await mkdtemp(join(tmpdir(), 'scale-workload-'));
+  t.after(() => rm(temp, { recursive: true, force: true }));
+  const path = join(temp, 'config.json');
+  const output = join(temp, 'evidence');
+  const config = configFor('https://example.com', 100);
+  config.localWorkload = { durationMs: 60_000 };
+  await writeFile(path, JSON.stringify(config), { mode: 0o600 });
+  const runner = fileURLToPath(new URL('../run.mjs', import.meta.url));
+  const launch = () => promisify(execFile)(process.execPath,
+    [runner, '--scenario', 'connected-workload', '--config', path, '--out', output]);
+  await assert.rejects(launch(), { code: 2 });
+  const file = join(output, 'results.json');
+  const retained = await readFile(file, 'utf8');
+  const report = JSON.parse(retained);
+  assert.equal(report.status, 'NO_GO');
+  assert.deepEqual(report.scenarios.map(({ scenario, status, code }) => ({ scenario, status, code })), [
+    { scenario: 'connected_workload', status: 'BLOCKED', code: 'nonlocal_target_refused' },
+  ]);
+  await assert.rejects(launch(), { code: 2 });
+  assert.equal(await readFile(file, 'utf8'), retained);
 });
