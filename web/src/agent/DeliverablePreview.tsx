@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { fileBase64 } from '../api/agentFiles';
 import { Button } from '../ui/Button';
-import { FilePreview, textContent } from './files/FilePreview';
+import { Modal } from '../ui/Modal';
+import { FilePreview, imageType, textContent } from './files/FilePreview';
+import { ImagePreview } from './files/ImagePreview';
 import { MessageContent } from './MessageContent';
 import type { DeliverableSelection } from './previewSelection';
 import { previewFormat, usePreviewRead, type PreviewValue } from './previewRead';
@@ -59,7 +61,9 @@ export function DeliverablePreview({
         content_base64: fileBase64(bytes),
       }
     : undefined;
-  const text = content ? textContent(content) : undefined;
+  const format = previewFormat(item);
+  const imageMime = format === 'file' ? imageType(item.reference.name) : undefined;
+  const text = content && !imageMime ? textContent(content) : undefined;
   return (
     <aside
       ref={root}
@@ -67,7 +71,7 @@ export function DeliverablePreview({
       aria-label="Deliverable preview"
       aria-busy={!value && reading.state.status !== 'error'}
       onKeyDown={(event) => {
-        if (event.key === 'Escape') {
+        if (event.key === 'Escape' && !event.defaultPrevented) {
           event.preventDefault();
           onClose();
         }
@@ -125,7 +129,12 @@ export function DeliverablePreview({
           <p role="status">Preview is not supported; download to view this file.</p>
         ) : !content ? (
           <p role="status">{statusText[value.status as keyof typeof statusText]}</p>
-        ) : previewFormat(item) === 'markdown' && text !== undefined ? (
+        ) : imageMime ? (
+          <DeliverableImagePreview
+            name={item.reference.name}
+            source={`data:${imageMime};base64,${content.content_base64}`}
+          />
+        ) : format === 'markdown' && text !== undefined ? (
           <div className="delivery-preview__document">
             <MessageContent content={text} inertResources />
           </div>
@@ -153,5 +162,26 @@ export function DeliverablePreview({
         )}
       </div>
     </aside>
+  );
+}
+
+function DeliverableImagePreview({
+  name,
+  source,
+}: {
+  readonly name: string;
+  readonly source: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const close = () => setExpanded(false);
+  return (
+    <>
+      <ImagePreview name={name} source={source} onToggle={() => setExpanded(true)} />
+      {expanded ? (
+        <Modal open headless title={name} placement="image-viewer-dialog" onClose={close}>
+          <ImagePreview expanded name={name} source={source} onToggle={close} />
+        </Modal>
+      ) : null}
+    </>
   );
 }
