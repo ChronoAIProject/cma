@@ -101,6 +101,84 @@ fn runtime_resume_does_not_add_updates_for_loss_custom_images_or_current_version
 }
 
 #[test]
+fn retained_startup_policy_keeps_the_admitted_image_on_ordinary_resume() {
+    use layer3_adapter::{RuntimeStartupPolicyObservation, RuntimeStatus};
+
+    let current = format!("registry.example/runtime@sha256:{}", "a".repeat(64));
+    let released = format!("registry.example/runtime@sha256:{}", "b".repeat(64));
+    for enabled in [false, true] {
+        let mut sandbox = paused();
+        let binding = sandbox.lifecycle.suspended_runtime.as_mut().unwrap();
+        binding.runtime_version = current.clone();
+        let observation = RuntimeStartupPolicyObservation {
+            runtime: RuntimeStatus {
+                agent_browser: false,
+                agent_filesystem: false,
+                agent_attachment_upload: false,
+                agent_skill_install: false,
+                agent_skill_upgrade: false,
+                agent_model_catalog: false,
+                agent_resource_preparation: false,
+                agent_process_restart: false,
+                exact_github_credential_route: false,
+                github_repository_scope: false,
+                sandbox_id: sandbox.id.to_string(),
+                generation: binding.provision_generation.unwrap(),
+                home_identity: sandbox
+                    .lifecycle
+                    .home
+                    .as_ref()
+                    .unwrap()
+                    .attachment()
+                    .unwrap()
+                    .identity()
+                    .unwrap(),
+                boot_id: binding.boot_id.clone().unwrap(),
+                installation_ready: true,
+                credential_ready: true,
+                restore_pending: false,
+                agent_processes: 0,
+            },
+            legacy_journal_recovery_enabled: enabled,
+        };
+        sandbox.lifecycle.retained_startup_policy =
+            Some(Box::new(RetainedRuntimePolicyBinding { observation }));
+        sandbox.validate().unwrap();
+        let original = sandbox.clone();
+        assert!(sandbox.supports_retained_runtime_update());
+        assert!(!sandbox.check_daily_runtime_update(&released, NOW).unwrap());
+        assert!(sandbox
+            .request_runtime_update(released.clone(), false, NOW.into())
+            .is_err());
+        assert_eq!(sandbox, original);
+        for cause in [
+            SandboxReviveCause::ExplicitRequest,
+            SandboxReviveCause::AgentMessage,
+            SandboxReviveCause::TriggerLaunch,
+            SandboxReviveCause::AgentCreation,
+            SandboxReviveCause::WorkspaceCreation,
+        ] {
+            let mut resumed = original.clone();
+            resumed
+                .begin_revive_with_managed_runtime(cause, Some(&released), NOW.into())
+                .unwrap();
+            assert_eq!(resumed.status, SandboxStatus::Reviving);
+            assert_eq!(resumed.revision, original.revision + 1);
+            assert!(resumed.admitted_runtime_update_target().is_none());
+            assert_eq!(
+                resumed.lifecycle.suspended_runtime,
+                original.lifecycle.suspended_runtime
+            );
+            assert_eq!(
+                resumed.lifecycle.retained_startup_policy,
+                original.lifecycle.retained_startup_policy
+            );
+            assert_eq!(resumed.lifecycle.home, original.lifecycle.home);
+        }
+    }
+}
+
+#[test]
 fn cold_canary_keeps_its_exact_runtime_across_daily_updates_and_revive() {
     use super::custom_runtime::test_support::{finish, image, pause, provision};
 

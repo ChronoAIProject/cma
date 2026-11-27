@@ -9,6 +9,7 @@ export default defineConfig({
   testDir: '.',
   testMatch: [
     'desktop-conversation.check.ts',
+    'desktop-fullscreen.check.ts',
     'desktop-local-time.check.ts',
     'desktop-reconnect.check.ts',
     'deletion-progress.check.ts',

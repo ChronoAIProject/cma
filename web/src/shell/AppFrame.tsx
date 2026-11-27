@@ -49,6 +49,7 @@ interface AppFrameProps {
   readonly details?: ReactNode;
   /** Whether the details column is asked for. */
   readonly detailsOpen: boolean;
+  readonly detailsExpanded?: boolean;
   readonly workspaceDetails?: boolean;
   readonly taskLayout?: boolean;
   readonly compactDetailsOverlay?: boolean;
@@ -77,6 +78,7 @@ export function AppFrame({
   center,
   details,
   detailsOpen,
+  detailsExpanded = false,
   workspaceDetails = false,
   taskLayout = false,
   compactDetailsOverlay = false,
@@ -284,10 +286,11 @@ export function AppFrame({
   const compactDetails = viewport > 0 && detailsOpen && columns.details === 0;
   const detailsInline = compactDetails && compactDetailsInline;
   const detailsOverlay = compactDetails && compactDetailsOverlay && !detailsInline;
+  const detailsModal = detailsOpen && (detailsOverlay || detailsExpanded);
   usePlateFocus(
     detailsRef,
     onDetailsClose ?? (() => {}),
-    detailsOverlay && onDetailsClose !== undefined,
+    detailsModal && onDetailsClose !== undefined,
   );
 
   const content = (
@@ -299,6 +302,7 @@ export function AppFrame({
       data-measuring={settled ? undefined : ''}
       data-details-collapsed={columns.details === 0 ? '' : undefined}
       data-details-overlay={detailsOverlay ? '' : undefined}
+      data-details-expanded={detailsOpen && detailsExpanded ? '' : undefined}
       data-details-inline={detailsInline ? '' : undefined}
       data-sidebar-overlay={sidebarOverlay ? '' : undefined}
       data-phone={phone ? '' : undefined}
@@ -310,7 +314,7 @@ export function AppFrame({
     >
       <div
         className="frame__sidebar"
-        inert={detailsOverlay || undefined}
+        inert={detailsModal || undefined}
         hidden={phone && effectiveSidebarCollapsed}
         style={
           sidebarOverlay
@@ -320,7 +324,7 @@ export function AppFrame({
       >
         {renderedSidebar}
       </div>
-      <div className="frame__center" inert={sidebarOverlay || detailsOverlay || undefined}>
+      <div className="frame__center" inert={sidebarOverlay || detailsModal || undefined}>
         {phone && sidebarOwnsToggle ? (
           <div className="frame__topbar">
             {sidebarLocked ? null : (
@@ -345,9 +349,9 @@ export function AppFrame({
       <div
         className="frame__details"
         ref={detailsRef}
-        role={detailsOverlay ? 'dialog' : undefined}
-        aria-modal={detailsOverlay || undefined}
-        aria-label={detailsOverlay ? 'Agent panel' : undefined}
+        role={detailsModal ? 'dialog' : undefined}
+        aria-modal={detailsModal || undefined}
+        aria-label={detailsModal ? 'Agent panel' : undefined}
       >
         {details}
       </div>

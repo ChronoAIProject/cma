@@ -250,7 +250,8 @@ pub fn apply_image_rotation(
             SandboxMaintenanceOutcome::AlreadyScheduled,
         ));
     }
-    if !image_rotation_required(current, &request.expected_runtime_version)
+    if current.requires_retained_runtime_transition()
+        || !image_rotation_required(current, &request.expected_runtime_version)
         || (current.has_managed_desktop_image()
             && (!current.supports_retained_runtime_update()
                 || current
