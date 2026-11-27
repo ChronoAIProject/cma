@@ -4,6 +4,7 @@ import { ApiError, createClient } from '@cma/client';
 import { AgentSidePanel, type AgentPanel } from './AgentSidePanel';
 import { CmaClientProvider } from '../api/context';
 import type { ReadOptions } from '../api/client';
+import type { AgentFilesClient } from '../api/agentFiles';
 import { agentClient, AGENT_DETAIL } from '../test/agent';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import type { AgentEnvironment } from '@cma/client';
@@ -772,4 +773,60 @@ it('review 4221 keeps a confirmed denial when its retry also fails transiently',
   await act(async () => {});
   expect(fileClient.environment).toHaveBeenCalledTimes(3);
   expect(fileClient.list).toHaveBeenCalledTimes(1);
+});
+
+it('replaces the pending Files tree when revalidation finds a new boot of the same image', async () => {
+  vi.useFakeTimers();
+  let finishEnvironment!: (value: AgentEnvironment) => void;
+  let finishOldTree!: (value: Awaited<ReturnType<AgentFilesClient['list']>>) => void;
+  const treeEntry = (name: string) => ({
+    path: `/home/${name}`,
+    name,
+    kind: 'file' as const,
+    size_bytes: 1,
+    hidden: false,
+  });
+  const fileClient = files(
+    vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...environment,
+        files: available,
+        runtime_incarnation: 'boot-one',
+        revalidate_at: new Date(Date.now() + 1000).toISOString(),
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishEnvironment = resolve;
+          }),
+      ),
+  );
+  const list = vi
+    .fn<AgentFilesClient['list']>()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOldTree = resolve;
+        }),
+    )
+    .mockResolvedValueOnce([treeEntry('current.txt')]);
+  render(panel(agentClient({ files: { ...fileClient, list } })));
+  await act(async () => {});
+  expect(list).toHaveBeenCalledTimes(1);
+  const oldSignal = list.mock.calls[0][2]?.signal;
+
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(fileClient.environment).toHaveBeenCalledTimes(2);
+  expect(oldSignal?.aborted).toBe(false);
+  expect(list).toHaveBeenCalledTimes(1);
+
+  await act(async () =>
+    finishEnvironment({ ...environment, files: available, runtime_incarnation: 'boot-two' }),
+  );
+  expect(oldSignal?.aborted).toBe(true);
+  expect(list).toHaveBeenCalledTimes(2);
+  await act(async () => finishOldTree([treeEntry('obsolete.txt')]));
+  expect(currentTab().getByText('current.txt')).toBeVisible();
+  expect(currentTab().queryByText('obsolete.txt')).toBeNull();
 });
