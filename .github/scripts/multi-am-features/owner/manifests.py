@@ -129,6 +129,7 @@ def managers(secret, ready):
         env['stringData']['CHRONO_SANDBOX_CPU'] = '500m'
     elif ready.get('fixture') == 'features':
         env['stringData']['CHRONO_ADMISSION_CONTROL_WRITES_ENABLED'] = 'true'
+        env['stringData']['CHRONO_DOCUMENT_DELETION_ENABLED'] = 'true'
         env['stringData']['CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED'] = 'true'
         env['stringData']['CHRONO_MONGODB_URI'] += '&appName=' + FEATURES_MONGO_APP
         env['stringData']['RUST_LOG'] += ',cma::agent_manager::writer_publication=debug,provenance_commit=debug'

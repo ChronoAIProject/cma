@@ -8,6 +8,8 @@ import {ExtendedAdminMatrix} from './features/admin_extended.mjs';
 import {ADMIN_PERMISSIONS, verifyRuntimeInventory} from './features/admin_matrix.mjs';
 import {userCases} from './features/user.mjs';
 import {browserFileRoundtrip} from './features/files_browser.mjs';
+import {composerAttachments} from './features/composer_attachments.mjs';
+import {answerDeliverables} from './features/answer_deliverables.mjs';
 import {browserChangedFilePreview, withChangedFile} from './features/files_preview.mjs';
 import {documentCases} from './features/documents.mjs';
 import {createDocumentAfterLostReply} from './features/document_creation_browser.mjs';
@@ -448,12 +450,15 @@ try {
           });
           await withBrowser(context.config.ams, async browser => {
             for (const am of ['a', 'b']) {
-              await browser.forIngress(am, async ({page}) => {
+              await browser.forIngress(am, async ({page, origin}) => {
                 await browserCase(am, iteration, 'user.agent_open', () => agentOpen(page, context.record, transcriptWitness));
                 await browserCase(am, iteration, 'user.agent_copy_response', () => copyAgentResponse(page, transcriptWitness));
                 await browserCase(am, iteration, 'user.agent_rename', () => agentRename({page, ingress: am, api: user,
                   agentId: context.record.agentId, ...transcriptWitness, recordFailure: (stage, error) =>
                     retainFailure(config.matrix_output, stage, error, {case: 'user.agent_rename', phase, iteration})}));
+                await browserCase(am, iteration, 'user.composer_attachments', () => composerAttachments({page, api: user,
+                  ingress: am, adapter: context.adapter, agentId: context.record.agentId, recordFailure: (stage, error) =>
+                    retainFailure(config.matrix_output, stage, error, {case: 'user.composer_attachments', phase, iteration})}));
                 await browserCase(am, iteration, 'user.browser_file_roundtrip', () => browserFileRoundtrip({page,
                   api: user, outsider, ingress: am, agentId: context.record.agentId,
                   seedOversizeFile: directory => context.adapter.seedOversizeFile({
@@ -461,6 +466,10 @@ try {
                     operationId: context.record.operationId,
                   }), recordFailure: (stage, error) =>
                     retainFailure(config.matrix_output, stage, error, {case: 'user.browser_file_roundtrip', phase, iteration})}));
+                await browserCase(am, iteration, 'user.answer_deliverables', () => answerDeliverables({page, origin, api: user,
+                  outsider, adapter: context.adapter, ingress: am, ownerId: config.owner_id, record: context.record,
+                  recordFailure: (stage, error) =>
+                    retainFailure(config.matrix_output, stage, error, {case: 'user.answer_deliverables', phase, iteration})}));
               });
             }
           }, 'user.agent_open');

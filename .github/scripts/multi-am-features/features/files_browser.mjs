@@ -12,6 +12,8 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
   const directory = 'ci-browser-' + randomUUID();
   const filename = 'note.txt';
   const file = directory + '/' + filename;
+  const oversizedUpload = 'oversize-' + randomUUID() + '.txt';
+  const oversizedUploadPath = directory + '/' + oversizedUpload;
   const peer = other(ingress);
   const read = am => api.request(am, 'GET', `${path}/content?path=${encodeURIComponent(file)}`, {direct: true});
   const folderEntry = am => findRootEntry(api, path, am, directory);
@@ -20,6 +22,13 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
   const dialog = page.getByRole('dialog', {name: 'Files', exact: true});
   const button = name => dialog.getByRole('button', {name, exact: true});
   let folderSubmitted = false, folderAcknowledged = false, folderDeleted = false;
+  let oversizedUploadDispatched = false;
+  const observeOversizedUpload = request => {
+    const url = new URL(request.url());
+    if (request.method() === 'POST' && url.pathname === path && url.origin === new URL(page.url()).origin) {
+      oversizedUploadDispatched = true;
+    }
+  };
   const create = async (folder, name, target, expected) => {
     await button(folder ? 'New folder' : 'New file').click({timeout});
     const field = dialog.getByRole('textbox', {name: folder ? 'Folder name' : 'File name', exact: true});
@@ -59,6 +68,7 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
     await dialog.getByLabel('Current directory', {exact: true}).getByText('/home/' + directory, {exact: true}).waitFor({timeout});
     const folder = await folderEntry(peer);
     check(folder?.kind === 'directory' && folder.name === directory, 'browser_files_created_directory_missing_on_peer');
+    await checkFileUpload({page, dialog, api, ingress, path, directory});
     await create(false, filename, file);
     const original = (await read(peer)).body;
     check(original.path === file && original.sha256 === hash('') && original.content_base64 === '',
@@ -203,6 +213,17 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
     }});
     await button(filename).click({timeout});
     await preview.waitFor({timeout});
+    // The remaining browser actions only read and delete. Count every Files
+    // POST so that renaming an oversized upload cannot hide its submission.
+    page.on('request', observeOversizedUpload);
+    await dropFile(dialog, oversizedUpload, oversizeBytes);
+    await dialog.getByRole('alert').getByText(oversizedUpload + ' must be 32 MiB or smaller.', {exact: true}).waitFor({timeout});
+    for (const am of [ingress, peer]) {
+      const response = await api.request(am, 'GET', path + '/content?path=' + encodeURIComponent(oversizedUploadPath),
+        {direct: true, allowed: [200, 404, 413]});
+      check(response.status === 404 && response.body?.code === 'file_not_found',
+        'browser_files_oversize_upload_present_before_delete');
+    }
     await deleteFiles({page, dialog, api, ingress, path, directory, file, recordFailure});
     for (const am of [ingress, peer]) {
       const {body} = await api.rawRequest(am, 'GET', `${path}/download?path=${encodeURIComponent(oversize)}`,
@@ -211,8 +232,14 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
     }
     folderDeleted = true;
   }, async () => {
-    if (!folderSubmitted || folderDeleted) return;
-    await removeFixtureDirectory({api, path, ingress, directory, acknowledged: folderAcknowledged});
+    try {
+      if (folderSubmitted && !folderDeleted) {
+        await removeFixtureDirectory({api, path, ingress, directory, acknowledged: folderAcknowledged});
+      }
+    } finally {
+      page.off('request', observeOversizedUpload);
+    }
+    check(!oversizedUploadDispatched, 'browser_files_oversize_upload_dispatched');
   }, recordFailure);
 }
 
@@ -329,6 +356,74 @@ async function deleteFiles({page, dialog, api, ingress, path, directory, file, r
     check((await Promise.all([ingress, peer].map(absent))).every(Boolean),
       'browser_files_delete_neighbor_cleanup_unconfirmed');
   }, recordFailure);
+}
+
+function dropFile(dialog, name, content) {
+  return dialog.locator('.agent-files__layout').evaluate((element, {name, content}) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([typeof content === 'number' ? new Uint8Array(content) : content],
+      name, {type: 'text/plain'}));
+    element.dispatchEvent(new DragEvent('dragover', {bubbles: true, cancelable: true, dataTransfer}));
+    element.dispatchEvent(new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer}));
+  }, {name, content});
+}
+
+async function checkFileUpload({page, dialog, api, ingress, path, directory}) {
+  const choiceName = 'chosen-' + randomUUID() + '.txt';
+  const dropName = 'dropped-' + randomUUID() + '.txt';
+  const origin = new URL(page.url()).origin;
+  const matchesWrite = request => {
+    const url = new URL(request.url());
+    return request.method() === 'POST' && url.origin === origin && url.pathname === path;
+  };
+  const chooserUpload = async (name, text) => {
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser', {timeout}),
+      dialog.getByRole('button', {name: 'Upload', exact: true}).click({timeout}),
+    ]);
+    await chooser.setFiles({name, mimeType: 'text/plain', buffer: Buffer.from(text)}, {timeout});
+  };
+  const verify = async (name, text) => {
+    const file = directory + '/' + name;
+    const encoded = Buffer.from(text).toString('base64');
+    for (const am of [ingress, other(ingress)]) {
+      const {body} = await api.request(am, 'GET', path + '/content?path=' + encodeURIComponent(file),
+        {direct: true});
+      check(body?.path === file && body.sha256 === hash(text) && body.content_base64 === encoded,
+        'browser_files_upload_readback_changed');
+    }
+    const entry = dialog.getByRole('button', {name, exact: true});
+    await entry.click({timeout});
+    await dialog.getByLabel('Selected file', {exact: true}).getByText('/home/' + file, {exact: true}).waitFor({timeout});
+    const preview = dialog.getByRole('textbox', {name: 'Contents of ' + name, exact: true});
+    check(await preview.inputValue({timeout}) === text, 'browser_files_upload_preview_changed');
+  };
+  const upload = async (send, name, text, status) => {
+    const [response] = await Promise.all([
+      page.waitForResponse(reply => matchesWrite(reply.request()), {timeout}), send(name, text),
+    ]);
+    const file = directory + '/' + name;
+    const submitted = response.request().postDataJSON();
+    check(submitted?.path === file && submitted.content_base64 === Buffer.from(text).toString('base64')
+      && submitted.expected_sha256 == null && submitted.directory !== true, 'browser_files_upload_intent_changed');
+    const body = await response.json();
+    if (status === 409) {
+      check(response.status() === 409 && body?.code === 'file_conflict', 'browser_files_upload_conflict_not_refused');
+      await dialog.getByRole('alert').getByText('The file changed; refresh before saving.', {exact: true}).waitFor({timeout});
+    } else {
+      check(response.status() === 200 && body?.path === file
+        && body.sha256 === hash(text) && body.size_bytes === Buffer.byteLength(text),
+        'browser_files_upload_receipt_changed');
+      await dialog.getByText('1 file uploaded.', {exact: true}).waitFor({timeout});
+      await verify(name, text);
+    }
+  };
+  const chosen = 'Synthetic file selected in the chooser.\n';
+  await upload(chooserUpload, choiceName, chosen, 200);
+  await upload((name, text) => dropFile(dialog, name, text), dropName,
+    'Synthetic file dropped into the selected directory.\n', 200);
+  await upload(chooserUpload, choiceName, 'Unexpected replacement.\n', 409);
+  await verify(choiceName, chosen);
 }
 
 async function findRootEntry(api, path, am, directory) {
