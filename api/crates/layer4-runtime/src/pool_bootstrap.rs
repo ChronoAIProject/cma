@@ -51,6 +51,7 @@ enum Reply {
 
 struct Admission {
     receipt: Option<RuntimeBootstrapReceipt>,
+    disarmed_receipt: Option<RuntimeBootstrapReceipt>,
     sender: Option<oneshot::Sender<AssignedRuntime>>,
     startup_confirmation: Option<oneshot::Sender<()>>,
 }
@@ -85,6 +86,7 @@ impl AssignmentServer {
         let (sender, receiver) = oneshot::channel();
         let admission = Arc::new(Mutex::new(Admission {
             receipt: None,
+            disarmed_receipt: None,
             sender: Some(sender),
             startup_confirmation: None,
         }));
@@ -203,12 +205,29 @@ async fn accept(
         };
     }
     if let Some(current) = &state.receipt {
-        return if current == &receipt {
-            Ok(receipt)
-        } else {
-            Err("runtime is already assigned".into())
-        };
+        if current == &receipt {
+            return Ok(receipt);
+        }
+        if state.disarmed_receipt.as_ref() == Some(&receipt) {
+            // A manager can replay the same assignment after its staging
+            // switch has been removed or expired. Drop the confirmation
+            // sender so a pending Runtime can continue startup immediately.
+            state.startup_confirmation = None;
+            state.disarmed_receipt = None;
+            state.receipt = Some(receipt.clone());
+            return Ok(receipt);
+        }
+        return Err("runtime is already assigned".into());
     }
+    let fault = request.staging_startup_failure.take();
+    let disarmed_receipt = if fault.is_some() {
+        Some(
+            RuntimeBootstrapReceipt::for_request(&request)
+                .map_err(|_| "invalid disarmed runtime assignment")?,
+        )
+    } else {
+        None
+    };
     let token = request
         .environment
         .remove("CHRONO_RUNTIME_CONTROL_TOKEN")
@@ -222,7 +241,7 @@ async fn accept(
     if socket.starts_with(&config.home) {
         return Err("runtime assignment socket must be outside the tenant home".into());
     }
-    let startup_failure = request.staging_startup_failure.map(|fault| {
+    let startup_failure = fault.map(|fault| {
         let (confirm, wait) = oneshot::channel();
         state.startup_confirmation = Some(confirm);
         (fault, wait)
@@ -237,6 +256,7 @@ async fn accept(
             startup_failure,
         })
         .map_err(|_| "runtime assignment receiver is unavailable")?;
+    state.disarmed_receipt = disarmed_receipt;
     state.receipt = Some(receipt.clone());
     Ok(receipt)
 }
