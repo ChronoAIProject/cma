@@ -30,6 +30,10 @@ import {
   useConversationReturn,
   type AgentComputerObservation,
 } from './environment/observation';
+import {
+  useComputerFullscreen,
+  type ComputerFullscreenFallback,
+} from './environment/useComputerFullscreen';
 import { agentInitialized } from './modelReadiness';
 
 export type AgentPanel = 'details' | 'files' | 'activity' | 'browser' | undefined;
@@ -55,6 +59,7 @@ export function AgentSidePanel({
   onStopForControl,
   resourceAvailability,
   canManageSandbox = false,
+  fullscreenFallback,
 }: {
   readonly canManageSandbox?: boolean;
   readonly onStopForControl?: () => Promise<void>;
@@ -75,22 +80,15 @@ export function AgentSidePanel({
   readonly onSelect?: (panel: AgentPanel, expected?: AgentPanel) => void;
   readonly observation?: AgentComputerObservation;
   readonly viewerId?: string;
+  readonly fullscreenFallback?: ComputerFullscreenFallback;
 }) {
   const client = useCmaClient();
   const filesOpen = panel === 'files';
   const computerOpen = panel !== undefined && panel !== 'details';
   const computerRef = useRef<HTMLElement>(null);
   const [connectionRevision, reconnect] = useState(0);
-  const [fullScreen, setFullScreen] = useState(false);
-  const [screenError, setScreenError] = useState<string>();
-  useEffect(() => {
-    const changed = () => {
-      setFullScreen(document.fullscreenElement === computerRef.current);
-      setScreenError(undefined);
-    };
-    document.addEventListener('fullscreenchange', changed);
-    return () => document.removeEventListener('fullscreenchange', changed);
-  }, []);
+  const fullscreen = useComputerFullscreen(computerRef, fullscreenFallback);
+  const { expanded, fullScreen, screenError, exitFullScreen } = fullscreen;
   const [visitedScope, setVisitedScope] = useState<{
     client: typeof client;
     agentId: string;
@@ -130,7 +128,7 @@ export function AgentSidePanel({
   const [errorPanel, setErrorPanel] = useState(panel);
   if (errorPanel !== panel) {
     setErrorPanel(panel);
-    setScreenError(undefined);
+    fullscreen.clearScreenError();
   }
   const select = (tab: AgentPanel) => onSelect?.(tab);
   const currentObservation =
@@ -242,8 +240,15 @@ export function AgentSidePanel({
         aria-label="Agent computer"
         id="agent-files-panel"
         className="agent-computer"
+        data-expanded={expanded || undefined}
         hidden={!computerOpen}
         inert={!computerOpen || undefined}
+        onKeyDownCapture={(event) => {
+          if (event.key !== 'Escape' || document.fullscreenElement !== computerRef.current) return;
+          event.preventDefault();
+          event.stopPropagation();
+          exitFullScreen();
+        }}
       >
         <header className="agent-computer__header">
           <h2 className="sr-only">Agent computer</h2>
@@ -285,39 +290,31 @@ export function AgentSidePanel({
             ))}
           </div>
           <div className="agent-computer__actions">
-            {panel === 'browser' ? (
-              <>
-                {!lifecycleHeld &&
-                ((!shared && detail?.desktop === true) ||
-                  !features ||
-                  ['available', 'temporarily_unavailable'].includes(features.browser.state)) ? (
-                  <Button
-                    size="sm"
-                    icon={<IconRefreshOutline14 />}
-                    aria-label="Reconnect"
-                    title="Reconnect"
-                    onClick={() => {
-                      setScreenError(undefined);
-                      reconnect((revision) => revision + 1);
-                      environment.reload();
-                    }}
-                  />
-                ) : null}
-                <Button
-                  size="sm"
-                  icon={<IconFullscreenOutline16 />}
-                  aria-label={fullScreen ? 'Exit full screen' : 'Full screen'}
-                  title={fullScreen ? 'Exit full screen' : 'Full screen'}
-                  onClick={() => {
-                    const request = fullScreen
-                      ? document.exitFullscreen?.()
-                      : computerRef.current?.requestFullscreen?.();
-                    if (!request) setScreenError('Full screen is unavailable in this browser.');
-                    else
-                      void request.catch(() => setScreenError('Full screen could not be opened.'));
-                  }}
-                />
-              </>
+            {panel === 'browser' &&
+            !lifecycleHeld &&
+            ((!shared && detail?.desktop === true) ||
+              !features ||
+              ['available', 'temporarily_unavailable'].includes(features.browser.state)) ? (
+              <Button
+                size="sm"
+                icon={<IconRefreshOutline14 />}
+                aria-label="Reconnect"
+                title="Reconnect"
+                onClick={() => {
+                  fullscreen.clearScreenError();
+                  reconnect((revision) => revision + 1);
+                  environment.reload();
+                }}
+              />
+            ) : null}
+            {panel === 'browser' || expanded || fullScreen ? (
+              <Button
+                size="sm"
+                icon={<IconFullscreenOutline16 />}
+                aria-label={fullscreen.screenSizeLabel}
+                title={fullscreen.screenSizeLabel}
+                onClick={fullscreen.toggleScreenSize}
+              />
             ) : null}
             <Button
               size="sm"
@@ -325,8 +322,7 @@ export function AgentSidePanel({
               aria-label="Close computer"
               title="Close computer"
               onClick={() => {
-                if (document.fullscreenElement === computerRef.current)
-                  void document.exitFullscreen?.();
+                if (document.fullscreenElement === computerRef.current) exitFullScreen();
                 onClose();
               }}
             />
