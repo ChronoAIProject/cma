@@ -2,17 +2,18 @@ use super::*;
 use crate::dependency_test_support::{finish, Peer};
 use axum::http::{header, Method};
 use serde_json::json;
+use std::sync::Arc;
 
 #[tokio::test]
 async fn retirement_receipt_requires_exact_terminal_provider_evidence() {
     let mut peer = Peer::start().await;
-    let issuer = KeyIssuer::new(
+    let issuer = Arc::new(KeyIssuer::new(
         crate::auth::test_support::contract_auth(&peer.origin)
             .http
             .clone(),
         &peer.origin,
         "test-deployment",
-    );
+    ));
     let digest = "a".repeat(64);
     let valid = json!({
         "operation_id": "mint_fixture", "owner": "fixture-owner", "request_sha256": digest,
@@ -69,7 +70,7 @@ async fn retirement_receipt_requires_exact_terminal_provider_evidence() {
             request.headers[header::AUTHORIZATION],
             "Bearer synthetic-owner-bearer"
         );
-        request.respond(status, &body.to_string());
+        request.respond(status, body.to_string());
         assert_eq!(
             finish(task).await.ok().map(|receipt| receipt.is_some()),
             expected
