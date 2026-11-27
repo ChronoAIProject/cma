@@ -28,6 +28,16 @@ def inspect(revision=OLD, image=IMAGE):
 
 
 class MigrationKindRunnerTests(unittest.TestCase):
+    def test_manifest_accepts_only_bounded_explicit_runtime_stack(self):
+        args = (IMAGE, 'runtime-password', 'admin-password', 'key', MONGO, {})
+        for stack_bytes in (None, 16777216):
+            objects = runner.manifests(*args, runtime_stack_bytes=stack_bytes)
+            values = next(value['data'] for value in objects if value['metadata']['name'] == 'api-env')
+            self.assertEqual(values.get('RUST_MIN_STACK'), None if stack_bytes is None else str(stack_bytes))
+        for stack_bytes in (True, '16777216', 1048575, 67108865):
+            with self.subTest(stack_bytes=stack_bytes), self.assertRaisesRegex(ValueError, 'stack budget'):
+                runner.manifests(*args, runtime_stack_bytes=stack_bytes)
+
     def test_identity_requires_exact_source_digest_platform_and_label(self):
         command = lambda argv: json.dumps(inspect())
         value = runner.checked_identity(command, IMAGE, OLD)
