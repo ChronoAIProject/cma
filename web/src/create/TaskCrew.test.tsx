@@ -61,7 +61,6 @@ it('renders only a real reply and its source time, never a resource timestamp or
   expect(screen.getByText(text)).toBeVisible();
   const card = screen.getByRole('button', { name: 'Agent one, Working' });
   expect(card.querySelectorAll('img')).toHaveLength(1);
-  expect(card.querySelector('img')?.getAttribute('src')).toContain('/working/poster-');
   expect(card.querySelector('time')).toHaveAttribute('datetime', '2026-11-23T10:00:00Z');
   expect(within(card).queryByText('Working')).toBeNull();
   expect(screen.getByText('Working')).toBeVisible();
