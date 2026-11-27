@@ -62,3 +62,42 @@ fn startup_phase_counts_and_outcomes_do_not_inherit_caller_payload() {
     assert!(rows[2].contains("outcome=\"cancelled\""));
     assert!(rows[2].contains("item_count=0 count_known=false"));
 }
+
+#[test]
+fn managed_machine_scope_startup_diagnostic_is_bounded() {
+    let canary = uuid::Uuid::new_v4();
+    for origin_enabled in [false, true] {
+        for (scope, mode) in [
+            (ManagedMachineUpdates::Disabled, "disabled"),
+            (ManagedMachineUpdates::Canary(canary), "canary"),
+            (ManagedMachineUpdates::All, "all"),
+        ] {
+            let output = Output::default();
+            let subscriber = tracing_subscriber::fmt()
+                .with_ansi(false)
+                .without_time()
+                .with_writer(output.clone())
+                .finish();
+            tracing::subscriber::with_default(subscriber, || {
+                let parent = tracing::info_span!("caller", content = "startup-private-canary");
+                let _entered = parent.enter();
+                observe_managed_machine_scope(scope, origin_enabled);
+            });
+            let text = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+            let (level, message) = if origin_enabled && scope == ManagedMachineUpdates::Disabled {
+                (
+                    "WARN",
+                    "Disabled Machine scope blocks origin qualification and new managed Machine update admission",
+                )
+            } else {
+                ("INFO", "Managed Machine runtime update scope")
+            };
+            assert_eq!(text.trim(), format!(
+                "{level} cma_startup: {message} setting=\"CHRONO_MANAGED_MACHINE_RUNTIME_UPDATES\" mode=\"{mode}\" runtime_image_origin_enabled={origin_enabled}"
+            ));
+            assert!(!text.contains(&canary.to_string()));
+            assert!(!text.contains(&canary.simple().to_string()));
+            assert!(!text.contains("startup-private-canary"));
+        }
+    }
+}

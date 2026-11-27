@@ -26,7 +26,7 @@ use serde_json::json;
 use std::{sync::Arc, time::Duration};
 
 #[path = "native_state.rs"]
-mod native_state;
+pub(crate) mod native_state;
 
 #[derive(Clone, Copy, Debug)]
 pub(super) enum Variant {

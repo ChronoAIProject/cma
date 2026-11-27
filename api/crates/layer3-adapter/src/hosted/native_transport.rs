@@ -234,6 +234,7 @@ impl ProviderHostedControlTransport {
                         .await
                         .map_err(|error| {
                             NativeHttpObservation::record_http_failure(&error);
+                            crate::workspace_prepare_observation::native_transport();
                             unavailable("runtime HTTP handshake over Kubernetes failed")
                         })?;
                 let mut retired = slot.cancellation();
@@ -329,6 +330,7 @@ impl ProviderHostedControlTransport {
             .await
             .map_err(|error| {
                 NativeHttpObservation::record_http_failure(&error);
+                crate::workspace_prepare_observation::native_transport();
                 unavailable("runtime HTTP exchange over Kubernetes failed")
             })?;
         let status = response.status();
@@ -363,6 +365,7 @@ impl ProviderHostedControlTransport {
         while let Some(frame) = body.frame().await {
             let frame = frame.map_err(|error| {
                 NativeHttpObservation::record_http_failure(&error);
+                crate::workspace_prepare_observation::native_transport();
                 unavailable("runtime HTTP body over Kubernetes failed")
             })?;
             if let Some(data) = frame.data_ref() {

@@ -61,6 +61,7 @@ impl WorkspaceWorker {
     ) -> Result<(), SandboxStoreError> {
         let expected = workspace.revision;
         let fence = claimed_fence(&workspace, &self.config.holder)?;
+        self.record_prepare_failure(&mut workspace, &failure);
         let stamp = rfc3339_at(now);
         if failure.retryable {
             workspace
