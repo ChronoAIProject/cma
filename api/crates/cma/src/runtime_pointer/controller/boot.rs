@@ -111,7 +111,10 @@ impl RuntimePointerController {
                 }
                 // Only errors raised inside this effect can be pool conflicts.
                 // A failed boot-writer guard still propagates as an error.
-                match self.ensure_bootstrap_pool(lane, image, can_publish).await {
+                match self
+                    .ensure_bootstrap_pool(lane, image, can_publish, current.is_some())
+                    .await
+                {
                     Err(WarmPoolError::Conflict) => Ok(None),
                     result => result.map(Some),
                 }
@@ -172,6 +175,7 @@ impl RuntimePointerController {
         lane: ReleasedLane,
         image: &str,
         can_publish: bool,
+        has_record: bool,
     ) -> Result<(), WarmPoolError> {
         let machine = lane == ReleasedLane::Machine;
         self.targets.verify_bootstrap(machine, image).await?;
@@ -184,6 +188,8 @@ impl RuntimePointerController {
             self.targets
                 .publish_bootstrap(&target, &self.release.lanes, &self.writer, &record, epoch)
                 .await?;
+        } else if machine && !has_record {
+            self.pools.retain_selected_machine(image).await?;
         } else {
             self.pools.ensure_released_image(image, machine).await?;
         }

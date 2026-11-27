@@ -93,6 +93,30 @@ impl NativeWarmPools {
             .await
     }
 
+    /// Machine can retain an existing selection while Agent publication is
+    /// held, but this path cannot establish a new release or sizing plan.
+    pub(crate) async fn retain_selected_machine(&self, image: &str) -> Result<(), WarmPoolError> {
+        let plan = self.default_plan(&deployment_image(image.into()))?;
+        let targets = self.store.list().await?;
+        let selected = targets.iter().any(|target| {
+            target.machine
+                && target.plan == plan
+                && !target.retiring
+                && !target.retired
+                && target.activated_at.is_some()
+                && target.machine_plan_activated_at.is_some()
+        });
+        if selected && !self.store.default_pin_conflicts(&plan, true).await? {
+            return Ok(());
+        }
+        self.default_holds.hold(true, image.into());
+        tracing::warn!(target: "cma_warm_pool_startup", parent: None,
+            reason = "agent_pointer_required_for_machine_selection",
+            config_sha256 = %plan.config_sha256,
+            "Agent Manager will retain the existing Machine pool authority");
+        Ok(())
+    }
+
     /// A first pointer publishes the prepared target in its own transaction.
     /// Preparation alone must never change the effective release order.
     pub(crate) async fn prepare_released_image(
