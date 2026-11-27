@@ -45,6 +45,27 @@ class SignalTests(unittest.TestCase):
         self.api.request.assert_not_called()
         self.assertEqual(self.freeze(), value)
 
+    def test_qualification_only_captures_the_selected_new_single_component(self):
+        self.matrix["include"] = [row for row in self.matrix["include"] if row["component"] == "eg"]
+        self.env["CD_QUALIFICATION_PR"] = "42"
+        self.api.request.return_value = {
+            "merged": True, "merge_commit_sha": self.env["GITHUB_SHA"],
+            "base": {"ref": "develop", "repo": {"full_name": "ChronoAIProject/cma"}},
+        }
+        self.assertEqual(set(self.freeze()["receipts"]), {"eg"})
+        self.api.request.assert_called_once_with("pulls/42")
+        with patch.dict(self.env, {"GITHUB_RUN_ATTEMPT": "2"}), self.assertRaises(Refusal):
+            self.freeze()
+        self.api.request.return_value["merge_commit_sha"] = "f" * 40
+        with self.assertRaises(Refusal):
+            self.freeze()
+
+    def test_qualification_rejects_publication_with_companions(self):
+        self.env["CD_QUALIFICATION_PR"] = "42"
+        with self.assertRaisesRegex(Refusal, "one Gateway or Web"):
+            self.freeze()
+        self.api.request.assert_not_called()
+
     def test_companion_failure_refuses_notification_even_when_deployables_published(self):
         self.api.tags.side_effect = lambda key: [] if key == "runtime" else [fixture_tag(self.receipts[key])]
         with self.assertRaises(Refusal):
