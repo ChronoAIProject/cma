@@ -267,7 +267,11 @@ async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String>
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|error| format!("bind runtime supervisor at {bind}: {error}"))?;
-    tracing::info!(%bind, "runtime supervisor listening");
+    tracing::info!(
+        %bind,
+        stale_turn_seal_enabled = supervisor.stale_turn_seal_enabled(),
+        "runtime supervisor listening"
+    );
     let mut router = link::router(supervisor.clone());
     if let Some(auth) = control_auth {
         router = router.layer(axum::middleware::from_fn_with_state(
