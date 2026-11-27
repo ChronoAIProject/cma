@@ -88,6 +88,8 @@ class LocalFixture(OriginalFixture):
                     'CHRONO_USAGE_REPORT_WARMER_ENABLED': 'false',
                     'CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED': 'false',
                     'CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE': self.ready['runtime_images']['omarchy']}
+        if self.ready.get('fixture') == 'features':
+            expected['CHRONO_ADMISSION_CONTROL_WRITES_ENABLED'] = 'true'
         config = self.client.kjson(['get', 'configmap', 'am-environment', '-o', 'json'])
         observed = {key: config.get('data', {}).get(key) for key in expected}
         if observed != expected:
@@ -121,6 +123,7 @@ class LocalFixture(OriginalFixture):
             refs = [x.get('configMapRef', {}).get('name') for x in container.get('envFrom', [])]
             protected = {'CHRONO_AGENT_MANAGER_REPLICAS_ENABLED',
                          'CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED',
+                         'CHRONO_ADMISSION_CONTROL_WRITES_ENABLED',
                          'CHRONO_USAGE_REPORT_VIEWS_ENABLED', 'CHRONO_USAGE_REPORT_WARMER_ENABLED',
                          'CHRONO_USAGE_REPORT_VIEW_SCOPES',
                          'CHRONO_USAGE_ALLOCATION_ROLLUPS_ENABLED', 'CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE'}
