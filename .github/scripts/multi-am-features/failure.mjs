@@ -5,6 +5,28 @@ import {join} from 'node:path';
 export const errorCode = error => /^[a-zA-Z0-9_:-]{1,160}$/.test(error?.message ?? '')
   ? error.message : 'transport_or_contract_error';
 
+const documentRateLimitRoutes = [
+  [/^\/api\/v1\/documents$/, '/api/v1/documents'],
+  [/^\/api\/v1\/documents\/[^/?#]+$/, '/api/v1/documents/{id}'],
+  [/^\/api\/v1\/documents\/[^/?#]+\/share-recipients$/, '/api/v1/documents/{id}/share-recipients'],
+  [/^\/api\/v1\/documents\/[^/?#]+\/shares$/, '/api/v1/documents/{id}/shares'],
+  [/^\/api\/v1\/documents\/[^/?#]+\/shares\/[^/?#]+$/, '/api/v1/documents/{id}/shares/{subject}'],
+  [/^\/api\/v1\/documents\/[^/?#]+\/comments$/, '/api/v1/documents/{id}/comments'],
+  [/^\/api\/v1\/documents\/[^/?#]+\/comments\/[^/?#]+$/, '/api/v1/documents/{id}/comments/{id}'],
+];
+
+export function rateLimitEvidence(method, path, retryAfter, code) {
+  const route = documentRateLimitRoutes.find(([pattern]) => pattern.test(path))?.[1];
+  return {
+    status: 429,
+    method: ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE'].includes(method) ? method : undefined,
+    route,
+    problem_code: code === 'rate_limited' ? code : undefined,
+    retry_after_seconds: typeof retryAfter === 'string' && /^[0-9]{1,5}$/.test(retryAfter)
+      ? Number(retryAfter) : undefined,
+  };
+}
+
 export function lifecycleFailureSummary(operation) {
   if (!operation) return null;
   const statuses = ['queued', 'running', 'ready', 'succeeded', 'failed', 'waiting_for_connection', 'cancelled'];

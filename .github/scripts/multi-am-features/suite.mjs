@@ -19,7 +19,7 @@ import {busyConfigurationCase, competingSystemPrompts, configurationCases, heldC
   verifyLifecycleReplay} from './features/agent_configuration.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
-import {journeyFailureSummary, retainFailure, withRestoration} from './failure.mjs';
+import {journeyFailureSummary, rateLimitEvidence, retainFailure, withRestoration} from './failure.mjs';
 import {openPreparedBrowser} from './prepared_browser.mjs';
 import {relinquishAndReplayAlwaysOn} from './features/sandbox_always_on_browser.mjs';
 import {NonOwnerRouter} from './routing.mjs';
@@ -50,7 +50,7 @@ const mappings = JSON.parse(await readFile(join(root, 'case-mapping.json'), 'utf
 const writerRegistry = JSON.parse(await readFile(join(root, 'writer-regressions.json'), 'utf8'));
 await mkdir(config.matrix_output, {recursive: true, mode: 0o700});
 const rows = [], observations = [], adminOwnerProofs = [], apiObservations = [], savedDocuments = [];
-let phase;
+let phase, activeBrowserCase;
 const journal = await open(join(config.matrix_output, 'cases.private.jsonl'), 'ax', 0o600);
 async function record(row) {
   rows.push(row); await journal.write(JSON.stringify(row) + '\n'); await journal.sync();
@@ -126,7 +126,9 @@ const result = {schema: 'multi-am-features-v1', verdict: 'RUNNING', source: conf
   production_acceptance: false, image: config.expected_api_image, started_at: new Date().toISOString()};
 
 async function withBrowser(am_origins, run, name) {
-  const browser = await openPreparedBrowser({...config, am_origins});
+  const browser = await openPreparedBrowser({...config, am_origins, observeBrowserRateLimit(am, evidence) {
+    if (activeBrowserCase?.am === am) activeBrowserCase.rateLimit ??= evidence;
+  }});
   let outcome;
   await withRestoration(async () => { outcome = await run(browser); }, () => browser.close(),
     (stage, error) => retainFailure(config.output_dir, stage, error, {case: name}));
@@ -136,23 +138,25 @@ async function withBrowser(am_origins, run, name) {
 async function browserCase(am, iteration, name, run) {
   const start = performance.now();
   const row = {case: name, phase, iteration, ams: [am], real_browser: true, verdict: 'RUNNING'};
+  const observation = {am};
+  activeBrowserCase = observation;
   try { await run(); row.verdict = 'PASS'; }
   catch (error) {
     row.verdict = 'FAIL';
     row.browser_failure = error?.name === 'TimeoutError' ? 'timeout' : 'assertion_or_transport_error';
     if (error?.response?.status === 429) {
       const {timing, retry_after: after, body} = error.response;
-      row.rate_limit = {
-        status: 429, method: timing?.method,
-        route: timing?.route?.replace(/(\/documents)\/[^/]+/g, '$1/{id}')
-          .replace(/(\/shares)\/[^/]+$/g, '$1/{subject}'),
-        problem_code: body?.code === 'rate_limited' ? 'rate_limited' : undefined,
-        retry_after_seconds: typeof after === 'string' && /^[0-9]{1,5}$/.test(after) ? Number(after) : undefined,
-      };
+      row.rate_limit = rateLimitEvidence(timing?.method, timing?.route, after, body?.code);
+    } else if (observation.rateLimit) {
+      row.rate_limit = observation.rateLimit;
     }
     throw error;
   }
-  finally { row.elapsed_ms = performance.now() - start; await record(row); }
+  finally {
+    activeBrowserCase = undefined;
+    row.elapsed_ms = performance.now() - start;
+    await record(row);
+  }
 }
 
 async function accountBrowserCases(ams, witness) {

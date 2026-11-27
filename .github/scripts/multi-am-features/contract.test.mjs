@@ -4,7 +4,8 @@ import {NonOwnerRouter} from './routing.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
 import {RequestPacer, requestPacer} from './pacing.mjs';
-import {routeFixtureBrowserRequest} from './prepared_browser.mjs';
+import {browserApiPacing, routeFixtureBrowserRequest} from './prepared_browser.mjs';
+import {rateLimitEvidence} from './failure.mjs';
 import {createAdapter} from './owner/adapter.mjs';
 import {API, assertOwner, hash} from './cma/core.mjs';
 
@@ -86,20 +87,56 @@ test('a two-request fixture burst reserves both slots and leaves room on each si
   await assert.rejects(pacer.wait('operator', 'POST', 3), /fixture_pacing_burst_bound/);
 });
 
-test('browser API requests share the fixture pace and block cross-origin traffic', async t => {
+test('browser forwarding reserves one fixture slot for the active session', async t => {
   const calls = [];
   t.mock.method(requestPacer, 'wait', async (...args) => calls.push(['pace', ...args]));
+  const pacing = browserApiPacing({bearer: 'fixture-owner', admin_bearer: 'fixture-admin',
+    browser_session_cookie: 'owner-session', recipient_browser_session_cookie: 'recipient-session'}, true);
+  let forward;
+  pacing.configurePreviewServer({middlewares: {use(callback) { forward = callback; }}});
+  pacing.rememberOwnerSession(['state=irrelevant; Path=/', 'cma_session=fresh-owner; Path=/; HttpOnly']);
+  const dispatch = (url, cookie, method = 'POST') => new Promise((resolve, reject) => {
+    forward({url, method, headers: {cookie}}, {}, error => {
+      if (error) return reject(error);
+      calls.push(['forward', url]);
+      resolve();
+    });
+  });
+  await dispatch('/api/v1/documents', 'state=unused; cma_session=owner-session');
+  await dispatch('/api/v1/documents?limit=5', 'cma_session=recipient-session', 'GET');
+  await dispatch('/api/v1/documents', 'cma_session=fresh-owner');
+  await dispatch('/auth/session', 'cma_session=fresh-owner', 'GET');
+  await dispatch('/api/v1/documents', 'cma_session=unknown-session');
+  assert.deepEqual(calls, [
+    ['pace', 'fixture-owner', 'POST'], ['forward', '/api/v1/documents'],
+    ['pace', 'fixture-admin', 'GET'], ['forward', '/api/v1/documents?limit=5'],
+    ['pace', 'fixture-owner', 'POST'], ['forward', '/api/v1/documents'],
+    ['forward', '/auth/session'], ['forward', '/api/v1/documents'],
+  ]);
+});
+
+test('browser route retains the origin restriction', async () => {
+  const calls = [];
   const origin = 'http://127.0.0.1:4321';
   const route = path => ({
-    request: () => ({url: () => new URL(path, origin).href, method: () => 'POST'}),
-    continue: async () => calls.push(['continue']),
-    abort: async reason => calls.push(['abort', reason]),
+    request: () => ({url: () => new URL(path, origin).href}),
+    continue: async () => calls.push('continue'),
+    abort: async reason => calls.push(reason),
   });
-  await routeFixtureBrowserRequest(route('/api/v1/documents'), origin, 'fixture-owner');
-  await routeFixtureBrowserRequest(route('/assets/script.js'), origin, 'fixture-owner');
-  await routeFixtureBrowserRequest(route('https://foreign.invalid/api/'), origin, 'fixture-owner');
-  assert.deepEqual(calls, [['pace', 'fixture-owner', 'POST'], ['continue'],
-    ['continue'], ['abort', 'blockedbyclient']]);
+  await routeFixtureBrowserRequest(route('/api/v1/documents'), origin);
+  await routeFixtureBrowserRequest(route('https://foreign.invalid/api/'), origin);
+  assert.deepEqual(calls, ['continue', 'blockedbyclient']);
+});
+
+test('public rate-limit evidence emits fixed routes and excludes unfamiliar fields', () => {
+  const evidence = (...args) => JSON.parse(JSON.stringify(rateLimitEvidence(...args)));
+  assert.deepEqual(evidence('DELETE', '/api/v1/documents/synthetic-document/comments/synthetic-comment',
+    '12', 'rate_limited'), {status: 429, method: 'DELETE', route: '/api/v1/documents/{id}/comments/{id}',
+    problem_code: 'rate_limited', retry_after_seconds: 12});
+  assert.deepEqual(evidence('PATCH', '/api/v1/documents/a/shares/synthetic-subject', '00001'),
+    {status: 429, method: 'PATCH', route: '/api/v1/documents/{id}/shares/{subject}', retry_after_seconds: 1});
+  assert.deepEqual(evidence('unknown', '/api/v1/documents/a/private-path/synthetic-id',
+    'Mon, 01 Dec 2026 00:00:00 GMT', 'private-problem'), {status: 429});
 });
 
 test('prepared adapter failures expose only an approved diagnostic shape', async t => {
