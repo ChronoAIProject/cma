@@ -179,7 +179,11 @@ export function AgentSidePanel({
     (!shared || authorized?.capabilities.includes('view_files') === true) &&
     (!client.files?.environment ||
       (environment.state.status === 'ready' &&
-        (!features || features.files.state === 'available')));
+        (!features || features.files.state === 'available')) ||
+      (filesOpen &&
+        document.visibilityState !== 'hidden' &&
+        environment.state.status === 'error' &&
+        environment.state.transient));
   const mayRetain =
     (!shared ||
       authorized?.capabilities.includes('view_files') === true ||
