@@ -15,6 +15,7 @@ import staging_cd_produce
 
 from staging_cd_build_cargo_keys import CargoKey
 from staging_cd_common import Refusal
+from staging_cd_native_archive import METADATA, artifact_name
 from staging_cd_release_archive import ARCHIVE, LEGACY_SCHEMA, MANIFEST, load, path_for, seal
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt
 
@@ -59,6 +60,43 @@ class ArchiveHandoffTests(unittest.TestCase):
 
     def test_low_disk_headroom_defers_export_until_verification_scratch_is_removed(self):
         self.check_prepared_release(overlap=False)
+
+    def test_tested_native_archive_writes_the_upload_outputs(self):
+        release = fixture_identity(component="am")
+        reservation = {key: value for key, value in release.items() if key != "build"}
+        reservation["schema"] = "cma-version-reservation-v1"
+        task = {"mode": "publish", "reservation": reservation, "component": "am"}
+        stamp = {"versionLabel": release["version"], "imageId": "sha256:" + "b" * 64,
+                 "buildFingerprint": release["build"]}
+
+        def build_image(_root, _reservation, directory, **_options):
+            archive = directory / ARCHIVE
+            archive.write_bytes(b"synthetic native archive")
+            return archive, release
+
+        def test_image(directory, _release, _source):
+            (directory / METADATA).write_text(json.dumps(stamp))
+            return stamp
+
+        with tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
+            root = Path(temporary)
+            output = root / "output"
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": release["source"],
+                   "GITHUB_RUN_ID": str(release["run_id"]), "GITHUB_RUN_ATTEMPT": str(release["run_attempt"]),
+                   "CD_COMPONENT": "am", "CD_TASKS": json.dumps([task]), "RUNNER_TEMP": str(root),
+                   "CD_NATIVE_CI_PRODUCER": "true", "GITHUB_OUTPUT": str(output)}
+            for name in ("event_identity", "GitHub", "snapshot", "Reservations"):
+                stack.enter_context(patch.object(staging_cd_produce, name))
+            stack.enter_context(patch.object(staging_cd_produce, "command",
+                                             return_value=f"{release['source']}\n{release['tree']}\n".encode()))
+            stack.enter_context(patch.object(staging_cd_produce, "build", side_effect=build_image))
+            stack.enter_context(patch.object(staging_cd_produce, "stamp_metadata", side_effect=test_image))
+            result = staging_cd_produce.produce(env, root, Mock(), {})
+            self.assertEqual(result["imageId"], stamp["imageId"])
+            destination = path_for(root / "cma-prepared-release", reservation)
+            self.assertEqual(output.read_text(), f"native_name={artifact_name(release)}\nnative_path={destination}\n")
+            self.assertIsNotNone(load(destination, release))
+            self.assertTrue((destination / METADATA).is_file())
 
     def check_prepared_release(self, *, overlap, reuse=False):
         receipt = fixture_receipt(component="am")

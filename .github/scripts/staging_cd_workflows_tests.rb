@@ -213,7 +213,9 @@ class StagingWorkflowTest < Minitest::Test
     tested = steps.index { |step| step['id'] == 'producer' }
     upload = steps.index { |step| step['id'] == 'upload' }
     assert_operator tested, :<, upload
-    assert_equal '${{ steps.producer.outputs.native-path }}', steps[upload].dig('with', 'path')
+    assert_equal "steps.producer.outputs.native_path != ''", steps[upload]['if']
+    assert_equal '${{ steps.producer.outputs.native_name }}', steps[upload].dig('with', 'name')
+    assert_equal '${{ steps.producer.outputs.native_path }}', steps[upload].dig('with', 'path')
     refute steps[upload].dig('with', 'overwrite')
   end
 

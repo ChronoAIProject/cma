@@ -118,7 +118,7 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
             diagnostics.mark("inspect")
             tested = stamp_metadata(directory, release, source)
             authority.require_current(reservation, build_started=True)
-            step_output(env, "native-name", artifact_name(release))
+            step_output(env, "native_name", artifact_name(release))
         # The destination is allocated exclusively and the manifest is the
         # final commit marker. A partial handoff cannot authorize publication.
         destination.mkdir(mode=0o700, exist_ok=False)
@@ -126,7 +126,7 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
         os.link(directory / MANIFEST, destination / MANIFEST)
         if native:
             os.link(directory / METADATA, destination / METADATA)
-            step_output(env, "native-path", str(destination))
+            step_output(env, "native_path", str(destination))
             qualification = {"component": release["component"], "source": release["source"],
                             "version": tested["versionLabel"], "imageId": tested["imageId"],
                             "buildFingerprint": tested["buildFingerprint"]}
