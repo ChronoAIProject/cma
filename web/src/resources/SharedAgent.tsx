@@ -353,6 +353,12 @@ export function SharedAgent({
       <AgentHeader
         title={title}
         status={status}
+        readOnly={
+          ready !== undefined &&
+          !can('interact') &&
+          !can('operate_agent') &&
+          !can('resolve_approval')
+        }
         // A shared reader is authorized for this Agent, not for its parents,
         // so the breadcrumb names only the place it was opened from.
         breadcrumb={[

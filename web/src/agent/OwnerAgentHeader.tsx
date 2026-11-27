@@ -17,7 +17,7 @@ export function OwnerAgentHeader({
   actionsBusy = false,
   onTitleUpdated,
   ...header
-}: Omit<ComponentProps<typeof AgentHeader>, 'sandbox' | 'onShare'> & {
+}: Omit<ComponentProps<typeof AgentHeader>, 'sandbox' | 'readOnly' | 'onShare'> & {
   readonly detail: AgentDetail;
   readonly readOnly: boolean;
   readonly busy: boolean;
@@ -51,6 +51,8 @@ export function OwnerAgentHeader({
     <>
       <AgentHeader
         {...header}
+        parentSandbox={readOnly ? undefined : (header.parentSandbox ?? detail.sandbox)}
+        readOnly={readOnly && !header.detailsUnavailable}
         onActionsOpenChange={setMenuOpen}
         onShare={readOnly || !client.resourceViews ? undefined : () => setDialog('share')}
         menu={[

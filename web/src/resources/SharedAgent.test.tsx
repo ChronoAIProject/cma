@@ -1085,9 +1085,5 @@ it.each([
   });
   test.show();
   await screen.findByText(/Your current access does not allow interaction/);
-  await waitFor(() =>
-    expect(
-      screen.getByRole('button', { name: 'Show Agent details' }).getAttribute('title'),
-    ).toContain(label),
-  );
+  expect(await within(screen.getByRole('banner')).findByText(label, { exact: true })).toBeVisible();
 });
