@@ -1,5 +1,6 @@
 """Collect sanitized, Agent-scoped publication diagnostics from both Managers."""
 import hashlib
+import ipaddress
 import json
 from pathlib import Path
 import re
@@ -41,9 +42,45 @@ def writer_publication_abort(fixture, arm=None):
     return publication_abort(fixture, arm, 'update', 'agents', FEATURES_MONGO_APP)
 
 
-def runtime_loss_publication_abort(fixture, action=None, count=None):
+def runtime_loss_publication_abort(fixture, action=None, count=None, sandboxId=None, manager=None):
     require_feature_fixture(fixture)
-    return timed_publication_abort(fixture, action, count, 'agents')
+    if action not in ('arm', 'wait', 'sample', 'disarm'):
+        raise ValueError('runtime_loss_action_required')
+    agent_digest(sandboxId)
+    if manager not in ('a', 'b'):
+        raise ValueError('runtime_loss_manager_required')
+    if action == 'arm':
+        profile = {'profile': 2, 'filter': {'appName': FEATURES_MONGO_APP, 'command.find': 'sandboxes',
+                                            'command.filter._id': sandboxId, 'command.autocommit': False}}
+        if fixture.mongo(f'print(JSON.stringify(d.runCommand({json.dumps(profile)}).ok));') != 1:
+            raise RuntimeError('runtime_loss_profiler_not_armed')
+        return timed_publication_abort(fixture, action, count, 'agents')
+    if action == 'disarm':
+        try:
+            return timed_publication_abort(fixture, action, count, 'agents')
+        finally:
+            if fixture.mongo('print(JSON.stringify(d.runCommand({profile:0,filter:"unset"}).ok));') != 1:
+                raise RuntimeError('runtime_loss_profiler_not_restored')
+    if action == 'wait' and not timed_publication_abort(fixture, action, count, 'agents').get('entered'):
+        return {'transaction_sha256': None}
+    return active_runtime_loss_transaction(fixture, manager, sandboxId)
+
+
+def active_runtime_loss_transaction(fixture, manager, sandbox_id):
+    pod = fixture.client.kjson(['get', 'pod', f'am-{manager}-0', '-o', 'json'])
+    client_ip = str(ipaddress.ip_address(pod['status']['podIP']))
+    command = {'appName': FEATURES_MONGO_APP, 'active': True, 'command.update': 'agents',
+               'command.autocommit': False, 'client': {'$regex': rf'^\[?{re.escape(client_ip)}\]?:[0-9]+$'}}
+    read = {'appName': FEATURES_MONGO_APP, 'command.find': 'sandboxes', 'command.filter._id': sandbox_id,
+            'command.autocommit': False}
+    identity = fixture.mongo(f'const criteria = {json.dumps(read)};'
+        f'const rows = admin.aggregate([{{$currentOp:{{allUsers:true}}}},{{$match:{json.dumps(command)}}},{{$limit:8}}]).toArray();'
+        'const matches = rows.filter(row => row.command.lsid && row.command.txnNumber != null && '
+        'd.system.profile.findOne({...criteria, "command.lsid":row.command.lsid, "command.txnNumber":row.command.txnNumber}));'
+        'if (matches.length > 1) throw Error("runtime_loss_multiple_active_transactions");'
+        'print(JSON.stringify(matches.map(row => [row.command.lsid, row.command.txnNumber.toString(), row.opid])));')
+    digest = hashlib.sha256(json.dumps(identity[0], sort_keys=True).encode()).hexdigest() if identity else None
+    return {'transaction_sha256': digest}
 
 
 def share_redemption_publication_abort(fixture, action=None, count=None):

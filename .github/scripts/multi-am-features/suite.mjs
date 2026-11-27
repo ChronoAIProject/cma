@@ -420,6 +420,7 @@ try {
     runtime_loss: runtimeLoss ? {recovered_agents: runtimeLoss.recovered_agents,
       known_recovery_aborts: runtimeLoss.known_recovery_aborts,
       competing_metadata_publications: runtimeLoss.competing_metadata_publications,
+      overlapping_transaction_sha256: runtimeLoss.overlapping_transaction_sha256,
       recovery_abort_manager: runtimeLoss.recovery_abort_manager,
       recovery_abort_instance_sha256: runtimeLoss.recovery_abort_instance_sha256,
       recovery_commit_manager: runtimeLoss.recovery_commit_manager,

@@ -65,19 +65,22 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
   let writerProof;
   const router = new NonOwnerRouter({adapter, record: proof => { writerProof = proof; }});
   const recoveryManager = other(siblingOwner.am);
+  const publicationControl = (action, count) => adapter.runtimeLossPublicationAbort({action, count, sandboxId,
+    manager: recoveryManager});
   const inventoryAuthority = async allow => {
     const authority = await adapter.runtimeInventoryAuthority({manager: siblingOwner.am, allow});
     check(authority?.manager === siblingOwner.am && authority.allowed === allow && authority.peer_allowed === true,
       'runtime_loss_inventory_authority_unbound');
   };
-  let armed, disarmed, observedRecovery, publication;
+  let armed, disarmed, heldTransaction, observedRecovery, publication;
   const removeAndWrite = async () => {
-    armed = await adapter.runtimeLossPublicationAbort({action: 'arm'});
+    armed = await publicationControl('arm');
     check(Number.isSafeInteger(armed?.count), 'runtime_loss_abort_count_unbound');
     const removed = await adapter.removeRuntimePod({agentId, sandboxId, operationId, podUid: runtime.pod_uid});
     check(removed?.accepted === true && removed.pod_uid === runtime.pod_uid, 'runtime_loss_removal_unbound');
-    await waitFor(() => adapter.runtimeLossPublicationAbort({action: 'wait', count: armed.count}),
-      value => value?.entered === true, {timeout: 90000, interval: 100, code: 'runtime_loss_transaction_not_observed'});
+    const held = await waitFor(() => publicationControl('wait', armed.count),
+      value => /^[a-f0-9]{64}$/.test(value?.transaction_sha256 ?? ''),
+      {timeout: 90000, interval: 100, code: 'runtime_loss_transaction_not_observed'});
     writer = await router.dispatch(sibling.agentId, am => api.rawRequest(am, 'PATCH', preferencePath, {
       body: {title, expected_revision: preferences.revision}, key: randomUUID(), allowed: [200], timeout: 8000,
     }));
@@ -86,17 +89,19 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
     check(writerProof?.verified_owner_write === true && writer.timing.am === writerProof.ingress
       && writerProof.owner === siblingOwner.am && writerProof.owner_epoch === siblingOwner.epoch,
       'runtime_loss_writer_unattributed');
+    const afterWrite = await publicationControl('sample');
+    check(afterWrite?.transaction_sha256 === held.transaction_sha256, 'runtime_loss_writer_missed_transaction_window');
+    heldTransaction = held.transaction_sha256;
     const ingressEvidence = await adapter.peerWriteEvidence({am: writerProof.ingress,
       requestHash: hash(writerProof.request_id), epoch: writerProof.owner_epoch, operation: 'preferences'});
     check(ingressEvidence?.matches === 0, 'runtime_loss_writer_executed_on_ingress');
-    check(equal(await observeRecovery(), priorRecovery), 'runtime_loss_writer_missed_transaction_window');
     observedRecovery = await waitFor(observeRecovery, value => managers.some(am => value[am]?.known_aborts > 0),
       {timeout: 90000, code: 'runtime_loss_abort_not_observed'});
   };
   await withRestoration(async () => {
     await inventoryAuthority(false);
     await withRestoration(removeAndWrite, async () => {
-      disarmed = await adapter.runtimeLossPublicationAbort({action: 'disarm'});
+      disarmed = await publicationControl('disarm');
     });
     publication = await waitFor(observeRecovery, value => managers.some(am => value[am]?.recovery_scheduled > 0),
       {timeout: 90000, code: 'runtime_loss_successful_publication_unattributed'});
@@ -164,6 +169,7 @@ export async function runtimeLoss({adapter, api, record, sibling, openBoth, comp
   return {previous_pod_sha256: hash(runtime.pod_uid), replacement_pod_sha256: hash(replacement.pod_uid),
     recovered_agents: agents.length, retained_runtime_image: true, retained_home: true,
     retained_conversations: true, known_recovery_aborts: 1, competing_metadata_publications: titleEffects.length,
+    overlapping_transaction_sha256: heldTransaction,
     recovery_abort_manager: abortAm, recovery_abort_instance_sha256: hash(finalTopology.ams[abortAm].instance_id),
     recovery_commit_manager: recoveryAm, recovery_commit_instance_sha256: hash(finalTopology.ams[recoveryAm].instance_id),
     metadata_writer_manager: writerProof.owner, metadata_writer_instance_sha256: writerProof.owner_instance_sha256,

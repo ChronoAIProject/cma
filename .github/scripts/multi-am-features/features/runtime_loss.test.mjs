@@ -55,20 +55,23 @@ function fixture({changeHome = false, changeConversation = false, loseHistory = 
     runtimeLossEvidence: async scope => {
       assert.deepEqual(scope, {sandboxId: 'sandbox'});
       if (title) observationsWithWriter += 1;
-      const visible = title && (missWindow || observationsWithWriter > 1);
-      const repeated = repeatAbort && observationsWithWriter > 2;
+      const visible = Boolean(title);
+      const repeated = repeatAbort && observationsWithWriter > 1;
       return Object.fromEntries(['a', 'b'].map(am => [am, {
         known_aborts: (visible ? aborts[am] : 0) + Number(am === 'a' && repeated),
-        recovery_scheduled: observationsWithWriter > 2 ? scheduled[am] : 0,
+        recovery_scheduled: observationsWithWriter > 1 ? scheduled[am] : 0,
       }]));
     },
-    runtimeLossPublicationAbort: async ({action, count}) => {
+    runtimeLossPublicationAbort: async ({action, count, sandboxId, manager}) => {
+      assert.equal(sandboxId, 'sandbox');
+      assert.equal(manager, 'a');
       faultActions.push(action);
       if (action === 'wait') {
         assert.equal(count, 3);
         assert(removed);
-        return {entered: transactionEntered};
+        return {transaction_sha256: transactionEntered ? 'f'.repeat(64) : null};
       }
+      if (action === 'sample') return {transaction_sha256: missWindow ? 'e'.repeat(64) : 'f'.repeat(64)};
       return {count: action === 'arm' ? 3 : 3 + consumedAborts};
     },
     runtimeInventoryAuthority: async ({manager, allow}) => {
@@ -124,6 +127,7 @@ test('runtime loss retains both Agents with one replacement and a working peer S
   assert.equal(result.generation_retirements, 2);
   assert.equal(result.known_recovery_aborts, 1);
   assert.equal(result.competing_metadata_publications, 1);
+  assert.equal(result.overlapping_transaction_sha256, 'f'.repeat(64));
   assert.equal(result.recovery_abort_manager, 'a');
   assert.equal(result.recovery_abort_instance_sha256, hash('manager-a'));
   assert.equal(result.recovery_commit_manager, 'a');
@@ -131,7 +135,7 @@ test('runtime loss retains both Agents with one replacement and a working peer S
   assert.equal(result.metadata_ingress_instance_sha256, hash('manager-a'));
   assert.equal(result.metadata_writer_instance_sha256, hash('manager-b'));
   assert.equal(result.metadata_request_sha256, hash('preferences-request'));
-  assert.deepEqual(context.faultActions, ['arm', 'wait', 'disarm']);
+  assert.deepEqual(context.faultActions, ['arm', 'wait', 'sample', 'disarm']);
   assert.deepEqual(context.inventoryActions, [{manager: 'b', allow: false}, {manager: 'b', allow: true}]);
   assert.deepEqual(context.reads.filter(([, path]) => path.includes('/events')), [
     ['a', '/api/v1/agents/agent/events?after=20'], ['b', '/api/v1/agents/agent/events?after=20'],
@@ -158,7 +162,7 @@ test('runtime loss disarms the fault and rejects unbound or repeated aborts', as
   ]) {
     const context = fixture(input);
     await assert.rejects(runtimeLoss(context), error);
-    assert.deepEqual(context.faultActions, ['arm', 'wait', 'disarm']);
+    assert.equal(context.faultActions.at(-1), 'disarm');
     assert.deepEqual(context.inventoryActions, [{manager: 'b', allow: false}, {manager: 'b', allow: true}]);
     assert.deepEqual(context.completions, [['sibling', 'a', false]]);
   }
