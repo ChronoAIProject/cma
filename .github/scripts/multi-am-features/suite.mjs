@@ -236,7 +236,23 @@ try {
         runCase: (name, operation) => documentCase(iteration, name, operation)});
       if (phase === 'before_restart') savedDocuments.push(document);
     }
-    await matrix.run({iterations: 3, groups: ['reads', 'denials', 'settings', 'triggers', 'admission', 'usage']});
+    await matrix.run({iterations: 3, groups: ['reads', 'denials', 'settings', 'triggers', 'admission', 'usage'],
+      verifyAdmission: async (ingress, mode) => {
+        const {record, create, cleanup} = context;
+        check(typeof record.workspaceId === 'string' && record.workspaceId.length > 0, 'admission_probe_workspace_missing');
+        let child;
+        try {
+          child = await create(ingress, false, {workspace_id: record.workspaceId});
+        } catch (error) {
+          if (mode === 'paused' && error.response?.status === 503 && error.response.body?.code === 'admission_paused'
+            && error.response.timing?.method === 'POST' && error.response.timing.route === '/api/v1/agents') return;
+          throw error;
+        }
+        await cleanup(child);
+        check(mode === 'open', 'admission_stop_allowed_fresh_agent');
+        check(child.agentId !== record.agentId && child.sandboxId === record.sandboxId
+          && child.workspaceId === record.workspaceId && child.deleted === true, 'admission_resume_probe_lineage_unbound');
+      }});
     await matrix.runExtended({iterations: 3, groups: ['replace', 'inactivity']});
     const previousRecorder = context.api.router.record;
     context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };

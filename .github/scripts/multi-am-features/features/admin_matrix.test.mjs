@@ -89,6 +89,31 @@ test('admission lost stop acknowledgement reconciles once and restores through p
   await assert.rejects(m.admission(1),/lost_ack/);assert.equal(state.operator_stop,null);
   assert.equal(calls.filter(x=>x.path.endsWith('/stop')).length,1);
 });
+test('admission retains one stop across both Managers and probes public behavior before and after resume', async () => {
+  const probes = [];
+  const state = {revision: 0, operator_stop: null, last_change: null, writes_available: true, history: []};
+  const matrix = new AdminMatrix({fixture: fixture(), record: () => {},
+    request: async (_role, _am, method, path, {body}) => {
+      const success = () => ({status: 200, body: structuredClone(state)});
+      if (method === 'GET') return success();
+      const stopping = path.endsWith('/stop');
+      if (stopping && state.operator_stop) return success();
+      if (body.expected_revision !== state.revision) return {status: 409, body: {code: 'revision_conflict'}};
+      const revision = state.revision + 1;
+      const {reason} = body;
+      const newStop = stopping ? {revision, since: 100, actor: 'fixture', reason} : null;
+      const change = {revision, at: 100, actor: 'fixture', reason, old_stop: state.operator_stop, new_stop: newStop};
+      Object.assign(state, {revision, operator_stop: newStop, last_change: change});
+      state.history.unshift(change);
+      return success();
+    }});
+  await matrix.admission(1, async (am, mode) => {
+    probes.push({am, mode, stopped: state.operator_stop !== null});
+  });
+  assert.deepEqual(probes, [{am: 'b', mode: 'paused', stopped: true}, {am: 'a', mode: 'open', stopped: false}]);
+  assert.equal(state.revision, 2);
+  assert.equal(state.history[1].reason, 'local-matrix-offline-test-1');
+});
 test('real usage status field and report identity govern completion, not state guess',async()=>{
   const rows=[],calls=[];const m=new AdminMatrix({fixture:fixture(),record:r=>rows.push(r),request:async(role,am,method,path)=>{
     calls.push({am,method,path});return {status:method==='POST'?202:200,body:method==='POST'?{report_id:'report_1',status:'ready',report_complete:true}:{report_id:'report_1'}};

@@ -166,26 +166,39 @@ export class AdminMatrix {
       }
     });
   }
-  async admission(iteration) {
+  async admission(iteration, verifyAdmission) {
     const am=iteration%2?'a':'b',peer=other(am),path=`${P}/admission`;
     await this.runCase('admission_stop_resume',iteration,async()=>{
       const initial=await this.call(am,'GET',path);
       check(initial.writes_available===true && initial.operator_stop===null,'admission_fixture_must_be_open_writable');
       const reason=`local-matrix-${this.fixture.run_id}-${iteration}`;
-      try {
+      await this.withRestoration(async () => {
         const stopped=await this.call(am,'POST',`${path}/stop`,{expected_revision:initial.revision,reason});
-        check(stopped.operator_stop?.reason===reason && stopped.revision>initial.revision,'admission_stop_ack');
+        check(stopped.operator_stop?.reason === reason && stopped.revision === initial.revision + 1,
+          'admission_stop_ack');
+        const replay = await this.call(peer, 'POST', `${path}/stop`,
+          {expected_revision: initial.revision, reason: reason + '-competing'});
+        check(replay.revision === stopped.revision && isDeepStrictEqual(replay.operator_stop, stopped.operator_stop),
+          'admission_stop_replay_changed');
         const peerState=await this.call(peer,'GET',path);
-        check(peerState.revision===stopped.revision && peerState.operator_stop?.reason===reason,'admission_stop_not_visible');
+        check(admissionHistory(peerState) && peerState.revision === stopped.revision
+          && isDeepStrictEqual(peerState.operator_stop, stopped.operator_stop), 'admission_stop_not_visible');
+        await verifyAdmission?.(peer, 'paused');
         await this.call(peer,'POST',`${path}/resume`,{expected_revision:initial.revision,reason},[409]);
-      } finally {
+        const resumed = await this.call(peer, 'POST', `${path}/resume`, {expected_revision: stopped.revision, reason});
+        check(resumed.revision === stopped.revision + 1 && resumed.operator_stop === null, 'admission_resume_ack');
+        const settled = await this.call(am, 'GET', path);
+        check(admissionHistory(settled) && settled.revision === resumed.revision && settled.operator_stop === null,
+          'admission_resume_not_visible');
+        await verifyAdmission?.(am, 'open');
+      }, async () => {
         const current=await this.call(peer,'GET',path);
         if(current.operator_stop!==null) {
           check(current.operator_stop.reason===reason,'admission_restore_foreign_stop');
           await this.call(peer,'POST',`${path}/resume`,{expected_revision:current.revision,reason});
         }
         check((await this.call(am,'GET',path)).operator_stop===null,'admission_restore_failed');
-      }
+      });
     });
   }
   async sandboxAlwaysOn(iteration,fixture) {
@@ -339,7 +352,7 @@ export class AdminMatrix {
         }
       });
   }
-  async run({iterations=3,groups=['reads','denials','settings','triggers','admission'],sandboxFixtures=[],warmPoolFixtures=[],profileFixtures=[],runtimeFixtures=[]}={}) {
+  async run({iterations=3,groups=['reads','denials','settings','triggers','admission'],sandboxFixtures=[],warmPoolFixtures=[],profileFixtures=[],runtimeFixtures=[],verifyAdmission}={}) {
     check(Number.isInteger(iterations)&&iterations>=3&&iterations<=10,'minimum_three_bounded_iterations');
     check(groups.every(x=>['reads','denials','settings','triggers','admission','always_on','retire','warm_pool','profile_retire','runtime_update','usage'].includes(x)),'unknown_case_group');
     for(let i=1;i<=iterations;i++) {
@@ -348,7 +361,7 @@ export class AdminMatrix {
       if(groups.includes('denials')) await this.denials(i);
       if(groups.includes('settings')) await this.settingsCases(i);
       if(groups.includes('triggers')) await this.triggerPause(i);
-      if(groups.includes('admission')) await this.admission(i);
+      if(groups.includes('admission')) await this.admission(i, verifyAdmission);
       if(groups.includes('always_on')) await this.sandboxAlwaysOn(i,sandboxFixtures[i-1]);
       if(groups.includes('warm_pool')) await this.warmPool(i,warmPoolFixtures[i-1]);
       if(groups.includes('profile_retire')) await this.retireProfile(i,profileFixtures[i-1]);

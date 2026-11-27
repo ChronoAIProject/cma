@@ -404,10 +404,14 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
     let plain;
     await step('plain_create_a_ready_b', async () => {plain = await create('a', false); return {agent_sha256: hash(plain.agentId)};});
     await step('plain_open_both', () => openBoth(plain));
-    if (featureHook) await step('features_before_restart', () => featureHook({record: plain, api, adapter, config, phase: 'before_restart'}));
+    if (featureHook) await step('features_before_restart', () => featureHook({
+      record: plain, api, adapter, config, create, cleanup, phase: 'before_restart',
+    }));
     await step('plain_send_and_interrupt_non_owner', () => interrupt(plain, 'a', 'before_restart'));
     await step('actual_owner_kill_and_recovery', () => recovery(plain, 'b'));
-    if (featureHook) await step('features_after_restart', () => featureHook({record: plain, api, adapter, config, phase: 'after_restart'}));
+    if (featureHook) await step('features_after_restart', () => featureHook({
+      record: plain, api, adapter, config, create, cleanup, phase: 'after_restart',
+    }));
     await step('plain_send_and_interrupt_after_restart', () => interrupt(plain, 'b', 'after_restart'));
     await step('owner_drain_and_readiness', () => drainOwnerCase({adapter, api, record: plain, config}));
     await step('ready_autoscaler_two_three_two', () => scaleManagerCase({adapter, api, record: plain}));
