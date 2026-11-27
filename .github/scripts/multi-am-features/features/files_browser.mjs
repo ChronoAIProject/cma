@@ -12,6 +12,8 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
   const directory = 'ci-browser-' + randomUUID();
   const filename = 'note.txt';
   const file = directory + '/' + filename;
+  const oversizedUpload = 'oversize-' + randomUUID() + '.txt';
+  const oversizedUploadPath = directory + '/' + oversizedUpload;
   const peer = other(ingress);
   const read = am => api.request(am, 'GET', `${path}/content?path=${encodeURIComponent(file)}`, {direct: true});
   const folderEntry = am => findRootEntry(api, path, am, directory);
@@ -20,6 +22,15 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
   const dialog = page.getByRole('dialog', {name: 'Files', exact: true});
   const button = name => dialog.getByRole('button', {name, exact: true});
   let folderSubmitted = false, folderAcknowledged = false, folderDeleted = false;
+  let oversizedUploadDispatched = false;
+  const observeOversizedUpload = request => {
+    const url = new URL(request.url());
+    if (request.method() !== 'POST' || url.pathname !== path || url.origin !== new URL(page.url()).origin) return;
+    const target = request.postDataJSON()?.path;
+    if (typeof target === 'string' && target.split('/').at(-1) === oversizedUpload) {
+      oversizedUploadDispatched = true;
+    }
+  };
   const create = async (folder, name, target, expected) => {
     await button(folder ? 'New folder' : 'New file').click({timeout});
     const field = dialog.getByRole('textbox', {name: folder ? 'Folder name' : 'File name', exact: true});
@@ -49,6 +60,7 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
   };
   await withRestoration(async () => {
     await page.waitForURL(url => url.pathname === '/agents/' + agentId, {timeout});
+    page.on('request', observeOversizedUpload);
     await page.getByRole('button', {name: 'Show Agent details', exact: true}).click({timeout});
     await page.getByRole('button', {name: 'Browse files', exact: true}).click({timeout});
     const home = button('Sandbox root /home/');
@@ -59,7 +71,7 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
     await dialog.getByLabel('Current directory', {exact: true}).getByText('/home/' + directory, {exact: true}).waitFor({timeout});
     const folder = await folderEntry(peer);
     check(folder?.kind === 'directory' && folder.name === directory, 'browser_files_created_directory_missing_on_peer');
-    await checkFileUpload({page, dialog, api, ingress, path, directory});
+    await checkFileUpload({page, dialog, api, ingress, path, directory, oversizedUpload});
     await create(false, filename, file);
     const original = (await read(peer)).body;
     check(original.path === file && original.sha256 === hash('') && original.content_base64 === '',
@@ -204,6 +216,12 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
     }});
     await button(filename).click({timeout});
     await preview.waitFor({timeout});
+    for (const am of [ingress, peer]) {
+      const response = await api.request(am, 'GET', path + '/content?path=' + encodeURIComponent(oversizedUploadPath),
+        {direct: true, allowed: [200, 404, 413]});
+      check(response.status === 404 && response.body?.code === 'file_not_found',
+        'browser_files_oversize_upload_present_before_delete');
+    }
     await deleteFiles({page, dialog, api, ingress, path, directory, file, recordFailure});
     for (const am of [ingress, peer]) {
       const {body} = await api.rawRequest(am, 'GET', `${path}/download?path=${encodeURIComponent(oversize)}`,
@@ -212,8 +230,14 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
     }
     folderDeleted = true;
   }, async () => {
-    if (!folderSubmitted || folderDeleted) return;
-    await removeFixtureDirectory({api, path, ingress, directory, acknowledged: folderAcknowledged});
+    try {
+      if (folderSubmitted && !folderDeleted) {
+        await removeFixtureDirectory({api, path, ingress, directory, acknowledged: folderAcknowledged});
+      }
+    } finally {
+      page.off('request', observeOversizedUpload);
+    }
+    check(!oversizedUploadDispatched, 'browser_files_oversize_upload_dispatched');
   }, recordFailure);
 }
 
@@ -332,10 +356,9 @@ async function deleteFiles({page, dialog, api, ingress, path, directory, file, r
   }, recordFailure);
 }
 
-async function checkFileUpload({page, dialog, api, ingress, path, directory}) {
+async function checkFileUpload({page, dialog, api, ingress, path, directory, oversizedUpload}) {
   const choiceName = 'chosen-' + randomUUID() + '.txt';
   const dropName = 'dropped-' + randomUUID() + '.txt';
-  const tooLarge = 'oversize-' + randomUUID() + '.txt';
   const layout = dialog.locator('.agent-files__layout');
   const origin = new URL(page.url()).origin;
   const matchesWrite = request => {
@@ -397,16 +420,8 @@ async function checkFileUpload({page, dialog, api, ingress, path, directory}) {
   await upload(chooserUpload, choiceName, 'Unexpected replacement.\n', 409);
   await verify(choiceName, chosen);
 
-  let writes = 0;
-  const recordWrite = request => { if (matchesWrite(request)) writes += 1; };
-  page.on('request', recordWrite);
-  try {
-    await dropUpload(tooLarge, oversizeBytes);
-    await dialog.getByRole('alert').getByText(tooLarge + ' must be 32 MiB or smaller.', {exact: true}).waitFor({timeout});
-    check(writes === 0, 'browser_files_oversize_upload_dispatched');
-  } finally {
-    page.off('request', recordWrite);
-  }
+  await dropUpload(oversizedUpload, oversizeBytes);
+  await dialog.getByRole('alert').getByText(oversizedUpload + ' must be 32 MiB or smaller.', {exact: true}).waitFor({timeout});
 }
 
 async function findRootEntry(api, path, am, directory) {
