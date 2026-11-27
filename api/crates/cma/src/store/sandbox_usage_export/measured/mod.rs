@@ -1,5 +1,7 @@
 mod bridge;
 mod cli;
+mod completeness;
+mod completeness_rebuild;
 mod delivery;
 mod discovery;
 mod freeze;
