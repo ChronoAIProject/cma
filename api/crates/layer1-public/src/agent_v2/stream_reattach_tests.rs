@@ -199,11 +199,30 @@ async fn idle_reattach_keeps_queued_durable_prefix_and_initial_marker_once() {
 async fn a_turn_start_between_binding_and_the_authorized_head_read_emits_a_gap() {
     let (mut open, fixture, relay, _) = open_stream("owner-a").await;
     open.state.event_wake = true;
+    open.pending.clear();
+    open.initial_gap = false;
+    open.queue_live(false);
     let id = open.header.id.clone();
-    let mut body = response(open).into_body().into_data_stream();
-    catch_up(&mut body).await;
+    assert!(open.drained_attachment.is_some());
     relay.replace_owner().await;
-    start_turn(&fixture, &id).await;
+    open.wait_for_change().await.unwrap();
+    let interruption = open
+        .interruption
+        .take()
+        .expect("owner retirement woke the reader");
+    let turn = start_turn(&fixture, &id).await;
+    let current = open
+        .state
+        .reads
+        .event_stream_header(&open.authorization)
+        .await
+        .unwrap();
+    assert_eq!(current.active_turn, Some(turn));
+    open.reattach(interruption).await.unwrap();
+    assert!(!open.ended);
+    assert_eq!(open.discarded_fragments, 1);
+
+    let mut body = response(open).into_body().into_data_stream();
     assert!(next(&mut body).await.contains("turn_started"));
     assert!(next(&mut body).await.contains("\"reason\":\"lagged\""));
 }
