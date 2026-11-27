@@ -34,7 +34,7 @@ import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
 import {accountAppearance, accountBuildVersion, accountDocumentation, accountSignIn, accountSignOut,
   accountTextSize, gatewayDocumentation, gatewayNavigation, legacyNavigation} from './features/account_browser.mjs';
-import {commandSearch, taskNavigation} from './features/task_navigation.mjs';
+import {commandSearch, taskDraft, taskNavigation} from './features/task_navigation.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -123,7 +123,8 @@ async function accountBrowserCases(ams, witness) {
     ['user.account_documentation', page => accountDocumentation(page, witness.agentId)],
     ['user.navigation_legacy_routes', legacyNavigation],
     ['user.navigation_tasks', page => taskNavigation(page, witness)],
-    ['user.navigation_eg_transition', page => gatewayNavigation(page, witness, config.owner_id)]];
+    ['user.navigation_eg_transition', page => gatewayNavigation(page, witness, config.owner_id)],
+    ['user.task_draft', page => taskDraft(page, witness)]];
   if (config.eg_origin) cases.push(['eg.public_documentation', gatewayDocumentation]);
   async function exercise(am, iteration, name, run) {
     const start = performance.now();

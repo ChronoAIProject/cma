@@ -1,6 +1,66 @@
+import {randomUUID} from 'node:crypto';
 import {check, id} from '../cma/core.mjs';
 
 const timeout = 15000;
+
+export async function taskDraft(page, {workspaceId}) {
+  check(id(workspaceId), 'browser_draft_workspace_required');
+  const draft = 'Keep this fixture draft ' + randomUUID();
+  const workspaceDraft = 'Keep this Workspace draft ' + randomUUID();
+  const newTask = '/agent-manager';
+  const workspace = `/workspaces/${workspaceId}`;
+  const visit = path => page.goto(path, {waitUntil: 'domcontentloaded', timeout});
+  const field = page.getByLabel('Your task', {exact: true});
+  const desktop = page.getByRole('button', {name: /^Cloud computer/});
+  const admission = url => /^\/api\/(?:agent-manager\/)?v1\/(?:agents|sandboxes|workspaces\/[^/]+\/agents)$/.test(url.pathname);
+  let submissions = 0;
+  const rejectSubmission = async route => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    submissions += 1;
+    await route.abort('blockedbyclient');
+  };
+  await page.route(admission, rejectSubmission);
+  try {
+    await visit(newTask);
+    await page.getByRole('button', {name: 'Templates', exact: true}).click({timeout});
+    await page.getByRole('menuitem', {name: 'Write code', exact: true}).click({timeout});
+    await page.getByLabel('Language', {exact: true}).fill('Python', {timeout});
+    await page.getByLabel('What should the code do?', {exact: true}).fill('Format synthetic weather readings.', {timeout});
+    await page.getByRole('button', {name: 'Write a task without a template', exact: true}).click({timeout});
+    await field.waitFor({timeout});
+    const preview = await field.inputValue();
+    check(preview.includes('Python') && preview.includes('Format synthetic weather readings.'),
+      'browser_draft_template_preview_missing');
+    await field.fill(draft, {timeout});
+    await desktop.click({timeout});
+    await page.getByRole('menuitemcheckbox', {name: 'Shared desktop', exact: true, checked: false}).click({timeout});
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', {name: 'Cloud computer · Shared desktop', exact: true}).waitFor({timeout});
+
+    const scoped = page.getByRole('dialog', {name: 'New task', exact: true});
+    const scopedDraft = scoped.getByLabel('Your task', {exact: true});
+    const openWorkspaceDraft = async () => {
+      await visit(workspace);
+      await page.getByRole('button', {name: 'New agent in this Workspace', exact: true}).click({timeout});
+      await scopedDraft.waitFor({timeout});
+    };
+    await openWorkspaceDraft();
+    check(await scopedDraft.inputValue() === '', 'browser_draft_leaked_to_workspace');
+    await scopedDraft.fill(workspaceDraft, {timeout});
+    await scoped.getByRole('button', {name: 'Close', exact: true}).click({timeout});
+
+    await visit('/docs');
+    await visit(newTask);
+    await field.waitFor({timeout});
+    check(await field.inputValue() === draft, 'browser_draft_text_lost_after_navigation');
+    await page.getByRole('button', {name: 'Cloud computer · Shared desktop', exact: true}).waitFor({timeout});
+    await openWorkspaceDraft();
+    check(await scopedDraft.inputValue() === workspaceDraft, 'browser_workspace_draft_lost_after_navigation');
+    check(submissions === 0, 'browser_draft_submitted_without_confirmation');
+  } finally {
+    await page.unroute(admission, rejectSubmission);
+  }
+}
 
 export async function taskNavigation(page, {agentId, sandboxId, workspaceId}) {
   check([agentId, sandboxId, workspaceId].every(id), 'browser_task_lineage_required');
