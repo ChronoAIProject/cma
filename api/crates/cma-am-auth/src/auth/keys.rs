@@ -20,7 +20,7 @@ mod bots;
 pub use bots::owner_matches;
 mod catalog;
 mod dispatch;
-pub use dispatch::ResolvedMintService;
+pub use dispatch::{MintDispatchFailure, ResolvedMintService};
 mod grant;
 mod identifiers;
 #[cfg(test)]
@@ -240,6 +240,7 @@ impl KeyIssuer {
             .await?
             .dispatch()
             .await
+            .map_err(|failure| failure.error)
     }
 
     /// Revoke a provider key using the authority of its owning account.

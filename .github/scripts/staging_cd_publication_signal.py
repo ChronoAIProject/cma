@@ -35,9 +35,23 @@ def validate(value):
     return value
 
 
+def qualification_publication(pr_number, source, receipts, api):
+    require(matches(r"[1-9][0-9]{0,19}", pr_number)
+            and matches(r"[0-9a-f]{40}", source)
+            and receipts.keys() in ({"eg"}, {"web"}), "Qualification requires one Gateway or Web publication")
+    pr = api.request("pulls/" + pr_number)
+    require(pr.get("merged") is True and pr.get("merge_commit_sha") == source
+            and pr.get("base", {}).get("ref") == "develop"
+            and pr.get("base", {}).get("repo", {}).get("full_name") == REPOSITORY,
+            "Qualification publication source does not match the selected pull request")
+
+
 def freeze(matrix, env, api, registry):
     tasks = groups(matrix)
     require(bool(tasks), "Publication signal is empty")
+    if qualification := env.get("CD_QUALIFICATION_PR"):
+        require(env.get("GITHUB_RUN_ATTEMPT") == "1", "Qualification requires the first publication attempt")
+        qualification_publication(qualification, env.get("GITHUB_SHA"), tasks, api)
     for component in tasks:
         suffix = component.upper().replace("-", "_")
         require(env.get("CD_PUBLISH_" + suffix) == "success"
@@ -48,6 +62,10 @@ def freeze(matrix, env, api, registry):
                               for component, entries in tasks.items()]}
     receipts = automatic_set(normalized, api, registry)["receipts"]
     require(receipts.keys() == tasks.keys(), "Publication receipts differ from the scheduled components")
+    if qualification:
+        require(all(row["source"] == env["GITHUB_SHA"] and row["identity"]["run_id"] == int(env["GITHUB_RUN_ID"])
+                    and row["identity"]["run_attempt"] == 1 for row in receipts.values()),
+                "Qualification requires a new image from the selected publication")
     value = {"schema": "cma-publication-signal-v1", "repository": REPOSITORY,
              "source": env["GITHUB_SHA"], "run_id": int(env["GITHUB_RUN_ID"]),
              "run_attempt": int(env["GITHUB_RUN_ATTEMPT"]), "receipts": receipts}

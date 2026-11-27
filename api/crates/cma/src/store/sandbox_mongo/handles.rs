@@ -84,6 +84,7 @@ impl MongoSandboxStore {
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
             suggestions: majority_collection(&database, "agent_suggestions"),
+            suggestion_control: None,
             agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
             agent_channel_usage: majority_collection(&database, "agent_channel_usage"),
             channel_usage_events: majority_collection(&database, "channel_usage_events"),

@@ -17,7 +17,7 @@ struct RetirementHold {
 pub(super) struct RetirementStore {
     store: Arc<MongoNativeWarmPools>,
     hold: Mutex<Option<RetirementHold>>,
-    activation: Mutex<Option<RetirementHold>>,
+    preparation: Mutex<Option<RetirementHold>>,
 }
 
 impl RetirementStore {
@@ -25,15 +25,18 @@ impl RetirementStore {
         Self {
             store,
             hold: Mutex::new(None),
-            activation: Mutex::new(None),
+            preparation: Mutex::new(None),
         }
     }
 
-    pub(super) fn hold_activation(&self, id: &str) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+    pub(super) fn hold_preparation(
+        &self,
+        id: &str,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
         let (reached, observation) = oneshot::channel();
         let (release, resume) = oneshot::channel();
         assert!(self
-            .activation
+            .preparation
             .lock()
             .unwrap()
             .replace(RetirementHold {
@@ -84,15 +87,6 @@ impl PoolTargetStore for RetirementStore {
     }
 
     async fn activate(&self, id: &str) -> Result<(), WarmPoolError> {
-        let gate = self
-            .activation
-            .lock()
-            .unwrap()
-            .take_if(|gate| gate.config_sha256 == id);
-        if let Some(gate) = gate {
-            gate.reached.send(()).expect("activation observer dropped");
-            gate.resume.await.expect("activation was not released");
-        }
         self.store.activate(id).await
     }
 
@@ -140,7 +134,17 @@ impl PoolTargetStore for RetirementStore {
     }
 
     async fn list(&self) -> Result<Vec<PoolTarget>, WarmPoolError> {
-        self.store.list().await
+        let rows = self.store.list().await?;
+        let gate = self
+            .preparation
+            .lock()
+            .unwrap()
+            .take_if(|gate| rows.iter().any(|row| row.id == gate.config_sha256));
+        if let Some(gate) = gate {
+            gate.reached.send(()).expect("preparation observer dropped");
+            gate.resume.await.expect("preparation was not released");
+        }
+        Ok(rows)
     }
 
     async fn find(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {

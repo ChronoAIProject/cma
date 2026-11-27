@@ -9,6 +9,9 @@ pub(super) async fn publish(
     claim: &SuggestionWork,
     completion: &SuggestionCompletion,
 ) -> Result<(), AgentReadError> {
+    if let Some(control) = &store.suggestion_control {
+        control.hold_before_publish(claim, completion).await;
+    }
     for attempt in 0..TRANSACTION_ATTEMPTS {
         if attempt > 0 {
             tokio::task::yield_now().await;
@@ -40,7 +43,12 @@ pub(super) async fn publish(
             }
         }
         match commit_transaction(&mut session).await {
-            CommitOutcome::Committed => return Ok(()),
+            CommitOutcome::Committed => {
+                if let Some(control) = &store.suggestion_control {
+                    control.record_commit(claim).await;
+                }
+                return Ok(());
+            }
             CommitOutcome::Retry(_) => continue,
             // An uncertain commit cannot authorize a new transaction. The
             // existing terminal claim semantics also prevent model redispatch.
@@ -73,6 +81,11 @@ async fn apply(
     }
     let parent = context::current_parent(store, &work, session, false).await?;
     if let Some(parent) = &parent {
+        if let Some(control) = &store.suggestion_control {
+            control
+                .hold_before_parent_fence(claim, completion, parent)
+                .await;
+        }
         parent::fence(store, &work, parent, &mut *session).await?;
     }
     store

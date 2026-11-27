@@ -138,6 +138,32 @@ async fn every_issuance_stage_503_stops_with_typed_refusal_and_no_retry_or_later
 }
 
 #[tokio::test]
+async fn dispatch_distinguishes_http_refusal_from_unreadable_success() {
+    for (status, phase) in [(503, "response_status"), (201, "response_decode")] {
+        let mut peer = Peer::start().await;
+        let issuer = issuer(&peer.origin);
+        let task = tokio::spawn(async move {
+            issuer
+                .prepare_mint(
+                    "sbx_contract",
+                    &layer2_core::SubjectId::new("contract-owner"),
+                    "contract-owner-bearer",
+                    &[ServiceId::new("chrono-llm-public")],
+                )
+                .await
+                .unwrap()
+                .dispatch()
+                .await
+        });
+        reach(&mut peer, 2).await.respond(status, "fixture");
+        let failure = finish(task).await.unwrap_err();
+        assert_eq!(failure.phase, phase);
+        assert_eq!(failure.http_status, Some(status));
+        assert_eq!(peer.count(), 3);
+    }
+}
+
+#[tokio::test]
 async fn stalled_headers_and_bodies_at_every_stage_obey_the_production_deadline() {
     for stage in 0..3 {
         for body in [false, true] {

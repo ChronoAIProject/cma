@@ -32,6 +32,7 @@ struct Fixture {
     /// Native retirement admission; the production default is off.
     retirement_admission: std::sync::atomic::AtomicBool,
     reopen_output_refusal: bool,
+    park_runtime_update_sandbox: Option<SandboxId>,
     retry_delay: Duration,
 }
 impl Fixture {
@@ -51,6 +52,7 @@ impl Fixture {
             backend,
             retirement_admission: std::sync::atomic::AtomicBool::new(true),
             reopen_output_refusal: false,
+            park_runtime_update_sandbox: None,
             retry_delay: Duration::from_secs(5),
         }
     }
@@ -103,6 +105,7 @@ impl Fixture {
                 .with_home_policy(Some(self.home_policy()));
         config.retry_delay = self.retry_delay;
         config.reopen_output_refusal_enabled = self.reopen_output_refusal;
+        config.park_runtime_update_sandbox = self.park_runtime_update_sandbox.clone();
         config.retirement_finalizer = Some(Arc::new(
             crate::sandbox::native_retirement_finalizer::NativeRetirementFinalizer::new(
                 self.harness.store.clone(),
