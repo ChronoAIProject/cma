@@ -7,6 +7,7 @@ INITIALIZATION_WAITS = {
     'runtime_visible_public_api_unreachable', 'provider_not_ready',
     'two_members_not_ready', 'client_deadline', 'infrastructure_deadline',
     'am_pod_not_ready_a', 'am_pod_not_ready_b', 'am_not_ready_a', 'am_not_ready_b',
+    'provenance_progress_command_timeout',
     'forward_not_ready_am-a-0', 'forward_not_ready_am-b-0',
     'forward_not_ready_provider', 'forward_not_ready_identity',
 }

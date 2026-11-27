@@ -36,6 +36,7 @@ import {triggerAlwaysOn} from './features/trigger_always_on.mjs';
 import {suggestionsCase} from './features/suggestions.mjs';
 import {suggestionDraftBrowser} from './features/suggestion_draft_browser.mjs';
 import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
+import {provenanceKnownAbort} from './features/provenance_progress.mjs';
 import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_custody.mjs';
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
 import {accountAppearance, accountBuildVersion, accountDocumentation, accountSignIn, accountSignOut,
@@ -237,7 +238,10 @@ async function heldCases(context, exercise, repetitions = 3) {
 }
 
 try {
-  result.journey = await runJourney(config, {navigationHook: async ({config: journeyConfig, active, retired}) => {
+  result.journey = await runJourney(config, {firstAgentHook: context =>
+    context.step('provenance_progress_known_abort', () => provenanceKnownAbort({...context,
+      recordFailure: (stage, error) => retainFailure(config.matrix_output, stage, error,
+        {case: 'provenance_progress_known_abort'})})), navigationHook: async ({config: journeyConfig, active, retired}) => {
     check(retired.deleted === true, 'browser_search_retirement_unproven');
     Object.assign(normal.ams, journeyConfig.ams);
     await withBrowser(journeyConfig.ams, async browser => {
@@ -516,6 +520,7 @@ try {
   const drain = result.journey?.steps.find(s => s.name === 'owner_drain_and_readiness' && s.verdict === 'PASS');
   const runtimeLoss = result.journey?.steps.find(s => s.name === 'native_runtime_loss_preserves_agents' && s.verdict === 'PASS');
   const retirement = result.journey?.steps.find(s => s.name === 'retirement_retains_terminal_evidence' && s.verdict === 'PASS');
+  const provenance = result.journey?.steps.find(s => s.name === 'provenance_progress_known_abort' && s.verdict === 'PASS');
   const unresolvedTitle = result.journey?.steps.find(s => s.name === 'unresolved_title_retirement_defers_purge'
     && s.verdict === 'PASS');
   const interrupts = ['plain_send_and_interrupt_non_owner', 'plain_send_and_interrupt_after_restart']
@@ -541,6 +546,10 @@ try {
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: Boolean(recovery), owner_restart_replay: recovery?.replay ?? null,
     non_owner_interrupts: interrupts,
+    provenance_progress: provenance ? {known_aborts: provenance.known_aborts, recorded: provenance.recorded,
+      original_creation_restored: provenance.original_creation_restored, ingress: provenance.ingress,
+      owner: provenance.owner, owner_epoch: provenance.owner_epoch,
+      overlapping_transaction_sha256: provenance.overlapping_transaction_sha256} : null,
     retirement: retirement ? {retained_history: retirement.retained_history,
       eligible_purge: retirement.eligible_purge, retained_title_custody: retirement.retained_title_custody,
       retained_creation_provenance: retirement.retained_creation_provenance, purged_agents: retirement.purged_agents} : null,
