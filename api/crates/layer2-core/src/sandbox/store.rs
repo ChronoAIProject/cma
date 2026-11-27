@@ -136,9 +136,9 @@ mod agent_worktree_validation;
 pub use agent_work_evidence_validation::{MAX_AGENT_CLEANUP_DEBT, MAX_AGENT_WORK_RECEIPTS};
 pub use agent_work_prepared_pair::is_prepared_agent_replay_pair;
 pub use agent_work_validation::{
-    retired_sandbox_cleanup_is_absent, retiring_sandbox_process_is_absent,
-    validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox,
-    validate_agent_workspace_binding,
+    retired_failed_worktree_cleanup_is_absent, retired_sandbox_cleanup_is_absent,
+    retiring_sandbox_process_is_absent, validate_agent_work_mutation,
+    validate_agent_work_mutation_with_sandbox, validate_agent_workspace_binding,
 };
 mod sandbox_admission;
 pub use sandbox_admission::{
