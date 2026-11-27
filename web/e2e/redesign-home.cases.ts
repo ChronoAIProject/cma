@@ -48,8 +48,9 @@ export function registerRedesignHomeCases() {
         const input = page.getByLabel('Your task', { exact: true });
         if (state === 'empty') {
           await expect(page.getByRole('heading', { name: 'Give it a job.' })).toBeVisible();
-          await expect(page.getByText('Your next agent starts here')).toBeVisible();
-          await expect(page.getByText('Your first agent starts here')).toHaveCount(0);
+          await expect(
+            page.locator('.task-home__first-mascot .agent-mascot__poster'),
+          ).toBeVisible();
         } else
           await expect(
             page.getByRole('region', { name: 'Your crew' }).getByRole('button'),
@@ -304,7 +305,7 @@ export function registerRedesignHomeCases() {
     const fixture = await redesignHomeFixture(page, baseURL!, 'navigation-error');
     await page.goto('/agent-manager');
     await expect(page.getByRole('main').getByRole('alert')).toBeVisible();
-    await expect(page.getByText('Your next agent starts here')).toHaveCount(0);
+    await expect(page.locator('.task-home__first-mascot')).toHaveCount(0);
     expect(fixture.writes).toEqual([]);
   });
 }

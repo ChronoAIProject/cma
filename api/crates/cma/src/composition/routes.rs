@@ -78,7 +78,14 @@ pub(super) fn compose(
     // Public Stop/Delete charge directly after authentication. Runtime-effect
     // routes retain owner routing before their existing operation budgets.
     let public = match relay {
-        Some(relay) => relay.authenticated_control_routes(public, auth, limits.lifecycle()),
+        Some(relay) => {
+            let public = relay.authenticated_control_routes(public, auth, limits.lifecycle());
+            if config.features.agent_file_single_exchange {
+                crate::agent_manager::relay::Relay::file_preview_identity_route(public)
+            } else {
+                public
+            }
+        }
         None => {
             let public = crate::control_admission::routes(public, limits.lifecycle());
             public.layer(axum::middleware::from_fn_with_state(

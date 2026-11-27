@@ -19,6 +19,11 @@ pub const PROVIDER_VERIFICATION_TIMEOUT: Duration = super::identity_retry::DEADL
 pub const MAX_VERIFICATION_FLIGHTS: usize = 256;
 pub type VerificationFlight = OnceCell<Result<Arc<identity::VerifiedSubject>, VerificationFailure>>;
 
+pub(super) struct BrowserVerification {
+    pub(super) key: VerificationKey,
+    pub(super) evidence: Arc<identity::VerifiedSubject>,
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 pub struct VerificationKey {
     subject: SubjectId,
@@ -97,6 +102,15 @@ pub async fn request_for_browser_cookie(
     verify_with_timeout(auth, owner, state, PROVIDER_VERIFICATION_TIMEOUT).await
 }
 
+pub(super) async fn request_for_browser_cookie_with_receipt(
+    auth: &AuthState,
+    owner: &SubjectId,
+    state: SubjectAuthState,
+    receipt: Option<&mut Option<BrowserVerification>>,
+) -> Result<Option<RequestAuth>, StoreError> {
+    verify(auth, owner, state, PROVIDER_VERIFICATION_TIMEOUT, receipt).await
+}
+
 pub async fn request_with_timeout(
     auth: &AuthState,
     owner: &SubjectId,
@@ -113,6 +127,16 @@ pub async fn verify_with_timeout(
     owner: &SubjectId,
     state: SubjectAuthState,
     timeout: Duration,
+) -> Result<Option<RequestAuth>, StoreError> {
+    verify(auth, owner, state, timeout, None).await
+}
+
+async fn verify(
+    auth: &AuthState,
+    owner: &SubjectId,
+    state: SubjectAuthState,
+    timeout: Duration,
+    receipt: Option<&mut Option<BrowserVerification>>,
 ) -> Result<Option<RequestAuth>, StoreError> {
     if &state.subject != owner {
         return Err(unavailable());
@@ -220,6 +244,12 @@ pub async fn verify_with_timeout(
         ),
         PermissionEvidence::Inactive => (Authorization::none(), None),
     };
+    if let Some(receipt) = receipt.filter(|_| delegated_credential.is_some()) {
+        *receipt = Some(BrowserVerification {
+            key,
+            evidence: verified.clone(),
+        });
+    }
     Ok(Some(RequestAuth {
         binding: None,
         credential_source: layer2_core::resource_access::CredentialSource::Retained,

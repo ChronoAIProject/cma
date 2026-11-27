@@ -9,6 +9,8 @@ use axum::{
 use futures_util::StreamExt;
 use relay_diagnostics::RelayDiagnostic;
 
+pub(super) use public_access::authorize_public;
+
 pub(super) async fn route(
     State(relay): State<Arc<Relay>>,
     request: Request,
@@ -117,6 +119,11 @@ async fn route_request(
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
+    // One public ingress can consume its own proof. A peer or handoff must independently verify.
+    let browser_proof = request
+        .extensions_mut()
+        .remove::<crate::auth::relay::BrowserRelayProof>()
+        .filter(|_| proof.is_none());
     let file_write =
         write_handoff_route && file_write::eligible(request.uri().path(), request.method(), &bytes);
     let write_target = if !private && !is_cancellation {
@@ -125,6 +132,7 @@ async fn route_request(
             &id,
             &request,
             diagnostic.as_ref(),
+            browser_proof.as_ref(),
             file_write && proof.is_none(),
         )
         .await
@@ -327,43 +335,6 @@ async fn route_request(
         .await;
     }
     forward::finish(forwarded, slot, deadline, diagnostic.as_ref())
-}
-
-pub(super) fn authorize_public<'a>(
-    relay: &'a Relay,
-    id: &'a AgentId,
-    request: &'a Request,
-    diagnostic: Option<&'a RelayDiagnostic>,
-    capture_write_target: bool,
-) -> impl std::future::Future<
-    Output = Result<Option<layer2_core::sandbox::agent_filesystem::FileWriteTarget>, Response>,
-> + use<'a> {
-    let access = relay.public_access.get();
-    let context = request
-        .extensions()
-        .get::<layer2_core::resource_access::CallerContext>();
-    let credential = request
-        .extensions()
-        .get::<layer1_public::DelegatedCredential>()
-        .map(layer1_public::DelegatedCredential::value);
-    let input = context.map(|context| public_access::PublicRequest {
-        id,
-        method: request.method(),
-        uri: request.uri(),
-        headers: ingress::headers(request),
-        context,
-        credential,
-        capture_write_target,
-    });
-    async move {
-        let access = access
-            .ok_or_else(|| unavailable_with(diagnostic, Refusal::AuthorizationUnavailable))?;
-        let input = input.ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())?;
-        access
-            .authorize(input)
-            .await
-            .map_err(public_access::refusal)
-    }
 }
 
 #[derive(Clone)]
