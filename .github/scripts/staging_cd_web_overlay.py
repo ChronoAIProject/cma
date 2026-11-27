@@ -18,7 +18,9 @@ from image_scanner_policy import verify_bundle
 from image_secret_gate import checksum, verified_staging_scan
 from staging_cd_common import matches, require
 from staging_cd_receipts import canonical, sha256
-from staging_cd_web_continuity import PROOF_SCHEMA, REPOSITORY, SCHEMA, binding, validate, validate_proof
+from staging_cd_web_continuity import (
+    HASH, PROOF_SCHEMA, REPOSITORY, SCHEMA, binding, immutable_image, validate, validate_input, validate_proof,
+)
 
 
 SCANNER_ROOT = Path(__file__).resolve().parent / "image-secret-scanner"
@@ -73,7 +75,7 @@ def scanner_types():
     return ImageArchive, Budget, archive_path, json_bytes
 
 
-def validate_base(kind, images, expected):
+def validate_base(kind, images, expected, *, allow_asset_overlay=False):
     require(kind == "oci" and len(images) == 1, "Web base must contain one immutable OCI image")
     [image] = images
     config = image["config"]
@@ -84,9 +86,13 @@ def validate_base(kind, images, expected):
             and labels.get("org.opencontainers.image.title") == "CMA Web"
             and labels.get("org.opencontainers.image.source") == SOURCE
             and labels.get("org.opencontainers.image.version") == expected.version
-            and labels.get("org.opencontainers.image.revision") == expected.source
-            and not {MANIFEST_LABEL, BASE_LABEL} & labels.keys(),
+            and labels.get("org.opencontainers.image.revision") == expected.source,
             "Web asset base identity differs from its immutable release")
+    if {MANIFEST_LABEL, BASE_LABEL} & labels.keys():
+        require(allow_asset_overlay and matches(HASH, labels.get(MANIFEST_LABEL))
+                and immutable_image(labels.get(BASE_LABEL))
+                and labels[BASE_LABEL] != REPOSITORY + "@" + expected.digest,
+                "Web asset base has unexpected overlay labels")
     return image
 
 
@@ -226,9 +232,56 @@ def pack_overlay(base, image, reader, layer, diff_id, inventory, destination):
     return {"archive": destination, "digest": selected["digest"], "archive_sha256": checksum(destination)}
 
 
+def load_assets(expected, directory, lifetime, scanner, limit, *, allow_asset_overlay=False):
+    ImageArchive, Budget, read_path, read_json = scanner
+    workspace = Path(lifetime.enter_context(tempfile.TemporaryDirectory(dir=directory, prefix="web-asset-input-")))
+    reader = lifetime.enter_context(ImageArchive(expected.archive, workspace, Budget(ARCHIVE_LIMIT, ARCHIVE_ENTRIES)))
+    kind, images = reader.images()
+    image = validate_base(kind, images, expected, allow_asset_overlay=allow_asset_overlay)
+    assets, sentinel = read_current(reader, image, read_path, read_json, expected, limit)
+    catalog_digest = hashed(catalog_bytes(assets))
+    require(expected.catalog_sha256 is None or expected.catalog_sha256 == catalog_digest,
+            "Web asset base differs from its finalized catalog")
+    base = read_json(reader.read("blobs/sha256/" + expected.digest[7:]))
+    return (base, image, reader), assets, sentinel, catalog_digest
+
+
+def assemble_prepare(incumbent, candidate, directory, *, max_files, max_bytes):
+    """Add both current asset catalogs while continuing to serve the incumbent HTML."""
+    require(type(max_files) is int and max_files > 0 and type(max_bytes) is int and max_bytes > 0,
+            "Web asset retention requires a positive file and byte budget")
+    require(incumbent.digest != candidate.digest and incumbent.source != candidate.source
+            and incumbent.version != candidate.version, "Web asset retention release scope is ambiguous")
+    for item in (incumbent, candidate):
+        validate_input({"image": REPOSITORY + "@" + item.digest, "source_sha": item.source,
+                        "version": item.version, "completed_rollouts": 0}, catalog_required=False)
+    scanner = scanner_types()
+    union = {}
+    with ExitStack() as lifetime:
+        base, old_assets, old_sentinel, _ = load_assets(incumbent, directory, lifetime, scanner, max_bytes)
+        # A published promote archive may already contain fallback assets from staging.
+        # Its current catalog identifies the paths needed by its own HTML and lazy chunks.
+        _, new_assets, new_sentinel, _ = load_assets(
+            candidate, directory, lifetime, scanner, max_bytes, allow_asset_overlay=True,
+        )
+        total = add_assets(union, old_assets, 0, max_files=max_files, max_bytes=max_bytes)
+        total = add_assets(union, new_assets, total, max_files=max_files, max_bytes=max_bytes)
+        layer, diff_id, inventory = make_layer(union)
+        output = Path(tempfile.mkdtemp(dir=directory, prefix="web-asset-prepare-"))
+        try:
+            prepare = pack_overlay(*base, layer, diff_id, inventory, output / "web-prepare.oci.tar")
+        except BaseException:
+            shutil.rmtree(output)
+            raise
+    return {"prepare": prepare, "incumbent_digest": incumbent.digest, "candidate_digest": candidate.digest,
+            "asset_manifest_sha256": inventory, "asset_count": len(union), "asset_bytes": total,
+            "layer_digest": "sha256:" + hashed(layer), "assets": json.loads(catalog_bytes(union)),
+            "sentinels": {"incumbent": old_sentinel, "candidate": new_sentinel}}
+
+
 def assemble(incumbent, candidate, retained, directory, *, max_files, max_bytes):
     """Build the two images from immutable release bases and the reviewed retention scope."""
-    ImageArchive, Budget, read_path, read_json = scanner_types()
+    scanner = scanner_types()
     selected = (*retained, incumbent, candidate)
     require(type(max_files) is int and max_files > 0 and type(max_bytes) is int and max_bytes > 0,
             "Web asset retention requires a positive file and byte budget")
@@ -238,21 +291,13 @@ def assemble(incumbent, candidate, retained, directory, *, max_files, max_bytes)
     total, union, base_images, sentinels, inputs = 0, {}, {}, {}, []
     with ExitStack() as lifetime:
         for expected in selected:
-            workspace = Path(lifetime.enter_context(tempfile.TemporaryDirectory(dir=directory, prefix="web-asset-input-")))
-            reader = lifetime.enter_context(ImageArchive(expected.archive, workspace, Budget(ARCHIVE_LIMIT, ARCHIVE_ENTRIES)))
-            kind, images = reader.images()
-            image = validate_base(kind, images, expected)
-            assets, sentinel = read_current(reader, image, read_path, read_json, expected, max_bytes)
-            catalog_digest = hashed(catalog_bytes(assets))
-            require(expected.catalog_sha256 is None or expected.catalog_sha256 == catalog_digest,
-                    "Web asset base differs from its finalized catalog")
+            base, assets, sentinel, catalog_digest = load_assets(expected, directory, lifetime, scanner, max_bytes)
             total = add_assets(union, assets, total, max_files=max_files, max_bytes=max_bytes)
             inputs.append({"image": REPOSITORY + "@" + expected.digest, "source_sha": expected.source,
                            "version": expected.version, "catalog_sha256": catalog_digest,
                            "completed_rollouts": expected.completed_rollouts})
             if expected in (incumbent, candidate):
-                raw = reader.read("blobs/sha256/" + expected.digest[7:])
-                base_images[expected] = (read_json(raw), image, reader)
+                base_images[expected] = base
                 sentinels[expected] = sentinel
         layer, diff_id, inventory = make_layer(union)
         output = Path(tempfile.mkdtemp(dir=directory, prefix="web-asset-overlays-"))
