@@ -182,14 +182,19 @@ export class AdminMatrix {
           'admission_stop_replay_changed');
         const peerState=await this.call(peer,'GET',path);
         check(admissionHistory(peerState) && peerState.revision === stopped.revision
-          && isDeepStrictEqual(peerState.operator_stop, stopped.operator_stop), 'admission_stop_not_visible');
+          && isDeepStrictEqual(peerState.operator_stop, stopped.operator_stop)
+          && isDeepStrictEqual(peerState.last_change, stopped.last_change)
+          && peerState.last_change.old_stop === null, 'admission_stop_not_visible');
         await verifyAdmission?.(peer, 'paused');
-        await this.call(peer,'POST',`${path}/resume`,{expected_revision:initial.revision,reason},[409]);
+        const stale = await this.call(peer, 'POST', `${path}/resume`, {expected_revision: initial.revision, reason}, [409]);
+        check(stale?.code === 'admission_control_conflict', 'admission_resume_stale_refusal_untyped');
         const resumed = await this.call(peer, 'POST', `${path}/resume`, {expected_revision: stopped.revision, reason});
         check(resumed.revision === stopped.revision + 1 && resumed.operator_stop === null, 'admission_resume_ack');
         const settled = await this.call(am, 'GET', path);
-        check(admissionHistory(settled) && settled.revision === resumed.revision && settled.operator_stop === null,
-          'admission_resume_not_visible');
+        check(admissionHistory(settled) && settled.revision === resumed.revision && settled.operator_stop === null
+          && isDeepStrictEqual(settled.last_change, resumed.last_change)
+          && isDeepStrictEqual(settled.last_change.old_stop, stopped.operator_stop)
+          && isDeepStrictEqual(settled.history[1], stopped.last_change), 'admission_resume_not_visible');
         await verifyAdmission?.(am, 'open');
       }, async () => {
         const current=await this.call(peer,'GET',path);
