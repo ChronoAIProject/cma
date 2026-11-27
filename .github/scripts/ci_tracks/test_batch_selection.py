@@ -103,10 +103,11 @@ class BatchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             batch_selection.determine_many(self.root, [self.first])
 
-    def test_reviewed_historical_runtime_recipe_replays_through_hash_repair(self):
+    def test_reviewed_historical_runtime_recipe_replays_after_restoring_the_pin(self):
         path = image_inputs.RECIPE
-        previous = sha256((self.root / path).read_bytes()).hexdigest()
-        edited = (self.root / path).read_text() + 'ENV SYNTHETIC_FEATURE=1\n'
+        original = (self.root / path).read_text()
+        previous = sha256(original.encode()).hexdigest()
+        edited = original + 'ENV SYNTHETIC_FEATURE=1\n'
         current = sha256(edited.encode()).hexdigest()
         self.write(path, edited)
         stale = self.commit()
@@ -114,11 +115,13 @@ class BatchTests(unittest.TestCase):
                 patch.object(image_inputs, 'SEAL_RECIPE', current):
             with self.assertRaises(SelectionIntegrityError):
                 batch_selection.determine_many(self.root, [stale])
-            self.pin_recipes()
+            self.write(path, original)
             repair = self.commit()
             plans = batch_selection.determine_many(self.root, [stale, repair])
             self.assertEqual(plans[1], selection.determine(self.root, {'after': repair}, 'push'))
-            self.assertEqual(plans[1]['deployables'], ['cma-runtime', 'cma-runtime-omarchy'])
+            self.assertEqual(plans[1]['deployables'], [
+                'cma-agent-manager', 'cma-runtime', 'cma-runtime-omarchy',
+            ])
             self.assertIn('cma-runtime', plans[0]['deployables'])
             with patch.object(image_inputs, 'SEAL_RECIPE', '0' * 64), \
                     self.assertRaises(SelectionIntegrityError):

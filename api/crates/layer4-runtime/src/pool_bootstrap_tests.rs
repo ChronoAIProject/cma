@@ -81,6 +81,14 @@ async fn exact_pod_assignment_is_replayable_and_keeps_control_credentials_out_of
         .config
         .install_env
         .contains_key("CHRONO_RUNTIME_CONTROL_TOKEN"));
+    assert_eq!(
+        assigned.config.process_env[crate::bridge::STALE_TURN_SEAL_FLAG],
+        "1"
+    );
+    assert_eq!(
+        first,
+        RuntimeBootstrapReceipt::for_request(&request).unwrap()
+    );
     assert_eq!(first, assign(&directory.socket(), &request).await.unwrap());
     let app = Router::new()
         .route("/control", get(|| async { "private" }))
@@ -121,6 +129,23 @@ async fn exact_pod_assignment_is_replayable_and_keeps_control_credentials_out_of
     );
     drop(server);
     assert!(!directory.socket().exists());
+}
+
+#[tokio::test]
+async fn assignment_preserves_seal_opt_out_and_machine_default() {
+    let flag = crate::bridge::STALE_TURN_SEAL_FLAG;
+    for (name, value, expected) in [(flag, "0", Some("0")), ("CMA_MACHINE_INCLUDED", "1", None)] {
+        let directory = Directory::new();
+        let (_server, ready) = directory.start().await;
+        let mut request = directory.request();
+        request.environment.insert(name.into(), value.into());
+        assign(&directory.socket(), &request).await.unwrap();
+        let assigned = ready.await.unwrap();
+        assert_eq!(
+            assigned.config.process_env.get(flag).map(String::as_str),
+            expected
+        );
+    }
 }
 
 #[tokio::test]
