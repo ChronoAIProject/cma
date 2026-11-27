@@ -4,6 +4,7 @@ import { ApiError, createClient } from '@cma/client';
 import { AgentSidePanel, type AgentPanel } from './AgentSidePanel';
 import { CmaClientProvider } from '../api/context';
 import type { ReadOptions } from '../api/client';
+import type { AgentFilesClient } from '../api/agentFiles';
 import { agentClient, AGENT_DETAIL } from '../test/agent';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import type { AgentEnvironment } from '@cma/client';
@@ -153,7 +154,7 @@ it('offers a safe environment retry in owner Files and coalesces pending focus e
   render(panel(agentClient({ files: fileClient })));
   await act(async () => {});
   expect(screen.queryByText('<private upstream error>')).not.toBeInTheDocument();
-  expect(fileClient.list).toHaveBeenCalledTimes(1);
+  expect(fileClient.list).not.toHaveBeenCalled();
   fireEvent.focus(window);
   fireEvent.focus(window);
   await act(async () => {});
@@ -164,14 +165,13 @@ it('offers a safe environment retry in owner Files and coalesces pending focus e
   expect(fileClient.write).not.toHaveBeenCalled();
 });
 
-it('attempts the Files listing during a transient environment failure', async () => {
+it('offers a retry before starting a Files listing after an initial environment failure', async () => {
   const fileClient = files(vi.fn().mockRejectedValueOnce(new ApiError(503, 'Runtime unavailable')));
-  fileClient.list.mockRejectedValueOnce(new Error('File listing unavailable'));
   render(panel(agentClient({ files: fileClient })));
   await act(async () => {});
-  expect(fileClient.list).toHaveBeenCalledTimes(1);
-  expect(currentTab().getByText('File listing unavailable')).toBeVisible();
-  expect(currentTab().queryByText('Checking file access…')).not.toBeInTheDocument();
+  expect(fileClient.list).not.toHaveBeenCalled();
+  expect(currentTab().getByText('We couldn’t check file availability.')).toBeVisible();
+  expect(currentTab().getByRole('button', { name: 'Try again' })).toBeEnabled();
 });
 
 it('keeps an in-flight Files listing alive through environment revalidation loading', async () => {
@@ -345,26 +345,25 @@ it('recovers all views on the existing visible 30-second refresh without enablin
   for (const tab of ['files', 'activity', 'browser'] as const) {
     view.rerender(panel(client, tab));
     const subject = tab === 'files' ? 'file' : tab === 'activity' ? 'operation' : 'screen';
-    if (tab !== 'files')
-      expect(currentTab().getByText(`We couldn’t check ${subject} availability.`)).toBeVisible();
+    expect(currentTab().getByText(`We couldn’t check ${subject} availability.`)).toBeVisible();
   }
   await act(() => vi.advanceTimersByTimeAsync(29_999));
   expect(fileClient.environment).toHaveBeenCalledTimes(1);
-  expect(fileClient.list).toHaveBeenCalledTimes(1);
+  expect(fileClient.list).not.toHaveBeenCalled();
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(fileClient.environment).toHaveBeenCalledTimes(2);
   expect(currentTab().getByText('Live screen is not enabled')).toBeVisible();
   expect(currentTab().getByRole('button', { name: 'Enable browser' })).toBeEnabled();
-  expect(fileClient.list).toHaveBeenCalledTimes(2);
+  expect(fileClient.list).not.toHaveBeenCalled();
   view.rerender(panel(client, 'activity'));
   expect(currentTab().getByText('capability-proof', { exact: true })).toBeVisible();
   view.rerender(panel(client));
   await act(async () => {});
-  expect(fileClient.list).toHaveBeenCalledTimes(3);
+  expect(fileClient.list).toHaveBeenCalledTimes(1);
   expect(screen.queryByText('We couldn’t check file availability.')).not.toBeInTheDocument();
   view.rerender(panel(client, 'details'));
   view.rerender(panel(client));
-  expect(fileClient.list).toHaveBeenCalledTimes(3);
+  expect(fileClient.list).toHaveBeenCalledTimes(1);
   expect(configure).not.toHaveBeenCalled();
   expect(changeControl).not.toHaveBeenCalled();
   expect(fileClient.write).not.toHaveBeenCalled();
@@ -384,7 +383,7 @@ it('honors the environment 429 deadline through retry buttons, focus and the per
   for (let count = 0; count < 5; count++) fireEvent.focus(window);
   await act(() => vi.advanceTimersByTimeAsync(40_499));
   expect(fileClient.environment).toHaveBeenCalledTimes(1);
-  expect(fileClient.list).toHaveBeenCalledTimes(1);
+  expect(fileClient.list).not.toHaveBeenCalled();
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(fileClient.environment).toHaveBeenCalledTimes(2);
   expect(fileClient.list).toHaveBeenCalledTimes(1);
@@ -425,7 +424,7 @@ it('honors the owner retry header across first open and same-scope reopen', asyn
   view.rerender(panel(client));
   await act(() => vi.advanceTimersByTimeAsync(799));
   expect(fetch).toHaveBeenCalledTimes(1);
-  expect(fileClient.list).toHaveBeenCalledTimes(2);
+  expect(fileClient.list).not.toHaveBeenCalled();
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(fetch).toHaveBeenCalledTimes(2);
   fireEvent.focus(window);
@@ -437,7 +436,7 @@ it('honors the owner retry header across first open and same-scope reopen', asyn
     expect(String(request)).toBe('https://fixture.invalid/api/v1/agents/agt_1/environment');
     expect(options?.method).toBe('GET');
   }
-  expect(fileClient.list).toHaveBeenCalledTimes(2);
+  expect(fileClient.list).toHaveBeenCalledTimes(1);
 });
 
 it.each([{ viewerId: 'owner-b' }, { agentId: 'agt_2' }, { runtimeVersion: 'runtime-b' }])(
@@ -471,7 +470,7 @@ it.each([{ viewerId: 'owner-b' }, { agentId: 'agt_2' }, { runtimeVersion: 'runti
       expect.anything(),
     );
     expect(currentTab().getByText('File access is unavailable.')).toBeVisible();
-    expect(fileClient.list).toHaveBeenCalled();
+    expect(fileClient.list).not.toHaveBeenCalled();
   },
 );
 
@@ -516,12 +515,12 @@ it('waits while hidden and ignores a timed-out old incarnation after recovery', 
   );
   render(panel(agentClient({ files: fileClient })));
   await act(() => vi.advanceTimersByTimeAsync(15_000));
-  expect(fileClient.list).toHaveBeenCalledTimes(1);
+  expect(fileClient.list).not.toHaveBeenCalled();
   visibility.mockReturnValue('hidden');
   fireEvent(document, new Event('visibilitychange'));
   await act(() => vi.advanceTimersByTimeAsync(60_000));
   expect(fileClient.environment).toHaveBeenCalledTimes(1);
-  expect(fileClient.list).toHaveBeenCalledTimes(1);
+  expect(fileClient.list).not.toHaveBeenCalled();
   visibility.mockReturnValue('visible');
   fireEvent(document, new Event('visibilitychange'));
   fireEvent.focus(window);
@@ -772,4 +771,60 @@ it('review 4221 keeps a confirmed denial when its retry also fails transiently',
   await act(async () => {});
   expect(fileClient.environment).toHaveBeenCalledTimes(3);
   expect(fileClient.list).toHaveBeenCalledTimes(1);
+});
+
+it('replaces the pending Files tree when revalidation finds a new boot of the same image', async () => {
+  vi.useFakeTimers();
+  let finishEnvironment!: (value: AgentEnvironment) => void;
+  let finishOldTree!: (value: Awaited<ReturnType<AgentFilesClient['list']>>) => void;
+  const treeEntry = (name: string) => ({
+    path: `/home/${name}`,
+    name,
+    kind: 'file' as const,
+    size_bytes: 1,
+    hidden: false,
+  });
+  const fileClient = files(
+    vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...environment,
+        files: available,
+        runtime_incarnation: 'boot-one',
+        revalidate_at: new Date(Date.now() + 1000).toISOString(),
+      })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishEnvironment = resolve;
+          }),
+      ),
+  );
+  const list = vi
+    .fn<AgentFilesClient['list']>()
+    .mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishOldTree = resolve;
+        }),
+    )
+    .mockResolvedValueOnce([treeEntry('current.txt')]);
+  render(panel(agentClient({ files: { ...fileClient, list } })));
+  await act(async () => {});
+  expect(list).toHaveBeenCalledTimes(1);
+  const oldSignal = list.mock.calls[0]?.[2]?.signal;
+
+  await act(() => vi.advanceTimersByTimeAsync(1000));
+  expect(fileClient.environment).toHaveBeenCalledTimes(2);
+  expect(oldSignal?.aborted).toBe(false);
+  expect(list).toHaveBeenCalledTimes(1);
+
+  await act(async () =>
+    finishEnvironment({ ...environment, files: available, runtime_incarnation: 'boot-two' }),
+  );
+  expect(oldSignal?.aborted).toBe(true);
+  expect(list).toHaveBeenCalledTimes(2);
+  await act(async () => finishOldTree([treeEntry('obsolete.txt')]));
+  expect(currentTab().getByText('current.txt')).toBeVisible();
+  expect(currentTab().queryByText('obsolete.txt')).toBeNull();
 });

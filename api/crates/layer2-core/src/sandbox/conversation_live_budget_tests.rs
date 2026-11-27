@@ -51,7 +51,7 @@ fn requested_bytes<T>(run: impl FnOnce() -> T) -> (usize, T) {
 #[test]
 fn live_fragments_compete_with_adapter_storage_and_keep_the_last_owner_charged() {
     let source = fragment("one", "retained");
-    let bytes = coordinated_bytes(&source, &source.delta).unwrap();
+    let bytes = budgeted_bytes(&source, &source.delta).unwrap();
     let aggregate = IngressBudget::new(bytes);
     let local = Arc::new(Semaphore::new(bytes));
     let budget = LiveBudget(local, Some(aggregate.clone()));
@@ -76,7 +76,7 @@ fn production_live_pool_uses_the_same_process_coordinator_as_the_adapter() {
     let before = root.available_bytes();
     let live = LiveBudget::process_coordinated();
     let source = fragment("one", "source");
-    let weight = coordinated_bytes(&source, &source.delta).unwrap();
+    let weight = budgeted_bytes(&source, &source.delta).unwrap();
     let held = live.copy_chunk(&source, &source.delta).unwrap();
     assert_eq!(root.available_bytes(), before - weight);
     drop(held);
@@ -84,24 +84,33 @@ fn production_live_pool_uses_the_same_process_coordinator_as_the_adapter() {
 }
 
 #[test]
-fn coordinated_copy_accounts_for_requested_allocations_before_copying() {
+fn budgeted_copy_accounts_for_requested_allocations_before_copying() {
     let mut source = fragment("agent", "the entire source is distinct from the slice");
     source.agent_id.0.reserve(256);
     source.message_id.reserve(512);
     source.delta.reserve(1024);
     let chunk = "é😀";
-    let bytes = coordinated_bytes(&source, chunk).unwrap();
-    for (local, root) in [(bytes - 1, bytes), (bytes, bytes - 1), (bytes, bytes)] {
-        let aggregate = IngressBudget::new(root);
-        let budget = LiveBudget(Arc::new(Semaphore::new(local)), Some(aggregate.clone()));
+    let bytes = budgeted_bytes(&source, chunk).unwrap();
+    for (local, root) in [
+        (bytes - 1, None),
+        (bytes, None),
+        (bytes - 1, Some(bytes)),
+        (bytes, Some(bytes - 1)),
+        (bytes, Some(bytes)),
+    ] {
+        let aggregate = root.map(IngressBudget::new);
+        let budget = LiveBudget(Arc::new(Semaphore::new(local)), aggregate.clone());
         // Warm the semaphore's platform-specific backing outside the measurement.
         drop(budget.copy_chunk(&source, chunk));
         let (requested, delivery) = requested_bytes(|| budget.copy_chunk(&source, chunk));
-        if local == bytes && root == bytes {
+        if local == bytes && root.is_none_or(|root| root == bytes) {
             let delivery = delivery.unwrap();
             assert_eq!(requested, bytes);
             assert_eq!(budget.available(), 0);
-            assert_eq!(aggregate.available_bytes(), 0);
+            assert_eq!(
+                aggregate.as_ref().map(IngressBudget::available_bytes),
+                root.map(|_| 0)
+            );
             assert_eq!(delivery.agent_id, source.agent_id);
             assert_eq!(delivery.message_id, source.message_id);
             assert_eq!(delivery.delta, chunk);
@@ -111,7 +120,7 @@ fn coordinated_copy_accounts_for_requested_allocations_before_copying() {
             assert!(delivery.is_none());
         }
         assert_eq!(budget.available(), local);
-        assert_eq!(aggregate.available_bytes(), root);
+        assert_eq!(aggregate.as_ref().map(IngressBudget::available_bytes), root);
     }
 }
 
@@ -142,45 +151,56 @@ fn coordinated_setup(bytes: usize) -> (Arc<LiveBudget>, AgentLiveHub) {
 }
 
 #[test]
-fn coordinated_delivery_releases_capacity_when_the_last_receiver_exits_before_send() {
-    let source = fragment("one", "last receiver");
-    let bytes = coordinated_bytes(&source, &source.delta).unwrap();
-    let (budget, hub) = coordinated_setup(bytes);
-    drop(budget.copy_chunk(&source, &source.delta));
-    let receiver = hub.subscribe(&source.agent_id);
-    let barrier = Arc::new(Barrier::new(2));
-    std::thread::scope(|scope| {
-        let peer = barrier.clone();
-        scope.spawn(move || {
-            peer.wait();
-            drop(receiver);
-            peer.wait();
+fn budgeted_delivery_releases_capacity_when_the_last_receiver_exits_before_send() {
+    for coordinated in [false, true] {
+        let source = fragment("one", "last receiver");
+        let bytes = budgeted_bytes(&source, &source.delta).unwrap();
+        let (budget, hub) = if coordinated {
+            coordinated_setup(bytes)
+        } else {
+            setup(bytes)
+        };
+        drop(budget.copy_chunk(&source, &source.delta));
+        let receiver = hub.subscribe(&source.agent_id);
+        let barrier = Arc::new(Barrier::new(2));
+        std::thread::scope(|scope| {
+            let peer = barrier.clone();
+            scope.spawn(move || {
+                peer.wait();
+                drop(receiver);
+                peer.wait();
+            });
+            // The first allocation in publish is after it holds the lane sender.
+            BEFORE_COPY.with(|pause| *pause.borrow_mut() = Some(barrier));
+            hub.publish(Some(source));
+            if let Some(unused) = BEFORE_COPY.with(|pause| pause.borrow_mut().take()) {
+                unused.wait();
+                unused.wait();
+                panic!("publish did not construct a budgeted delivery");
+            }
         });
-        // The first allocation in publish is after it holds the lane sender.
-        BEFORE_COPY.with(|pause| *pause.borrow_mut() = Some(barrier));
-        hub.publish(Some(source));
-        if let Some(unused) = BEFORE_COPY.with(|pause| pause.borrow_mut().take()) {
-            unused.wait();
-            unused.wait();
-            panic!("publish did not construct a coordinated delivery");
+        assert_eq!(budget.available(), bytes);
+        if let Some(aggregate) = &budget.1 {
+            assert_eq!(aggregate.available_bytes(), bytes);
         }
-    });
-    assert_eq!(budget.available(), bytes);
-    assert_eq!(budget.1.as_ref().unwrap().available_bytes(), bytes);
+    }
 }
 
 #[test]
-fn retained_clone_holds_actual_string_capacity_until_last_drop() {
-    let mut source = fragment("one", "private text");
+fn retained_clone_holds_exact_copy_capacity_until_last_drop() {
+    let mut source = fragment("one", "private text and source suffix");
     source.delta.reserve(1024);
-    let bytes = retained_bytes(&source).unwrap() as usize;
-    assert!(bytes > 1024);
+    let chunk = "private text";
+    let bytes = budgeted_bytes(&source, chunk).unwrap();
     let budget = LiveBudget::new(bytes);
-    let first = budget.retain_local(source).unwrap();
-    let clone = first.clone();
+    let first = budget.copy_chunk(&source, chunk).unwrap();
+    let (requested, clone) = requested_bytes(|| first.clone());
+    assert_eq!(requested, 0);
+    assert_eq!(clone.delta, chunk);
+    assert_eq!(clone.delta.capacity(), chunk.len());
     assert!(std::ptr::eq(first.deref(), clone.deref()));
     assert_eq!(budget.available(), 0);
-    assert!(budget.retain_local(fragment("two", "next")).is_none());
+    assert!(budget.copy_chunk(&source, chunk).is_none());
     assert!(!format!("{clone:?}").contains("private text"));
     drop(first);
     assert_eq!(budget.available(), 0);
@@ -191,7 +211,7 @@ fn retained_clone_holds_actual_string_capacity_until_last_drop() {
 #[tokio::test]
 async fn lanes_share_capacity_and_return_ordered_gaps_without_blocking() {
     let source = fragment("one", "first");
-    let bytes = retained_bytes(&source).unwrap() as usize;
+    let bytes = budgeted_bytes(&source, &source.delta).unwrap();
     let (budget, hub) = setup(bytes);
     let mut first = hub.subscribe(&source.agent_id);
     let mut second = hub.subscribe(&AgentId("two".into()));
@@ -210,62 +230,80 @@ async fn lanes_share_capacity_and_return_ordered_gaps_without_blocking() {
 
 #[test]
 fn subscriber_deferred_copy_retains_reservation_after_every_lane_closes() {
-    let source = fragment("one", "first");
-    let bytes = coordinated_bytes(&source, &source.delta).unwrap();
-    let (budget, hub) = coordinated_setup(bytes);
-    let mut first = hub.subscribe(&source.agent_id);
-    let mut second = hub.subscribe(&source.agent_id);
-    hub.publish(Some(source));
-    let held = first.try_recv().unwrap();
-    let deferred = held.clone();
-    let other = second.try_recv().unwrap();
-    assert!(std::ptr::eq(held.deref(), other.deref()));
-    std::thread::scope(|scope| {
-        scope.spawn(|| drop((first, held)));
-        scope.spawn(|| drop((second, other)));
-    });
-    assert_eq!(budget.available(), 0);
-    drop(deferred);
-    assert_eq!(budget.available(), bytes);
+    for coordinated in [false, true] {
+        let source = fragment("one", "first");
+        let bytes = budgeted_bytes(&source, &source.delta).unwrap();
+        let (budget, hub) = if coordinated {
+            coordinated_setup(bytes)
+        } else {
+            setup(bytes)
+        };
+        let mut first = hub.subscribe(&source.agent_id);
+        let mut second = hub.subscribe(&source.agent_id);
+        hub.publish(Some(source));
+        let held = first.try_recv().unwrap();
+        let deferred = held.clone();
+        let other = second.try_recv().unwrap();
+        assert!(std::ptr::eq(held.deref(), other.deref()));
+        std::thread::scope(|scope| {
+            scope.spawn(|| drop((first, held)));
+            scope.spawn(|| drop((second, other)));
+        });
+        assert_eq!(budget.available(), 0);
+        drop(deferred);
+        assert_eq!(budget.available(), bytes);
+    }
 }
 
 #[test]
 fn gap_is_after_the_accepted_frame_and_before_later_recovered_delivery() {
-    let source = fragment("one", "first");
-    let bytes = coordinated_bytes(&source, &source.delta).unwrap();
-    let (budget, hub) = coordinated_setup(bytes);
-    let mut watching = hub.subscribe(&source.agent_id);
-    hub.publish(Some(source));
-    hub.publish(Some(fragment("one", "refused")));
-    assert_eq!(watching.try_recv().unwrap().delta, "first");
-    hub.publish(Some(fragment("one", "next")));
-    assert_eq!(watching.try_recv(), Err(TryRecvError::Lagged(1)));
-    assert_eq!(watching.try_recv().unwrap().delta, "next");
-    assert_eq!(watching.try_recv(), Err(TryRecvError::Empty));
-    assert_eq!(budget.available(), bytes);
+    for coordinated in [false, true] {
+        let source = fragment("one", "first");
+        let bytes = budgeted_bytes(&source, &source.delta).unwrap();
+        let (budget, hub) = if coordinated {
+            coordinated_setup(bytes)
+        } else {
+            setup(bytes)
+        };
+        let mut watching = hub.subscribe(&source.agent_id);
+        hub.publish(Some(source));
+        hub.publish(Some(fragment("one", "refused")));
+        assert_eq!(watching.try_recv().unwrap().delta, "first");
+        hub.publish(Some(fragment("one", "next")));
+        assert_eq!(watching.try_recv(), Err(TryRecvError::Lagged(1)));
+        assert_eq!(watching.try_recv().unwrap().delta, "next");
+        assert_eq!(watching.try_recv(), Err(TryRecvError::Empty));
+        assert_eq!(budget.available(), bytes);
+    }
 }
 
 #[test]
 fn utf8_fragments_are_shared_and_bounded_without_unaccounted_coalescing() {
-    let text = "€".repeat(7000);
-    let (budget, hub) = coordinated_setup(65536);
-    let mut first = hub.subscribe(&AgentId("one".into()));
-    let mut second = hub.subscribe(&AgentId("one".into()));
-    hub.publish(Some(fragment("one", &text)));
-    let mut result = String::new();
-    let mut count = 0;
-    while let Ok(mut delivery) = first.try_recv() {
-        let duplicate = second.try_recv().unwrap();
-        assert_eq!(delivery, duplicate);
-        assert!(std::ptr::eq(delivery.deref(), duplicate.deref()));
-        assert!(delivery.delta.len() <= 16384);
-        assert!(!delivery.coalesce_legacy(&duplicate, usize::MAX));
-        result.push_str(&delivery.delta);
-        count += 1;
+    for coordinated in [false, true] {
+        let text = "€".repeat(7000);
+        let (budget, hub) = if coordinated {
+            coordinated_setup(65536)
+        } else {
+            setup(65536)
+        };
+        let mut first = hub.subscribe(&AgentId("one".into()));
+        let mut second = hub.subscribe(&AgentId("one".into()));
+        hub.publish(Some(fragment("one", &text)));
+        let mut result = String::new();
+        let mut count = 0;
+        while let Ok(mut delivery) = first.try_recv() {
+            let duplicate = second.try_recv().unwrap();
+            assert_eq!(delivery, duplicate);
+            assert!(std::ptr::eq(delivery.deref(), duplicate.deref()));
+            assert!(delivery.delta.len() <= 16384);
+            assert!(!delivery.coalesce_legacy(&duplicate, usize::MAX));
+            result.push_str(&delivery.delta);
+            count += 1;
+        }
+        assert_eq!(result, text);
+        assert_eq!(count, 2);
+        assert_eq!(budget.available(), 65536);
     }
-    assert_eq!(result, text);
-    assert_eq!(count, 2);
-    assert_eq!(budget.available(), 65536);
 }
 
 #[test]
@@ -303,7 +341,7 @@ async fn cancelling_a_waiting_subscription_does_not_retain_a_reservation() {
 
 #[test]
 fn concurrent_lanes_cannot_overshoot_a_shared_reservation() {
-    let bytes = retained_bytes(&fragment("one", "payload")).unwrap() as usize;
+    let bytes = budgeted_bytes(&fragment("one", "payload"), "payload").unwrap();
     let (budget, hub) = setup(bytes * 2);
     let hub = Arc::new(hub);
     let watchers: Vec<_> = (0..16)

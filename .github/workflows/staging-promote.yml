@@ -104,6 +104,7 @@ jobs:
       release_set: ${{ needs.admit.outputs.release_set }}
       started_at: ${{ needs.admit.outputs.started_at }}
       mode: release
+      automatic_lane: ${{ inputs.lane }}
       infra_ref: ${{ inputs.infra_ref }}
       evidence_suffix: ${{ format('-{0}', inputs.lane) }}
       retry_allowed: true
@@ -168,6 +169,7 @@ jobs:
       release_set: ${{ needs.readmit.outputs.release_set }}
       started_at: ${{ needs.readmit.outputs.started_at }}
       mode: release
+      automatic_lane: ${{ inputs.lane }}
       infra_ref: ${{ inputs.infra_ref }}
       evidence_suffix: ${{ format('-{0}-retry', inputs.lane) }}
       retry_allowed: false

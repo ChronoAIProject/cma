@@ -19,6 +19,9 @@ on:
       mode:
         required: true
         type: string
+      automatic_lane:
+        type: string
+        default: ''
       evidence_suffix:
         type: string
         default: ''
@@ -58,7 +61,7 @@ jobs:
     outputs:
       status: ${{ job.status }}
       component_result: ${{ steps.coordinate.outputs.component_result }}
-      disposition: ${{ steps.release.outputs.disposition || steps.coordinate.outputs.disposition }}
+      disposition: ${{ steps.release.outputs.disposition || steps.admission.outputs.disposition || steps.coordinate.outputs.disposition }}
       retryable: ${{ steps.coordinate.outputs.retryable }}
     env:
       CD_STARTED_AT: ${{ inputs.started_at }}
@@ -70,12 +73,14 @@ jobs:
           persist-credentials: false
           fetch-depth: 0
       - name: Refuse an expired deployment before setup
+        if: inputs.automatic_lane == ''
         run: python3 -B .github/scripts/staging_cd_clock.py
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: '3.12'
       - name: Verify immutable published set
         id: release
+        if: inputs.automatic_lane == ''
         env:
           GH_TOKEN: ${{ github.token }}
           CD_RESOLVE_MODE: verify
@@ -153,11 +158,22 @@ jobs:
       - name: Install reviewed private controller requirements
         if: steps.release.outputs.disposition == ''
         run: python3 -B .github/scripts/staging_cd_tools.py requirements
+      - name: Verify and admit the immutable automatic set after setup
+        id: admission
+        if: inputs.automatic_lane != '' && steps.release.outputs.disposition == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_RESOLVE_MODE: verify-automatic-at-deploy
+          CD_PROMOTION_LANE: ${{ inputs.automatic_lane }}
+          CD_RELEASE_SET: ${{ inputs.release_set }}
+        run: python3 -B .github/scripts/staging_cd_resolve.py
       - name: Coordinate the immutable deployment set
         id: coordinate
-        if: steps.release.outputs.disposition == ''
+        if: steps.release.outputs.disposition == '' && steps.admission.outputs.disposition == '' &&
+            (inputs.automatic_lane == '' || steps.admission.outcome == 'success')
         env:
-          CD_RELEASE_SET: ${{ steps.release.outputs.release_set }}
+          CD_RELEASE_SET: ${{ steps.admission.outputs.release_set || steps.release.outputs.release_set }}
+          CD_STARTED_AT: ${{ fromJSON(inputs.automatic_lane == '' && toJSON(inputs.started_at) || toJSON(steps.admission.outputs.started_at)) }}
           CD_INFRA_REF: ${{ steps.private.outputs.revision }}
           CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
           CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}

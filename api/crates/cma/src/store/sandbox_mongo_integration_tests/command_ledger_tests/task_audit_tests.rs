@@ -207,3 +207,80 @@ async fn task_audit_cross_checks_terminal_and_reports_missing_or_wrong_evidence_
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn task_audit_reuses_one_legacy_scan_for_commands_from_the_same_agent() {
+    use crate::store::mongo_read_telemetry;
+    use layer2_core::sandbox::{AgentUpdateRecorder, DurableAgentUpdateRecorder};
+    use layer3_adapter::{
+        ConversationInputSender, ConversationUpdate, PromptResponse, TurnStopReason,
+    };
+
+    let (client, name) = database("task_audit_shared_legacy").await;
+    let sender = ConversationInputSender::spawn(4, |_| async { Ok(()) });
+    let (store, agent, parent, execution, _) =
+        execution_tests::composed_with_input(&client, &name, sender, "audit-fixture".into()).await;
+    index(&store).await;
+    let worker = AgentCommandWorker::new(store.clone(), execution, "audit-worker".into()).unwrap();
+    let recorder = DurableAgentUpdateRecorder::new(store.clone());
+    let second_admission = "2026-09-05T00:00:02Z";
+    for (key, admitted_at) in [("audit-first", NOW), ("audit-second", second_admission)] {
+        let current = store.get_agent(&agent.id).await.unwrap().unwrap();
+        let admitted = record(
+            store
+                .reserve_command(work_tests::live_request(&current, &parent, key))
+                .await
+                .unwrap(),
+        );
+        let command_id = &admitted.receipt.envelope.command_id;
+        worker.run_one(command_id).await.unwrap();
+        let working = store.get_agent(&agent.id).await.unwrap().unwrap();
+        recorder
+            .record_update(
+                &agent.id,
+                working.conversation.runtime_generation.unwrap(),
+                &mut layer2_core::sandbox::AgentMessageAssembly::default(),
+                ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::EndTurn)),
+                layer2_core::now_rfc3339(),
+            )
+            .await
+            .unwrap();
+        let mut settled = store.reconcile_command(command_id).await.unwrap();
+        settled.receipt.admitted_at = admitted_at.into();
+        store
+            .agent_commands
+            .replace_one(
+                doc! {"_id": command_id.as_str()},
+                crate::store::agent_commands::command_document(&settled).unwrap(),
+            )
+            .await
+            .unwrap();
+    }
+    let before = snapshot(&store).await;
+    let selected = selection();
+    let mut first = selected.clone();
+    first.to = Some(second_admission.into());
+    let mut expected_reads = None;
+    for (cohort, count) in [(&first, 1), (&selected, 2)] {
+        let (report, reads) = mongo_read_telemetry::isolated_test(async {
+            let report = task_audit::observe(&store, cohort).await.unwrap();
+            (report, mongo_read_telemetry::snapshot("agent_log"))
+        })
+        .await;
+        metric(&report.metrics(), "accepted_tasks", "", count);
+        metric(
+            &report.metrics(),
+            "audit_tasks",
+            ",result=\"verified_terminal\"",
+            count,
+        );
+        assert!(reads[0] > 0);
+        if let Some(expected_reads) = expected_reads {
+            assert_eq!(reads, expected_reads);
+        }
+        expected_reads = Some(reads);
+    }
+    assert_eq!(snapshot(&store).await, before);
+    client.database(&name).drop().await.unwrap();
+}

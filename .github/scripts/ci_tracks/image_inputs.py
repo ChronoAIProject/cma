@@ -25,6 +25,9 @@ CARGO_CONFIG = {'api/Cargo.toml', 'api/Cargo.lock', 'api/rust-toolchain.toml'}
 # PR #4171 changed this exact recipe but left the previous digest in both rows.
 PRE_SEAL_RECIPE = '209e7cc60a75297f873a185081fccd7a9fefc6482d73cfa03a9735074d644562'
 SEAL_RECIPE = '1524620b368bb9e5f03790d46b6f9b41b848a1ba032e00a4a9f36629ae7acde0'
+# PR #4242 added two exact Web startup and drain script COPYs.
+PRE_WEB_DRAIN_RECIPE = '2156db5b2ca81011548685e3319e1e8bfed0498534f56710223684ca308d410a'
+WEB_DRAIN_RECIPE = 'f934534a9c3a4fcead71f637d4aa6194d7faf2446bb25f441c51783c9e2dfe65'
 
 
 def recipes(root, fallback=None):
@@ -135,15 +138,20 @@ def validate_recipe_sources(root, manifest):
 
 
 def historical_recipe_model(root, manifest):
-    """Model the exact reviewed #4171 bytes in archived comparisons."""
-    source = root / RECIPE
-    if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != SEAL_RECIPE:
-        return manifest
+    """Replay reviewed Dockerfiles that landed before their manifest updates."""
     model = dict(manifest)
-    for name in ('cma-runtime', 'cma-runtime-omarchy'):
-        recipe = manifest.get(name)
-        if recipe and recipe['dockerfile'] == RECIPE and recipe['dockerfile_sha256'] == PRE_SEAL_RECIPE:
-            model[name] = dict(recipe, dockerfile_sha256=SEAL_RECIPE)
+    reviewed = (
+        (RECIPE, PRE_SEAL_RECIPE, SEAL_RECIPE, ('cma-runtime', 'cma-runtime-omarchy')),
+        ('web/Dockerfile', PRE_WEB_DRAIN_RECIPE, WEB_DRAIN_RECIPE, ('cma-web',)),
+    )
+    for path, previous, current, names in reviewed:
+        source = root / path
+        if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != current:
+            continue
+        for name in names:
+            recipe = model.get(name)
+            if recipe and recipe['dockerfile'] == path and recipe['dockerfile_sha256'] == previous:
+                model[name] = dict(recipe, dockerfile_sha256=current)
     return model
 
 

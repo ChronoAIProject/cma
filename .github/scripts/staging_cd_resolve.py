@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 
+from cd_target import STAGING, name as target_name
 from staging_cd_admission import event_identity, maintainer_dispatch
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub
@@ -142,9 +143,22 @@ def main():
             if env.get("GITHUB_STEP_SUMMARY"):
                 with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
                     stream.write(f"Publication-and-preparation seconds: {elapsed(publication_started):.2f}\n")
-        elif command == "verify":
+        elif command in ("verify", "verify-automatic-at-deploy"):
             started, mode = env.get("CD_STARTED_AT"), env.get("CD_DEPLOY_MODE")
-            remaining(started, mode=mode, env=env)
+            admitted = document(env["CD_RELEASE_SET"])
+            refresh = command == "verify-automatic-at-deploy"
+            if refresh:
+                from staging_cd_routes import lane_components
+                require(target_name(env) == STAGING and env["GITHUB_EVENT_NAME"] == "push"
+                        and mode == "release", "Fresh admission requires a protected staging push")
+                allowed = lane_components(env.get("CD_PROMOTION_LANE"))
+                require(isinstance(admitted, dict) and isinstance(admitted.get("receipts"), dict)
+                        and bool(admitted["receipts"]) and admitted["receipts"].keys() <= allowed,
+                        "Fresh admission differs from its scheduled scope")
+                run_created(env, api.request)
+                elapsed(started)  # Validate the original timestamp, including future dates.
+            else:
+                remaining(started, mode=mode, env=env)
             inputs = maintainer_dispatch(env, api.request) if env["GITHUB_EVENT_NAME"] == "workflow_dispatch" else None
             if inputs is not None:
                 # A retry retains the run-created timestamp, never run_started_at.
@@ -152,7 +166,6 @@ def main():
                 require(mode == inputs.get("mode", "release"), "Dispatch mode changed")
             else:
                 require(mode == "release", "Automatic bootstrap is forbidden")
-            admitted = document(env["CD_RELEASE_SET"])
             try:
                 value = verify_set(admitted, api, registry, automatic=inputs is None, inputs=inputs)
             except OvertakenByNewerFinal as error:
@@ -165,6 +178,8 @@ def main():
                                       "A newer final's run owns this deployment.\n")
                 return SKIPPED
             record_withheld(env, admitted["receipts"], value["receipts"])
+            if refresh:
+                started = timestamp()
             remaining(started, mode=mode, env=env)
         else:
             return False

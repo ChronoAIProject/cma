@@ -463,7 +463,7 @@ class StagingWorkflowTest < Minitest::Test
     deploy = workflow('staging-deploy')
     job = deploy['jobs']['deploy']
     # Verification or, after it, the coordinator under the set lock may find the set overtaken.
-    assert_equal '${{ steps.release.outputs.disposition || steps.coordinate.outputs.disposition }}',
+    assert_equal '${{ steps.release.outputs.disposition || steps.admission.outputs.disposition || steps.coordinate.outputs.disposition }}',
                  job.dig('outputs', 'disposition')
     trigger = deploy['on'] || deploy.fetch(true)
     assert_equal '${{ jobs.deploy.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
@@ -492,6 +492,26 @@ class StagingWorkflowTest < Minitest::Test
     admit = promote['jobs']['admit']
     assert_equal '${{ steps.set.outputs.disposition }}', admit.dig('outputs', 'disposition')
     assert_equal 'automatic', admit['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_RESOLVE_MODE')
+  end
+
+  def test_automatic_admission_runs_after_private_setup_for_both_attempts
+    deploy = workflow('staging-deploy').dig('jobs', 'deploy', 'steps')
+    verify = deploy.index { |step| step['id'] == 'admission' }
+    coordinate = deploy.index { |step| step['id'] == 'coordinate' }
+    assert_operator deploy.index { |step| step['name'] == 'Install reviewed private controller requirements' }, :<, verify
+    assert_equal verify + 1, coordinate
+    assert_equal 'verify-automatic-at-deploy', deploy[verify].dig('env', 'CD_RESOLVE_MODE')
+    assert_equal '${{ inputs.automatic_lane }}', deploy[verify].dig('env', 'CD_PROMOTION_LANE')
+    assert_includes deploy[coordinate]['if'], "steps.admission.outputs.disposition == ''"
+    assert_includes deploy[coordinate]['if'], "steps.admission.outcome == 'success'"
+    assert_includes deploy[coordinate].dig('env', 'CD_STARTED_AT'), 'steps.admission.outputs.started_at'
+    %w[deploy redeploy].each do |name|
+      assert_equal '${{ inputs.lane }}',
+                   workflow('staging-promote').dig('jobs', name, 'with', 'automatic_lane')
+    end
+    early_clock = deploy.find { |step| step['name'] == 'Refuse an expired deployment before setup' }
+    assert_equal "inputs.automatic_lane == ''", early_clock['if']
+    assert_equal "inputs.automatic_lane == ''", deploy.find { |step| step['id'] == 'release' }['if']
   end
 
   def test_only_the_locked_staging_promotion_admission_reads_prior_proofs
