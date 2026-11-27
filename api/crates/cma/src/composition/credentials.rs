@@ -119,6 +119,7 @@ pub(super) fn sandbox_credentials(
                 crate::sandbox::ServiceAccessOwnerTokens::new(auth, stores.sandbox_model.clone());
             ManagedSandboxCredentials::new(issuer, tokens, stores.sandbox_credentials.clone())
                 .with_exact_connections(broker)
+                .with_retirement_receipts(config.features.credential_retirement_receipts)
         }
         None => Arc::new(UnavailableSandboxCredentials),
     };
