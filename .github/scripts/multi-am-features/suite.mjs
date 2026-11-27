@@ -139,6 +139,16 @@ async function browserCase(am, iteration, name, run) {
   catch (error) {
     row.verdict = 'FAIL';
     row.browser_failure = error?.name === 'TimeoutError' ? 'timeout' : 'assertion_or_transport_error';
+    if (error?.response?.status === 429) {
+      const {timing, retry_after: after, body} = error.response;
+      row.rate_limit = {
+        status: 429, method: timing?.method,
+        route: timing?.route?.replace(/(\/documents)\/[^/]+/g, '$1/{id}')
+          .replace(/(\/shares)\/[^/]+$/g, '$1/{subject}'),
+        problem_code: body?.code === 'rate_limited' ? 'rate_limited' : undefined,
+        retry_after_seconds: typeof after === 'string' && /^[0-9]{1,5}$/.test(after) ? Number(after) : undefined,
+      };
+    }
     throw error;
   }
   finally { row.elapsed_ms = performance.now() - start; await record(row); }
@@ -504,6 +514,7 @@ try {
     ...journeyFailureSummary(result.journey),
     first_failed_case: failedCase ? {case: failedCase.case, phase: failedCase.phase, iteration: failedCase.iteration,
       ...(failedCase.document_failures ? {document_failures: failedCase.document_failures} : {}),
+      ...(failedCase.rate_limit ? {rate_limit: failedCase.rate_limit} : {}),
       ...(failedCase.browser_failure ? {browser_ingress: failedCase.ams[0], browser_failure: failedCase.browser_failure} : {})} : null,
     writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,

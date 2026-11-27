@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import {NonOwnerRouter} from './routing.mjs';
 import {coverage, loadInventory} from './coverage.mjs';
 import {readConfig} from './config.mjs';
-import {RequestPacer} from './pacing.mjs';
+import {RequestPacer, requestPacer} from './pacing.mjs';
+import {routeFixtureBrowserRequest} from './prepared_browser.mjs';
+import {createAdapter} from './owner/adapter.mjs';
 import {API, assertOwner, hash} from './cma/core.mjs';
 
 test('command polling follows its Agent receipt to the current non-owner', async () => {
@@ -82,6 +84,32 @@ test('a two-request fixture burst reserves both slots and leaves room on each si
   await pacer.wait('operator', 'POST');
   assert.deepEqual(waits, [12400, 24800]);
   await assert.rejects(pacer.wait('operator', 'POST', 3), /fixture_pacing_burst_bound/);
+});
+
+test('browser API requests share the fixture pace and block cross-origin traffic', async t => {
+  const calls = [];
+  t.mock.method(requestPacer, 'wait', async (...args) => calls.push(['pace', ...args]));
+  const origin = 'http://127.0.0.1:4321';
+  const route = path => ({
+    request: () => ({url: () => new URL(path, origin).href, method: () => 'POST'}),
+    continue: async () => calls.push(['continue']),
+    abort: async reason => calls.push(['abort', reason]),
+  });
+  await routeFixtureBrowserRequest(route('/api/v1/documents'), origin, 'fixture-owner');
+  await routeFixtureBrowserRequest(route('/assets/script.js'), origin, 'fixture-owner');
+  await routeFixtureBrowserRequest(route('https://foreign.invalid/api/'), origin, 'fixture-owner');
+  assert.deepEqual(calls, [['pace', 'fixture-owner', 'POST'], ['continue'],
+    ['continue'], ['abort', 'blockedbyclient']]);
+});
+
+test('prepared adapter failures expose only an approved diagnostic shape', async t => {
+  let error = 'RuntimeError:prepared_publication_conflict_transaction_changed';
+  t.mock.method(globalThis, 'fetch', async () => ({ok: false, status: 500, json: async () => ({error})}));
+  const adapter = createAdapter({control_origin: 'http://127.0.0.1:4321', control_token: 'fixture-token'});
+  await assert.rejects(adapter.preparedSchemaRace(),
+    {message: 'prepared_publication_conflict_transaction_changed'});
+  error = 'RuntimeError:prepared_publication_conflict_transaction_changed extra';
+  await assert.rejects(adapter.preparedSchemaRace(), /^Error: adapter preparedSchemaRace:/);
 });
 
 test('discarding an acknowledgement cancels the success body and retains typed refusal bodies', async t => {

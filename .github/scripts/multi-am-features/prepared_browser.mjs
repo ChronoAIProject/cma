@@ -3,6 +3,7 @@ import {createRequire} from 'node:module';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {assertOracle, check, hash, id, poll, safeError} from './cma/core.mjs';
 import {withRestoration} from './failure.mjs';
+import {requestPacer} from './pacing.mjs';
 
 const webRoot = fileURLToPath(new URL('../../../web/', import.meta.url));
 const webRequire = createRequire(new URL('../../../web/package.json', import.meta.url));
@@ -21,6 +22,16 @@ function loopback(value) {
     && url.pathname === '/' && !url.username && !url.password && !url.search && !url.hash,
   'prepared_browser_requires_pod_forward');
   return url.origin;
+}
+
+export async function routeFixtureBrowserRequest(route, origin, pacingKey) {
+  const request = route.request();
+  const url = new URL(request.url());
+  if (url.origin !== origin) return route.abort('blockedbyclient');
+  if (pacingKey && url.pathname.startsWith('/api/')) {
+    await requestPacer.wait(pacingKey, request.method());
+  }
+  return route.continue();
 }
 
 export async function openPreparedBrowser(config) {
@@ -79,8 +90,8 @@ export async function openPreparedBrowser(config) {
       try {
         const origin = 'http://127.0.0.1:' + server.httpServer.address().port;
         context = await browser.newContext({baseURL: origin, serviceWorkers: 'block'});
-        await context.route('**/*', route => new URL(route.request().url()).origin === origin
-          ? route.continue() : route.abort('blockedbyclient'));
+        const pacingKey = config.bearer ?? config.auth?.bearer;
+        await context.route('**/*', route => routeFixtureBrowserRequest(route, origin, pacingKey));
         if (!freshSession) {
           await context.addCookies([{name: 'cma_session', value: config.browser_session_cookie, url: origin,
             httpOnly: true, secure: true, sameSite: 'Lax'}]);

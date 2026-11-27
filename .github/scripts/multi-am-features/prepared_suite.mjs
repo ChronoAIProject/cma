@@ -1,7 +1,7 @@
 import {readFile, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {isDeepStrictEqual as equal} from 'node:util';
-import {assertOwner, check, hash, poll} from './cma/core.mjs';
+import {assertOwner, check, hash, poll, safeError} from './cma/core.mjs';
 import {runJourney} from './cma/journey.mjs';
 import {readConfig} from './config.mjs';
 import {journeyFailureSummary, retainFailure, withRestoration} from './failure.mjs';
@@ -11,6 +11,15 @@ import {writerCoverage} from './writer_coverage.mjs';
 
 const isDigest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const OLD_WORK_LEASE_MS = 18 * 60 * 1000;
+
+async function preparedOperation(code, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    if (safeError(error) !== 'transport_or_adapter_error') throw error;
+    throw new Error(code, {cause: error});
+  }
+}
 
 async function servingManagers(adapter) {
   const topology = await adapter.topology();
@@ -57,16 +66,19 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         const race = action => adapter.preparedSchemaRace({
           action, operationId: admission.operationId, reservations: ready, barrier,
         });
-        const disarm = () => adapter.preparedSchemaBarrier({arm: false});
+        const disarm = () => preparedOperation('prepared_publication_barrier_release_failed',
+          () => adapter.preparedSchemaBarrier({arm: false}));
         await withRestoration(async () => {
-          await adapter.preparedSchemaBarrier(ownerFence ? {arm: true, ownerFence} : {arm: true});
-          record = await createAndOpen(admitted => {
+          await preparedOperation('prepared_publication_barrier_arm_failed',
+            () => adapter.preparedSchemaBarrier(ownerFence ? {arm: true, ownerFence} : {arm: true}));
+          record = await preparedOperation('prepared_publication_create_failed', () => createAndOpen(admitted => {
             admission = admitted;
             pending = withRestoration(async () => {
-              collision = await poll(() => race('inject'), value => value !== null,
+              collision = await poll(() => preparedOperation('prepared_publication_collision_failed',
+                () => race('inject')), value => value !== null,
                 {timeout: 120000, interval: 100, code: 'prepared_publication_transaction_not_observed'});
             }, disarm, recordFailure).then(() => ({}), error => ({error}));
-          });
+          }));
           check(pending, 'prepared_publication_admission_unobserved');
           const outcome = await pending;
           if (outcome.error) throw outcome.error;
@@ -76,7 +88,7 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         }, async () => {
           if (!admission) return disarm();
           await pending;
-          const marker = await race('restore');
+          const marker = await preparedOperation('prepared_publication_marker_restore_failed', () => race('restore'));
           check(marker.restored === 1 || (!collision && marker.restored === 0),
             'prepared_publication_collision_restore_unproven');
         }, recordFailure);
@@ -85,7 +97,7 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       }
       check(Number.isSafeInteger(record.createToReadyMs) && record.createToReadyMs > 0
         && record.createToReadyMs < OLD_WORK_LEASE_MS, 'prepared_ready_work_lease_bound_unproven');
-      const durable = await evidenceFor(record);
+      const durable = await preparedOperation('prepared_publication_readback_failed', () => evidenceFor(record));
       check(ready.includes(record.sandboxId) && durable.consumed === true &&
         durable.installation_bound === true && durable.reservation_bound === true &&
         durable.agent_ready === true && !consumed.has(record.sandboxId),
@@ -98,7 +110,8 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
         'prepared_open_ready_atomic_publication_unproven');
       check(durable.startup_receipts?.length === 3 && durable.startup_receipts.every(count => count === 1),
         'prepared_startup_receipt_count_wrong');
-      const nativeAfter = await adapter.preparedRuntimeEvidence({sandboxId: record.sandboxId, operationId: record.operationId});
+      const nativeAfter = await preparedOperation('prepared_publication_runtime_readback_failed',
+        () => adapter.preparedRuntimeEvidence({sandboxId: record.sandboxId, operationId: record.operationId}));
       check(equal(nativeAfter, nativeBefore.get(record.sandboxId)) && ['indexed', 'legacy'].includes(nativeAfter?.format)
         && nativeAfter.pod_sha256 === hash(record.runtime.pod_uid) && nativeAfter.receipts?.length === 3
         && nativeAfter.receipts.every(isDigest) && new Set(nativeAfter.receipts).size === 3,
@@ -111,8 +124,9 @@ export async function preparedJourney({adapter, create, openBoth, cleanup, step,
       check(isDigest(browserOpen?.started), 'prepared_browser_starting_read_unproven');
       check(record.am === ingress && typeof record.admissionRequest === 'string'
         && record.admissionRequest.trim().length > 0, 'prepared_admission_ingress_unbound');
-      await openBoth(record);
-      const browserReply = await page.sendAndRead(record.agentId, adapter);
+      await preparedOperation('prepared_publication_both_managers_read_failed', () => openBoth(record));
+      const browserReply = await preparedOperation('prepared_browser_send_failed',
+        () => page.sendAndRead(record.agentId, adapter));
       check(browserReply?.effects === 1 && isDigest(browserReply.ready_request_sha256)
         && isDigest(browserReply.send_request_sha256) && isDigest(browserReply.answer_sha256)
         && ['agui', 'responses_v2'].includes(browserReply.transport),

@@ -6,7 +6,13 @@ export function createAdapter(config) {
       body: JSON.stringify(body), signal: AbortSignal.timeout(method === 'observeScale' ? 260000 : 180000),
     });
     const value = await response.json();
-    if (!response.ok) throw new Error(`adapter ${method}: ${value.error || response.status}`);
+    if (!response.ok) {
+      const cause = new Error(`adapter ${method}: ${value.error || response.status}`);
+      const preparedCode = /^(?:RuntimeError|ValueError):((?:prepared_|disposable_feature_fixture_)[a-z0-9_]{1,96})$/
+        .exec(value.error ?? '')?.[1];
+      if (method.startsWith('prepared') && preparedCode) throw new Error(preparedCode, {cause});
+      throw cause;
+    }
     return value;
   }
   return Object.fromEntries(['topology','runtimeFor','prepareTurn','ownerOf','killAm',
