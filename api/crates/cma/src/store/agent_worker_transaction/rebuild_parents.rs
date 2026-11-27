@@ -1,6 +1,8 @@
 //! Serialize a rebuilt publication against its freshly verified parent revisions.
 use super::*;
-use layer2_core::sandbox::store::AgentWorkPublicationLineage;
+use layer2_core::sandbox::store::{
+    validate_agent_work_mutation_with_sandbox, AgentWorkPublicationLineage,
+};
 use layer2_core::sandbox::AgentLogKind;
 
 pub(super) async fn fence(
@@ -97,4 +99,110 @@ pub(super) async fn fence(
         }
     }
     Ok(())
+}
+
+// Allocate these parent reads and fences only for the selected validation.
+// The publication may otherwise retain both branches while scanning history.
+#[inline(never)]
+pub(super) fn fence_workspace_binding<'a>(
+    store: &'a MongoSandboxStore,
+    current: &'a Agent,
+    mutation: &'a AgentWorkMutation,
+    session: &'a mut mongodb::ClientSession,
+) -> impl std::future::Future<Output = Result<(), ApplyError>> + Send + 'a {
+    Box::pin(async move {
+        let sandbox = store
+            .sandboxes
+            .find_one(doc! {"_id": current.sandbox_id.as_str()})
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .as_ref()
+            .map(crate::store::sandboxes::read_sandbox)
+            .transpose()
+            .map_err(ApplyError::Domain)?
+            .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        let workspace = store
+            .workspaces
+            .find_one(doc! {"_id": current.workspace_id.as_str()})
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .as_ref()
+            .map(crate::store::workspaces::read_workspace)
+            .transpose()
+            .map_err(ApplyError::Domain)?
+            .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        layer2_core::sandbox::store::validate_agent_workspace_binding(
+            current, mutation, &sandbox, &workspace,
+        )
+        .map_err(ApplyError::Domain)?;
+        for (collection, id, revision) in [
+            (&store.sandboxes, sandbox.id.as_str(), sandbox.revision),
+            (&store.workspaces, workspace.id.as_str(), workspace.revision),
+        ] {
+            let written = collection.update_one(crate::store::work_schema::for_collection(collection, doc! {"_id": id,
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "revision": signed(revision, "bootstrap parent revision").map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                "owned_workspace_cleanup_admission_v1": {"$exists": false},
+                "channel_reuse_cleanup_execution": {"$exists": false}}),
+                doc! {"$inc": {"agent_bootstrap_binding_fence": 1_i64}})
+                .session(&mut *session).await.map_err(ApplyError::Driver)?;
+            if written.matched_count != 1 {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+        }
+        Ok(())
+    })
+}
+
+#[inline(never)]
+pub(super) fn fence_runtime_free_cleanup<'a>(
+    store: &'a MongoSandboxStore,
+    current: &'a Agent,
+    current_worktree: &'a Worktree,
+    entry_count: u64,
+    mutation: &'a AgentWorkMutation,
+    session: &'a mut mongodb::ClientSession,
+) -> impl std::future::Future<Output = Result<(), ApplyError>> + Send + 'a {
+    Box::pin(async move {
+        let sandbox = store
+            .sandboxes
+            .find_one(doc! { "_id": current.sandbox_id.as_str() })
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .as_ref()
+            .map(crate::store::sandboxes::read_sandbox)
+            .transpose()
+            .map_err(ApplyError::Domain)?
+            .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        validate_agent_work_mutation_with_sandbox(
+            current,
+            current_worktree,
+            entry_count,
+            mutation,
+            &sandbox,
+        )
+        .map_err(|error| contention::validation_error(current, mutation, error))?;
+        // Serialize the no-runtime proof with any concurrent parent publication.
+        let written = store
+            .sandboxes
+            .update_one(
+                crate::store::work_schema::query(doc! {
+                    "_id": sandbox.id.as_str(),
+                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                    "revision": signed(sandbox.revision, "retiring sandbox revision")
+                        .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                }),
+                doc! { "$inc": { "runtime_writer_claim_fence": 1_i64 } },
+            )
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        if written.matched_count != 1 {
+            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+        }
+        Ok(())
+    })
 }
