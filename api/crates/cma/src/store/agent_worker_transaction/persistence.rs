@@ -155,7 +155,7 @@ pub(super) async fn fence_retired_sandbox(
         .await
         .map_err(ApplyError::Driver)?
         .as_ref()
-        .map(super::sandboxes::read_sandbox)
+        .map(crate::store::sandboxes::read_sandbox)
         .transpose()
         .map_err(ApplyError::Domain)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
