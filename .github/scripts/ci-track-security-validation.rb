@@ -188,6 +188,22 @@ def require_omarchy_image_secret_scan(steps)
     'Omarchy retention must require promotion success')
 end
 
+def image_scan_workflow_mutations
+  [
+    ->(d) { d['ci-images']['jobs']['images']['steps'].reject! { |s| s['name'] == 'Scan tested image as staging publication does' } },
+    ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['continue-on-error'] = true },
+    ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['if'] = "github.event_name == 'merge_group'" },
+    ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['run'] += ' || true' },
+    ->(d) { steps = d['ci-images']['jobs']['images']['steps']; scan = steps.index { |s| s['name'] == 'Scan tested image as staging publication does' }; steps.insert(steps.index { |s| s['name'] == 'Retain tested native image' } + 1, steps.delete_at(scan)) },
+    ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['name'] == 'Install pinned image secret scanner' } },
+    ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image as staging publication does' }['timeout-minutes'] = 120 },
+    ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-scan-input' }['if'] = 'success()' },
+    ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Export tested Omarchy image' }['run'].sub!('test "$OMARCHY_SCAN_STARTED" = true', 'true') },
+    ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Export tested Omarchy image' }['run'].sub!('if [[ "$GITHUB_EVENT_NAME" = push', 'if [[ "$GITHUB_EVENT_NAME" = schedule || "$GITHUB_EVENT_NAME" = push') },
+    ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Retain tested native image' }['if'] = "success() && steps.native-image-export.outcome == 'success'" },
+  ]
+end
+
 def check_verification_archive_scan_paths(documents)
   images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
   scan = images.find { |step| step['id'] == 'native-image-scan' }
