@@ -464,9 +464,10 @@
   },
   "cma-user.files.download": {
     "cases": [
-      "user.files_roundtrip"
+      "user.files_roundtrip",
+      "user.browser_file_roundtrip"
     ],
-    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "blocked": "Download bytes, missing-file and denied-access assertions are wired. The two-Manager fixture still needs a Runtime file beyond 32 MiB.",
     "minimum_runs": 3,
     "routing": "non_owner",
     "phases": [

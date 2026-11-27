@@ -1,4 +1,5 @@
 import {randomUUID} from 'node:crypto';
+import {readFile} from 'node:fs/promises';
 import {check, hash, id, other, poll} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 
@@ -93,6 +94,11 @@ export async function browserFileRoundtrip({page, api, ingress, agentId, recordF
     const hiddenPreview = dialog.getByRole('textbox', {name: 'Contents of ' + hiddenName, exact: true});
     await poll(() => hiddenPreview.inputValue({timeout}), value => value === hiddenText,
       {timeout, interval: 100, code: 'browser_file_tree_refreshed_bytes_changed'});
+    const removed = await api.request(peer, 'DELETE', `${path}?path=${encodeURIComponent(hiddenPath)}&recursive=false`,
+      {direct: true});
+    check(removed.body?.path === hiddenPath && removed.body.deleted === true,
+      'browser_files_download_fixture_delete_unconfirmed');
+    await checkFileDownload({page, dialog, path, file: hiddenPath});
     await showHidden.uncheck({timeout});
     await button(hiddenName).waitFor({state: 'hidden', timeout});
     const currentDirectory = dialog.getByLabel('Current directory', {exact: true});
@@ -173,12 +179,49 @@ export async function browserFileRoundtrip({page, api, ingress, agentId, recordF
     await prompt.getByRole('button', {name: 'Confirm', exact: true}).click({timeout});
     await poll(() => preview.inputValue({timeout}), value => value === current,
       {timeout, interval: 100, code: 'browser_files_confirm_reload_used_stale_bytes'});
+    await checkFileDownload({page, dialog, path, file, expected: Buffer.from(current)});
     await deleteFiles({page, dialog, api, ingress, path, directory, file, recordFailure});
     folderDeleted = true;
   }, async () => {
     if (!folderSubmitted || folderDeleted) return;
     await removeFixtureDirectory({api, path, ingress, directory, acknowledged: folderAcknowledged});
   }, recordFailure);
+}
+
+async function checkFileDownload({page, dialog, path, file, expected}) {
+  const button = dialog.getByRole('button', {name: 'Download file', exact: true});
+  const responseForFile = () => page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return response.request().method() === 'GET' && url.origin === new URL(page.url()).origin
+      && url.pathname === path + '/download' && url.searchParams.get('path') === file;
+  }, {timeout});
+  if (expected) {
+    const [response, download] = await Promise.all([
+      responseForFile(), page.waitForEvent('download', {timeout}), button.click({timeout}),
+    ]);
+    try {
+      check(response.status() === 200 && response.headers()['content-type'] === 'application/octet-stream',
+        'browser_files_download_response_invalid');
+      check(download.suggestedFilename() === file.split('/').at(-1)
+        && (await readFile(await download.path())).equals(expected), 'browser_files_download_bytes_changed');
+    } finally {
+      await download.delete();
+    }
+    return;
+  }
+  const unexpected = [];
+  const capture = download => unexpected.push(download);
+  page.on('download', capture);
+  try {
+    const [response] = await Promise.all([responseForFile(), button.click({timeout})]);
+    check(response.status() === 404 && (await response.json()).code === 'file_not_found',
+      'browser_files_download_missing_untyped');
+    await dialog.getByRole('alert').getByText('File or directory does not exist.', {exact: true}).waitFor({timeout});
+    check(unexpected.length === 0, 'browser_files_missing_download_produced_file');
+  } finally {
+    page.off('download', capture);
+    await Promise.all(unexpected.map(download => download.delete()));
+  }
 }
 
 async function deleteFiles({page, dialog, api, ingress, path, directory, file, recordFailure}) {
