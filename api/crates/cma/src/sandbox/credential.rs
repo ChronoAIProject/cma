@@ -14,8 +14,10 @@ pub(crate) use issuance::{
 };
 pub(crate) mod owner_tokens;
 mod provided;
+mod retirement_reauthorization;
 mod retirement_settlement;
 pub(crate) use contracts::*;
+pub(super) use retirement_reauthorization::retain_strongest_refusal;
 
 pub(crate) struct ManagedSandboxCredentials {
     issuer: Arc<KeyIssuer>,
@@ -23,6 +25,7 @@ pub(crate) struct ManagedSandboxCredentials {
     custody: Arc<dyn SandboxCredentialCustody>,
     exact_connections: Option<Arc<crate::trigger::CmaServiceConnectionBroker>>,
     retirement_receipts_enabled: bool,
+    retirement_reauthorization_enabled: bool,
 }
 
 impl ManagedSandboxCredentials {
@@ -37,6 +40,7 @@ impl ManagedSandboxCredentials {
             custody,
             exact_connections: None,
             retirement_receipts_enabled: false,
+            retirement_reauthorization_enabled: false,
         })
     }
 
@@ -85,23 +89,42 @@ impl ManagedSandboxCredentials {
             }
             return Ok(());
         }
-        let token = self.owner_token(sandbox).await?;
+        let recovery = sandbox.work.retirement_credential_recovery.is_some()
+            || self.uses_retirement_reauthorization(sandbox);
+        let token = if recovery {
+            None
+        } else {
+            Some(self.owner_token(sandbox).await?)
+        };
+        let mut failure = None;
         for revocation in revocations {
-            self.issuer
-                .revoke(&revocation.provider_key_id, token.expose())
+            if let Some(token) = &token {
+                self.issuer
+                    .revoke(&revocation.provider_key_id, token.expose())
+                    .await
+                    .map_err(classify_issuer)?;
+            } else if let Err(error) = self
+                .revoke_managed_key(sandbox, &revocation.provider_key_id)
                 .await
-                .map_err(classify_issuer)?;
+            {
+                retain_strongest_refusal(&mut failure, error);
+                continue;
+            }
             self.custody
                 .delete_revocation(&sandbox.id, &revocation.provider_key_id)
                 .await
                 .map_err(custody_error)?;
         }
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
 }
 
 #[async_trait::async_trait]
 impl SandboxCredentialController for ManagedSandboxCredentials {
+    fn uses_retirement_reauthorization(&self, sandbox: &Sandbox) -> bool {
+        self.retirement_reauthorization_enabled && sandbox.allows_retirement_credential_recovery()
+    }
+
     async fn issue(
         &self,
         sandbox: &Sandbox,
@@ -185,11 +208,14 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
         if !sandbox.credential.source.is_managed() {
             return Ok(());
         }
-        let token = self.owner_token(sandbox).await?;
-        self.issuer
-            .revoke(provider_key_id, token.expose())
-            .await
-            .map_err(classify_issuer)
+        self.revoke_managed_key(sandbox, provider_key_id).await
+    }
+
+    async fn retirement_authority_version(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<Option<layer2_core::sandbox::RetirementAuthorityVersion>, CredentialError> {
+        self.retirement_owner_version(sandbox).await
     }
 
     async fn settle_revocations(&self, sandbox: &Sandbox) -> Result<(), CredentialError> {

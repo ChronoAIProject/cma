@@ -15,6 +15,19 @@ impl ServiceAccessOwnerTokens {
 
 #[async_trait::async_trait]
 impl OwnerTokenSource for ServiceAccessOwnerTokens {
+    async fn retirement_authority_version(
+        &self,
+        sandbox: &Sandbox,
+        token: &SecretValue,
+    ) -> Result<Option<layer2_core::sandbox::RetirementAuthorityVersion>, CredentialError> {
+        self.auth
+            .retirement_authority_version(&sandbox.owner, token)
+            .await
+            .map_err(|_| {
+                CredentialError::Unavailable("owner reauthorization evidence is unavailable".into())
+            })
+    }
+
     async fn token_for(&self, owner: &SubjectId) -> Result<Option<SecretValue>, String> {
         self.auth.token_for(owner).await
     }

@@ -50,6 +50,7 @@ impl Fixture {
                 provider_identity: "a".repeat(64),
                 request_digest: "b".repeat(64),
             },
+            owner_authority: None,
             original_holder: "original-issuer".into(),
             original_fence: 1,
             created_at: NOW.into(),

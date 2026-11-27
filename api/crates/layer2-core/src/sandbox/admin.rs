@@ -192,7 +192,7 @@ impl SandboxRetirement for StoredSandboxRetirement {
                 "sandbox retirement revision changed".into(),
             ));
         }
-        let resume = expected_revision.is_some() && sandbox.retirement_retry_exhausted();
+        let resume = expected_revision.is_some() && sandbox.retirement_can_resume();
         if !resume
             && matches!(
                 sandbox.status,

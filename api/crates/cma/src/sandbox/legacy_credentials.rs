@@ -27,6 +27,10 @@ impl LegacySandboxCredentials {
 }
 #[async_trait::async_trait]
 impl SandboxCredentialController for LegacySandboxCredentials {
+    fn uses_retirement_reauthorization(&self, sandbox: &Sandbox) -> bool {
+        self.ordinary.uses_retirement_reauthorization(sandbox)
+    }
+
     async fn retire_channel(
         &self,
         sandbox: &Sandbox,
@@ -55,6 +59,13 @@ impl SandboxCredentialController for LegacySandboxCredentials {
     ) -> Result<(), CredentialError> {
         self.provenance.require_ordinary(&sandbox.id).await?;
         self.ordinary.revoke(sandbox, provider_key_id).await
+    }
+    async fn retirement_authority_version(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<Option<layer2_core::sandbox::RetirementAuthorityVersion>, CredentialError> {
+        self.provenance.require_ordinary(&sandbox.id).await?;
+        self.ordinary.retirement_authority_version(sandbox).await
     }
     async fn settle_revocations(&self, sandbox: &Sandbox) -> Result<(), CredentialError> {
         self.provenance.require_ordinary(&sandbox.id).await?;
