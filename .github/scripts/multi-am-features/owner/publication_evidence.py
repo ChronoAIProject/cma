@@ -298,7 +298,7 @@ def prepared_schema_race(fixture, action=None, operationId=None, reservations=No
                          parentVersions=None, commitProof=None):
     require_feature_fixture(fixture, kind='prepared')
     supported = ('worktree_schema', 'worktree_cleanup', 'work_lease', 'publication_conflict',
-                 'parent_envelope', 'parent_pause', 'owner_fence', 'commit_acknowledgement')
+                 'parent_envelope', 'parent_pause', 'owner_fence', 'owner_epoch', 'commit_acknowledgement')
     actions = {
         'parent_pause': ('sample', 'read'),
         'commit_acknowledgement': ('arm_commit', 'verify_commit'),

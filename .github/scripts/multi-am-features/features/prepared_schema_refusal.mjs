@@ -64,6 +64,66 @@ export async function preparedSchemaRefusal({adapter, admit, cleanup, recordFail
 }
 
 
+export async function preparedOwnerEpochRefusal({adapter, admit, cleanup, recordFailure}) {
+  const ingress = 'b', barrier = 'owner_epoch';
+  const reservations = await poll(() => adapter.preparedReady(),
+    rows => Array.isArray(rows) && rows.length > 0,
+    {timeout: 180000, code: 'no_ready_prepared_reservation'});
+  const before = new Map(await Promise.all(reservations.map(async sandboxId =>
+    [sandboxId, await adapter.preparedRuntimeEvidence({sandboxId})])));
+  const topology = await adapter.topology();
+  let record, replaced, state, owner, diagnostics, runtime;
+  const race = action => adapter.preparedSchemaRace({
+    action, operationId: record.operationId, reservations, barrier,
+  });
+  await withRestoration(async () => {
+    await adapter.preparedSchemaBarrier({arm: true, ownerFence: true});
+    record = await admit(ingress, false, {});
+    replaced = await poll(() => race('inject'), value => value !== null,
+      {timeout: 120000, interval: 100, code: 'prepared_owner_epoch_transaction_missing'});
+    check(id(replaced.agentId) && reservations.includes(replaced.sandboxId)
+      && replaced.agentUnchanged === true && Number.isSafeInteger(replaced.ownerEpoch)
+      && replaced.ownerEpoch > 0, 'prepared_owner_epoch_lineage_unbound');
+    Object.assign(record, {agentId: replaced.agentId, sandboxId: replaced.sandboxId});
+    const owners = ['a', 'b'].filter(am => topology.ams?.[am]?.ready === true
+      && topology.ams[am].instance_id === replaced.ownerInstance);
+    check(owners.length === 1, 'prepared_owner_epoch_manager_unbound');
+    [owner] = owners;
+    await adapter.preparedSchemaBarrier({arm: false});
+    diagnostics = await poll(() => adapter.publicationEvidence({agentId: record.agentId}),
+      value => value?.[owner]?.owner_authority_refused?.publish_connection >= 1,
+      {timeout: 20000, code: 'prepared_owner_epoch_refusal_missing'});
+    check(diagnostics[owner].owner_authority_refused.publish_connection === 1
+      && diagnostics[owner].known_aborted_cas?.publish_connection === 1
+      && !diagnostics[other(owner)]?.owner_authority_refused?.publish_connection
+      && !diagnostics[other(owner)]?.known_aborted_cas?.publish_connection
+      && ['a', 'b'].every(am => !diagnostics[am]?.prepared_commit_work_lease_sha256?.length
+        && !diagnostics[am]?.unknown_commit?.publish_connection), 'prepared_owner_epoch_outcome_unproven');
+    state = await race('read');
+    check(state.agentId === record.agentId && state.sandboxId === record.sandboxId
+      && state.ownerInstance === replaced.ownerInstance && state.ownerEpoch === replaced.ownerEpoch + 1
+      && state.agentUnchanged === true && state.conversation_unpublished === true
+      && state.ready_fences_absent === true && state.receipt_count === replaced.receipt_count,
+    'prepared_owner_epoch_stale_publication_unproven');
+    runtime = await adapter.preparedRuntimeEvidence({sandboxId: record.sandboxId, operationId: record.operationId});
+    check(runtime?.receipts?.length === 3 && equal(runtime, before.get(record.sandboxId)),
+      'prepared_owner_epoch_runtime_receipts_changed');
+  }, async () => {
+    await withRestoration(async () => {
+      if (!record) return;
+      const restored = await race('restore');
+      check(restored.restored === 1 || (!replaced && restored.restored === 0),
+        'prepared_owner_epoch_restore_unproven');
+    }, () => adapter.preparedSchemaBarrier({arm: false}), recordFailure);
+  }, recordFailure);
+  await cleanup(record);
+  return {ingress, owner, owner_epoch: replaced.ownerEpoch, replacement_owner_epoch: state.ownerEpoch,
+    agent_sha256: hash(record.agentId), prepared_reservation_sha256: hash(record.sandboxId),
+    lifecycle_operation_sha256: hash(record.operationId), publication_diagnostics: diagnostics,
+    observed_known_abort: true, prepared_owner_epoch_refused: true, startup_receipt_count: state.receipt_count,
+    runtime_receipt_count: runtime.receipts.length};
+}
+
 export async function preparedParentPauseRefusal({api, adapter, admit, cleanup, recordFailure}) {
   const reservations = await poll(() => adapter.preparedReady(),
     rows => Array.isArray(rows) && rows.length > 0,

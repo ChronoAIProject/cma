@@ -189,7 +189,7 @@
       "feature": "Startup refusal boundaries",
       "requirement": "Reject changed authority/intent, preserve unknown outcome, do not claim retryable known-abort or repeat native effects.",
       "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "The prepared fixture changes the exact Worktree schema or Agent work lease and requires the original publication to refuse. The journey also requires Ready reconciliation from one unknown commit without repeating Runtime mutations. The exact-image owner authority variant and hosted execution remain pending.",
+      "remaining": "The prepared fixture changes the exact Worktree schema or Agent work lease and requires the original publication to refuse. The journey also requires Ready reconciliation from one unknown commit without repeating Runtime mutations. The prepared fixture changes the exact owner epoch while the original Agent remains byte-identical and requires the old token to be refused without publishing Ready. Hosted execution remains pending.",
       "trigger": "During publication retry change owner epoch, parent identity, runtime, work step or lease; separately inject Unavailable/unknown commit",
       "required_assertions": [
         {"case": "prepared_worktree_schema_refusal", "minimum_runs": 1, "phases": [], "routing": "journey"},
@@ -243,6 +243,12 @@
         },
         {
           "case": "prepared_commit_acknowledgement_loss",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        },
+        {
+          "case": "prepared_owner_epoch_refusal",
           "minimum_runs": 1,
           "phases": [],
           "routing": "journey"

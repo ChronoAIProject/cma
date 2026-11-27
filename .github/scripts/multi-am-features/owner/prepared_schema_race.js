@@ -6,7 +6,8 @@
   const cleanup = 'owned_workspace_cleanup_admission_v1';
   const schemaChange = scope.barrier === 'worktree_schema';
   const leaseChange = scope.barrier === 'work_lease';
-  const ownerFence = scope.barrier === 'owner_fence';
+  const ownerEpochChange = scope.barrier === 'owner_epoch';
+  const ownerFence = scope.barrier === 'owner_fence' || ownerEpochChange;
   const publicationConflict = ownerFence || scope.barrier === 'publication_conflict';
   const parentEnvelope = scope.barrier === 'parent_envelope';
   const parentPause = scope.barrier === 'parent_pause';
@@ -167,8 +168,8 @@
     }
   }
 
-  async function rawAgent(agentId) {
-    const raw = await d.agents.findOne({_id: agentId}, undefined, {raw: true});
+  async function rawAgent(agentId, collection = d.agents) {
+    const raw = await collection.findOne({_id: agentId}, undefined, {raw: true});
     if (!Buffer.isBuffer(raw)) throw Error('prepared_owner_fence_agent_bson_unavailable');
     return raw;
   }
@@ -211,6 +212,12 @@
           }
           const originalAgent = ownerFence ? await rawAgent(rows.agent._id) : null;
           const mutation = {$set: {[marker]: {operation: operationId, barrier: scope.barrier}}};
+          if (ownerEpochChange) {
+            if (!Number.isSafeInteger(ownerEpoch + 1)) throw Error('prepared_owner_epoch_overflow');
+            mutation.$inc = {epoch: NumberLong('1')};
+            Object.assign(mutation.$set[marker], {originalEpoch: owner.epoch,
+              agentSha256: require('crypto').createHash('sha256').update(originalAgent).digest('hex')});
+          }
           const collection = ownerFence ? d.cma_agent_manager_owners : d.native_prepared_sandboxes;
           // Both writes change the transaction snapshot while keeping authority intact.
           const filter = ownerFence ? {_id: owner._id, instance_id: owner.instance_id,
@@ -271,8 +278,25 @@
     const session = await d.getMongo().startSession();
     try {
       await session.startTransaction({readConcern: {level: 'snapshot'}});
-      const rows = await lineage(session.getDatabase(d.getName()));
+      const database = session.getDatabase(d.getName());
+      const rows = await lineage(database);
       if (parentPause) return rows && {...proof(rows), sandboxStatus: rows.sandbox.status};
+      if (ownerEpochChange) {
+        if (!rows) throw Error('prepared_owner_epoch_lineage_missing');
+        const owner = await database.cma_agent_manager_owners.findOne({_id: rows.agent._id,
+          [`${marker}.operation`]: operationId, [`${marker}.barrier`]: scope.barrier});
+        const value = proof(rows);
+        const original = owner?.[marker];
+        const raw = await rawAgent(rows.agent._id, database.agents);
+        const digest = require('crypto').createHash('sha256').update(raw).digest('hex');
+        const epoch = Number(owner?.epoch);
+        if (!owner?.instance_id || !Number.isSafeInteger(epoch)
+            || epoch !== Number(original?.originalEpoch) + 1
+            || digest !== original.agentSha256 || !pending(value)) {
+          throw Error('prepared_owner_epoch_stale_publication_unproven');
+        }
+        return {...value, ownerInstance: owner.instance_id, ownerEpoch: epoch, agentUnchanged: true};
+      }
       const observed = rows && (leaseChange ? rows.agent[marker] : rows.tree[marker]);
       if (observed?.operation !== operationId || observed?.barrier !== scope.barrier) {
         throw Error('prepared_schema_race_marker_missing');
