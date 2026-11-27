@@ -28,6 +28,7 @@ pub(crate) struct AssignedRuntime {
 }
 
 pub(crate) struct AssignmentServer {
+    admission: Arc<Mutex<Admission>>,
     task: JoinHandle<()>,
     path: PathBuf,
     inode: u64,
@@ -54,6 +55,7 @@ struct Admission {
     disarmed_receipt: Option<RuntimeBootstrapReceipt>,
     sender: Option<oneshot::Sender<AssignedRuntime>>,
     startup_confirmation: Option<oneshot::Sender<()>>,
+    startup_exit_committed: bool,
 }
 
 impl AssignmentServer {
@@ -89,8 +91,10 @@ impl AssignmentServer {
             disarmed_receipt: None,
             sender: Some(sender),
             startup_confirmation: None,
+            startup_exit_committed: false,
         }));
         let socket_path = path.clone();
+        let server_admission = admission.clone();
         let task = tokio::spawn(async move {
             let mut jobs = JoinSet::new();
             let base = Arc::new(base);
@@ -109,7 +113,15 @@ impl AssignmentServer {
                 }
             }
         });
-        Ok((Self { task, path, inode }, receiver))
+        Ok((
+            Self {
+                admission: server_admission,
+                task,
+                path,
+                inode,
+            },
+            receiver,
+        ))
     }
 }
 
@@ -154,19 +166,23 @@ async fn serve(
             serde_json::from_slice::<RuntimeBootstrapRequest>(&bytes)
                 .map_err(|_| "invalid runtime assignment".into())
         });
-    let receipt = match request {
-        Ok(request) if request.pod_uid == pod_uid => {
-            let confirm = request.staging_startup_confirmed;
-            accept(request, &admission, base, socket)
-                .await
-                .map(|receipt| (receipt, confirm))
-        }
-        _ => Err("runtime assignment identity mismatch".into()),
+    let Ok(request) = request else {
+        return write_reply(&mut stream, Reply::Rejected).await;
     };
-    let (reply, confirm) = match receipt {
-        Ok((receipt, confirm)) => (Reply::Accepted { receipt }, confirm),
-        Err(_) => (Reply::Rejected, false),
+    if request.pod_uid != pod_uid {
+        return write_reply(&mut stream, Reply::Rejected).await;
+    }
+    if request.staging_startup_confirmed {
+        return confirm_startup(request, &admission, &mut stream).await;
+    }
+    let reply = match accept(request, &admission, base, socket).await {
+        Ok(receipt) => Reply::Accepted { receipt },
+        Err(_) => Reply::Rejected,
     };
+    write_reply(&mut stream, reply).await
+}
+
+async fn write_reply(stream: &mut UnixStream, reply: Reply) -> Result<(), String> {
     let bytes =
         serde_json::to_vec(&reply).map_err(|_| "cannot encode runtime assignment receipt")?;
     stream
@@ -176,11 +192,30 @@ async fn serve(
     stream
         .shutdown()
         .await
-        .map_err(|_| "cannot finish runtime assignment")?;
-    if confirm {
-        if let Some(sender) = admission.lock().await.startup_confirmation.take() {
-            let _ = sender.send(());
-        }
+        .map_err(|_| "cannot finish runtime assignment".into())
+}
+
+async fn confirm_startup(
+    mut request: RuntimeBootstrapRequest,
+    admission: &Mutex<Admission>,
+    stream: &mut UnixStream,
+) -> Result<(), String> {
+    let Ok(receipt) = RuntimeBootstrapReceipt::for_request(&request) else {
+        return write_reply(stream, Reply::Rejected).await;
+    };
+    request.staging_startup_confirmed = false;
+    let Ok(original) = RuntimeBootstrapReceipt::for_request(&request) else {
+        return write_reply(stream, Reply::Rejected).await;
+    };
+    // Keep confirmation delivery and disarm in the same critical section.
+    // A failed reply leaves the assignment eligible for disarm.
+    let mut state = admission.lock().await;
+    if state.receipt.as_ref() != Some(&original) {
+        return write_reply(stream, Reply::Rejected).await;
+    }
+    write_reply(stream, Reply::Accepted { receipt }).await?;
+    if let Some(sender) = state.startup_confirmation.take() {
+        state.startup_exit_committed = sender.send(()).is_ok();
     }
     Ok(())
 }
@@ -194,21 +229,11 @@ async fn accept(
     let receipt =
         RuntimeBootstrapReceipt::for_request(&request).map_err(|_| "invalid runtime assignment")?;
     let mut state = admission.lock().await;
-    if request.staging_startup_confirmed {
-        request.staging_startup_confirmed = false;
-        let original = RuntimeBootstrapReceipt::for_request(&request)
-            .map_err(|_| "invalid runtime startup confirmation")?;
-        return if state.receipt.as_ref() == Some(&original) {
-            Ok(receipt)
-        } else {
-            Err("runtime startup confirmation differs from its assignment".into())
-        };
-    }
     if let Some(current) = &state.receipt {
         if current == &receipt {
             return Ok(receipt);
         }
-        if state.disarmed_receipt.as_ref() == Some(&receipt) {
+        if !state.startup_exit_committed && state.disarmed_receipt.as_ref() == Some(&receipt) {
             // A manager can replay the same assignment after its staging
             // switch has been removed or expired. Drop the confirmation
             // sender so a pending Runtime can continue startup immediately.
@@ -362,12 +387,13 @@ async fn read_bounded(reader: impl AsyncRead + Unpin, limit: usize) -> Result<Ve
 mod tests;
 
 pub(crate) async fn apply_staging_startup_failure(
+    server: &AssignmentServer,
     fault: StagingStartupFailure,
     confirmed: oneshot::Receiver<()>,
 ) -> Result<(), String> {
     use layer3_adapter::runtime_bootstrap::NATIVE_ASSIGNMENT_DEADLINE;
-    if !fault.armed_at(std::time::SystemTime::now())
-        || !matches!(
+    if fault.armed_at(std::time::SystemTime::now())
+        && matches!(
             tokio::time::timeout(
                 NATIVE_ASSIGNMENT_DEADLINE + Duration::from_secs(10),
                 confirmed
@@ -376,12 +402,17 @@ pub(crate) async fn apply_staging_startup_failure(
             Ok(Ok(()))
         )
     {
-        return Ok(());
+        // Give the confirmation relay time to finish before terminating the process.
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        if fault.armed_at(std::time::SystemTime::now()) {
+            return Err(
+                "staging qualification: runtime startup interrupted after assignment".into(),
+            );
+        }
     }
-    // Give the confirmation relay time to finish before terminating the process.
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    if fault.armed_at(std::time::SystemTime::now()) {
-        return Err("staging qualification: runtime startup interrupted after assignment".into());
-    }
+    // An unconfirmed or expired fault leaves this process available for ordinary adoption.
+    let mut state = server.admission.lock().await;
+    state.startup_confirmation = None;
+    state.startup_exit_committed = false;
     Ok(())
 }

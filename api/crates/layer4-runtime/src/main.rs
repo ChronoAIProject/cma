@@ -246,7 +246,7 @@ async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String>
     let (config, control_auth, _assignment_server) = if waiting {
         let (assigned, server) = pool_bootstrap::wait_for_assignment().await?;
         if let Some((fault, confirmed)) = assigned.startup_failure {
-            pool_bootstrap::apply_staging_startup_failure(fault, confirmed).await?;
+            pool_bootstrap::apply_staging_startup_failure(&server, fault, confirmed).await?;
         }
         (assigned.config, Some(assigned.auth), Some(server))
     } else {
