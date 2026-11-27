@@ -71,10 +71,8 @@ export function ConsoleContent({
   const surfaceRef = useViewArrival(routePath(route), true, false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const selectedAgent = route.kind === 'agent' ? route.agentId : undefined;
-  const { panel, setPanel, setComputerOpen, detailsOpen, setDetailsOpen } = useAgentPanel(
-    user.id,
-    selectedAgent,
-  );
+  const panels = useAgentPanel(user.id, selectedAgent);
+  const { panel, setPanel, setComputerOpen, detailsOpen, setDetailsOpen } = panels;
   const [positions] = useState(() => new AgentViewPositions());
   const viewPosition = useMemo(() => positions.forAgent(selectedAgent), [positions, selectedAgent]);
   const [artifactPublicationScope] = useState(() => new ArtifactPublicationScope());
@@ -359,8 +357,9 @@ export function ConsoleContent({
         taskLayout
         workspaceDetails={panel !== 'details'}
         detailsOpen={runtimeVisible && hasAgent && panel !== undefined}
+        detailsExpanded={panels.computerExpanded}
         compactDetailsOverlay
-        onDetailsClose={() => setPanel(undefined)}
+        onDetailsClose={panels.dismissDetails}
         details={
           route.kind === 'agent' && runtimeVisible && hasAgent ? (
             <AgentSidePanel
@@ -374,6 +373,7 @@ export function ConsoleContent({
               canManageSandbox={permissions.pauseSandbox}
               panel={panel}
               onSelect={setPanel}
+              fullscreenFallback={panels}
               conversation={ready?.conversation}
               observation={computerObservation}
               onClose={() => setPanel(undefined)}

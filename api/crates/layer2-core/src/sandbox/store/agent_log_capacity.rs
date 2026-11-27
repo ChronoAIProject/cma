@@ -154,7 +154,7 @@ pub(super) fn validate_failure(
                 return Err(SandboxStoreError::Conflict);
             }
         } else {
-            super::agent_work_transition_validation::validate_position(current, worktree)?;
+            super::agent_work_transition_validation::validate_position(current, worktree, false)?;
         }
         super::agent_work_evidence_validation::validate_histories(
             current,

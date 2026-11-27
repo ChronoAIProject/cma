@@ -102,6 +102,24 @@ async fn owner_managed_runtime_update_refuses_an_explicit_image_on_a_retained_ho
         let f = runtime_update_fixture(original.clone(), true).await;
         let (status, body) = json_response(
             &f.router,
+            authenticated(Method::GET, "/api/v1/sandboxes/sbx_update", None, None),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let view = &body["runtime_update"];
+        if custom {
+            assert_eq!(view["image_origin"], "unknown");
+            assert_eq!(view["can_update"], false);
+            assert_eq!(view["update_available"], false);
+            assert_eq!(view["blocked_reason"], "The original source of this Sandbox image is unknown. Managed runtime updates require a confirmed origin. If you used the platform's default image, contact the deployment operator to check this Sandbox's image origin and update eligibility.");
+        } else {
+            assert_eq!(view["image_origin"], "managed_agent");
+            assert_eq!(view["can_update"], true);
+            assert!(view["blocked_reason"].is_null());
+        }
+
+        let (status, body) = json_response(
+            &f.router,
             authenticated(
                 Method::POST,
                 PATH,
@@ -120,6 +138,30 @@ async fn owner_managed_runtime_update_refuses_an_explicit_image_on_a_retained_ho
             assert_managed_update_queued(&original, &stored, &body);
         }
     }
+}
+
+#[test]
+fn explicitly_selected_image_keeps_custom_update_guidance() {
+    use crate::rest::sandbox_runtime_update::{RuntimeUpdateImageOrigin, SandboxRuntimeUpdateView};
+    use layer2_core::sandbox::SandboxRuntimeImageOrigin;
+
+    let mut sandbox = native_runtime_update_sandbox(
+        stored_sandbox("sbx_update", "owner", SandboxStatus::Active, 4),
+        true,
+    );
+    sandbox.origin = SandboxOrigin::Lifecycle {
+        operation_id: "fixture-operation".into(),
+    };
+    sandbox.lifecycle.runtime_image_origin = Some(SandboxRuntimeImageOrigin::UserSelected);
+    sandbox.validate().unwrap();
+    let service = SandboxRuntimeUpdateService::new(
+        Arc::new(InMemorySandboxStore::default()),
+        "runtime-v2".into(),
+    );
+    let view = SandboxRuntimeUpdateView::new(&sandbox, &service);
+    assert_eq!(view.image_origin, RuntimeUpdateImageOrigin::UserSelected);
+    assert!(!view.can_update);
+    assert_eq!(view.blocked_reason.as_deref(), Some("This Sandbox uses a custom image. Automatic CMA runtime updates do not replace custom images."));
 }
 
 #[tokio::test]

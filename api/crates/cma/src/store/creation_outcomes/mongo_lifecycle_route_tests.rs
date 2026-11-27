@@ -19,7 +19,7 @@ use crate::store::{MongoAgentLifecycleStore, MongoSandboxStore};
 
 const BODY: &str = r#"{"name":"Fixture lifecycle"}"#;
 
-async fn routes(
+pub(super) async fn routes(
     store: &CreationOutcomes,
 ) -> (
     Router,
@@ -61,7 +61,7 @@ fn lifecycle_query(
     request
 }
 
-async fn call(app: &Router, request: Request<Body>, expected: StatusCode) -> Value {
+pub(super) async fn call(app: &Router, request: Request<Body>, expected: StatusCode) -> Value {
     let response = app.clone().oneshot(request).await.unwrap();
     let status = response.status();
     let bytes = to_bytes(response.into_body(), 65_536).await.unwrap();

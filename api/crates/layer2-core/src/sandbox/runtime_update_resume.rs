@@ -14,6 +14,7 @@ impl Sandbox {
         if next.status == SandboxStatus::Paused
             && cause != SandboxReviveCause::RuntimeLost
             && next.supports_retained_runtime_update()
+            && !next.requires_retained_runtime_transition()
         {
             let target = next
                 .runtime_update_request()

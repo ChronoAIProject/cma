@@ -75,6 +75,12 @@ impl Sandbox {
             && self.retained_runtime_binding().is_some()
     }
 
+    /// Once a scoped startup policy has been applied, changing its image or
+    /// policy requires another scoped retained transition on the same home.
+    pub fn requires_retained_runtime_transition(&self) -> bool {
+        self.lifecycle.retained_startup_policy.is_some()
+    }
+
     pub fn runtime_update_request(&self) -> Option<&SandboxRuntimeUpdateRequest> {
         self.lifecycle
             .runtime_update
@@ -107,6 +113,7 @@ impl Sandbox {
     ) -> Result<bool, SandboxModelError> {
         self.validate()?;
         if !self.has_managed_runtime_image()
+            || self.requires_retained_runtime_transition()
             || !valid_version(&target)
             || seconds_from_rfc3339(&at).is_none()
         {
@@ -181,6 +188,7 @@ impl Sandbox {
         at: &str,
     ) -> Result<bool, SandboxModelError> {
         if !self.supports_retained_runtime_update()
+            || self.requires_retained_runtime_transition()
             || !matches!(self.status, SandboxStatus::Active | SandboxStatus::Paused)
         {
             return Ok(false);

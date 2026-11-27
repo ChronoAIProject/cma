@@ -59,6 +59,18 @@ const snapshot = (state: 'queued' | 'produced' = 'queued'): Mutable<ActivityPage
   ],
 });
 
+it('shows a source refusal from the activity stream without an Agent status', () => {
+  vi.stubGlobal('EventSource', Feed);
+  render(<ChannelActivity owner="owner" channelId="channel" active />);
+  const page = snapshot();
+  page.items[0]!.source_refusal = 'attachment_unsupported';
+  page.items[0]!.consumers = [];
+  act(() => Feed.instances[0]!.snapshot(page));
+  expect(screen.getByText('Refused at source')).toBeVisible();
+  expect(screen.getByText('This attachment could not be processed.')).toBeVisible();
+  expect(screen.queryByText('Agent completed')).not.toBeInTheDocument();
+});
+
 it('labels the bound from confirmed delivery and replaces it when exact production arrives', () => {
   vi.stubGlobal('EventSource', Feed);
   render(<ChannelActivity owner="owner" channelId="channel" active />);

@@ -49,6 +49,12 @@ impl AgentWorker {
             .get_worktree(&agent.worktree_id)
             .await?
             .ok_or(SandboxStoreError::NotFound)?;
+        // Runtime-loss recovery can stop an Agent before its first Worktree
+        // leaves Creating. Recheck provider absence even if its receipts are empty.
+        let abandoned_creation = agent.status == AgentStatus::Stopped
+            && agent.work.step == AgentWorkStep::EnsureProcessClosed
+            && worktree.status == WorktreeStatus::Creating;
+        let unstarted = unstarted && !abandoned_creation;
         if !unstarted
             && !retired_sandbox_cleanup_is_absent(agent, &sandbox)
             && !retired_failed_worktree_cleanup_is_absent(agent, &worktree, &sandbox)
@@ -118,13 +124,16 @@ impl AgentWorker {
         let expected_revision = worktree.revision;
         let versioned = match agent.work.step {
             AgentWorkStep::EnsureProcessClosed | AgentWorkStep::RemoveWorktree => {
-                worktree
-                    .transition(if agent.work.step == AgentWorkStep::EnsureProcessClosed {
-                        WorktreeStatus::Removing
-                    } else {
-                        WorktreeStatus::Removed
-                    })
-                    .map_err(|_| SandboxStoreError::Conflict)?;
+                let transition = match (agent.work.step, worktree.status) {
+                    (AgentWorkStep::EnsureProcessClosed, WorktreeStatus::Creating) => {
+                        worktree.remove_abandoned_agent_worktree()
+                    }
+                    (AgentWorkStep::EnsureProcessClosed, _) => {
+                        worktree.transition(WorktreeStatus::Removing)
+                    }
+                    _ => worktree.transition(WorktreeStatus::Removed),
+                };
+                transition.map_err(|_| SandboxStoreError::Conflict)?;
                 Some(VersionedWorktree {
                     expected_revision,
                     worktree: worktree.clone(),
