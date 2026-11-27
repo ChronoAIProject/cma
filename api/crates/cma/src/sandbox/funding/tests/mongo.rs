@@ -6,6 +6,7 @@ use layer2_core::sandbox_usage_service::SandboxUsageStore as _;
 mod runtime_controls;
 
 mod missing_tests;
+mod owner_evidence;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
