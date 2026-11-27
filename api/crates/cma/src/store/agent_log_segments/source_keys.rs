@@ -13,6 +13,26 @@ use mongodb::{
 };
 use std::time::Duration;
 
+pub(in crate::store) async fn require_index(
+    database: &Database,
+    budget: Option<&mut PreviewBudget>,
+) -> Result<(), TransactionLogError> {
+    // Catalog qualification is outside the data snapshot, as for the opening index.
+    let inspection = agent_log_source_keys::inspect(database);
+    let pending = match budget {
+        Some(budget) => budget.catalog(inspection).await?,
+        None => inspection.await,
+    }
+    .map_err(|reason| SandboxStoreError::Unavailable(reason.into()))?;
+    if !pending.is_empty() {
+        return Err(SandboxStoreError::Unavailable(
+            "Agent log source-key index migration is required".into(),
+        )
+        .into());
+    }
+    Ok(())
+}
+
 pub(super) async fn prove(
     database: &Database,
     head: &Head,
@@ -29,22 +49,8 @@ pub(super) async fn prove_budgeted(
     snapshot: bool,
     mut budget: Option<&mut PreviewBudget>,
 ) -> Result<(), TransactionLogError> {
-    // Catalog qualification is outside the data snapshot, as for the opening
-    // index. Every source query below joins the caller's original session.
-    let pending = if let Some(budget) = budget.as_deref_mut() {
-        budget
-            .catalog(agent_log_source_keys::inspect(database))
-            .await?
-    } else {
-        agent_log_source_keys::inspect(database).await
-    }
-    .map_err(|reason| SandboxStoreError::Unavailable(reason.into()))?;
-    if !pending.is_empty() {
-        return Err(SandboxStoreError::Unavailable(
-            "Agent log source-key index migration is required".into(),
-        )
-        .into());
-    }
+    require_index(database, budget.as_deref_mut()).await?;
+    // Both source queries join the caller's original data snapshot.
     let source = majority_collection::<Document>(database, "agent_log");
     // Under simple binary collation, [id, id + NUL) contains exactly id,
     // including arbitrary UTF-8 and embedded NUL. A hint alone can scan every

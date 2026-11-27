@@ -164,14 +164,7 @@ export function ActiveAgentSurface({
   if (state.status === 'idle' || state.status === 'loading')
     return <AgentOpening headingRef={headingRef} />;
   if (state.status === 'error')
-    return (
-      <AgentUnavailable
-        message={state.message}
-        retryAt={state.retryAt}
-        headingRef={headingRef}
-        onRetry={controller.reload}
-      />
-    );
+    return <AgentUnavailable state={state} headingRef={headingRef} onRetry={controller.reload} />;
 
   const { detail, conversation } = state;
   const inputAvailability = composerInputAvailability(
@@ -211,11 +204,14 @@ export function ActiveAgentSurface({
     !controller.inputAvailability.allowed ||
     controller.controlsUnavailable === true;
   const historyIssue = agentHistoryIssue(state);
+  const streamIssue = status === 'failed' ? undefined : controller.streamError;
   const issue = state.workspaceUnavailable
     ? WORKSPACE_READ_RECONNECTING
-    : historyIssue !== undefined
-      ? (controller.streamError ?? historyIssue)
-      : (connectionError ?? connections.error ?? controller.actionError);
+    : (streamIssue ??
+      historyIssue ??
+      connectionError ??
+      connections.error ??
+      controller.actionError);
   const observed = controller.progressObservation;
   const setupRoute = setupEnvironmentRoute(
     status,
@@ -312,7 +308,9 @@ export function ActiveAgentSurface({
           <AgentSurfaceIssue
             issue={issue}
             unconfirmed={controller.pendingMessage !== undefined || controller.pendingControl}
-            historyIncomplete={historyIncomplete || state.workspaceUnavailable === true}
+            historyIncomplete={
+              historyIncomplete || state.workspaceUnavailable === true || streamIssue !== undefined
+            }
             onRetry={connectionError && !readOnly ? connection.retry : undefined}
             onDismiss={() => {
               connection.clearError();

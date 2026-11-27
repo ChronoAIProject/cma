@@ -122,6 +122,9 @@ pub(super) fn validate_advance_history(
         return Err(SandboxStoreError::Conflict);
     }
     let mut expected_debt = current.work.cleanup_debt.clone();
+    if retired_process_absent && current.work.step == AgentWorkStep::RemoveWorktree {
+        expected_debt.retain(|debt| debt.step != AgentWorkStep::AddWorktree);
+    }
     if let Some(receipt) = appended {
         if receipt.step != current.work.step
             || receipt.completed_at != mutation.appended_at
