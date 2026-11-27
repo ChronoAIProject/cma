@@ -46,6 +46,21 @@ impl SandboxCredentialCustody for MongoSandboxCredentialStore {
     ) -> Result<(), CredentialCustodyError> {
         issuance::accept(self, sandbox, intent, material).await
     }
+    async fn has_retirement_receipt(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        intent: &crate::sandbox::CredentialIssuance,
+    ) -> Result<bool, CredentialCustodyError> {
+        issuance::retirement::has_receipt(self, sandbox, intent).await
+    }
+    async fn record_retirement_receipt(
+        &self,
+        sandbox: &layer2_core::sandbox::Sandbox,
+        intent: &crate::sandbox::CredentialIssuance,
+        receipt: &crate::auth::keys::CredentialRetirementReceipt,
+    ) -> Result<(), CredentialCustodyError> {
+        issuance::retirement::record(self, sandbox, intent, receipt).await
+    }
     async fn observe_issuance(
         &self,
         sandbox: &layer2_core::sandbox::Sandbox,

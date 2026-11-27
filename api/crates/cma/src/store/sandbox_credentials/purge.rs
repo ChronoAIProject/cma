@@ -34,14 +34,18 @@ pub(in crate::store) async fn required(
         None if marked => return Ok(true),
         None => {}
         Some(row) => {
-            let Ok(intent) = issuance_record::decode(row) else {
+            let Ok(intent) = issuance_record::decode(row.clone()) else {
                 return Ok(true);
             };
             if !marked
                 || intent.sandbox_id != sandbox.id
                 || intent.owner != sandbox.owner
                 || !sandbox.credential.source.is_managed()
-                || intent.state != IssuanceState::Accepted
+                || (intent.state != IssuanceState::Accepted
+                    && !matches!(
+                        issuance::retirement::decode_receipt(&row, &intent),
+                        Ok(Some(_))
+                    ))
             {
                 return Ok(true);
             }
