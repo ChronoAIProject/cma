@@ -303,8 +303,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             adapter.clone(),
         )?;
-        let cancel_wake = (config.features.command_cancel_wake && ownership.is_some())
-            .then(|| Arc::new(tokio::sync::Notify::new()));
+        let cancel_wake = media::cancel_wake(config, ownership.is_some());
         let command_scheduler = media::commands(
             crate::commands::ProductionCommandDependencies {
                 source_guard: media::guard(&media),

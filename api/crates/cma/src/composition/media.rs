@@ -49,6 +49,14 @@ pub(super) fn compose(
         })
         .transpose()
 }
+pub(super) fn cancel_wake(
+    config: &Config,
+    has_ownership: bool,
+) -> Option<Arc<tokio::sync::Notify>> {
+    (config.features.command_cancel_wake && has_ownership)
+        .then(|| Arc::new(tokio::sync::Notify::new()))
+}
+
 pub(super) fn commands(
     dependencies: crate::commands::ProductionCommandDependencies,
     holder: String,
