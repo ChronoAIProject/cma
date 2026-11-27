@@ -151,6 +151,80 @@ async fn current_statement(f: &Fixture) -> Option<Statement> {
         .unwrap_or_else(|_| panic!("read measured completeness statement"))
 }
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn completeness_mixed_flag_takeover_keeps_measured_statement_current() {
+    use super::refresh::{head, retry};
+    use super::refresh_source::{Response, Source};
+
+    let f = completeness_fixture().await;
+    assert!(f.store.backfill_completeness(&f.stream.id).await.unwrap());
+    let mut config = f.store.config.clone();
+    config.completeness_enabled = false;
+    let disabled = CaptureStore::open(&f.store.client, f.db.name(), config)
+        .await
+        .unwrap();
+    let source = Source::new(&f).await;
+
+    assert!(source.run_with_store(&f, &disabled).await);
+    let original = head(&f).await;
+    let events = f.rows(OUTBOX).await;
+    assert!(current_statement(&f).await.is_none());
+
+    retry(&f).await;
+    assert!(!source.run(&f).await);
+    let first = current_statement(&f).await.unwrap();
+    assert_eq!(first.revision.0, 1);
+    assert!(first.producer_hold.is_none());
+
+    retry(&f).await;
+    source.set(Response::MemoryTimeout);
+    assert!(!source.run_with_store(&f, &disabled).await);
+    assert_retained_refresh_hold(&f, &original, &events).await;
+    let held = current_statement(&f).await.unwrap();
+    assert_eq!(held.revision.0, first.revision.0 + 1);
+    assert_eq!(held.facts, first.facts);
+    assert_eq!(
+        held.producer_hold.as_deref(),
+        Some("refresh_source_unavailable")
+    );
+    let delivery = f
+        .store
+        .claim_completeness(&held.statement_id, &"f".repeat(64))
+        .await
+        .unwrap()
+        .unwrap();
+    let statement =
+        Statement::from_value(serde_json::from_slice(&delivery.payload).unwrap()).unwrap();
+    assert_eq!(statement.producer_hold, held.producer_hold);
+
+    retry(&f).await;
+    source.set(Response::Values(60.0));
+    assert!(!source.run_with_store(&f, &disabled).await);
+    let recovered = current_statement(&f).await.unwrap();
+    assert_eq!(recovered.revision.0, held.revision.0 + 1);
+    assert!(recovered.producer_hold.is_none());
+    assert_eq!(recovered.facts, first.facts);
+    assert_eq!(head(&f).await, original);
+
+    retry(&f).await;
+    source.set(Response::Values(30.0));
+    assert!(source.run_with_store(&f, &disabled).await);
+    let corrected = current_statement(&f).await.unwrap();
+    assert_eq!(corrected.revision.0, recovered.revision.0 + 1);
+    assert_eq!(corrected.facts[0].event_id, head(&f).await.event_id);
+    assert_eq!(corrected.facts[0].evidence_revision.0, 2);
+    assert!(corrected.producer_hold.is_none());
+
+    retry(&f).await;
+    assert!(!source.run(&f).await);
+    assert_eq!(
+        current_statement(&f).await.unwrap().revision,
+        corrected.revision
+    );
+    f.db.drop().await.unwrap();
+}
+
 async fn rebuild_due(f: &Fixture) {
     let updated = f
         .store

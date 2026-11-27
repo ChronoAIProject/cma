@@ -1,5 +1,6 @@
 use super::freeze::MeasuredPublication;
 use super::*;
+use crate::sandbox_usage_export::completeness_contract::Basis;
 use crate::store::{sandbox_metric_bindings, usage_reports};
 use serde_json::json;
 
@@ -169,23 +170,24 @@ impl CaptureStore {
                 .await
                 .map_err(Driver)?;
         }
-        if held && advance && self.completeness_enabled() {
+        // The local flag controls the first statement. Once a minute has a
+        // chain, every writer must carry its holds and corrections forward.
+        if held && advance {
             self.stage_measured_hold(session, &stream, publication)
                 .await?;
         }
-        let repair_has_statement = !advance
-            && !held
-            && !unchanged
-            && self
-                .retained_statement(
-                    session,
-                    &stream.source_stream,
-                    input.minute,
-                    crate::sandbox_usage_export::completeness_contract::Basis::Measured,
-                )
-                .await?
-                .is_some();
-        if !held && (self.completeness_enabled() || repair_has_statement) {
+        if !held
+            && (self.completeness_enabled()
+                || self
+                    .retained_statement(
+                        session,
+                        &stream.source_stream,
+                        input.minute,
+                        Basis::Measured,
+                    )
+                    .await?
+                    .is_some())
+        {
             let current: FactHead = self
                 .collection(INVENTORY)
                 .find_one(doc! {"_id":keys::id(&key)})
