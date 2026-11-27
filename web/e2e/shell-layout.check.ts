@@ -116,6 +116,10 @@ for (const width of [390, 360, 320]) {
         await settleShell(page, width, rail(width));
         await page.evaluate(() => document.fonts.ready.then(() => undefined));
         if (running) {
+          await expect(page.locator('.turn-activity .agent-mascot__artwork')).toBeVisible();
+          const activity = page.getByRole('region', { name: 'Agent activity' });
+          await expect(activity).toBeVisible();
+          await expect(activity.locator('.character-avatar')).toHaveCount(0);
           await expect(send).toHaveCount(0);
           await expect(stop).toBeEnabled();
           await insideViewport(stop);
@@ -274,6 +278,73 @@ test('LOCAL expanded navigation fits its rail and still scrolls vertically', asy
   expect(fixture.writes).toEqual([]);
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
+});
+
+test('LOCAL long task titles leave room for sidebar state and elapsed time', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalSandboxFilters();
+  const { boundary } = fixture;
+  const task = boundary.workspace.agents[0]!;
+  const longTitle = 'A long synthetic task title '.repeat(5);
+  boundary.workspace = {
+    ...boundary.workspace,
+    agents: [
+      { ...task, id: 'agt_ready', title: `${longTitle} ready`, task_status: 'not_started' },
+      {
+        ...task,
+        id: 'agt_running',
+        title: `${longTitle} running`,
+        status: 'working',
+        task_started_at: new Date().toISOString(),
+      },
+    ],
+  };
+  await fixture.route(page, baseURL!);
+  await routePolicy(page);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto('/');
+  const tree = page.getByRole('tree', { name: 'Personal Agents' });
+  for (const width of [1440, 390, 320]) {
+    if (width !== 1440) {
+      await page.setViewportSize({ width, height: 844 });
+      await settleShell(page, width, 0);
+      await page.getByRole('button', { name: 'Show navigation', exact: true }).click();
+    }
+    const ready = tree.getByRole('treeitem', { name: /Ready to start/ });
+    const running = tree.getByRole('treeitem', { name: /Working/ });
+    for (const row of [ready, running]) {
+      await expect(row).toBeInViewport();
+      const title = row.locator('.tree-row__name');
+      await expect(title).toHaveCSS('text-overflow', 'ellipsis');
+      expect(await title.evaluate((node) => node.clientWidth)).toBeGreaterThan(0);
+      expect(await title.evaluate((node) => node.scrollWidth - node.clientWidth)).toBeGreaterThan(
+        0,
+      );
+    }
+    await expect(ready.locator('.task-ready')).toHaveText('Ready to start');
+    await expect(running.locator('.task-running')).not.toBeEmpty();
+    for (const row of [ready, running]) {
+      await expect
+        .poll(() =>
+          row.locator('.tree-row__meta').evaluate((meta) => {
+            const box = meta.getBoundingClientRect();
+            return (
+              meta.scrollWidth === meta.clientWidth &&
+              Array.from(meta.children).every(
+                (child) =>
+                  child.getBoundingClientRect().right <= box.right + 0.5 &&
+                  child.scrollWidth === child.clientWidth,
+              )
+            );
+          }),
+        )
+        .toBe(true);
+    }
+    if (width !== 1440)
+      await page.getByRole('button', { name: 'Hide navigation', exact: true }).click();
+  }
 });
 
 test('LOCAL shell resize preserves draft, desktop navigation width and manual collapse', async ({
