@@ -118,6 +118,9 @@ pub(crate) struct LiveAgentRegistry {
     state: Mutex<RegistryState>,
     next_nonce: AtomicU64,
     loss_handler: OnceLock<Arc<dyn LiveAgentConnectionLossHandler>>,
+    #[cfg(test)]
+    pub(crate) before_missing_attachment:
+        Mutex<Option<(oneshot::Sender<()>, oneshot::Receiver<()>)>>,
 }
 
 impl LiveAgentRegistry {
@@ -367,6 +370,10 @@ impl AgentRuntimeRegistry for LiveAgentRegistry {
         target: &AgentRuntimeTarget,
     ) -> Result<(), AgentRuntimeError> {
         self.reconnect_target(target).await
+    }
+
+    async fn recover_missing_attachment(&self, target: &AgentRuntimeTarget) {
+        self.recover_unresolved(target).await;
     }
 
     async fn fence(

@@ -105,10 +105,12 @@ impl AgentRuntimeRegistry for SdkRegistry {
             let target = target.clone();
             let recorder = self.recorder.clone();
             let probe = self.probe.clone();
+            let owner = layer2_core::agent_ownership::execution_authority();
             ConversationInputSender::spawn(4, move |input| {
                 let target = target.clone();
                 let recorder = recorder.clone();
                 let probe = probe.clone();
+                let owner = owner.clone();
                 async move {
                     if let Some(probe) = &probe {
                         probe.inputs.lock().unwrap().push((target.clone(), input.clone()));
@@ -129,10 +131,17 @@ impl AgentRuntimeRegistry for SdkRegistry {
                         if let Some(probe) = probe {
                             probe.replies.acquire().await.unwrap().forget();
                         }
-                        if ask_approval {
-                            emit_approval(recorder, target).await;
+                        let record = async move {
+                            if ask_approval {
+                                emit_approval(recorder, target).await;
+                            } else {
+                                emit_reply(recorder, target, with_tools, outcome).await;
+                            }
+                        };
+                        if let Some(owner) = owner {
+                            owner.run(record).await.unwrap();
                         } else {
-                            emit_reply(recorder, target, with_tools, outcome).await;
+                            record.await;
                         }
                     });
                     Ok(())
@@ -143,6 +152,10 @@ impl AgentRuntimeRegistry for SdkRegistry {
             capabilities: connection.capabilities,
             input,
         })
+    }
+
+    async fn recover_missing_attachment(&self, target: &AgentRuntimeTarget) {
+        AgentRuntimeRegistry::recover_missing_attachment(self.live.as_ref(), target).await;
     }
 
     async fn fence(

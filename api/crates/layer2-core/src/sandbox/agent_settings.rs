@@ -215,11 +215,10 @@ impl AgentOperationService {
                 .await
             {
                 Ok(_) => {
-                    let mut recovery = SettingsRecoveryOnDrop {
-                        runtimes: self.runtimes.clone(),
-                        target: target.clone(),
-                        armed: true,
-                    };
+                    let mut recovery = super::agent_runtime::ReconnectOnDrop::new(
+                        self.runtimes.clone(),
+                        target.clone(),
+                    );
                     let result = self
                         .dispatch_prepared(PreparedAgentOperation {
                             target,
@@ -243,23 +242,5 @@ impl AgentOperationService {
             }
         }
         Err(AgentOperationError::ConfigurationAdmissionConflict)
-    }
-}
-
-struct SettingsRecoveryOnDrop {
-    runtimes: std::sync::Arc<dyn super::AgentRuntimeRegistry>,
-    target: super::AgentRuntimeTarget,
-    armed: bool,
-}
-
-impl Drop for SettingsRecoveryOnDrop {
-    fn drop(&mut self) {
-        if self.armed {
-            let runtimes = self.runtimes.clone();
-            let target = self.target.clone();
-            tokio::spawn(async move {
-                let _ = runtimes.request_reconnect(&target).await;
-            });
-        }
     }
 }

@@ -7,6 +7,74 @@ use layer2_core::sandbox::store::SandboxStoreError;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable loopback replica set"]
+async fn retired_cleanup_claim_carries_the_exact_active_proof() {
+    let fixture = Fixture::new(true).await;
+    fixture.delete("proof-delete").await;
+    let now = SystemTime::now().max(ledger_hold_tests::due(&fixture.stored().await));
+    let parent = fixture.begin_retirement(now).await;
+    fixture.retire(parent, now, true).await;
+
+    let store = fixture
+        .h
+        .store
+        .as_ref()
+        .clone()
+        .enable_agent_ownership("proof-manager".into())
+        .await
+        .unwrap()
+        .with_prepared_active_proof_for_test(&fixture.agent.id)
+        .await;
+    let coordinator = OwnershipCoordinator::register(
+        store.agent_ownership.as_ref().unwrap().clone(),
+        member("proof-manager"),
+    )
+    .await
+    .unwrap();
+    let owner = coordinator
+        .acquire(&fixture.agent.id)
+        .await
+        .unwrap()
+        .unwrap();
+    let proofs = fixture
+        .admin
+        .collection::<Document>("agent_log_active_proofs_v1");
+    let filter = doc! {"_id":fixture.agent.id.as_str()};
+    let before = proofs.find_one(filter.clone()).await.unwrap().unwrap();
+    let claim = owner
+        .run(fixture.claim(&store, "proof-worker", now))
+        .await
+        .unwrap();
+    let carried = proofs.find_one(filter).await.unwrap().unwrap();
+    assert_eq!(claim.work.step, AgentWorkStep::EnsureProcessClosed);
+    assert_eq!(
+        carried.get_i64("agent_revision").unwrap() as u64,
+        claim.revision
+    );
+    assert_eq!(
+        before.get_document("head").unwrap(),
+        carried.get_document("head").unwrap()
+    );
+    assert_eq!(before.get("leaves"), carried.get("leaves"));
+    assert_ne!(before.get("proof_sha256"), carried.get("proof_sha256"));
+    let worker = owned_worker(
+        &fixture,
+        Arc::new(store),
+        "proof-worker",
+        coordinator.clone(),
+    );
+    coordinator.maintain().await.unwrap();
+    owner
+        .run(worker.execute_claimed_for_test(claim, now))
+        .await
+        .unwrap()
+        .unwrap();
+    let now = now.max(ledger_hold_tests::due(&fixture.stored().await));
+    fixture.converge(&worker, now).await;
+    fixture.admin.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable loopback replica set"]
 async fn retired_cleanup_reconciles_a_lost_mongo_commit_and_retains_an_unproved_claim() {
     for (segmented, committed) in [(false, true), (true, true), (false, false), (true, false)] {
         let fixture = Fixture::new(segmented).await;
