@@ -4,21 +4,28 @@ import {mkdtemp, readdir, readFile, rm, stat} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
-import {journeyFailureSummary, retainFailure, withRestoration} from '../failure.mjs';
+import {journeyFailureSummary, lifecycleFailureSummary, retainFailure, withRestoration} from '../failure.mjs';
 import {NonOwnerRouter} from '../routing.mjs';
 
 test('hosted summaries keep the initiating failure and count cleanup failures without resource identities', () => {
   const result = journeyFailureSummary({
     steps: [{name: 'initialization', verdict: 'PASS'},
       {name: 'prepared_create_on_a', verdict: 'FAIL', error: 'prepared_parent_schemas_unbound'}],
+    create_failure: {observation: lifecycleFailureSummary({status: 'running', phase: 'workspace_runtime',
+      agent_id: 'private-agent', error: 'private fixture detail'})},
+    failure_capture: {runtime_pod_count: 0, path: '/private/capture'},
     cleanup: [{public_cleanup: 'FAILED', reason: 'private fixture detail', agent_sha256: 'private-agent'},
       {am_restore: 'FAILED'}, {public_cleanup: 'PASS'}],
   });
   assert.deepEqual(result, {first_failed_step: 'prepared_create_on_a',
     first_failed_step_code: 'prepared_parent_schemas_unbound',
+    lifecycle_failure: {status: 'running', phase: 'workspace_runtime', agent_assigned: true},
+    failure_runtime_pod_count: 0,
     journey_cleanup_failures: {public_retirement: 1, provider_release: 0, manager_restore: 1}});
   assert.equal(journeyFailureSummary({steps: [{name: 'initialization', verdict: 'FAIL', error: '/private/file'}]})
     .first_failed_step_code, 'transport_or_contract_error');
+  assert.deepEqual(lifecycleFailureSummary({status: 'private-state', phase: 'private-phase'}),
+    {status: 'unknown', phase: 'unknown', agent_assigned: false});
 });
 
 test('post-acceptance attribution failure retains command and stream receipts without replay', async () => {

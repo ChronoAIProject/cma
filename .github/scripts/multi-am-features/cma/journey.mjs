@@ -11,6 +11,7 @@ import {cleanupFixture} from './cleanup.mjs';
 import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
 import {retainedLifecycle} from '../features/lifecycle_atomicity.mjs';
 import {runtimeLoss} from '../features/runtime_loss.mjs';
+import {lifecycleFailureSummary} from '../failure.mjs';
 
 export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook,
   preparedHook, triggerHook, retirementHook} = {}) {
@@ -73,25 +74,33 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
   async function create(am, desktop, overrides = {}, onAgentId) {
     const start = performance.now();
     const record = await admit(am, desktop, overrides);
-    const op = await poll(async () => {
-      const {body} = await api.request(other(am), 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
-      check(body?.id === record.operationId, 'lifecycle_identity_mismatch');
-      if (id(body.agent_id) && !record.agentId) {
-        record.agentId = body.agent_id;
-        onAgentId?.(record);
-      }
-      check(!record.agentId || !body.agent_id || body.agent_id === record.agentId, 'lifecycle_agent_identity_changed');
-      if (['failed', 'waiting_for_connection'].includes(body.status)) {
-        const failurePath = join(config.output_dir, 'create-failure-' + hash(record.operationId) + '.private.json');
-        await writeFile(failurePath, JSON.stringify(body, null, 2) + '\n', {mode: 0o600, flag: 'wx'});
-        result.create_failure = {operation_sha256: hash(record.operationId),
-          agent_sha256: record.agentId ? hash(record.agentId) : null,
-          lifecycle_status: body.status, native_response_path: failurePath};
-        await save();
-      }
-      check(!['failed', 'waiting_for_connection'].includes(body.status), 'create_operation_failed'); return body;
-    }, value => value.status === 'succeeded' && id(record.agentId),
-    {timeout: 420000, interval: onAgentId ? 250 : 1000, code: 'create_lifecycle_timeout'});
+    let op, lastOperation;
+    try {
+      op = await poll(async () => {
+        const {body} = await api.request(other(am), 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
+        check(body?.id === record.operationId, 'lifecycle_identity_mismatch');
+        lastOperation = body;
+        if (id(body.agent_id) && !record.agentId) {
+          record.agentId = body.agent_id;
+          onAgentId?.(record);
+        }
+        check(!record.agentId || !body.agent_id || body.agent_id === record.agentId, 'lifecycle_agent_identity_changed');
+        check(!['failed', 'waiting_for_connection'].includes(body.status), 'create_operation_failed');
+        return body;
+      }, value => value.status === 'succeeded' && id(record.agentId),
+      {timeout: 420000, interval: onAgentId ? 250 : 1000, code: 'create_lifecycle_timeout'});
+    } catch (error) {
+      const operationHash = hash(record.operationId);
+      result.create_failure = {operation_sha256: operationHash,
+        agent_sha256: record.agentId ? hash(record.agentId) : null,
+        lifecycle_status: lastOperation?.status ?? null, observation: lifecycleFailureSummary(lastOperation)};
+      const failurePath = join(config.output_dir, 'create-failure-' + operationHash + '.private.json');
+      try {
+        await writeFile(failurePath, JSON.stringify(lastOperation ?? null, null, 2) + '\n', {mode: 0o600, flag: 'wx'});
+        result.create_failure.native_response_path = failurePath;
+      } catch { result.create_failure.evidence_write_failed = true; }
+      throw error;
+    }
     let ready;
     const readinessObservations = [];
     try {
@@ -446,7 +455,8 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
         const captured = await adapter.captureFailure({reason:result.failure});
         await retainTurn('owner_failure_capture', {result:captured});
         result.failure_capture = {attempted:captured.attempted === true, path:captured.path ?? null,
-          error_count:Array.isArray(captured.errors) ? captured.errors.length : null};
+          error_count:Array.isArray(captured.errors) ? captured.errors.length : null,
+          runtime_pod_count: captured.runtime_pod_count ?? null};
       } catch (captureError) {
         result.failure_capture = {attempted:true, failure:safeError(captureError)};
       }

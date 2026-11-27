@@ -448,9 +448,11 @@ class Fixture:
                 result['errors'].append({'scope':'durable_state','error':type(exc).__name__+':'+str(exc)})
             pod_file=destination/'pods.final.json'
             pods=json.loads(pod_file.read_text()).get('items',[]) if pod_file.exists() else []
-            for pod in pods:
-                if not any(c.get('name')=='runtime' for c in pod.get('spec',{}).get('containers',[])):
-                    continue
+            runtime_pods = [pod for pod in pods if any(c.get('name') == 'runtime'
+                            for c in pod.get('spec', {}).get('containers', []))]
+            if pod_file.exists():
+                result['runtime_pod_count'] = len(runtime_pods)
+            for pod in runtime_pods:
                 name=pod['metadata']['name']
                 try:
                     rc,raw=self.client.k(['exec',name,'-c','runtime','--','cat','/proc/net/tcp','/proc/net/tcp6'],check=False)
@@ -465,7 +467,8 @@ class Fixture:
             result['ended_at']=utc()
             result['files']=[p.name for p in sorted(destination.iterdir()) if p.is_file()]
             write(destination/'capture-result.json',result)
-        return {'attempted':True,'path':str(destination),'errors':result['errors']}
+        return {'attempted':True,'path':str(destination),'errors':result['errors'],
+                'runtime_pod_count': result.get('runtime_pod_count')}
 
     def capture(self, output=None):
         destination=Path(output) if output is not None else self.output
