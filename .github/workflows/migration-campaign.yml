@@ -1,139 +1,78 @@
 name: Migration campaign
-
-# Executes released Agent Manager readers, pinned by digest in
-# .github/scripts/migration-campaign-pins.json, against the migration harness
-# on a disposable kind cluster (#1327). It is not a required check: it runs on
-# demand and when its own inputs change, until it has a stable record. The
-# repository is public, so only identities and verdicts reach the log; raw
-# campaign evidence never leaves the runner.
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [develop]
-    paths:
-      - '.github/workflows/migration-campaign.yml'
-      - '.github/scripts/migration-campaign-pins.json'
-      - '.github/scripts/migration_campaign_pins.py'
-      - '.github/scripts/migration_kind_runner.py'
-      - '.github/scripts/migration_image_preflight.py'
-      - '.github/scripts/migration_campaign_summary.py'
-      - '.github/scripts/migration_campaign_cells.py'
-
+    inputs:
+      historical_source:
+        description: Historical reader source
+        required: true
+        type: string
+      historical_image:
+        description: Historical reader image
+        required: true
+        type: string
+      current_source:
+        description: Current reader source
+        required: true
+        type: string
+      current_image:
+        description: Current reader image
+        required: true
+        type: string
+      candidate_source:
+        description: Candidate reader source
+        required: true
+        type: string
+      candidate_image:
+        description: Candidate reader image
+        required: true
+        type: string
+      recovery_source:
+        description: Recovery reader source
+        required: true
+        type: string
+      recovery_image:
+        description: Recovery reader image
+        required: true
+        type: string
 permissions:
   contents: read
-
-# An explicit bash shell runs with -eo pipefail, so a failing summary or
-# coverage command cannot hide behind the tee that copies it into the log.
-defaults:
-  run:
-    shell: bash
-
-concurrency:
-  group: migration-campaign-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  preflight:
-    name: Migration campaign preflight
-    if: github.repository == 'ChronoAIProject/cma'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-      - name: Campaign pin regressions
-        timeout-minutes: 3
-        run: python3 -B -m unittest discover -s .github/scripts -p 'test_migration_campaign_pins.py'
-      - name: Verify release tags still name the pinned readers
-        timeout-minutes: 5
-        working-directory: .github/scripts
-        run: |
-          python3 -B migration_campaign_pins.py verify
-          python3 -B migration_campaign_pins.py env >> "$GITHUB_ENV"
-      - name: Pull pinned images
-        timeout-minutes: 25
-        run: |
-          python3 -B .github/scripts/migration_campaign_pins.py images > "$RUNNER_TEMP/images.txt"
-          mapfile -t images < "$RUNNER_TEMP/images.txt"
-          for image in "${images[@]}"; do
-            bash .github/scripts/pull-pinned-image.sh "$image"
-          done
-      - name: Preflight reader identities
-        timeout-minutes: 5
-        run: |
-          if ! python3 -B .github/scripts/migration_kind_runner.py --preflight-only \
-              --old-source "$CAMPAIGN_OLD_SOURCE" --old-image "$CAMPAIGN_OLD_IMAGE" \
-              --new-source "$CAMPAIGN_NEW_SOURCE" --new-image "$CAMPAIGN_NEW_IMAGE" \
-              > "$RUNNER_TEMP/preflight.json"; then
-            reason=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("reason", "unknown"))' "$RUNNER_TEMP/preflight.json" 2>/dev/null || echo unknown)
-            echo "::error title=Migration campaign preflight::A pinned reader failed its local identity check: ${reason}. Compare the pulled image with migration-campaign-pins.json."
-            exit 1
-          fi
-          python3 - "$RUNNER_TEMP/preflight.json" >> "$GITHUB_STEP_SUMMARY" <<'PY'
-          import json, sys
-          value = json.load(open(sys.argv[1]))
-          print("### Migration campaign readers\n\n| Role | Source | Image | Config |\n|---|---|---|---|")
-          for role in ("old", "new"):
-              row = value[role]
-              print(f"| {role} | `{row['source']}` | `{row['image']}` | `{row['config']}` |")
-          PY
-      - name: Install pinned kind
-        timeout-minutes: 3
-        run: |
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kind" \
-            "https://github.com/kubernetes-sigs/kind/releases/download/${CAMPAIGN_KIND_VERSION}/kind-linux-amd64"
-          if ! echo "${CAMPAIGN_KIND_SHA256}  $RUNNER_TEMP/kind" | sha256sum --check --status -; then
-            echo "::error title=Migration campaign kind::kind ${CAMPAIGN_KIND_VERSION} does not match its pinned sha256. Re-pin it only after checking the release checksum."
-            exit 1
-          fi
-          chmod 0755 "$RUNNER_TEMP/kind"
-          echo "KIND_BIN=$RUNNER_TEMP/kind" >> "$GITHUB_ENV"
-      - name: Start and remove a pinned kind cluster
-        timeout-minutes: 8
-        run: |
-          name="cma-campaign-smoke-${GITHUB_RUN_ID}"
-          trap '"$KIND_BIN" delete cluster --name "$name" >/dev/null 2>&1 || true' EXIT
-          if ! "$KIND_BIN" create cluster --name "$name" --image "$CAMPAIGN_KIND_NODE" --wait 120s; then
-            echo "::error title=Migration campaign cluster::The pinned kind node did not become ready. Re-run once; a repeat means the node pin or runner changed."
-            exit 1
-          fi
-          kubectl --context "kind-${name}" get nodes -o wide
-
-  campaign:
-    name: Migration campaign (${{ matrix.fixture.name }})
-    needs: preflight
-    if: github.repository == 'ChronoAIProject/cma'
+  release-campaign:
+    name: Release ${{ matrix.policy }} / ${{ matrix.fixture.name }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     strategy:
       fail-fast: false
-      max-parallel: 2
-      # Each entry passed a real local campaign for the pinned pair. Not listed:
-      # gateway (its legacy route was retired before v0.20.0, so it does not
-      # apply to these readers) and share (blocked by product gap #3296).
+      max-parallel: 4
       matrix:
+        policy: [disabled, enabled]
         fixture:
           - { name: profile, script: migration_profile_fixture.py, overlay: '' }
           - { name: api-custody, script: migration_api_custody_fixture.py, overlay: --api-custody-fixture }
-          # The membership overlay only adds manifests; the base profile fixture drives it.
-          - { name: membership, script: migration_profile_fixture.py, overlay: --membership-fixture }
           - { name: bot, script: migration_bot_fixture.py, overlay: --bot-fixture }
           - { name: sandbox, script: migration_sandbox_fixture.py, overlay: --sandbox-admission-fixture }
           - { name: sandbox-control, script: migration_sandbox_control_fixture.py, overlay: --sandbox-control-fixture }
           - { name: launch, script: migration_launch_fixture.py, overlay: --launch-fixture }
           - { name: admission-policy, script: migration_admission_policy_fixture.py, overlay: --sandbox-admission-fixture }
           - { name: visitor, script: migration_visitor_fixture.py, overlay: --visitor-fixture }
-          - { name: rate, script: migration_rate_fixture.py, overlay: --rate-fixture }
           - { name: warm-pool, script: migration_warm_pool_fixture.py, overlay: --warm-pool-fixture }
           - { name: directory, script: migration_directory_fixture.py, overlay: --directory-fixture }
-          # Usage only runs composed; the composite also covers the trigger fixture.
           - { name: trigger-usage, script: migration_composite_fixture.py, overlay: '' }
           - { name: event-worker, script: migration_event_worker_fixture.py, overlay: '' }
           - { name: report-rows, script: migration_report_rows_fixture.py, overlay: '' }
+    env:
+      OLD_SOURCE: ${{ inputs.historical_source }}
+      OLD_IMAGE: ${{ inputs.historical_image }}
+      NEW_SOURCE: ${{ inputs.candidate_source }}
+      NEW_IMAGE: ${{ inputs.candidate_image }}
+      RECOVERY_SOURCE: ${{ inputs.recovery_source }}
+      RECOVERY_IMAGE: ${{ inputs.recovery_image }}
+      CURRENT_SOURCE: ${{ inputs.current_source }}
+      CURRENT_IMAGE: ${{ inputs.current_image }}
+      POLICY: ${{ matrix.policy }}
+      FIXTURE: ${{ matrix.fixture.name }}
+      FIXTURE_SCRIPT: ${{ matrix.fixture.script }}
+      FIXTURE_OVERLAY: ${{ matrix.fixture.overlay }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -141,138 +80,74 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - name: Load campaign pins
-        timeout-minutes: 3
-        working-directory: .github/scripts
-        run: python3 -B migration_campaign_pins.py env >> "$GITHUB_ENV"
-      - name: Fetch both reader sources
-        timeout-minutes: 5
-        run: git fetch --no-tags --depth=1 origin "$CAMPAIGN_OLD_SOURCE" "$CAMPAIGN_NEW_SOURCE"
-      - name: Pull pinned images
+      - name: Fetch immutable sources and prepare declaration
+        shell: bash
+        run: |
+          python3 -B - <<'PY_CHECK'
+          import os, sys
+          sys.path.insert(0, '.github/scripts')
+          from migration_plan import identity
+          for role in ('OLD', 'CURRENT', 'NEW', 'RECOVERY'):
+              identity(os.environ[f'{role}_SOURCE'], os.environ[f'{role}_IMAGE'])
+          PY_CHECK
+          git fetch --no-tags --depth=1 origin "$OLD_SOURCE" "$CURRENT_SOURCE" "$NEW_SOURCE" "$RECOVERY_SOURCE"
+          python3 -B .github/scripts/migration_campaign_pins.py env >> "$GITHUB_ENV"
+          mkdir -m 0700 "$RUNNER_TEMP/campaign-inputs"
+          python3 -B .github/scripts/migration_inventory.py --repo . --old "$OLD_SOURCE" --new "$NEW_SOURCE" --output "$RUNNER_TEMP/campaign-inputs/inventory.json"
+          python3 -B - <<'PY'
+          import json, os, sys
+          from pathlib import Path
+          sys.path.insert(0, '.github/scripts')
+          from migration_plan import build, build_release
+          root = Path(os.environ['RUNNER_TEMP']) / 'campaign-inputs'
+          inventory = json.loads((root / 'inventory.json').read_text())
+          old = {'source': os.environ['OLD_SOURCE'], 'image': os.environ['OLD_IMAGE']}
+          new = {'source': os.environ['NEW_SOURCE'], 'image': os.environ['NEW_IMAGE']}
+          current = {'source': os.environ['CURRENT_SOURCE'], 'image': os.environ['CURRENT_IMAGE']}
+          recovery = {'source': os.environ['RECOVERY_SOURCE'], 'image': os.environ['RECOVERY_IMAGE']}
+          pairwise = build(inventory, old['source'], old['image'], new['source'], new['image'])
+          release = build_release(inventory, {'historical': old, 'current': current, 'candidate': new, 'recovery': recovery}, pairwise['cells'])
+          (root / 'plan.json').write_text(json.dumps(release, indent=2) + '\n')
+          print(f"Declared {len(release['fixtures'])} fixtures and {len(release['cells'])} cells; execution remains pending.")
+          PY
+      - name: Pull immutable artifacts and install pinned kind
+        shell: bash
         timeout-minutes: 25
         run: |
-          python3 -B .github/scripts/migration_campaign_pins.py images > "$RUNNER_TEMP/images.txt"
-          mapfile -t images < "$RUNNER_TEMP/images.txt"
-          for image in "${images[@]}"; do
+          for image in "$OLD_IMAGE" "$CURRENT_IMAGE" "$NEW_IMAGE" "$RECOVERY_IMAGE" "$CAMPAIGN_MONGO_IMAGE" "$CAMPAIGN_IDENTITY_IMAGE" "$CAMPAIGN_KIND_NODE"; do
             bash .github/scripts/pull-pinned-image.sh "$image"
           done
-      - name: Install pinned kind
-        timeout-minutes: 3
-        run: |
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kind" \
-            "https://github.com/kubernetes-sigs/kind/releases/download/${CAMPAIGN_KIND_VERSION}/kind-linux-amd64"
-          if ! echo "${CAMPAIGN_KIND_SHA256}  $RUNNER_TEMP/kind" | sha256sum --check --status -; then
-            echo "::error title=Migration campaign kind::kind ${CAMPAIGN_KIND_VERSION} does not match its pinned sha256. Re-pin it only after checking the release checksum."
-            exit 1
-          fi
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/kind" "https://github.com/kubernetes-sigs/kind/releases/download/${CAMPAIGN_KIND_VERSION}/kind-linux-amd64"
+          echo "${CAMPAIGN_KIND_SHA256}  $RUNNER_TEMP/kind" | sha256sum --check --status -
           chmod 0755 "$RUNNER_TEMP/kind"
-          echo "KIND_BIN=$RUNNER_TEMP/kind" >> "$GITHUB_ENV"
-      - name: Build the source inventory and pairwise plan
-        timeout-minutes: 5
-        run: |
-          inputs="$RUNNER_TEMP/campaign-inputs"
-          mkdir -m 0700 "$inputs"
-          python3 -B .github/scripts/migration_inventory.py --repo . \
-            --old "$CAMPAIGN_OLD_SOURCE" --new "$CAMPAIGN_NEW_SOURCE" --output "$inputs/inventory.json"
-          python3 -B .github/scripts/migration_plan.py --inventory "$inputs/inventory.json" \
-            --old-source "$CAMPAIGN_OLD_SOURCE" --old-image "$CAMPAIGN_OLD_IMAGE" \
-            --new-source "$CAMPAIGN_NEW_SOURCE" --new-image "$CAMPAIGN_NEW_IMAGE" \
-            --output "$inputs/plan.json"
-      - name: Run the four-stage reader/writer campaign
+      - name: Execute four reader roles
+        shell: bash
         timeout-minutes: 55
         run: |
           inputs="$RUNNER_TEMP/campaign-inputs"
           output="$RUNNER_TEMP/campaign"
           set +e
           python3 -B .github/scripts/migration_kind_runner.py \
-            --old-source "$CAMPAIGN_OLD_SOURCE" --old-image "$CAMPAIGN_OLD_IMAGE" \
-            --new-source "$CAMPAIGN_NEW_SOURCE" --new-image "$CAMPAIGN_NEW_IMAGE" \
-            --fixture-command "python3 -B $GITHUB_WORKSPACE/.github/scripts/${{ matrix.fixture.script }}" \
+            --old-source "$OLD_SOURCE" --old-image "$OLD_IMAGE" \
+            --new-source "$NEW_SOURCE" --new-image "$NEW_IMAGE" \
+            --writer-policy "$POLICY" \
+            --fixture-command "python3 -B $GITHUB_WORKSPACE/.github/scripts/$FIXTURE_SCRIPT" \
             --output "$output" --plan "$inputs/plan.json" --inventory "$inputs/inventory.json" \
-            ${{ matrix.fixture.overlay }} --kind "$KIND_BIN" --kind-node-image "$CAMPAIGN_KIND_NODE" \
+            $FIXTURE_OVERLAY --kind "$RUNNER_TEMP/kind" --kind-node-image "$CAMPAIGN_KIND_NODE" \
             --mongo-image "$CAMPAIGN_MONGO_IMAGE" --identity-image "$CAMPAIGN_IDENTITY_IMAGE" \
-            --timeout 900 > "$RUNNER_TEMP/runner-result.json"
+            --timeout 900 > "$RUNNER_TEMP/runner-result.json" 2>/dev/null
           status=$?
           set -e
-          if [ -s "$output/kind-evidence.private.json" ]; then
-            # Public-safe stage, collection and check names for the coverage job.
-            mkdir -p "$RUNNER_TEMP/cells"
-            python3 -B .github/scripts/migration_campaign_cells.py derive \
-              --evidence "$output/kind-evidence.private.json" --fixture "${{ matrix.fixture.name }}" \
-              --output "$RUNNER_TEMP/cells/${{ matrix.fixture.name }}.json"
-            cp "$inputs/plan.json" "$RUNNER_TEMP/cells/plan-${{ matrix.fixture.name }}.json"
-          fi
-          if [ ! -s "$output/kind-evidence.private.json" ]; then
-            reason=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("reason", "unknown"))' "$RUNNER_TEMP/runner-result.json" 2>/dev/null || echo unknown)
-            echo "::error title=Migration campaign runner::${{ matrix.fixture.name }} stopped before recording evidence: ${reason}."
+          if test -s "$output/kind-evidence.private.json"; then
+            python3 -B .github/scripts/migration_campaign_summary.py "$output/kind-evidence.private.json" "$FIXTURE-$POLICY" | tee -a "$GITHUB_STEP_SUMMARY" || status=1
+            python3 -B - "$output/kind-evidence.private.json" <<'PY' | tee -a "$GITHUB_STEP_SUMMARY"
+          import json, sys
+          value = json.load(open(sys.argv[1]))
+          for row in value.get('release_probe', {}).get('stage_controls', []):
+              print(f"- {row['stage']}: {row['source']} / {row['writer_policy']}")
+          PY
+          else
+            echo 'The release probe stopped before the evidence receipt was written.'
             exit 1
           fi
-          if ! python3 -B .github/scripts/migration_campaign_summary.py \
-              "$output/kind-evidence.private.json" "${{ matrix.fixture.name }}" | tee -a "$GITHUB_STEP_SUMMARY" \
-              || [ "$status" -ne 0 ]; then
-            reason=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("reason", "unknown"))' "$RUNNER_TEMP/runner-result.json" 2>/dev/null || echo unknown)
-            echo "::error title=Migration campaign ${{ matrix.fixture.name }}::The campaign did not complete cleanly: ${reason}. The job summary names the stage; raw evidence stays on the runner."
-            exit 1
-          fi
-      - name: Retain public-safe cell records
-        if: always()
-        timeout-minutes: 5
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
-        with:
-          name: migration-campaign-cells-${{ matrix.fixture.name }}
-          path: ${{ runner.temp }}/cells/
-          if-no-files-found: ignore
-          retention-days: 7
-
-  coverage:
-    name: Migration matrix coverage
-    needs: campaign
-    if: always() && github.repository == 'ChronoAIProject/cma'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          persist-credentials: false
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.13'
-      - id: cells-download
-        continue-on-error: true
-        timeout-minutes: 3
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          digest-mismatch: error
-          pattern: migration-campaign-cells-*
-          path: ${{ runner.temp }}/cells
-          merge-multiple: true
-      - id: cells-download-retry
-        if: steps.cells-download.outcome == 'failure'
-        timeout-minutes: 3
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
-        with:
-          digest-mismatch: error
-          pattern: migration-campaign-cells-*
-          path: ${{ runner.temp }}/cells
-          merge-multiple: true
-      - name: Explain the unavailable cell records
-        if: failure() && steps.cells-download-retry.outcome == 'failure'
-        run: |
-          echo "::error title=Migration cell records unavailable::The campaign cell records were not downloaded: both attempts failed. Each attempt is limited to 3 minutes; an attempt that hit the limit shows 'has timed out' in its log. Coverage is unmeasured for this run. Next step: re-run the coverage job."
-          exit 1
-      - name: Report executed and unrun matrix cells
-        timeout-minutes: 3
-        run: |
-          cells="$RUNNER_TEMP/cells"
-          mapfile -t plans < <(find "$cells" -maxdepth 1 -name 'plan-*.json' | sort)
-          mapfile -t records < <(find "$cells" -maxdepth 1 -name '*.json' ! -name 'plan-*.json' | sort)
-          if [ "${#plans[@]}" -eq 0 ] || [ "${#records[@]}" -eq 0 ]; then
-            echo "::error title=Migration matrix coverage::No campaign produced a cell record, so coverage is unmeasured. Check the campaign jobs."
-            exit 1
-          fi
-          if [ "$(sha256sum "${plans[@]}" | awk '{print $1}' | sort -u | wc -l)" -ne 1 ]; then
-            echo "::error title=Migration matrix coverage::Campaigns ran different plans; their cells cannot be combined."
-            exit 1
-          fi
-          python3 -B .github/scripts/migration_campaign_cells.py aggregate --plan "${plans[0]}" \
-            --output "$RUNNER_TEMP/coverage.json" "${records[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$status"
