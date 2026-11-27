@@ -10,6 +10,22 @@ use std::{
     time::Duration,
 };
 
+/// Distinguishes an unconfirmed receiver revocation from other handoff errors.
+#[derive(Debug)]
+pub enum BackgroundHandoffError {
+    ReceiverUnavailable(String),
+    Ownership(OwnershipError),
+}
+
+impl BackgroundHandoffError {
+    pub fn into_ownership_error(self) -> OwnershipError {
+        match self {
+            Self::ReceiverUnavailable(detail) => OwnershipError::Unavailable(detail),
+            Self::Ownership(error) => error,
+        }
+    }
+}
+
 struct State {
     schedule: RetrySchedule<AgentId>,
     bindings: BTreeMap<AgentId, Episode>,
@@ -252,11 +268,21 @@ impl OwnershipCoordinator {
         &self,
         authority: &Arc<Authority>,
     ) -> Result<bool, OwnershipError> {
+        self.handoff_background_classified(authority)
+            .await
+            .map_err(BackgroundHandoffError::into_ownership_error)
+    }
+
+    pub async fn handoff_background_classified(
+        &self,
+        authority: &Arc<Authority>,
+    ) -> Result<bool, BackgroundHandoffError> {
         if self.contains_failures() {
             return self
                 .retirement_background(authority)
                 .await
-                .map(|result| result.is_some());
+                .map(|result| result.is_some())
+                .map_err(BackgroundHandoffError::Ownership);
         }
         let Some(mut attempt) = self.cleanup_pacing.begin(authority) else {
             return Ok(false);
@@ -271,7 +297,15 @@ impl OwnershipCoordinator {
         if result.is_ok() {
             attempt.confirmed();
         }
-        result.map(|()| true)
+        // Legacy handoff can return Unavailable from receiver revocation (or
+        // its deadline) before the acknowledgement, or from durable release
+        // afterward. The attempt records that boundary even without pacing.
+        result.map(|()| true).map_err(|error| match error {
+            OwnershipError::Unavailable(detail) if !attempt.acknowledged => {
+                BackgroundHandoffError::ReceiverUnavailable(detail)
+            }
+            error => BackgroundHandoffError::Ownership(error),
+        })
     }
 }
 

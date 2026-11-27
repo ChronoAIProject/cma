@@ -3,12 +3,12 @@
 //! A receiver handoff that fails with `Unavailable` has already revoked its
 //! local authority and kept its durable lease: `OwnershipCoordinator::handoff`
 //! releases the lease only after the receiving runtime confirms revocation.
-//! Without containment that one error stops the whole process. With it, the
-//! receiver stays fenced and is retried on later housekeeping ticks, paced by
-//! the coordinator's cleanup pacing, while healthy owners keep serving.
-//! Every other error, including Stale, IncompatibleProtocol, Invalid and any
-//! membership failure, still stops the process exactly as before.
-use layer2_core::agent_ownership::{Authority, OwnershipCoordinator, OwnershipError};
+//! Receiver unavailability is always contained. The receiver stays fenced and
+//! is retried on later housekeeping ticks while healthy owners keep serving.
+//! The receiver-only rollout policy also contains unavailable lease releases.
+use layer2_core::agent_ownership::{
+    Authority, BackgroundHandoffError, OwnershipCoordinator, OwnershipError,
+};
 use layer2_core::AgentId;
 use std::{
     collections::BTreeMap,
@@ -24,14 +24,14 @@ const RETRIES_PER_PASS: usize = 4;
 
 #[derive(Default)]
 pub(super) struct ContainedHandoffs {
-    enabled: AtomicBool,
+    contain_release_failures: AtomicBool,
     cursor: AtomicUsize,
     pending: Mutex<BTreeMap<AgentId, Arc<Authority>>>,
 }
 
 impl ContainedHandoffs {
     pub(super) fn enable(&self) {
-        self.enabled.store(true, Ordering::Release);
+        self.contain_release_failures.store(true, Ordering::Release);
     }
 
     /// Keep a transiently failed receiver for retry, or return the error.
@@ -39,12 +39,19 @@ impl ContainedHandoffs {
         &self,
         stage: &'static str,
         authority: &Arc<Authority>,
-        error: OwnershipError,
+        error: BackgroundHandoffError,
     ) -> Result<(), OwnershipError> {
-        if !self.enabled.load(Ordering::Acquire) || !matches!(error, OwnershipError::Unavailable(_))
-        {
-            return Err(error);
-        }
+        let error = match error {
+            BackgroundHandoffError::ReceiverUnavailable(detail) => {
+                OwnershipError::Unavailable(detail)
+            }
+            BackgroundHandoffError::Ownership(error @ OwnershipError::Unavailable(_))
+                if self.contain_release_failures.load(Ordering::Acquire) =>
+            {
+                error
+            }
+            BackgroundHandoffError::Ownership(error) => return Err(error),
+        };
         authority.log_receiver_handoff_failure(
             stage,
             &error,

@@ -30,15 +30,21 @@ fn unavailable() -> OwnershipError {
 async fn failed_handoff(
     coordinator: &OwnershipCoordinator,
     authority: &Arc<Authority>,
-) -> OwnershipError {
+) -> BackgroundHandoffError {
     coordinator
         .handoff(authority, async { Err(unavailable()) })
         .await
+        .map_err(|error| match error {
+            OwnershipError::Unavailable(detail) => {
+                BackgroundHandoffError::ReceiverUnavailable(detail)
+            }
+            error => BackgroundHandoffError::Ownership(error),
+        })
         .unwrap_err()
 }
 
 #[tokio::test(start_paused = true)]
-async fn disabled_or_non_transient_failures_still_stop_the_process() {
+async fn ownership_errors_respect_the_existing_release_policy() {
     let store = Arc::new(MemoryOwnershipStore::default());
     let coordinator = coordinator(store.clone()).await;
     let authority = coordinator
@@ -48,22 +54,38 @@ async fn disabled_or_non_transient_failures_still_stop_the_process() {
         .unwrap();
     let contained = ContainedHandoffs::default();
     assert_eq!(
-        contained.contain("current_handoff", &authority, unavailable()),
+        contained.contain(
+            "current_handoff",
+            &authority,
+            BackgroundHandoffError::Ownership(unavailable()),
+        ),
         Err(unavailable()),
         "off by default"
     );
-    contained.enable();
     for error in [
         OwnershipError::Stale,
         OwnershipError::IncompatibleProtocol,
         OwnershipError::Invalid("record".into()),
     ] {
         assert_eq!(
-            contained.contain("current_handoff", &authority, error.clone()),
+            contained.contain(
+                "current_handoff",
+                &authority,
+                BackgroundHandoffError::Ownership(error.clone()),
+            ),
             Err(error)
         );
     }
     assert_eq!(contained.pending(), 0);
+    contained.enable();
+    contained
+        .contain(
+            "current_handoff",
+            &authority,
+            BackgroundHandoffError::Ownership(unavailable()),
+        )
+        .unwrap();
+    assert_eq!(contained.pending(), 1);
 }
 
 #[tokio::test(start_paused = true)]
@@ -82,7 +104,6 @@ async fn a_contained_receiver_stays_fenced_until_a_confirmed_retry_releases_it()
         .unwrap();
     let original = store.owner(&failing.token.agent_id).await.unwrap();
     let contained = ContainedHandoffs::default();
-    contained.enable();
     let error = failed_handoff(&coordinator, &failing).await;
     contained
         .contain("current_handoff", &failing, error)
@@ -150,7 +171,6 @@ async fn a_fatal_retry_error_still_stops_the_process() {
         .unwrap()
         .unwrap();
     let contained = ContainedHandoffs::default();
-    contained.enable();
     let error = failed_handoff(&coordinator, &failing).await;
     contained
         .contain("inactive_retirement", &failing, error)
@@ -174,7 +194,6 @@ async fn an_entry_the_coordinator_no_longer_owns_is_dropped_without_retry() {
         .unwrap()
         .unwrap();
     let contained = ContainedHandoffs::default();
-    contained.enable();
     let error = failed_handoff(&coordinator, &failing).await;
     contained
         .contain("current_handoff", &failing, error)
@@ -199,7 +218,6 @@ async fn persistently_failing_receivers_do_not_starve_the_rest() {
     let store = Arc::new(MemoryOwnershipStore::default());
     let coordinator = coordinator(store).await;
     let contained = ContainedHandoffs::default();
-    contained.enable();
     for index in 0..6 {
         let authority = coordinator
             .acquire(&AgentId(format!("failing-{index}")))
@@ -241,7 +259,6 @@ async fn an_expired_contained_lease_is_forgotten_so_this_process_can_acquire_aga
         .unwrap()
         .unwrap();
     let contained = ContainedHandoffs::default();
-    contained.enable();
     let error = failed_handoff(&coordinator, &failing).await;
     contained
         .contain("current_handoff", &failing, error)
