@@ -5,7 +5,7 @@ import {API, normalizeConfig, check} from './cma/core.mjs';
 import {runJourney} from './cma/journey.mjs';
 import {requestPacer} from './pacing.mjs';
 import {ExtendedAdminMatrix} from './features/admin_extended.mjs';
-import {ADMIN_PERMISSIONS} from './features/admin_matrix.mjs';
+import {ADMIN_PERMISSIONS, verifyRuntimeInventory} from './features/admin_matrix.mjs';
 import {userCases} from './features/user.mjs';
 import {browserFileRoundtrip} from './features/files_browser.mjs';
 import {documentCases} from './features/documents.mjs';
@@ -295,6 +295,16 @@ try {
       if (phase === 'before_restart') savedDocuments.push(document);
     }
     await matrix.run({iterations: 3, groups: ['reads', 'denials', 'settings', 'triggers', 'admission', 'usage'],
+      verifyRuntimeInventory: async (...inventories) => {
+        const {adapter, record} = context;
+        const observation = await adapter.runtimeFor({agentId: record.agentId});
+        check(observation.agent_id === record.agentId && observation.sandbox_id === record.sandboxId
+          && observation.runtime_id === record.runtime.runtime_id
+          && observation.pod_uid === record.runtime.pod_uid && Number.isSafeInteger(observation.runtime_generation)
+          && observation.runtime_generation > 0 && observation.provider_status === 'ready',
+        'runtime_inventory_observer_unbound');
+        verifyRuntimeInventory(observation, inventories);
+      },
       verifyAdmission: async (ingress, mode) => {
         const {record, create, cleanup} = context;
         check(typeof record.workspaceId === 'string' && record.workspaceId.length > 0, 'admission_probe_workspace_missing');

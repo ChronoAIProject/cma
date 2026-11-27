@@ -1,10 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {AdminMatrix,validateFixture,ADMIN_PERMISSIONS} from './admin_matrix.mjs';
+import {AdminMatrix,validateFixture,verifyRuntimeInventory,ADMIN_PERMISSIONS} from './admin_matrix.mjs';
 const SOURCE = '1'.repeat(40), MANIFEST = 'sha256:' + '2'.repeat(64);
 const fixture=()=>({scope:'LOCAL_DISPOSABLE_TWO_AM',source:SOURCE,manifest:MANIFEST,database_disposable:true,
   single_matrix_writer:true,am_origins:{a:'http://127.0.0.1:8001',b:'http://127.0.0.1:8002'},
   admin_permissions:ADMIN_PERMISSIONS,ordinary_user_has_admin:false,run_id:'offline-test'});
+
+test('runtime inventory independently matches the observed identity, generation and state on both Managers', () => {
+  const native = {sandbox_id: 'fixture-sandbox', runtime_id: 'fixture-runtime', runtime_generation: 2,
+    provider_status: 'ready'};
+  const expected = {owner_reference: native.sandbox_id, runtime_id: native.runtime_id,
+    generation: native.runtime_generation, status: native.provider_status};
+  const snapshot = runtimes => ({observed_at: '2026-01-01T00:00:00Z', runtimes});
+  assert.doesNotThrow(() => verifyRuntimeInventory(native, [snapshot([expected]), snapshot([expected])]));
+  for (const invalid of [[], [expected, expected], [{...expected, runtime_id: 'another-runtime'}],
+    [{...expected, generation: 1}], [{...expected, status: 'starting'}]]) {
+    assert.throws(() => verifyRuntimeInventory(native, [snapshot([expected]), snapshot(invalid)]),
+      /runtime_inventory_durable_observation_mismatch/);
+  }
+});
 
 test('admission reads require bounded contiguous history and the same durable state on both Managers', async () => {
   const stop = {revision: 1, since: 100, actor: 'fixture', reason: 'fixture stop'};

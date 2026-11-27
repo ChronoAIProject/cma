@@ -255,7 +255,18 @@ class Fixture:
         members=self.client.kjson(['get','sandboxes.agents.x-k8s.io','-o','json'])['items']
         native=[m for m in members if m['metadata'].get('annotations',{}).get('cma/sandbox')==sandbox]
         if len(native)!=1:raise RuntimeError('sandbox_native_join')
-        uid=native[0]['metadata']['uid']
+        resource=native[0]
+        metadata=resource['metadata']
+        uid=metadata['uid']
+        generation=metadata.get('annotations',{}).get('cma/runtime-generation','')
+        conditions=resource.get('status',{}).get('conditions',[])
+        ready=any(condition.get('type')=='Ready' and condition.get('status')=='True'
+                  and condition.get('observedGeneration')==metadata.get('generation')
+                  for condition in conditions)
+        if metadata.get('deletionTimestamp') or resource['spec'].get('operatingMode')=='Suspended':
+            provider_status='unavailable'
+        else:
+            provider_status='ready' if ready else 'starting'
         pods=self.client.kjson(['get','pods','-o','json'])['items']
         pods=[p for p in pods if not p['metadata'].get('deletionTimestamp') and any(o['uid']==uid for o in p['metadata'].get('ownerReferences',[]))]
         if len(pods)!=1:raise RuntimeError('native_pod_join')
@@ -263,6 +274,8 @@ class Fixture:
         pvcs=[v['persistentVolumeClaim']['claimName'] for v in pod['spec']['volumes'] if 'persistentVolumeClaim'in v]
         value={'agent_id':identity,'sandbox_id':sandbox,'image':runtime['image'],'pod_name':pod['metadata']['name'],
             'pod_uid':pod['metadata']['uid'],'ready':detail.get('status')=='ready','pvc_names':pvcs,
+            'runtime_id':f"agent-sandbox:{metadata['name']}:{uid}",
+            'runtime_generation':int(generation) if generation.isdecimal() else None,'provider_status':provider_status,
             'home_identity':native[0]['metadata']['annotations'].get('cma/home-identity'),
             'runtime_security_context':runtime.get('securityContext',{}),
             'pod_security_context':pod['spec'].get('securityContext',{}),

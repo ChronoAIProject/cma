@@ -62,6 +62,15 @@ export const READ_CASES = [
   ['platform_spend_read',`${P}/spend`,v=>typeof v?.metering_enabled==='boolean'],
 ];
 
+export function verifyRuntimeInventory(observation, inventories) {
+  for (const inventory of inventories) {
+    const matches = inventory.runtimes.filter(row => row.owner_reference === observation.sandbox_id);
+    check(Number.isFinite(Date.parse(inventory.observed_at)) && matches.length === 1
+      && matches[0].runtime_id === observation.runtime_id && matches[0].generation === observation.runtime_generation
+      && matches[0].status === observation.provider_status, 'runtime_inventory_durable_observation_mismatch');
+  }
+}
+
 export class AdminMatrix {
   // request(role, am, method, path, {body,key,allowed,timeout}) must make a real
   // owner-authenticated local request and return {status,body}; no auto retries.
@@ -109,7 +118,7 @@ export class AdminMatrix {
       if (this.current && receipt) (this.current.failures ??= []).push(receipt);
     });
   }
-  async reads(iteration) {
+  async reads(iteration, verifyRuntimeInventory) {
     for (const [id,path,shape] of READ_CASES) await this.runCase(id,iteration,async()=>{
       const first = await this.call('a', 'GET', path);
       const second = await this.call('b', 'GET', path);
@@ -117,6 +126,7 @@ export class AdminMatrix {
       if (id === 'admission_read') {
         check(isDeepStrictEqual(admissionSnapshot(first), admissionSnapshot(second)), 'admission_history_peer_mismatch');
       }
+      if (id === 'runtime_inventory' && verifyRuntimeInventory) await verifyRuntimeInventory(first, second);
     });
   }
   async denials(iteration) {
@@ -388,12 +398,12 @@ export class AdminMatrix {
         }
       });
   }
-  async run({iterations=3,groups=['reads','denials','settings','triggers','admission'],sandboxFixtures=[],warmPoolFixtures=[],profileFixtures=[],runtimeFixtures=[],verifyAdmission}={}) {
+  async run({iterations=3,groups=['reads','denials','settings','triggers','admission'],sandboxFixtures=[],warmPoolFixtures=[],profileFixtures=[],runtimeFixtures=[],verifyAdmission,verifyRuntimeInventory}={}) {
     check(Number.isInteger(iterations)&&iterations>=3&&iterations<=10,'minimum_three_bounded_iterations');
     check(groups.every(x=>['reads','denials','settings','triggers','admission','always_on','retire','warm_pool','profile_retire','runtime_update','usage'].includes(x)),'unknown_case_group');
     for(let i=1;i<=iterations;i++) {
       await this.onBoundary({phase:'iteration_start',iteration:i});
-      if(groups.includes('reads')) await this.reads(i);
+      if(groups.includes('reads')) await this.reads(i, verifyRuntimeInventory);
       if(groups.includes('denials')) await this.denials(i);
       if(groups.includes('settings')) await this.settingsCases(i);
       if(groups.includes('triggers')) await this.triggerPause(i);
