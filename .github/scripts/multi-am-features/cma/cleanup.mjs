@@ -4,11 +4,12 @@ import {randomUUID} from 'node:crypto';
 import {check, hash, id, lineage, other, poll, safeError} from './core.mjs';
 
 export async function cleanupFixture({record, config, api, killedAm, result}) {
-  if (!record.agentId || record.deleted) return;
-  check(record.operationId, 'cleanup_create_lineage_incomplete');
+  if (record.deleted || (!record.agentId && !record.operationId)) return;
+  check(id(record.operationId), 'cleanup_create_lineage_incomplete');
   const am = killedAm ? other(killedAm) : other(record.am);
-  const receiptPath = join(config.output_dir, 'cleanup-' + hash(record.agentId) + '-' + randomUUID() + '.private.json');
-  const journal = {am, agent_id:record.agentId, sandbox_id:record.sandboxId, started_at:new Date().toISOString(), mutations:[], last_reads:{}};
+  const receiptPath = join(config.output_dir, 'cleanup-' + hash(record.agentId ?? record.operationId) + '-' + randomUUID() + '.private.json');
+  const journal = {am, operation_id: record.operationId, agent_id:record.agentId, sandbox_id:record.sandboxId,
+    started_at:new Date().toISOString(), mutations:[], last_reads:{}};
   const persist = () => writeFile(receiptPath, JSON.stringify(journal,null,2)+'\n', {mode:0o600});
   async function cleanupRequest(target, method, path, options) {
     try {
@@ -34,8 +35,29 @@ export async function cleanupFixture({record, config, api, killedAm, result}) {
     return response.body;
   }
   try {
-    const op = await cleanupRequest(am, 'GET', `/api/v1/agent-lifecycle/${record.operationId}`);
-    check(op.body.id === record.operationId && op.body.agent_id === record.agentId, 'cleanup_lifecycle_mismatch');
+    const operationPath = `/api/v1/agent-lifecycle/${record.operationId}`;
+    const readOperation = async () => {
+      const {body} = await cleanupRequest(am, 'GET', operationPath);
+      check(body?.id === record.operationId, 'cleanup_lifecycle_mismatch');
+      return body;
+    };
+    let operation = await readOperation();
+    if (!record.agentId && !operation.agent_id) {
+      const cancellation = await cleanupRequest(am, 'POST', operationPath + '/cancel', {allowed: [200, 409]});
+      if (cancellation.status === 200) {
+        check(cancellation.body?.id === record.operationId && cancellation.body.status === 'failed'
+          && cancellation.body.agent_id == null, 'cleanup_cancellation_unconfirmed');
+        const terminal = await readOperation();
+        check(terminal.status === 'failed' && terminal.agent_id == null, 'cleanup_cancellation_not_durable');
+        record.deleted = true;
+        return;
+      }
+      check(cancellation.body?.code === 'creation_cancellation_unavailable', 'cleanup_cancellation_refusal_untyped');
+      operation = await readOperation();
+    }
+    check(id(operation.agent_id) && (!record.agentId || operation.agent_id === record.agentId), 'cleanup_lifecycle_mismatch');
+    record.agentId = operation.agent_id;
+    journal.agent_id = record.agentId;
     const current = await cleanupDetail();
     if (!['stopped', 'deleted'].includes(current.status)) {
       await cleanupRequest(am, 'POST', `/api/v1/agents/${record.agentId}/stop`, {body: {}, key: record.key + '-stop', allowed: [200, 202, 204]});
@@ -70,7 +92,7 @@ export async function cleanupFixture({record, config, api, killedAm, result}) {
     journal.failure = safeError(error); throw error;
   } finally {
     journal.finished_at = new Date().toISOString(); await persist();
-    (result.cleanup_evidence ??= []).push({am, agent_sha256:hash(record.agentId), native_response_path:receiptPath,
+    (result.cleanup_evidence ??= []).push({am, agent_sha256:record.agentId ? hash(record.agentId) : null, native_response_path:receiptPath,
       delete_status:journal.mutations.find(x => x.method === 'DELETE' && x.path === `/api/v1/agents/${record.agentId}`)?.status ?? null,
       last_agent_status:journal.last_reads[`/api/v1/agents/${record.agentId}`]?.body?.status ?? null,
       failure:journal.failure ?? null});

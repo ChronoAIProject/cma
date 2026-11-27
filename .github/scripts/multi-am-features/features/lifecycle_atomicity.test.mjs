@@ -109,9 +109,9 @@ test('shared Sandbox cleanup deletes only the sibling and requires its exact Del
   }
 });
 
-test('cleanup discovers the original home after creation times out with its Agent still Starting', async () => {
+test('cleanup discovers a late assignment and retires the original home with its Agent still Starting', async () => {
   const output_dir = await mkdtemp(join(tmpdir(), 'starting-agent-cleanup-'));
-  const record = {agentId: 'agent', name: 'probe', operationId: 'operation', am: 'a', key: 'cleanup-key'};
+  const record = {name: 'probe', operationId: 'operation', am: 'a', key: 'cleanup-key'};
   let status = 'starting';
   let retired = false;
   const mutations = [];
@@ -139,8 +139,38 @@ test('cleanup discovers the original home after creation times out with its Agen
     await cleanupFixture({record, api, config: {output_dir, owner_id: 'fixture-owner'}, result: {cleanup: []}});
     assert.deepEqual(mutations, [['POST', '/api/v1/agents/agent/stop'], ['DELETE', '/api/v1/agents/agent'],
       ['DELETE', '/api/v1/sandboxes/sandbox']]);
+    assert.equal(record.agentId, 'agent');
     assert.equal(record.sandboxId, 'sandbox');
     assert.equal(record.deleted, true);
+  } finally {
+    await rm(output_dir, {recursive: true, force: true});
+  }
+});
+
+test('cleanup cancels an acknowledged unassigned creation and checks its durable settlement', async () => {
+  const output_dir = await mkdtemp(join(tmpdir(), 'unallocated-creation-cleanup-'));
+  const operation = '/api/v1/agent-lifecycle/operation';
+  try {
+    for (const confirmed of [true, false]) {
+      const record = {name: 'probe', operationId: 'operation', am: 'a', key: 'cleanup-key'};
+      const calls = [];
+      const api = {request: async (am, method, path) => {
+        assert.equal(am, 'b');
+        calls.push([method, path]);
+        if (path === operation + '/cancel') {
+          assert.equal(method, 'POST');
+          return confirmed ? {status: 200, body: {id: 'operation', status: 'failed'}}
+            : {status: 409, body: {code: 'creation_cancellation_unavailable'}};
+        }
+        assert.equal(path, operation);
+        return {status: 200, body: {id: 'operation', status: confirmed && calls.length === 3 ? 'failed' : 'running'}};
+      }};
+      const cleanup = cleanupFixture({record, api, config: {output_dir}, result: {cleanup: []}});
+      if (confirmed) await cleanup;
+      else await assert.rejects(cleanup, /cleanup_lifecycle_mismatch/);
+      assert.equal(record.deleted, confirmed ? true : undefined);
+      assert.deepEqual(calls, [['GET', operation], ['POST', operation + '/cancel'], ['GET', operation]]);
+    }
   } finally {
     await rm(output_dir, {recursive: true, force: true});
   }
