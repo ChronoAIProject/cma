@@ -19,7 +19,15 @@ pub(super) async fn working(
         .await
         .unwrap()
         .contains(&agent.id));
-    let ready = super::super::worker_discovery::finish_legacy_connection(&store, agent).await;
+    let (working, command) = begin_working(&store, agent).await;
+    (client, name, store, working, command)
+}
+
+pub(super) async fn begin_working(
+    store: &MongoSandboxStore,
+    agent: Agent,
+) -> (Agent, AdmittedAgentCommand) {
+    let ready = super::super::worker_discovery::finish_legacy_connection(store, agent).await;
     let parent = store.get_sandbox(&ready.sandbox_id).await.unwrap().unwrap();
     let command = record(
         store
@@ -44,7 +52,7 @@ pub(super) async fn working(
     // Keep custody through runtime output. The actual settlement transaction,
     // including abort/unknown retries, must clear this exact original claim.
     let working = store.get_agent(&ready.id).await.unwrap().unwrap();
-    (client, name, store, working, command)
+    (working, command)
 }
 
 pub(super) fn chunk(content: &str) -> ConversationUpdate {
