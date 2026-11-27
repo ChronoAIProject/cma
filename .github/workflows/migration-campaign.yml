@@ -2,6 +2,10 @@ name: Migration campaign
 on:
   workflow_dispatch:
     inputs:
+      runtime_stack_bytes:
+        description: Supported application worker stack budget in bytes
+        required: true
+        type: string
       historical_source:
         description: Historical reader source
         required: true
@@ -45,7 +49,7 @@ jobs:
       fail-fast: false
       max-parallel: 4
       matrix:
-        policy: [disabled]
+        policy: [disabled, enabled]
         fixture:
           - { name: profile, script: migration_profile_fixture.py, overlay: '' }
     env:
@@ -57,6 +61,7 @@ jobs:
       RECOVERY_IMAGE: ${{ inputs.recovery_image }}
       CURRENT_SOURCE: ${{ inputs.current_source }}
       CURRENT_IMAGE: ${{ inputs.current_image }}
+      MATRIX_RUNTIME_STACK_BYTES: ${{ inputs.runtime_stack_bytes }}
       POLICY: ${{ matrix.policy }}
       FIXTURE: ${{ matrix.fixture.name }}
       FIXTURE_SCRIPT: ${{ matrix.fixture.script }}

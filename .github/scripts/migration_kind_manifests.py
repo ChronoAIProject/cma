@@ -1,6 +1,7 @@
 """Disposable kind fixture infrastructure; no production resources."""
 import base64
 import json
+import os
 from pathlib import Path
 import secrets
 
@@ -66,6 +67,11 @@ def manifests(api_image, runtime_password, admin_password, encryption_key, mongo
         "CHRONO_UPSTREAM_WIRE_API": "responses",
         "CHRONO_PLATFORM_BASE_URL": "https://platform.matrix.invalid",
     }
+    stack = os.environ.get("MATRIX_RUNTIME_STACK_BYTES")
+    if stack:
+        if not stack.isdecimal() or not 1048576 <= int(stack) <= 67108864:
+            raise ValueError("invalid runtime stack budget")
+        api_values["RUST_MIN_STACK"] = stack
     if identity_credentials is None:
         api_values.update(CHRONO_AUTH_MODE="trusted", CHRONO_TRUSTED_SUBJECT="migration-owner")
     else:
