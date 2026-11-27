@@ -59,6 +59,7 @@ export async function browserFileRoundtrip({page, api, outsider, ingress, agentI
     await dialog.getByLabel('Current directory', {exact: true}).getByText('/home/' + directory, {exact: true}).waitFor({timeout});
     const folder = await folderEntry(peer);
     check(folder?.kind === 'directory' && folder.name === directory, 'browser_files_created_directory_missing_on_peer');
+    await checkFileUpload({page, dialog, api, ingress, path, directory});
     await create(false, filename, file);
     const original = (await read(peer)).body;
     check(original.path === file && original.sha256 === hash('') && original.content_base64 === '',
@@ -329,6 +330,83 @@ async function deleteFiles({page, dialog, api, ingress, path, directory, file, r
     check((await Promise.all([ingress, peer].map(absent))).every(Boolean),
       'browser_files_delete_neighbor_cleanup_unconfirmed');
   }, recordFailure);
+}
+
+async function checkFileUpload({page, dialog, api, ingress, path, directory}) {
+  const choiceName = 'chosen-' + randomUUID() + '.txt';
+  const dropName = 'dropped-' + randomUUID() + '.txt';
+  const tooLarge = 'oversize-' + randomUUID() + '.txt';
+  const layout = dialog.locator('.agent-files__layout');
+  const origin = new URL(page.url()).origin;
+  const matchesWrite = request => {
+    const url = new URL(request.url());
+    return request.method() === 'POST' && url.origin === origin && url.pathname === path;
+  };
+  const chooserUpload = async (name, text) => {
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser', {timeout}),
+      dialog.getByRole('button', {name: 'Upload', exact: true}).click({timeout}),
+    ]);
+    await chooser.setFiles({name, mimeType: 'text/plain', buffer: Buffer.from(text)}, {timeout});
+  };
+  const dropUpload = (name, content) => layout.evaluate((element, {name, content}) => {
+    const dataTransfer = new DataTransfer();
+    dataTransfer.items.add(new File([typeof content === 'number' ? new Uint8Array(content) : content],
+      name, {type: 'text/plain'}));
+    element.dispatchEvent(new DragEvent('dragover', {bubbles: true, cancelable: true, dataTransfer}));
+    element.dispatchEvent(new DragEvent('drop', {bubbles: true, cancelable: true, dataTransfer}));
+  }, {name, content});
+  const verify = async (name, text) => {
+    const file = directory + '/' + name;
+    const encoded = Buffer.from(text).toString('base64');
+    for (const am of [ingress, other(ingress)]) {
+      const {body} = await api.request(am, 'GET', path + '/content?path=' + encodeURIComponent(file),
+        {direct: true});
+      check(body?.path === file && body.sha256 === hash(text) && body.content_base64 === encoded,
+        'browser_files_upload_readback_changed');
+    }
+    const entry = dialog.getByRole('button', {name, exact: true});
+    await entry.click({timeout});
+    await dialog.getByLabel('Selected file', {exact: true}).getByText('/home/' + file, {exact: true}).waitFor({timeout});
+    const preview = dialog.getByRole('textbox', {name: 'Contents of ' + name, exact: true});
+    check(await preview.inputValue({timeout}) === text, 'browser_files_upload_preview_changed');
+  };
+  const upload = async (send, name, text, status) => {
+    const [response] = await Promise.all([
+      page.waitForResponse(reply => matchesWrite(reply.request()), {timeout}), send(name, text),
+    ]);
+    const file = directory + '/' + name;
+    const submitted = response.request().postDataJSON();
+    check(submitted?.path === file && submitted.content_base64 === Buffer.from(text).toString('base64')
+      && submitted.expected_sha256 == null && submitted.directory !== true, 'browser_files_upload_intent_changed');
+    const body = await response.json();
+    if (status === 409) {
+      check(response.status() === 409 && body?.code === 'file_conflict', 'browser_files_upload_conflict_not_refused');
+      await dialog.getByRole('alert').getByText('The file changed; refresh before saving.', {exact: true}).waitFor({timeout});
+    } else {
+      check(response.status() === 200 && body?.path === file
+        && body.sha256 === hash(text) && body.size_bytes === Buffer.byteLength(text),
+        'browser_files_upload_receipt_changed');
+      await dialog.getByText('1 file uploaded.', {exact: true}).waitFor({timeout});
+      await verify(name, text);
+    }
+  };
+  const chosen = 'Synthetic file selected in the chooser.\n';
+  await upload(chooserUpload, choiceName, chosen, 200);
+  await upload(dropUpload, dropName, 'Synthetic file dropped into the selected directory.\n', 200);
+  await upload(chooserUpload, choiceName, 'Unexpected replacement.\n', 409);
+  await verify(choiceName, chosen);
+
+  let writes = 0;
+  const recordWrite = request => { if (matchesWrite(request)) writes += 1; };
+  page.on('request', recordWrite);
+  try {
+    await dropUpload(tooLarge, oversizeBytes);
+    await dialog.getByRole('alert').getByText(tooLarge + ' must be 32 MiB or smaller.', {exact: true}).waitFor({timeout});
+    check(writes === 0, 'browser_files_oversize_upload_dispatched');
+  } finally {
+    page.off('request', recordWrite);
+  }
 }
 
 async function findRootEntry(api, path, am, directory) {
