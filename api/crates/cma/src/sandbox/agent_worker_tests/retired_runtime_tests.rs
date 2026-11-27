@@ -142,7 +142,13 @@ async fn retired_sandbox_agent_delete_removes_records_without_recreating_runtime
 
 #[tokio::test]
 async fn retired_home_settles_failed_worktree_debt_only_after_observing_runtime_absence() {
-    for (remove_runtime, released_home) in [(true, true), (false, true), (true, false)] {
+    for (remove_runtime, released_home, wrong_evidence) in [
+        (true, true, None),
+        (false, true, None),
+        (true, false, None),
+        (true, true, Some("operation")),
+        (true, true, Some("digest")),
+    ] {
         let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
         let admitted = harness.admit("retired-first-worktree", Vec::new()).await;
         harness.backend.fail_next(
@@ -151,11 +157,26 @@ async fn retired_home_settles_failed_worktree_debt_only_after_observing_runtime_
             "worktree addition left partial Git state",
         );
         harness.run(&admitted.id, harness.now).await;
-        let failed = harness.stored(&admitted.id).await;
+        let mut failed = harness.stored(&admitted.id).await;
         assert_eq!(failed.status, AgentStatus::Failed);
         assert!(
             matches!(failed.work.cleanup_debt.as_slice(), [debt] if debt.step == AgentWorkStep::AddWorktree)
         );
+        if let Some(field) = wrong_evidence {
+            let debt = &mut failed.work.cleanup_debt[0];
+            match field {
+                "operation" => debt.operation_id = "worktree:project:wt-2:add:v1".into(),
+                "digest" => debt.request_sha256 = "b".repeat(64),
+                _ => unreachable!(),
+            }
+            let revision = failed.revision;
+            failed.revision += 1;
+            harness
+                .store
+                .save_agent(revision, failed.clone())
+                .await
+                .unwrap();
+        }
         completed_retirement(&harness, remove_runtime, released_home).await;
         let before = harness.backend.requests().await.len();
         let at = harness.now + Duration::from_secs(11);
@@ -177,7 +198,7 @@ async fn retired_home_settles_failed_worktree_debt_only_after_observing_runtime_
             .await
             .unwrap()
             .unwrap();
-        if remove_runtime && released_home {
+        if remove_runtime && released_home && wrong_evidence.is_none() {
             assert_eq!(agent.status, AgentStatus::Deleted);
             assert_eq!(worktree.status, WorktreeStatus::Removed);
             assert!(agent.work.cleanup_debt.is_empty());

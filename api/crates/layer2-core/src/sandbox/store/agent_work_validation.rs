@@ -1,4 +1,5 @@
 use super::agent_work_identity::{immutable_agent_fields_changed, validate_agent_delta};
+use crate::sandbox::agent_worktree_recovery::exact_recorded_worktree_debt;
 use crate::sandbox::{
     Agent, AgentStatus, AgentStopReason, AgentWorkStep, Sandbox, SandboxStatus, SandboxWorkStep,
     Worktree, WorktreeStatus,
@@ -100,7 +101,7 @@ pub fn retired_failed_worktree_cleanup_is_absent(
             .as_ref()
             .is_some_and(|home| home.released)
         && agent.status == AgentStatus::Failed
-        && matches!(agent.work.cleanup_debt.as_slice(), [debt] if debt.step == AgentWorkStep::AddWorktree)
+        && matches!(agent.work.cleanup_debt.as_slice(), [debt] if exact_recorded_worktree_debt(debt, worktree))
         && agent.work.receipts.is_empty()
         && agent.work.warm_conversation_id.is_none()
         && agent.ready_at.is_none()
