@@ -186,6 +186,7 @@ async function send(
   const sendAttempt = async () => {
     if (accepted === undefined) {
       await authorize(session, intent.body.command, signal);
+      recovery.checkDeadline();
       requireRetained();
       try {
         accepted = await session.responses.submitControl(

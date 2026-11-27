@@ -14,21 +14,25 @@ function activeHarness() {
   return h;
 }
 
+function busyStop(retryAfter: string) {
+  const response = json(
+    {
+      error: {
+        type: 'server_error',
+        code: 'response_control_busy',
+        message: 'Busy',
+        param: null,
+      },
+    },
+    503,
+  );
+  response.headers.set('retry-after', retryAfter);
+  return response;
+}
+
 it('retries a busy Stop response with the original target, body and key', async () => {
   const h = activeHarness();
-  h.control.mockResolvedValueOnce(
-    json(
-      {
-        error: {
-          type: 'server_error',
-          code: 'response_control_busy',
-          message: 'Busy',
-          param: null,
-        },
-      },
-      503,
-    ),
-  );
+  h.control.mockResolvedValueOnce(busyStop('1'));
   const { result, unmount } = renderHook(() => useAgentController(h.client, 'agt_1'));
   await waitFor(() => expect(result.current.inputAvailability.allowed).toBe(true));
   await act(() => result.current.interrupt());
@@ -42,6 +46,17 @@ it('retries a busy Stop response with the original target, body and key', async 
   );
   expect(h.observe).toHaveBeenCalledOnce();
   expect(result.current.pendingControl).toBe(false);
+  unmount();
+});
+
+it('retains Stop response when Retry-After is longer than the action budget', async () => {
+  const h = activeHarness();
+  h.control.mockResolvedValueOnce(busyStop('60'));
+  const { result, unmount } = renderHook(() => useAgentController(h.client, 'agt_1'));
+  await waitFor(() => expect(result.current.inputAvailability.allowed).toBe(true));
+  await act(() => result.current.interrupt());
+  expect(h.control).toHaveBeenCalledOnce();
+  expect(result.current.pendingControl).toBe(true);
   unmount();
 });
 

@@ -9,6 +9,7 @@ export interface RequestRecovery {
   readonly signal: AbortSignal;
   readonly timeoutMs?: number;
   readonly retried: boolean;
+  checkDeadline(): void;
   /** An operation can authorize one retry for a specific server refusal. */
   retry<T>(
     operation: (retry: number) => Promise<T>,
@@ -47,14 +48,16 @@ export async function withRequestRecovery<T>(
   signal?.throwIfAborted();
   signal?.addEventListener('abort', abort, { once: true });
   const deadline = performance.now() + budgetMs;
-  const timer = policy.enabled
-    ? setTimeout(() => controller.abort(expired()), budgetMs)
-    : undefined;
+  let timer = policy.enabled ? setTimeout(() => controller.abort(expired()), budgetMs) : undefined;
   let retries = 0;
   let exhausted = false;
   const exhaust = () => {
     if (!exhausted) counts.exhausted += 1;
     exhausted = true;
+  };
+  const checkDeadline = () => {
+    if (timer !== undefined && performance.now() >= deadline) controller.abort(expired());
+    controller.signal.throwIfAborted();
   };
   const context: RequestRecovery = {
     signal: controller.signal,
@@ -62,10 +65,11 @@ export async function withRequestRecovery<T>(
       return retries > 0;
     },
     get timeoutMs() {
-      return policy.enabled
+      return timer !== undefined
         ? Math.max(1, Math.min(5000, Math.floor(deadline - performance.now())))
         : undefined;
     },
+    checkDeadline,
     async retry<T>(
       attempt: (retry: number) => Promise<T>,
       retryOnce?: (error: unknown) => boolean,
@@ -80,19 +84,25 @@ export async function withRequestRecovery<T>(
           return result;
         } catch (error) {
           const generalRecovery = policy.enabled && transientRequestFailure(error);
-          const specificRetry = retries === 0 && retryOnce?.(error) === true;
+          const specificRetry = !generalRecovery && retries === 0 && retryOnce?.(error) === true;
           if (controller.signal.aborted || (!generalRecovery && !specificRetry)) throw error;
-          const delay = generalRecovery ? policy.delay(error, retries + 1) : 1000;
+          const serverFloor = error instanceof ApiError ? (error.retryAfterMs ?? 0) : 0;
+          const delay = generalRecovery
+            ? policy.delay(error, retries + 1)
+            : Math.max(1000, serverFloor);
           if (!Number.isFinite(delay) || delay < 0)
             throw new Error('Request recovery delay must be finite and nonnegative.', {
               cause: error,
             });
           // A server Retry-After longer than this action's budget is never shortened.
-          if (retries >= maxRetries || delay >= deadline - performance.now()) {
+          const remaining = deadline - performance.now();
+          if (retries >= maxRetries || delay >= remaining) {
             exhaust();
             throw error;
           }
+          timer ??= setTimeout(() => controller.abort(expired()), remaining);
           await wait(delay, controller.signal);
+          checkDeadline();
           retries += 1;
           localRetries += 1;
           counts.retries += 1;
