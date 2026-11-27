@@ -135,8 +135,11 @@ test('public rate-limit evidence emits fixed routes and excludes unfamiliar fiel
     problem_code: 'rate_limited', retry_after_seconds: 12});
   assert.deepEqual(evidence('PATCH', '/api/v1/documents/a/shares/synthetic-subject', '00001'),
     {status: 429, method: 'PATCH', route: '/api/v1/documents/{id}/shares/{subject}', retry_after_seconds: 1});
+  assert.deepEqual(evidence('GET', '/api/v1/documents/a/share-links', '1', 'buffered_read_capacity_exhausted', 'b'),
+    {status: 429, method: 'GET', route: '/api/v1/documents/{id}/share-links', manager: 'b',
+      problem_code: 'buffered_read_capacity_exhausted', retry_after_seconds: 1});
   assert.deepEqual(evidence('unknown', '/api/v1/documents/a/private-path/synthetic-id',
-    'Mon, 01 Dec 2026 00:00:00 GMT', 'private-problem'), {status: 429});
+    'Mon, 01 Dec 2026 00:00:00 GMT', 'private-problem', 'private-manager'), {status: 429});
 });
 
 test('prepared adapter failures expose only an approved diagnostic shape', async t => {

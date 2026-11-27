@@ -8,20 +8,24 @@ export const errorCode = error => /^[a-zA-Z0-9_:-]{1,160}$/.test(error?.message 
 const documentRateLimitRoutes = [
   [/^\/api\/v1\/documents$/, '/api/v1/documents'],
   [/^\/api\/v1\/documents\/[^/?#]+$/, '/api/v1/documents/{id}'],
+  [/^\/api\/v1\/documents\/[^/?#]+\/source$/, '/api/v1/documents/{id}/source'],
   [/^\/api\/v1\/documents\/[^/?#]+\/share-recipients$/, '/api/v1/documents/{id}/share-recipients'],
   [/^\/api\/v1\/documents\/[^/?#]+\/shares$/, '/api/v1/documents/{id}/shares'],
   [/^\/api\/v1\/documents\/[^/?#]+\/shares\/[^/?#]+$/, '/api/v1/documents/{id}/shares/{subject}'],
+  [/^\/api\/v1\/documents\/[^/?#]+\/share-links$/, '/api/v1/documents/{id}/share-links'],
   [/^\/api\/v1\/documents\/[^/?#]+\/comments$/, '/api/v1/documents/{id}/comments'],
   [/^\/api\/v1\/documents\/[^/?#]+\/comments\/[^/?#]+$/, '/api/v1/documents/{id}/comments/{id}'],
 ];
 
-export function rateLimitEvidence(method, path, retryAfter, code) {
+export function rateLimitEvidence(method, path, retryAfter, code, am) {
   const route = documentRateLimitRoutes.find(([pattern]) => pattern.test(path))?.[1];
   return {
     status: 429,
     method: ['GET', 'HEAD', 'POST', 'PATCH', 'PUT', 'DELETE'].includes(method) ? method : undefined,
     route,
-    problem_code: code === 'rate_limited' ? code : undefined,
+    manager: am === 'a' || am === 'b' ? am : undefined,
+    problem_code: ['rate_limited', 'buffered_read_capacity_exhausted', 'document_capacity'].includes(code)
+      ? code : undefined,
     retry_after_seconds: typeof retryAfter === 'string' && /^[0-9]{1,5}$/.test(retryAfter)
       ? Number(retryAfter) : undefined,
   };

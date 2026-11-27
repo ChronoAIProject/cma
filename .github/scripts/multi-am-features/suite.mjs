@@ -146,7 +146,7 @@ async function browserCase(am, iteration, name, run) {
     row.browser_failure = error?.name === 'TimeoutError' ? 'timeout' : 'assertion_or_transport_error';
     if (error?.response?.status === 429) {
       const {timing, retry_after: after, body} = error.response;
-      row.rate_limit = rateLimitEvidence(timing?.method, timing?.route, after, body?.code);
+      row.rate_limit = rateLimitEvidence(timing?.method, timing?.route, after, body?.code, timing?.am);
     } else if (observation.rateLimit) {
       row.rate_limit = observation.rateLimit;
     }

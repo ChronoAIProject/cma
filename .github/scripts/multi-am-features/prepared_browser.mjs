@@ -92,7 +92,7 @@ export async function openPreparedBrowser(config) {
             const path = new URL(request.url, publicOrigin).pathname;
             if (incoming.statusCode === 429) {
               config.observeBrowserRateLimit?.(am,
-                rateLimitEvidence(request.method, path, incoming.headers['retry-after']));
+                rateLimitEvidence(request.method, path, incoming.headers['retry-after'], undefined, am));
             }
             if (!freshSession) return;
             if (path === '/auth/callback' && incoming.statusCode >= 200 && incoming.statusCode < 400) {
