@@ -112,7 +112,18 @@ async fn save_with_format(
     )?;
     let new_obligation =
         native_retirement_action::adds_obligation(&current, &agent).then_some(&current.sandbox_id);
-    let result = update(store, &agent.id, filter, fields, new_obligation).await?;
+    let carry_proof = recovery_source
+        .filter(|_| store.active_log_proofs && current_row.get_str("agent_log_format").is_ok())
+        .map(|source| (&current_row, source, &agent));
+    let result = update(
+        store,
+        &agent.id,
+        filter,
+        fields,
+        new_obligation,
+        carry_proof,
+    )
+    .await?;
     if result.matched_count == 1 {
         Ok(())
     } else if recovery_source.is_some() {
@@ -128,11 +139,12 @@ async fn update(
     filter: Document,
     fields: Document,
     new_obligation: Option<&SandboxId>,
+    carry_proof: Option<(&Document, &Agent, &Agent)>,
 ) -> Result<mongodb::results::UpdateResult, SandboxStoreError> {
     let update = doc! {"$set": fields};
     let owner_scoped = store.agent_ownership.is_some()
         && layer2_core::agent_ownership::execution_owner().is_some();
-    if new_obligation.is_none() && !owner_scoped {
+    if new_obligation.is_none() && !owner_scoped && carry_proof.is_none() {
         return store
             .agents
             .update_one(filter, update)
@@ -191,6 +203,27 @@ async fn update(
             }
             Err(error) => return Err(driver(error)),
         };
+        if let Some((row, source, next)) = carry_proof.filter(|_| result.matched_count == 1) {
+            use super::super::agent_log_integrity::TransactionLogError;
+            use super::super::agent_log_segments::{active_proof, read_head};
+            let proof = async {
+                let head = read_head(store, row, &mut session, false).await?;
+                active_proof::carry_claim(store, &head, source, next, &mut session).await
+            }
+            .await;
+            if let Err(error) = proof {
+                let _ = session.abort_guarded().await;
+                match error {
+                    TransactionLogError::Driver(error)
+                        if native_retirement_action::retryable_body_error(&error) =>
+                    {
+                        continue
+                    }
+                    TransactionLogError::Driver(error) => return Err(driver(error)),
+                    TransactionLogError::Domain(error) => return Err(error),
+                }
+            }
+        }
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(result),
             CommitOutcome::Retry(_) => continue,

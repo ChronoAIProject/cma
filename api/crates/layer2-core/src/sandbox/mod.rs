@@ -307,8 +307,6 @@ pub use agent_reads::{
     AgentRetainedOutputPage, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
     SharedAgentDetail, SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
 };
-#[cfg(feature = "test-support")]
-pub use agent_runtime::reconnect_guard_for_test;
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,
     AgentRuntimeInputSender, AgentRuntimePromptResponse, AgentRuntimeRegistry, AgentRuntimeTarget,

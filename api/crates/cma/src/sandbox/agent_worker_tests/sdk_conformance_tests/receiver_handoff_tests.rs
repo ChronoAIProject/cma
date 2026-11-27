@@ -40,7 +40,16 @@ async fn claimed_response_recovers_missing_receiver_after_owner_handoff_once() {
         .await
         .unwrap();
     let successor_store = harness.store.clone();
-    exercise(harness, agent, &old, &first_owner, next, successor_store).await;
+    exercise(
+        harness,
+        agent,
+        &old,
+        &first_owner,
+        next,
+        successor_store,
+        None,
+    )
+    .await;
 }
 
 #[tokio::test]
@@ -64,15 +73,6 @@ async fn segmented_claimed_response_recovers_missing_receiver_after_owner_handof
     )
     .await
     .unwrap();
-    let successor_store = Arc::new(
-        MongoSandboxStore::open(&client, &name)
-            .await
-            .unwrap()
-            .with_segment_adoption_enabled(true)
-            .enable_agent_ownership("next-manager".into())
-            .await
-            .unwrap(),
-    );
     let mut harness = Harness::with_store(store, Arc::new(EmptyAgentSkillResolver), 1).await;
     harness.now = SystemTime::now();
     let admitted_agent = harness.admit("segmented-receiver-handoff", vec![]).await;
@@ -98,12 +98,24 @@ async fn segmented_claimed_response_recovers_missing_receiver_after_owner_handof
         .unwrap();
     crate::store::skill_result_test_support::assert_format(&harness.store, &ready.id, true).await;
     let agent = harness.stored(&ready.id).await;
+    let successor_store = Arc::new(
+        MongoSandboxStore::open(&client, &name)
+            .await
+            .unwrap()
+            .with_segment_adoption_enabled(true)
+            .enable_agent_ownership("next-manager".into())
+            .await
+            .unwrap()
+            .with_prepared_active_proof_for_test(&agent.id)
+            .await,
+    );
     let next = OwnershipCoordinator::register(
         successor_store.agent_ownership.as_ref().unwrap().clone(),
         member("next-manager"),
     )
     .await
     .unwrap();
+    let database = client.database(&name);
     exercise(
         harness,
         agent.clone(),
@@ -111,10 +123,43 @@ async fn segmented_claimed_response_recovers_missing_receiver_after_owner_handof
         &first_owner,
         next,
         successor_store.clone(),
+        Some(&database),
     )
     .await;
     crate::store::skill_result_test_support::assert_format(&successor_store, &agent.id, true).await;
-    client.database(&name).drop().await.unwrap();
+    database.drop().await.unwrap();
+}
+
+async fn assert_current_proof(database: Option<&mongodb::Database>, agent: &Agent) {
+    use mongodb::bson::{doc, Document};
+    let Some(database) = database else {
+        return;
+    };
+    let query = doc! {"_id":agent.id.as_str()};
+    let aggregate = database
+        .collection::<Document>("agents")
+        .find_one(query.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    let proof = database
+        .collection::<Document>("agent_log_active_proofs_v1")
+        .find_one(query)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        proof.get_i64("agent_revision").unwrap() as u64,
+        agent.revision
+    );
+    assert_eq!(
+        proof
+            .get_document("head")
+            .unwrap()
+            .get_i64("revision")
+            .unwrap(),
+        aggregate.get_i64("agent_log_head_revision").unwrap()
+    );
 }
 
 async fn admitted<S: FixtureStore>(harness: &Harness<S>) -> AdmittedAgentCommand {
@@ -142,6 +187,7 @@ async fn exercise<S: FixtureStore>(
     first_owner: &Arc<layer2_core::agent_ownership::Authority>,
     next: Arc<OwnershipCoordinator>,
     successor_store: Arc<S>,
+    database: Option<&mongodb::Database>,
 ) {
     let target = AgentRuntimeTarget {
         agent_id: agent.id.clone(),
@@ -150,7 +196,10 @@ async fn exercise<S: FixtureStore>(
     };
     let old_guard = first_owner
         .run(async {
-            layer2_core::sandbox::reconnect_guard_for_test(harness.registry.clone(), target.clone())
+            layer2_core::sandbox::agent_io::reconnect_guard_for_test(
+                harness.registry.clone(),
+                target.clone(),
+            )
         })
         .await
         .unwrap();
@@ -213,6 +262,7 @@ async fn exercise<S: FixtureStore>(
     let recovering = harness.stored(&agent.id).await;
     assert_eq!(recovering.work.step, AgentWorkStep::PublishConnection);
     assert_eq!(recovering.conversation, agent.conversation);
+    assert_current_proof(database, &recovering).await;
 
     assert!(harness
         .store
@@ -222,6 +272,7 @@ async fn exercise<S: FixtureStore>(
         .contains(&agent.id));
     harness.run(&agent.id, SystemTime::now()).await;
     let recovered = harness.stored(&agent.id).await;
+    assert_current_proof(database, &recovered).await;
     assert_eq!(recovered.work.step, AgentWorkStep::None);
     assert_eq!(
         recovered.conversation.conversation_id,
@@ -355,7 +406,10 @@ async fn exercise<S: FixtureStore>(
     // Dropping it outside the scope must re-enter its captured authority.
     let guard = current_owner
         .run(async {
-            layer2_core::sandbox::reconnect_guard_for_test(harness.registry.clone(), target.clone())
+            layer2_core::sandbox::agent_io::reconnect_guard_for_test(
+                harness.registry.clone(),
+                target.clone(),
+            )
         })
         .await
         .unwrap();
