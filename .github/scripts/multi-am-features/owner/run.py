@@ -20,7 +20,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from common import Client, utc, write
+from common import Client, require_feature_fixture, utc, write
 from configuration_log import configuration_dispatch, configuration_log
 from file_fixture import seed_oversize_file
 import manifests
@@ -232,6 +232,14 @@ class Fixture:
             "const row=d.cma_agent_manager_owners.findOne({_id:" + json.dumps(agentId)
             + ",instance_id:{$type:'string'},$expr:{$gt:['$expires_at','$$NOW']}},{_id:1});"
             "print(JSON.stringify(row!==null));")
+
+    def attachmentIdentity(self, agentId, key):
+        require_feature_fixture(self)
+        if (not isinstance(agentId, str) or not re.fullmatch(r'[A-Za-z0-9_-]{1,160}', agentId)
+                or not isinstance(key, str) or not re.fullmatch(r'[0-9a-f-]{36}', key)):
+            raise ValueError('attachment_fixture_request_unbound')
+        scope = json.dumps({'agentId': agentId, 'key': key})
+        return self.mongo(f'const attachmentScope = {scope};\n' + (ROOT / 'attachment_identity.js').read_text())
 
     def lifecycleSnapshot(self, sandboxId=None, agentIds=None):
         if not isinstance(agentIds, list) or len(agentIds) not in (1, 2) or any(
@@ -452,7 +460,8 @@ class Fixture:
                              'retirementPurge','retirementTitleDeferral','removeRuntimePod','artifactPublicationAbort','artifactPublicationRace','preparedSchemaBarrier',
                              'preparedSchemaRace','preparedSchemaRefusals','writerPublicationAbort','writerPublicationEvidence',
                              'runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
-                             'shareRedemptionPublicationAbort','accessProposalAbort','provenanceBackfill','seedOversizeFile']
+                             'shareRedemptionPublicationAbort','accessProposalAbort','provenanceBackfill','seedOversizeFile',
+                             'attachmentIdentity']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

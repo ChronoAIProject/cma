@@ -32,9 +32,15 @@ export async function composerAttachments({page, api, adapter, ingress, agentId,
       && (name === undefined || url.searchParams.get('name') === name);
   };
   const observe = request => { if (matches(request)) seen.push(request); };
-  const receipt = (response, body, file) => {
-    check(response.status() === 201 && body?.agent_id === agentId && /^att_[a-f0-9]{64}$/.test(body.id)
-      && body.name === file.name && body.path === `/home/attachments/${agentId}/${body.id}/${file.name}`
+  const receipt = async (response, request, file) => {
+    const key = await request.headerValue('idempotency-key');
+    check(request.postDataBuffer()?.equals(file.bytes) === true && /^[0-9a-f-]{36}$/.test(key),
+      'browser_attachments_upload_intent_changed');
+    const {attachment_id: expected} = await adapter.attachmentIdentity({agentId, key});
+    const body = await response.json();
+    check(/^att_[a-f0-9]{64}$/.test(expected) && response.status() === 201
+      && body?.agent_id === agentId && body.id === expected
+      && body.name === file.name && body.path === `/home/attachments/${agentId}/${expected}/${file.name}`
       && body.sha256 === createHash('sha256').update(file.bytes).digest('hex')
       && body.size_bytes === file.bytes.length && body.media_type === file.media,
     'browser_attachments_receipt_changed');
@@ -54,10 +60,7 @@ export async function composerAttachments({page, api, adapter, ingress, agentId,
     const [response] = await Promise.all([
       page.waitForResponse(reply => matches(reply.request(), file.name), {timeout}), action(),
     ]);
-    const request = response.request();
-    check(request.postDataBuffer()?.equals(file.bytes) === true && id(await request.headerValue('idempotency-key')),
-      'browser_attachments_upload_intent_changed');
-    const value = receipt(response, await response.json(), file);
+    const value = await receipt(response, response.request(), file);
     await row(file.name).getByRole('status').getByText('Ready', {exact: true}).waitFor({timeout});
     return value;
   };
@@ -73,7 +76,7 @@ export async function composerAttachments({page, api, adapter, ingress, agentId,
     interruptedUpload = (async () => {
       try {
         const response = await route.fetch({maxRedirects: 0, maxRetries: 0, timeout});
-        firstReceipt = receipt(response, await response.json(), chooser);
+        firstReceipt = await receipt(response, route.request(), chooser);
         await waitForProgress;
       } catch (error) {
         firstFailure = error;
@@ -142,17 +145,23 @@ export async function composerAttachments({page, api, adapter, ingress, agentId,
       ]);
       check(response.ok(), 'browser_attachments_send_refused');
       await page.getByText(answer, {exact: true}).waitFor({timeout: 90000});
-      const sequences = [];
+      const completedTurns = [];
       for (const am of [ingress, other(ingress)]) {
-        sequences.push(await poll(async () => {
+        completedTurns.push(await poll(async () => {
           const {body} = await api.rawRequest(am, 'GET', '/api/v1' + agent + '/transcript');
           check(body?.agent_id === agentId && Array.isArray(body.turns), 'browser_attachments_transcript_unbound');
           const matches = body.turns.filter(turn => turn.owner_message === submitted);
           check(matches.length <= 1, 'browser_attachments_turn_duplicated');
-          return matches[0]?.outcome?.type === 'completed' ? matches[0].turn_sequence : null;
-        }, Number.isSafeInteger, {timeout, code: 'browser_attachments_turn_missing'}));
+          return matches[0]?.outcome?.type === 'completed' ? matches[0] : null;
+        }, Boolean, {timeout, code: 'browser_attachments_turn_missing'}));
       }
-      check(sequences[0] === sequences[1], 'browser_attachments_turn_unbound');
+      for (const turn of completedTurns) {
+        check(Number.isSafeInteger(turn.turn_sequence) && Array.isArray(turn.agent_messages)
+          && turn.agent_messages.join('') === answer && Array.isArray(turn.messages)
+          && turn.messages.filter(message => message.role === 'assistant').map(message => message.content).join('') === answer,
+        'browser_attachments_answer_changed');
+      }
+      check(equal(...completedTurns), 'browser_attachments_completed_turn_changed');
       const oracle = await poll(() => adapter.oracle({caseId}), value => value.active_streams === 0,
         {timeout, code: 'browser_attachments_provider_still_active'});
       assertOracle(oracle, caseId, 1);
