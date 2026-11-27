@@ -218,7 +218,7 @@ async fn dormant_legacy_certification_handles_adjacent_large_rows_and_reports_by
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn two_certified_legacy_heads_above_the_payload_budget_can_pause() {
+async fn certified_legacy_heads_share_one_sandbox_byte_allowance() {
     let f = TestStore::open().await;
     let row_bytes = (MAX_LEGACY_BYTES / 2 + 100_000) as usize;
     let large_tail = |entries: &mut [AgentLogEntry]| {
@@ -251,36 +251,24 @@ async fn two_certified_legacy_heads_above_the_payload_budget_can_pause() {
         "certified"
     );
     f.commands();
-    assert_eq!(refusal(&f, &sandbox).await, None);
-    let commands = f.commands();
     assert_eq!(
-        commands
-            .iter()
-            .filter(|command| command.get_document("projection").is_ok())
-            .count(),
-        2
+        refusal(&f, &sandbox).await,
+        Some(InactivityPauseRefusal::LegacyLogProofAggregateBytes)
     );
+    let commands = f.commands();
     assert_eq!(
         commands
             .iter()
             .filter(|command| command.contains_key("find")
                 && command.get_document("projection").is_err())
             .count(),
-        2
-    );
-    assert_unchanged(&f.store, &sandbox).await;
-    assert_eq!(
-        automatic(&f, &sandbox).await,
-        SandboxMaintenanceOutcome::Scheduled
-    );
-    assert_eq!(
-        f.store
-            .sandbox_events(&sandbox.id, 0, 10)
-            .await
-            .unwrap()
-            .len(),
         1
     );
+    assert_eq!(
+        automatic(&f, &sandbox).await,
+        SandboxMaintenanceOutcome::NotEligible
+    );
+    assert_unchanged(&f.store, &sandbox).await;
     f.cleanup().await;
 }
 

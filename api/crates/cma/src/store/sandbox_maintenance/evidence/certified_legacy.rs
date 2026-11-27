@@ -9,7 +9,10 @@ use layer2_core::{
 
 use crate::store::agent_log_integrity::inactivity::{self, Preparation, Proof};
 
-use super::{scoped::CapturedActivities, ApplyError, ClientSession, MongoSandboxStore};
+use super::{
+    legacy_log_budget::MAX_LEGACY_BYTES, scoped::CapturedActivities, ApplyError, ClientSession,
+    MongoSandboxStore,
+};
 
 pub(super) type CertifiedHeads = BTreeMap<AgentId, SandboxAgentLogActivity>;
 
@@ -25,29 +28,9 @@ pub(in crate::store::sandbox_maintenance) async fn capture(
     budget_reason: InactivityPauseRefusal,
     session: &mut ClientSession,
 ) -> Result<Result<CertifiedHeads, Unproven>, ApplyError> {
-    // Validate at most one raw tail per live legacy Agent, with one 4 MiB
-    // allowance per tail. Keep only the content-free projection between reads.
-    // The sandbox-wide deadline bounds this work independently of Agent count.
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        capture_heads(store, agents, segmented, budget_reason, session),
-    )
-    .await
-    .unwrap_or_else(|_| {
-        Ok(Err(Unproven {
-            reason: InactivityPauseRefusal::LegacyLogProofTimeout,
-            next_agent: None,
-        }))
-    })
-}
-
-async fn capture_heads(
-    store: &MongoSandboxStore,
-    agents: &[Agent],
-    segmented: Option<&CapturedActivities>,
-    budget_reason: InactivityPauseRefusal,
-    session: &mut ClientSession,
-) -> Result<Result<CertifiedHeads, Unproven>, ApplyError> {
+    // Reserve from a single Sandbox allowance before reading any raw tail.
+    // Only the content-free activity projection survives each check.
+    let mut bytes_left = MAX_LEGACY_BYTES as usize;
     let mut heads = BTreeMap::new();
     let mut missing = false;
     let mut next_agent = None;
@@ -56,7 +39,7 @@ async fn capture_heads(
         if segmented.is_some_and(|sources| sources.contains(agent)) {
             continue;
         }
-        let proof = inactivity::current(store, agent, session).await?;
+        let proof = inactivity::current(store, agent, &mut bytes_left, session).await?;
         match proof {
             Proof::Latest(entry) => {
                 heads.insert(agent.id.clone(), entry);
@@ -68,11 +51,15 @@ async fn capture_heads(
                     next_agent = Some(Box::new(agent.clone()));
                 }
             }
-            Proof::Budget => {
+            Proof::ByteLimit | Proof::AggregateBytes => {
+                let reason = match proof {
+                    Proof::ByteLimit => InactivityPauseRefusal::LegacyLogProofByteLimit,
+                    _ => InactivityPauseRefusal::LegacyLogProofAggregateBytes,
+                };
                 return Ok(Err(Unproven {
-                    reason: InactivityPauseRefusal::LegacyLogProofByteLimit,
+                    reason,
                     next_agent: None,
-                }))
+                }));
             }
         }
     }

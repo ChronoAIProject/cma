@@ -83,13 +83,15 @@ impl Progress {
 pub(in crate::store) enum Proof {
     Missing,
     Preparing,
-    Budget,
+    ByteLimit,
+    AggregateBytes,
     Latest(SandboxAgentLogActivity),
 }
 
 pub(in crate::store) async fn current(
     store: &MongoSandboxStore,
     agent: &Agent,
+    bytes_left: &mut usize,
     session: &mut ClientSession,
 ) -> Result<Proof, TransactionLogError> {
     let row = legacy_row(store, agent, session).await?;
@@ -98,24 +100,23 @@ pub(in crate::store) async fn current(
     };
     match progress.state {
         Preparation::Pending => return Ok(Proof::Preparing),
-        Preparation::ByteLimit => return Ok(Proof::Budget),
+        Preparation::ByteLimit => return Ok(Proof::ByteLimit),
         Preparation::Certified => {}
     }
     tip::require_tip(store, agent, session).await?;
     // The structural audit pins the exact content as well as the position.
     // The same revision may still have locally damaged persisted BSON.
-    let mut anchor_bytes = PAGE_BYTES;
     let Some(entry) = anchor(
         store,
         agent,
         progress.through,
         progress.tail_hash,
-        &mut anchor_bytes,
+        bytes_left,
         session,
     )
     .await?
     else {
-        return Err(invalid().into());
+        return Ok(Proof::AggregateBytes);
     };
     Ok(Proof::Latest(SandboxAgentLogActivity {
         agent_id: entry.agent_id,

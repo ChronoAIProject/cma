@@ -122,7 +122,7 @@ pub enum InactivityPauseRefusal {
     LegacyLogBytes,
     LegacyLogProofPending,
     LegacyLogProofByteLimit,
-    LegacyLogProofTimeout,
+    LegacyLogProofAggregateBytes,
     OpenSession,
     SessionEvidenceUnclear,
     PendingWorkspaceWork,
