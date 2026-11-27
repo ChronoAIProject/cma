@@ -6,6 +6,8 @@ from migration_image_preflight import RunnerError
 
 POLICY_ENV = "CHRONO_TASK_EXPERIENCE_POLICY"
 ROLES = ("historical", "current", "candidate", "recovery")
+STAGE_ROLES = {"old-write": "historical", "new-read-old-write": "current",
+               "new-write": "candidate", "old-read-new-write": "recovery"}
 
 
 def policy_env(policy):
@@ -17,11 +19,8 @@ def policy_env(policy):
     return {"name": POLICY_ENV, "value": json.dumps(config, separators=(",", ":"))}
 
 
-def declared_artifacts(plan, old, new, policy, inspect):
+def declared_reader_artifacts(plan):
     readers = plan.get("readers")
-    selected = {role: old if role in ("historical", "recovery") else new for role in ROLES}
-    if readers is None and policy is None:
-        return selected
     if not isinstance(readers, list) or len(readers) != len(ROLES):
         raise RunnerError("release probe requires exactly four declared reader roles")
     declared = {}
@@ -35,6 +34,14 @@ def declared_artifacts(plan, old, new, policy, inspect):
         if not isinstance(artifact, dict) or set(artifact) != {"image", "source"}:
             raise RunnerError("release reader artifact is incomplete")
         declared[role] = artifact
+    return declared
+
+
+def declared_artifacts(plan, old, new, policy, inspect):
+    selected = {role: old if role in ("historical", "recovery") else new for role in ROLES}
+    if plan.get("readers") is None and policy is None:
+        return selected
+    declared = declared_reader_artifacts(plan)
     for role in ("historical", "candidate"):
         if declared[role] != {key: selected[role][key] for key in ("image", "source")}:
             raise RunnerError("release reader does not match the pinned input")
@@ -52,16 +59,17 @@ def declared_artifacts(plan, old, new, policy, inspect):
 
 def stage_schedule(aliases, artifacts, policy):
     stages = (
-        ("old-write", "historical-boot", "historical"),
-        ("new-read-old-write", "current-boot", "current"),
-        ("new-write", "candidate-boot" if policy is not None else None, "candidate"),
-        ("old-read-new-write", "rollback-boot", "recovery"),
+        ("old-write", "historical-boot"),
+        ("new-read-old-write", "current-boot"),
+        ("new-write", "candidate-boot" if policy is not None else None),
+        ("old-read-new-write", "rollback-boot"),
     )
-    return [
-        (stage, boot, aliases[role], artifacts[role],
-         None if policy is None else policy if role == "candidate" else "disabled")
-        for stage, boot, role in stages
-    ]
+    schedule = []
+    for stage, boot in stages:
+        role = STAGE_ROLES[stage]
+        schedule.append((stage, boot, aliases[role], artifacts[role],
+                         None if policy is None else policy if role == "candidate" else "disabled"))
+    return schedule
 
 
 def policy_container(image, policy):

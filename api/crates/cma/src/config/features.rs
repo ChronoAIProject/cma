@@ -62,6 +62,7 @@ pub(crate) struct FeatureFlags {
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
     pub native_retirement_capture_enabled: bool,
+    pub credential_retirement_receipts: bool,
     pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
@@ -214,6 +215,7 @@ impl FeatureFlags {
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
             native_retirement_capture_enabled: flag(lookup, gates::RETIREMENT_CAPTURE)?,
+            credential_retirement_receipts: flag(lookup, gates::CREDENTIAL_RETIREMENT_RECEIPTS)?,
             reviewed_sandbox_retirement_enabled: flag(
                 lookup,
                 "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",

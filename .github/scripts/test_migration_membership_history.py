@@ -16,7 +16,11 @@ from types import SimpleNamespace
 
 class HistoryTests(unittest.TestCase):
     def campaign(self, directory):
+        old = {'source': 'old', 'image': 'old-image'}
+        new = {'source': 'new', 'image': 'new-image'}
         return SimpleNamespace(output=Path(directory), active_reader={'pod': pod(), 'source': 'old'},
+                               reader_artifacts={'historical': old, 'current': new,
+                                                 'candidate': new, 'recovery': old},
                                reader_pods=Mock(return_value=ready_document()),
                                kubectl=Mock(side_effect=['', '', json.dumps(snapshot())]))
 
@@ -107,6 +111,24 @@ class HistoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'reader artifact changed'):
                 capture(campaign, 'n', 'mongo', STAGES[2], 'new', 'unrelated-image')
             campaign.kubectl.assert_not_called()
+
+    def test_distinct_release_roles_compare_bound_membership_snapshots(self):
+        with tempfile.TemporaryDirectory() as directory:
+            campaign = self.campaign(directory)
+            campaign.reader_artifacts['current'] = {'source': 'current', 'image': 'current-image'}
+            campaign.reader_artifacts['recovery'] = {'source': 'recovery', 'image': 'recovery-image'}
+            self.first(campaign)
+            self.advance(campaign, uid='current', source='current', ip='10.0.0.3')
+            capture(campaign, 'n', 'mongo', STAGES[1], 'current', 'current-image')
+            self.advance(campaign, uid='candidate', ip='10.0.0.4', now=45000)
+            capture(campaign, 'n', 'mongo', STAGES[2], 'new', 'new-image')
+            self.advance(campaign, uid='recovery', source='recovery', ip='10.0.0.5', now=65000)
+            with self.assertRaisesRegex(ValueError, 'reader artifact changed'):
+                capture(campaign, 'n', 'mongo', STAGES[3], 'recovery', 'old-image')
+            campaign.kubectl.assert_not_called()
+            result = capture(campaign, 'n', 'mongo', STAGES[3], 'recovery', 'recovery-image')
+            self.assertEqual(len(result['comparisons']), 3)
+            self.assertTrue(all(row['reader_replaced'] for row in result['comparisons']))
 
     def test_complete_four_stage_history_keeps_exact_membership_pod(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -26,6 +26,8 @@ mod identifiers;
 #[cfg(test)]
 mod nyxid_contract_tests;
 mod provided;
+mod retirement;
+pub use retirement::CredentialRetirementReceipt;
 mod scope_plan;
 use grant::minted_key_from_response;
 #[cfg(any(test, feature = "test-support"))]
