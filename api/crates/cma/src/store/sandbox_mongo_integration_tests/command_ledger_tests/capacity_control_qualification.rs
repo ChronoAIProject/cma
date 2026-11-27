@@ -167,6 +167,14 @@ async fn sample(control: Control, name: &str, client: &Client) -> (Duration, u32
     let (capacity, elapsed) = match control {
         Control::Stop => {
             let (store, agent, _, _) = composed(name, client).await;
+            let parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+            let workspace = ready_workspace(&parent, agent.workspace_id.as_str(), "project");
+            let (mut worktree, _) = worktree_and_agent(&parent.id);
+            worktree.id = agent.worktree_id.clone();
+            worktree.workspace_id = workspace.id.clone();
+            worktree.agent_id = Some(agent.id.clone());
+            store.create_workspace(workspace).await.unwrap();
+            store.create_worktree(worktree).await.unwrap();
             let capacity = Saturated::fill(store, name).await;
             let request = AgentStopRequest {
                 target: AgentControlTarget::from(&agent),
