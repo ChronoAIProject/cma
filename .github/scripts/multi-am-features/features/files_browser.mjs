@@ -4,7 +4,7 @@ import {withRestoration} from '../failure.mjs';
 
 const timeout = 15000;
 
-export async function browserFileCreation({page, api, ingress, agentId, recordFailure}) {
+export async function browserFileRoundtrip({page, api, ingress, agentId, recordFailure}) {
   check(id(agentId), 'browser_files_agent_required');
   const path = `/api/v1/agents/${agentId}/files`;
   const directory = 'ci-browser-' + randomUUID();
@@ -17,7 +17,7 @@ export async function browserFileCreation({page, api, ingress, agentId, recordFa
   check((await bothViews()).every(entry => !entry), 'browser_files_initial_directory_present');
   const dialog = page.getByRole('dialog', {name: 'Files', exact: true});
   const button = name => dialog.getByRole('button', {name, exact: true});
-  let folderSubmitted = false, folderAcknowledged = false;
+  let folderSubmitted = false, folderAcknowledged = false, folderDeleted = false;
   const create = async (folder, name, target, expected) => {
     await button(folder ? 'New folder' : 'New file').click({timeout});
     const field = dialog.getByRole('textbox', {name: folder ? 'Folder name' : 'File name', exact: true});
@@ -121,10 +121,62 @@ export async function browserFileCreation({page, api, ingress, agentId, recordFa
     await prompt.getByRole('button', {name: 'Confirm', exact: true}).click({timeout});
     await poll(() => preview.inputValue({timeout}), value => value === current,
       {timeout, interval: 100, code: 'browser_files_confirm_reload_used_stale_bytes'});
+    await deleteFiles({page, dialog, api, ingress, path, directory, file});
+    folderDeleted = true;
   }, async () => {
-    if (!folderSubmitted) return;
+    if (!folderSubmitted || folderDeleted) return;
     await removeFixtureDirectory({api, path, ingress, directory, acknowledged: folderAcknowledged});
   }, recordFailure);
+}
+
+async function deleteFiles({page, dialog, api, ingress, path, directory, file}) {
+  const peer = other(ingress);
+  const sibling = directory + '/retained.txt';
+  const write = {path: sibling, content_base64: Buffer.from('Retain until recursive deletion.').toString('base64')};
+  const {body: siblingReceipt} = await api.request(peer, 'POST', path, {direct: true, body: write});
+  check(siblingReceipt.path === sibling, 'browser_files_delete_sibling_unbound');
+  const read = (am, target, allowed) => api.request(am, 'GET', `${path}/content?path=${encodeURIComponent(target)}`,
+    {direct: true, allowed});
+  const button = name => dialog.getByRole('button', {name, exact: true});
+  const confirmation = (target, recursive) => dialog.getByRole('alert').filter({
+    hasText: `Delete /home/${target}${recursive ? ' and everything inside it' : ''}? This cannot be undone.`,
+  });
+  const confirmDelete = async (name, target, recursive) => {
+    await button(name).click({timeout});
+    const prompt = confirmation(target, recursive);
+    await prompt.waitFor({timeout});
+    const [response] = await Promise.all([
+      page.waitForResponse(reply => {
+        const url = new URL(reply.url());
+        return url.pathname === path && reply.request().method() === 'DELETE'
+          && url.searchParams.get('path') === target && url.searchParams.get('recursive') === String(recursive);
+      }, {timeout}),
+      prompt.getByRole('button', {name: 'Confirm', exact: true}).click({timeout}),
+    ]);
+    const body = await response.json();
+    check(response.ok() && body.path === target && body.deleted === true, 'browser_files_delete_receipt_changed');
+    await dialog.getByText('Deleted.', {exact: true}).waitFor({timeout});
+  };
+  await button('Delete file').click({timeout});
+  await confirmation(file, false).getByRole('button', {name: 'Cancel', exact: true}).click({timeout});
+  check((await read(peer, file, [200])).body.path === file, 'browser_files_cancel_deleted_target');
+  await confirmDelete('Delete file', file, false);
+  const filename = file.split('/').at(-1);
+  await button(filename).waitFor({state: 'hidden', timeout});
+  for (const am of [ingress, peer]) {
+    check((await read(am, file, [404])).body?.code === 'file_not_found', 'browser_files_deleted_file_still_visible');
+    const {body} = await read(am, sibling, [200]);
+    check(body.path === sibling && body.sha256 === siblingReceipt.sha256,
+      'browser_files_delete_changed_unselected_sibling');
+  }
+
+  await confirmDelete('Delete folder', directory, true);
+  await button('Refresh files').click({timeout});
+  await button(directory).waitFor({state: 'hidden', timeout});
+  for (const am of [ingress, peer]) {
+    check(!await findRootEntry(api, path, am, directory), 'browser_files_deleted_directory_still_visible');
+    check((await read(am, sibling, [404])).body?.code === 'file_not_found', 'browser_files_recursive_delete_left_child');
+  }
 }
 
 async function findRootEntry(api, path, am, directory) {

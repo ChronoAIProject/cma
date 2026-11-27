@@ -476,7 +476,7 @@
   },
   "cma-user.files.create-file": {
     "cases": [
-      "user.browser_file_creation"
+      "user.browser_file_roundtrip"
     ],
     "browser": true,
     "minimum_runs": 1,
@@ -488,7 +488,7 @@
   },
   "cma-user.files.create-directory": {
     "cases": [
-      "user.browser_file_creation"
+      "user.browser_file_roundtrip"
     ],
     "browser": true,
     "minimum_runs": 1,
@@ -500,7 +500,7 @@
   },
   "cma-user.files.edit": {
     "cases": [
-      "user.browser_file_creation"
+      "user.browser_file_roundtrip"
     ],
     "browser": true,
     "minimum_runs": 1,
@@ -521,11 +521,11 @@
   },
   "cma-user.files.delete": {
     "cases": [
-      "user.files_roundtrip"
+      "user.browser_file_roundtrip"
     ],
-    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
-    "minimum_runs": 3,
-    "routing": "non_owner",
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
     "phases": [
       "before_restart",
       "after_restart"

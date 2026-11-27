@@ -7,7 +7,7 @@ import {requestPacer} from './pacing.mjs';
 import {ExtendedAdminMatrix} from './features/admin_extended.mjs';
 import {ADMIN_PERMISSIONS} from './features/admin_matrix.mjs';
 import {userCases} from './features/user.mjs';
-import {browserFileCreation} from './features/files_browser.mjs';
+import {browserFileRoundtrip} from './features/files_browser.mjs';
 import {documentCases} from './features/documents.mjs';
 import {createDocumentAfterLostReply} from './features/document_creation_browser.mjs';
 import {documentEditAndConflict} from './features/document_edit_browser.mjs';
@@ -385,9 +385,9 @@ try {
                 await browserCase(am, iteration, 'user.agent_rename', () => agentRename({page, ingress: am, api: user,
                   agentId: context.record.agentId, ...transcriptWitness, recordFailure: (stage, error) =>
                     retainFailure(config.matrix_output, stage, error, {case: 'user.agent_rename', phase, iteration})}));
-                await browserCase(am, iteration, 'user.browser_file_creation', () => browserFileCreation({page,
+                await browserCase(am, iteration, 'user.browser_file_roundtrip', () => browserFileRoundtrip({page,
                   api: user, ingress: am, agentId: context.record.agentId, recordFailure: (stage, error) =>
-                    retainFailure(config.matrix_output, stage, error, {case: 'user.browser_file_creation', phase, iteration})}));
+                    retainFailure(config.matrix_output, stage, error, {case: 'user.browser_file_roundtrip', phase, iteration})}));
               });
             }
           }, 'user.agent_open');
