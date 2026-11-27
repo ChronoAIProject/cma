@@ -277,6 +277,7 @@ try {
   const revival = result.journey?.steps.find(s => s.name === 'ownerless_pause_revive_open' && s.verdict === 'PASS');
   const trigger = result.journey?.steps.find(s => s.name === 'trigger_origin_always_on_and_replay' && s.verdict === 'PASS');
   const recovery = result.journey?.steps.find(s => s.name === 'actual_owner_kill_and_recovery' && s.verdict === 'PASS');
+  const drain = result.journey?.steps.find(s => s.name === 'owner_drain_and_readiness' && s.verdict === 'PASS');
   const journeyVerdict = result.journey?.verdict === 'LOCAL_TWO_AM_JOURNEY_PASS' ? 'PASS' : 'FAIL';
   // This allowlist is the only suite content eligible for CI artifact upload.
   await writeFile(join(config.summary_dir, 'coverage.json'), JSON.stringify({
@@ -285,6 +286,9 @@ try {
     writer_coverage: result.writer_coverage,
     case_count: rows.length, non_owner_request_count: observations.length,
     owner_restart_pass: Boolean(recovery), owner_restart_replay: recovery?.replay ?? null,
+    owner_drain: drain ? {readiness_dropped: drain.readiness_dropped, process_still_live: drain.process_still_live,
+      peer_advanced: drain.peer_advanced, drain_ms: drain.drain_ms, takeover_ms: drain.takeover_ms,
+      useful_reads_during_restart: drain.useful_reads_during_restart} : null,
     trigger_owner_relinquishment: trigger?.owner_relinquishment ?? null,
     lifecycle_owner_relinquishments: rows.filter(row => row.case === 'writer.lifecycle_owner_relinquishment_browser'
       && row.verdict === 'PASS').map(row => ({phase: row.phase, ...row.owner_relinquishment})),

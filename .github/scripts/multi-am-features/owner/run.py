@@ -27,7 +27,7 @@ import legacy_manifests as old
 from login import login
 from publication_evidence import (prepared_publication_abort, prepared_schema_barrier, prepared_schema_race,
                                   prepared_schema_refusals, publication_evidence)
-from readiness_scaling import observe_never_ready, observe_scale
+from readiness_scaling import drain_owner, observe_never_ready, observe_scale
 from retirement_purge import retirement_purge
 from runtime_loss import remove_runtime_pod
 from title_evidence import title_effects, title_intent
@@ -53,6 +53,7 @@ class Fixture:
     preparedSchemaRefusals = prepared_schema_refusals
     retirementPurge = retirement_purge
     removeRuntimePod = remove_runtime_pod
+    drainOwner = drain_owner
     titleEffects = title_effects
     titleIntent = title_intent
 
@@ -262,28 +263,6 @@ class Fixture:
         if forward:self.client.stop(forward[0])
         self.record('owning_am_killed',owner=actual,container_id=cid,actual_container_exited=True)
         return {'killed_am':am,'actual_container_exited':True,'pod_uid':actual['pod_uid']}
-
-    def drainOwner(self, agentId=None, owner=None):
-        actual = self.ownerOf(agentId=agentId)
-        if actual is None or not isinstance(owner, dict) or any(
-                actual.get(key) != owner.get(key) for key in ('am', 'epoch', 'pod_uid', 'instance_id')):
-            raise RuntimeError('owner_changed_before_drain')
-        am = actual['am']
-        name = 'am-' + am + '-0'
-        if am in self.drained or am in self.killed:
-            raise RuntimeError('manager_already_disrupted')
-        if self.client.http(self.origins[am], 'GET', '/ready', timeout=3)[0] != 200:
-            raise RuntimeError('manager_not_ready_before_drain')
-        started = time.monotonic()
-        self.client.k(['exec', name, '--', '/usr/local/bin/cma', '--agent-manager-drain'], timeout=30)
-        status, body = self.client.http(self.origins[am], 'GET', '/ready', timeout=3)
-        if status != 503 or body.get('reason') not in ('membership', 'draining'):
-            raise RuntimeError('drain_readiness_predicate_still_serving')
-        pod = self.client.kjson(['get', 'pod', name, '-o', 'json'])
-        if pod['metadata']['uid'] != actual['pod_uid'] or pod['metadata'].get('deletionTimestamp'):
-            raise RuntimeError('drained_process_replaced_before_observation')
-        self.drained[am] = actual
-        return {'am': am, 'readiness': status, 'elapsed_ms': round((time.monotonic() - started) * 1000)}
 
     def restartDrained(self, am=None):
         if am not in self.drained:

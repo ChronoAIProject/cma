@@ -7,6 +7,32 @@ import urllib.error
 import urllib.parse
 
 
+def drain_owner(fixture, agentId=None, owner=None):
+    client = fixture.client
+    actual = fixture.ownerOf(agentId=agentId)
+    if actual is None or not isinstance(owner, dict) or any(
+            actual.get(key) != owner.get(key) for key in ('am', 'epoch', 'pod_uid', 'instance_id')):
+        raise RuntimeError('owner_changed_before_drain')
+    am = actual['am']
+    name = 'am-' + am + '-0'
+    if am in fixture.drained or am in fixture.killed:
+        raise RuntimeError('manager_already_disrupted')
+    origin = fixture.origins[am]
+    if client.http(origin, 'GET', '/ready', timeout=3)[0] != 200:
+        raise RuntimeError('manager_not_ready_before_drain')
+    started = time.monotonic()
+    client.k(['exec', name, '--', '/usr/local/bin/cma', '--agent-manager-drain'], timeout=30)
+    fixture.drained[am] = actual
+    status, body = client.http(origin, 'GET', '/ready', timeout=3)
+    live = client.http_raw(origin, 'GET', '/livez', timeout=3)[0]
+    pod = client.kjson(['get', 'pod', name, '-o', 'json'])
+    if pod['metadata']['uid'] != actual['pod_uid'] or pod['metadata'].get('deletionTimestamp'):
+        raise RuntimeError('drained_process_replaced_before_observation')
+    return {'am': am, 'readiness': status, 'liveness': live,
+            'drain_reason': isinstance(body, dict) and body.get('reason') in ('membership', 'draining'),
+            'elapsed_ms': round((time.monotonic() - started) * 1000)}
+
+
 def observe_scale(fixture):
     client = fixture.client
     name = 'two-am-readiness'

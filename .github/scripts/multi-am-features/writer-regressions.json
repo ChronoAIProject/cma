@@ -300,8 +300,7 @@
       "issues": "#2159/#2146",
       "feature": "Readiness and HPA",
       "requirement": "Never-Ready manager acquires no Agent; shared readiness predicate drops immediately on termination; serving peer owns any touched Agent within approved drain bound. Existing native65 PASS is not an integrated image PASS.",
-      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
-      "remaining": "Hosted execution of the never-Ready third Manager and HPA 2-to-3-to-2 cases with a live Agent.",
+      "status": "COMPLETE",
       "trigger": "Reuse existing never-Ready third-AM and early SIGTERM/delete tests plus final exact-image HPA2->3->2 journey",
       "required_assertions": [
         {

@@ -5,7 +5,7 @@ import {join} from 'node:path';
 import test from 'node:test';
 import {drainOwnerCase} from './readiness.mjs';
 
-async function fixture(t, {readyAfterDrain = 503, peerCanWrite = true} = {}) {
+async function fixture(t, {readyAfterDrain = 503, liveAfterDrain = 200, peerCanWrite = true} = {}) {
   const output = await mkdtemp(join(tmpdir(), 'cma-fixture-'));
   t.after(() => rm(output, {recursive: true, force: true}));
   const agentId = 'test-agent';
@@ -19,7 +19,7 @@ async function fixture(t, {readyAfterDrain = 503, peerCanWrite = true} = {}) {
     drainOwner: async ({owner: requested}) => {
       assert.deepEqual(requested, original);
       calls.push('drain');
-      return {am: 'a', readiness: readyAfterDrain, elapsed_ms: 10};
+      return {am: 'a', readiness: readyAfterDrain, liveness: liveAfterDrain, drain_reason: true, elapsed_ms: 10};
     },
     restartDrained: async input => {
       assert.deepEqual(input, {am: 'a'});
@@ -52,9 +52,19 @@ test('the peer writes under a new epoch and serves while the drained manager res
   const context = await fixture(t);
   const result = await drainOwnerCase(context);
   assert.equal(result.peer_advanced, true);
+  assert.equal(result.process_still_live, true);
+  assert.equal(result.drain_ms, 10);
+  assert(Number.isSafeInteger(result.takeover_ms) && result.takeover_ms <= 65000);
   assert(result.useful_reads_during_restart > 0);
   assert.equal(context.config.ams.a, 'http://127.0.0.1:9999');
   assert(context.calls.lastIndexOf('PATCH') > context.calls.indexOf('restart'));
+});
+
+test('termination alone cannot satisfy the readiness transition', async t => {
+  const context = await fixture(t, {liveAfterDrain: 503});
+  await assert.rejects(drainOwnerCase(context), /manager_drain_bound/);
+  assert(context.calls.includes('restart'));
+  assert(!context.calls.includes('PATCH'));
 });
 
 test('a failed readiness transition still restarts the drained manager', async t => {

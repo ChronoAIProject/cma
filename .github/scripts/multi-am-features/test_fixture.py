@@ -24,6 +24,28 @@ from readiness_scaling import observe_never_ready, observe_scale
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_drain_records_readiness_and_liveness_on_the_original_process(self):
+        fixture = Fixture.__new__(Fixture)
+        fixture.drained, fixture.killed = {}, {}
+        fixture.origins = {'a': 'http://127.0.0.1:1234'}
+        owner = {'am': 'a', 'epoch': 3, 'pod_uid': 'original-pod', 'instance_id': 'first'}
+        fixture.ownerOf = Mock(return_value=owner)
+        fixture.client = Mock()
+        fixture.client.http.side_effect = [(200, {}), (503, {'reason': 'draining'})]
+        fixture.client.http_raw.return_value = (200, b'')
+        fixture.client.kjson.return_value = {'metadata': {'uid': 'original-pod'}}
+        result = fixture.drainOwner('fixture-agent', owner)
+        self.assertEqual({key: result[key] for key in ('readiness', 'liveness', 'drain_reason')},
+                         {'readiness': 503, 'liveness': 200, 'drain_reason': True})
+        self.assertEqual(fixture.drained, {'a': owner})
+        fixture.client.http_raw.assert_called_once_with(fixture.origins['a'], 'GET', '/livez', timeout=3)
+
+        fixture.drained.clear()
+        fixture.client.http.side_effect = [(200, {}), (503, {'reason': 'draining'})]
+        fixture.client.kjson.return_value = {'metadata': {'uid': 'replacement-pod'}}
+        with self.assertRaisesRegex(RuntimeError, 'drained_process_replaced'):
+            fixture.drainOwner('fixture-agent', owner)
+
     def test_fixture_cleanup_failures_preserve_the_main_result_and_remove_the_cluster(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / 'results'
