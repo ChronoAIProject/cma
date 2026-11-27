@@ -62,6 +62,11 @@ impl IntoResponse for AuthoringProblem {
                 "profile_skills_unavailable",
                 "The owner-visible skill catalog is unavailable.",
             ),
+            ProfileAuthoringError::SkillsAuthorizationRequired => (
+                StatusCode::FORBIDDEN,
+                "skill_catalog_authorization_required",
+                "The current credential requires service authorization to read the skill catalog.",
+            ),
             ProfileAuthoringError::RepositoryUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "repository_unavailable",
