@@ -15,6 +15,7 @@ const idPattern = /^[a-z][a-z0-9-]{0,95}$/;
 const imagePattern = /^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?\/)+[a-z0-9][a-z0-9._\/-]*@sha256:[a-f0-9]{64}$/;
 const roles = ['historical', 'current', 'candidate', 'recovery'];
 const policies = ['retained', 'disabled', 'enabled'];
+const maxCells = 4096;
 const requiredChecks = {
   accept: ['decode', 'replay', 'restart', 'takeover', 'identity_preserved', 'writer_policy'],
   refuse: ['refused_before_traffic', 'refused_before_write', 'identity_preserved'],
@@ -57,10 +58,9 @@ export function validatePlan(plan) {
   artifact(plan.candidate);
   const component = plan.candidate.image.split('@')[0];
   bounded(plan.readers, 32);
-  // Inventory currently contains 160 collections. Keep one fixture per
-  // collection (plus policy variants) instead of silently truncating it.
-  bounded(plan.fixtures, 512);
-  bounded(plan.cells, 4096);
+  // Every reader must exercise every fixture within the same cell budget.
+  bounded(plan.fixtures, Math.floor(maxCells / plan.readers.length));
+  bounded(plan.cells, maxCells);
   unique(plan.readers.map(row => row.id));
   unique(plan.fixtures.map(row => row.id));
   unique(plan.cells.map(row => row.id));
@@ -120,7 +120,7 @@ export function validateEvidence(plan, planHash, evidence, readArtifact) {
   assert.match(evidence.configuration_sha256, hashPattern);
   const start = timestamp(evidence.started_at), end = timestamp(evidence.finished_at);
   assert(end >= start);
-  bounded(evidence.cells, 4096);
+  bounded(evidence.cells, maxCells);
   unique(evidence.cells.map(row => row.id));
   assert.equal(evidence.cells.length, plan.cells.length);
   for (const row of evidence.cells) {
