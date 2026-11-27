@@ -38,6 +38,13 @@ def success():
 
 
 class BootObservationTests(unittest.TestCase):
+    def test_startup_accepts_only_declared_repository_and_canonical_alias(self):
+        canonical = pod(ready=True, image='docker.io/library/' + IMAGE + ':latest')
+        self.assertEqual(evaluate(stream(('ADDED', canonical)), set(), SELECTED, IMAGE, CONFIG, 'before')['failed_boots'], 0)
+        foreign = pod(ready=True, image='example.invalid/other/' + IMAGE + ':latest')
+        with self.assertRaisesRegex(BootObservationError, 'unexpected API image'):
+            evaluate(stream(('ADDED', foreign)), set(), SELECTED, IMAGE, CONFIG, 'before')
+
     def test_exact_manifest_is_allowed_and_embedded_config_is_rejected(self):
         image = 'example.invalid/api@sha256:' + 'b'*64
         for image_id in (image, image.split('@')[1], 'docker-pullable://'+image, 'containerd://'+CONFIG):
