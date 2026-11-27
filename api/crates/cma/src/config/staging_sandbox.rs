@@ -5,7 +5,7 @@ use layer2_core::SandboxId;
 const DROP_OPEN_REPLY: &str = "CHRONO_STAGING_DROP_ACP_OPEN_REPLY_FOR_SANDBOX";
 const PARK_RUNTIME_UPDATE: &str = "CHRONO_STAGING_PARK_RUNTIME_UPDATE_FOR_SANDBOX";
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) struct StagingSandboxControls {
     pub open_reply_loss: Option<String>,
     pub park_runtime_update: Option<SandboxId>,
