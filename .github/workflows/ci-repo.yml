@@ -31,6 +31,7 @@ jobs:
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'staging_cd_*_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/release_candidate_packet_tests.py
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/data_qualification_tests.py
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_retry_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_artifact_download_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'runtime_image_*tests.py'
