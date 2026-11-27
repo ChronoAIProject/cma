@@ -197,6 +197,40 @@ export async function gatewayDocumentation(page) {
   await account(page).waitFor({timeout});
 }
 
+export async function gatewayNavigation(page, {agentId, sandboxId}, owner) {
+  check(id(agentId) && id(sandboxId), 'browser_gateway_agent_lineage_required');
+  const resource = '/agents/' + agentId;
+  const service = name => page.getByRole('button', {name: 'Service: ' + name, exact: true});
+  const agentActions = page.getByRole('button', {name: 'More Agent actions', exact: true});
+  await page.goto(resource, {waitUntil: 'domcontentloaded', timeout});
+  await service('Agent Manager').waitFor({timeout});
+  await agentActions.waitFor({timeout});
+  await browserSession(page, 200, owner);
+
+  await page.getByRole('button', {name: 'Search', exact: true}).click({timeout});
+  await page.getByRole('combobox', {name: 'Search commands'}).fill('Event Gateway', {timeout});
+  await page.getByRole('option', {name: 'Event Gateway', exact: true}).click({timeout});
+  await page.waitForURL(url => url.pathname === '/event-gateway', {timeout});
+  await service('Event Gateway').waitFor({timeout});
+  await browserSession(page, 200, owner);
+
+  await service('Event Gateway').click({timeout});
+  await page.getByRole('menuitemradio', {name: 'Agent Manager', exact: true}).click({timeout});
+  await service('Agent Manager').waitFor({timeout});
+  if (new URL(page.url()).pathname !== resource) {
+    await page.locator(`[role="treeitem"][data-node-id="agent:${agentId}"]:visible a[href="${resource}"]`)
+      .click({timeout});
+  }
+  await page.waitForURL(url => url.pathname === resource, {timeout});
+  await agentActions.waitFor({timeout});
+  await browserSession(page, 200, owner);
+  const response = await page.request.get('/api/v1' + resource, {maxRedirects: 0, timeout});
+  check(response.ok(), 'browser_gateway_returned_agent_unavailable');
+  const detail = await response.json();
+  check(detail.id === agentId && detail.sandbox?.id === sandboxId && detail.status === 'ready',
+    'browser_gateway_returned_agent_lineage_changed');
+}
+
 export async function legacyNavigation(page) {
   const visit = path => page.goto(path, {waitUntil: 'domcontentloaded', timeout});
   const canonical = path => page.waitForURL(url => url.pathname === path, {timeout});

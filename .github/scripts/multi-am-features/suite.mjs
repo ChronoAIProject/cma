@@ -33,7 +33,7 @@ import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
 import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_custody.mjs';
 import {competingRenames, renameAfterPublicationAbort} from './features/rename_contention.mjs';
 import {accountAppearance, accountBuildVersion, accountDocumentation, accountSignIn, accountSignOut,
-  accountTextSize, gatewayDocumentation, legacyNavigation} from './features/account_browser.mjs';
+  accountTextSize, gatewayDocumentation, gatewayNavigation, legacyNavigation} from './features/account_browser.mjs';
 import {commandSearch, taskNavigation} from './features/task_navigation.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
@@ -122,7 +122,8 @@ async function accountBrowserCases(ams, witness) {
     ['user.account_build_version', page => accountBuildVersion(page, config.expected_api_source)],
     ['user.account_documentation', page => accountDocumentation(page, witness.agentId)],
     ['user.navigation_legacy_routes', legacyNavigation],
-    ['user.navigation_tasks', page => taskNavigation(page, witness)]];
+    ['user.navigation_tasks', page => taskNavigation(page, witness)],
+    ['user.navigation_eg_transition', page => gatewayNavigation(page, witness, config.owner_id)]];
   if (config.eg_origin) cases.push(['eg.public_documentation', gatewayDocumentation]);
   async function exercise(am, iteration, name, run) {
     const start = performance.now();
