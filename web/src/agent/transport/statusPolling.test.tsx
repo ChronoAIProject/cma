@@ -157,20 +157,25 @@ it('uses a slow fallback for an empty active queue and stays idle after the turn
   hook.unmount();
 });
 
-it('bounds stream-driven queue reads while preserving both fresh authorization checks', async () => {
+it('keeps the empty queue cadence under stream hints and refreshes after submission', async () => {
   const h = fixture();
   const hook = renderHook(
-    ({ revision }) => useQueuedInputs(h.session, true, true, revision, unchangedIdentity),
-    { initialProps: { revision: '0' } },
+    ({ revision, request }) =>
+      useQueuedInputs(h.session, true, true, revision, unchangedIdentity, request),
+    { initialProps: { revision: '0', request: 0 } },
   );
   await advance(0);
   for (let n = 1; n <= 300; n++) {
-    hook.rerender({ revision: String(n) });
+    hook.rerender({ revision: String(n), request: 0 });
     await advance(200);
   }
-  expect(h.listQueued.mock.calls.length).toBeGreaterThanOrEqual(30);
-  expect(h.listQueued.mock.calls.length).toBeLessThanOrEqual(31);
-  expect(h.currentUser).toHaveBeenCalledTimes(2 * h.listQueued.mock.calls.length);
+  expect(h.listQueued).toHaveBeenCalledTimes(7);
+  expect(h.currentUser).toHaveBeenCalledTimes(14);
+  h.listQueued.mockImplementation(async () => json(queuedPage('New queued message')));
+  hook.rerender({ revision: '300', request: 1 });
+  await advance(100);
+  expect(h.listQueued).toHaveBeenCalledTimes(8);
+  expect(hook.result.current.items[0]?.input).toBe('New queued message');
   expect(h.post).not.toHaveBeenCalled();
   hook.unmount();
 });

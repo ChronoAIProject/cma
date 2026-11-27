@@ -9,7 +9,7 @@ const runningLimit = 15_000;
 const idleDelay = 30_000;
 
 export function observeAccessRequests(options: {
-  readonly running: boolean;
+  readonly running: () => boolean;
   readonly read: (signal: AbortSignal) => Promise<readonly AgentAccessRequest[]>;
   readonly publish: (requests: readonly AgentAccessRequest[]) => void;
   readonly failed: (error: unknown) => void;
@@ -22,7 +22,11 @@ export function observeAccessRequests(options: {
       try {
         const requests = await options.read(signal);
         signal.throwIfAborted();
-        const summary = JSON.stringify([...requests].sort((a, b) => a.id.localeCompare(b.id)));
+        const running = options.running();
+        const summary = JSON.stringify([
+          running,
+          [...requests].sort((a, b) => a.id.localeCompare(b.id)),
+        ]);
         unchanged = previous === summary ? unchanged + 1 : 0;
         previous = summary;
         failures = 0;
@@ -32,10 +36,12 @@ export function observeAccessRequests(options: {
         );
         const next = pending
           ? activeDelay
-          : options.running
+          : running
             ? Math.min(activeDelay * 2 ** Math.min(unchanged, 3), runningLimit)
             : idleDelay;
-        return { next, cooldown: activeDelay };
+        // Conversation events are hints, including ordinary text and tool
+        // updates. Keep them within the current polling cadence.
+        return { next, cooldown: next };
       } catch (error) {
         if (signal.aborted) return undefined;
         options.failed(error);
