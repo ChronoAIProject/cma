@@ -3,7 +3,10 @@
 (async (scope, admin, d) => {
   const marker = 'ci_prepared_schema_race';
   const schema = 'document_schema_version';
-  const successor = NumberLong('999');
+  const cleanup = 'owned_workspace_cleanup_admission_v1';
+  const schemaChange = scope.barrier === 'worktree_schema';
+  const field = schemaChange ? schema : cleanup;
+  const successor = schemaChange ? NumberLong('999') : true;
   const operationId = scope.operationId;
 
   async function lineage(database) {
@@ -32,6 +35,7 @@
     return {
       agentId: agent._id, sandboxId: sandbox._id,
       schema: Number(tree[schema]), state: agent.status, step: agent.record.work.step,
+      cleanup_marked: Object.hasOwn(tree, cleanup),
       receipt_count: agent.record.work.receipts.length,
       conversation_unpublished: agent.record.conversation.conversation_id == null,
       ready_fences_absent: [sandbox, workspace, tree, reservation]
@@ -70,13 +74,15 @@
       const rows = await lineage(d);
       if (rows && await currentUpdate(rows)) {
         const before = proof(rows);
-        if (!pending(before) || before.schema !== 1 || rows.tree.status !== 'creating') {
+        if (!pending(before) || before.schema !== 1 || before.cleanup_marked || rows.tree.status !== 'creating') {
           throw Error('prepared_schema_race_startup_precondition');
         }
         const changed = await d.worktrees.updateOne({_id: rows.tree._id, revision: rows.tree.revision,
           [schema]: rows.tree[schema], [marker]: {$exists: false},
+          [cleanup]: {$exists: false},
           agent_prepared_open_ready_fence: {$exists: false}},
-        {$set: {[schema]: successor, [marker]: {operation: operationId, previous: rows.tree[schema]}}}, {maxTimeMS: 700});
+        {$set: {[field]: successor, [marker]: {operation: operationId, barrier: scope.barrier,
+          previous: rows.tree[schema]}}}, {maxTimeMS: 700});
         if (changed.modifiedCount !== 1) throw Error('prepared_schema_race_concurrent_write_missed');
         return before;
       }
@@ -90,9 +96,14 @@
     try {
       await session.startTransaction({readConcern: {level: 'snapshot'}});
       const rows = await lineage(session.getDatabase(d.getName()));
-      if (!rows || rows.tree[marker]?.operation !== operationId) throw Error('prepared_schema_race_marker_missing');
+      if (!rows || rows.tree[marker]?.operation !== operationId || rows.tree[marker]?.barrier !== scope.barrier) {
+        throw Error('prepared_schema_race_marker_missing');
+      }
       const value = proof(rows);
-      if (value.schema !== Number(successor) || !pending(value)) throw Error('prepared_schema_race_partial_publication');
+      if (value.schema !== (schemaChange ? Number(successor) : 1)
+          || value.cleanup_marked !== !schemaChange || !pending(value)) {
+        throw Error('prepared_schema_race_partial_publication');
+      }
       return value;
     } finally {
       await session.endSession();
@@ -104,10 +115,14 @@
       sandbox_id: {$in: scope.reservations}}).limit(2).toArray();
     if (!rows.length) return {restored: 0};
     const [tree] = rows;
-    if (rows.length !== 1 || Number(tree[marker]?.previous) !== 1) throw Error('prepared_schema_race_restore_custody');
-    const restored = await d.worktrees.updateOne({_id: tree._id, [schema]: successor,
-      [`${marker}.operation`]: operationId},
-    {$set: {[schema]: tree[marker].previous}, $unset: {[marker]: ''}});
+    if (rows.length !== 1 || Number(tree[marker]?.previous) !== 1 || tree[marker]?.barrier !== scope.barrier) {
+      throw Error('prepared_schema_race_restore_custody');
+    }
+    const update = schemaChange
+      ? {$set: {[schema]: tree[marker].previous}, $unset: {[marker]: ''}}
+      : {$unset: {[cleanup]: '', [marker]: ''}};
+    const restored = await d.worktrees.updateOne({_id: tree._id, [field]: successor,
+      [`${marker}.operation`]: operationId, [`${marker}.barrier`]: scope.barrier}, update);
     if (restored.modifiedCount !== 1) throw Error('prepared_schema_race_restore_conflict');
     return {restored: 1};
   }

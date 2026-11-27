@@ -77,8 +77,9 @@ test('prepared coverage requires the scoped abort, both ingress steps and a comp
   const group = registry.cases.find(row => row.id === 'SW13');
   const abort = registry.cases.find(row => row.id === 'SW05');
   const refusal = registry.cases.find(row => row.id === 'SW06');
+  const cases = new Set([group, abort, refusal].flatMap(row => row.required_assertions.map(assertion => assertion.case)));
   const journey = {verdict: 'LOCAL_PREPARED_TWO_AM_PASS',
-    steps: [...group.required_assertions, ...refusal.required_assertions].map(row => ({name: row.case, verdict: 'PASS'}))};
+    steps: [...cases].map(name => ({name, verdict: 'PASS'}))};
   const evaluate = () => writerCoverage(registry, [], journey, 'prepared');
   assert.equal(evaluate().groups[2].verdict, 'BLOCKED');
   group.status = 'COMPLETE';
@@ -90,10 +91,14 @@ test('prepared coverage requires the scoped abort, both ingress steps and a comp
   journey.verdict = 'LOCAL_TWO_AM_JOURNEY_PASS';
   assert.equal(evaluate().verdict, 'FAIL');
   journey.verdict = 'LOCAL_PREPARED_TWO_AM_PASS';
-  journey.steps.pop();
-  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['PASS', 'NOT_RUN', 'PASS']);
-  journey.steps.pop();
-  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['NOT_RUN', 'NOT_RUN', 'NOT_RUN']);
+  for (const [missing, expected] of [
+    ['prepared_worktree_cleanup_refusal', ['PASS', 'PASS', 'NOT_RUN']],
+    ['prepared_worktree_schema_refusal', ['PASS', 'NOT_RUN', 'NOT_RUN']],
+    ['prepared_create_on_b', ['NOT_RUN', 'PASS', 'NOT_RUN']],
+  ]) {
+    journey.steps = [...cases].filter(name => name !== missing).map(name => ({name, verdict: 'PASS'}));
+    assert.deepEqual(evaluate().groups.map(row => row.verdict), expected);
+  }
 });
 
 test('lifecycle Always on coverage requires browser execution on both sides of restart', async () => {

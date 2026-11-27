@@ -134,6 +134,9 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
       await context.step('prepared_worktree_schema_refusal', () => preparedSchemaRefusal({...context,
         recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
           {case: 'prepared_worktree_schema_refusal'})}));
+      await context.step('prepared_worktree_cleanup_refusal', () => preparedSchemaRefusal({...context,
+        barrier: 'worktree_cleanup', recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
+          {case: 'prepared_worktree_cleanup_refusal'})}));
     }, () => browser?.close(), (stage, error) => retainFailure(config.output_dir, stage, error,
       {case: 'prepared_browser'}));
   }});
@@ -148,11 +151,11 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
     steps: journey.steps.map(({name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
       atomic_publication_fence_count, startup_receipt_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
-      prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused}) => ({
+      prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused}) => ({
       name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
       atomic_publication_fence_count, startup_receipt_count, browser_starting_read, browser_ready_read, browser_reply_sha256,
-      prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused,
+      prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
     })),
   }, null, 2) + '\n', {flag: 'wx', mode: 0o600});
   process.exitCode = verdict === 'PASS' ? 0 : 1;

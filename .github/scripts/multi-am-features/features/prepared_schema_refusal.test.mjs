@@ -2,26 +2,31 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {preparedSchemaRefusal} from './prepared_schema_refusal.mjs';
 
-function fixture({aborts = 1, refusals = {a: 1, b: 0}, partial = false, restoreFails = false} = {}) {
+function fixture({aborts = 1, refusals = {a: 1, b: 0}, partial = false, restoreFails = false,
+  barrier = 'worktree_schema'} = {}) {
   const calls = [];
   const kept = [];
   const record = {operationId: 'op-1'};
   const owner = {agent_id: 'agent-1', am: 'a', pod_uid: 'pod-1', epoch: 12};
   const before = {agentId: 'agent-1', sandboxId: 'sandbox-1', schema: 1, receipt_count: 2};
-  return {calls, kept, adapter: {
+  return {calls, kept, barrier, adapter: {
     preparedReady: async () => [before.sandboxId],
     preparedSchemaBarrier: async ({arm}) => calls.push(arm ? 'arm' : 'disarm'),
-    preparedSchemaRace: async ({action, operationId, reservations}) => {
-      assert.deepEqual([operationId, reservations], ['op-1', ['sandbox-1']]);
+    preparedSchemaRace: async scope => {
+      const {action, ...lineage} = scope;
+      assert.deepEqual(lineage, {operationId: 'op-1', reservations: ['sandbox-1'], barrier});
       calls.push(action);
       if (action === 'inject') return before;
-      if (action === 'read') return {...before, schema: 999, conversation_unpublished: true,
-        ready_fences_absent: !partial};
+      if (action === 'read') return {...before, schema: barrier === 'worktree_schema' ? 999 : before.schema,
+        cleanup_marked: barrier === 'worktree_cleanup', conversation_unpublished: true, ready_fences_absent: !partial};
       if (restoreFails) throw Error('restore_failure');
       return {restored: 1};
     },
     ownerOf: async () => owner,
-    preparedSchemaRefusals: async () => refusals,
+    preparedSchemaRefusals: async scope => {
+      assert.deepEqual(scope, {agentId: before.agentId, barrier});
+      return refusals;
+    },
     publicationEvidence: async () => ({a: {known_aborted_cas: {publish_connection: aborts}}, b: {}}),
   }, admit: async () => {calls.push('admit'); return record;},
   cleanup: async value => {assert.equal(value, record); calls.push('cleanup');},
@@ -36,6 +41,15 @@ test('a live prepared Worktree refusal proves the old owner and cleans up the fi
   assert.equal(result.startup_receipt_count, 2);
   assert.equal(result.owner_epoch, 12);
   assert.doesNotMatch(JSON.stringify(result), /agent-1|sandbox-1/);
+});
+
+test('a live prepared cleanup marker refuses publication without changing the Worktree schema', async () => {
+  const context = fixture({barrier: 'worktree_cleanup'});
+  const result = await preparedSchemaRefusal(context);
+  assert.equal(result.prepared_cleanup_refused, true);
+  assert.equal(result.prepared_schema_refused, false);
+  assert.equal(result.startup_receipt_count, 2);
+  assert.deepEqual(context.calls, ['arm', 'admit', 'inject', 'disarm', 'read', 'restore', 'disarm', 'cleanup']);
 });
 
 test('the schema case fails on a second abort, an unrelated refusal or a partial publication', async () => {
