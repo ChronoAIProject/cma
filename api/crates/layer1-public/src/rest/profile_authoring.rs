@@ -88,7 +88,7 @@ pub(super) async fn services(
     responses((status = 200, body = AuthoringSkillPage),
     (status = 400, description = "invalid_profile_authoring_query", body = super::ProblemDocument, content_type = "application/problem+json"),
     (status = 401, description = "not_authenticated", body = super::ProblemDocument, content_type = "application/problem+json"),
-    (status = 403, description = "Requires UseOwnSandboxes or ManageOwnProfiles for the caller’s own catalog", body = super::ProblemDocument, content_type = "application/problem+json"),
+    (status = 403, description = "Requires UseOwnSandboxes or ManageOwnProfiles for the caller’s own catalog, plus service authorization (skill_catalog_authorization_required).", body = super::ProblemDocument, content_type = "application/problem+json"),
     (status = 503, description = "profile_skills_unavailable", body = super::ProblemDocument, content_type = "application/problem+json")))]
 pub(super) async fn skills(
     State(service): State<Arc<ProfileAuthoringService>>,

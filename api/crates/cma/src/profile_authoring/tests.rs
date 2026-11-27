@@ -9,6 +9,9 @@ use serde_json::{json, Value};
 
 use super::*;
 
+#[path = "catalog_authorization_tests.rs"]
+mod catalog_authorization;
+
 const SKILLS: &str = "/api/v1/proxy/s/ornn-api/api/v1";
 const SHA: &str = "0123456789abcdef0123456789abcdef01234567";
 const TAG_SHA: &str = "abcdef0123456789abcdef0123456789abcdef01";

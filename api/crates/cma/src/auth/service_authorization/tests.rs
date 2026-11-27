@@ -16,8 +16,12 @@ use crate::auth::{
     RequestAuth,
 };
 
+#[path = "catalog_scope.rs"]
+mod catalog_scope;
+
 struct SyntheticGrants {
     issuer: Url,
+    required: BTreeSet<ServiceId>,
     missing: Mutex<BTreeSet<ServiceId>>,
     challenge: Mutex<String>,
     account: Mutex<Option<bool>>,
@@ -66,10 +70,7 @@ impl GrantAuthority for SyntheticGrants {
     ) -> Result<Option<BTreeSet<ServiceId>>, StoreError> {
         assert_eq!(intent.subject.as_str(), "owner");
         assert_eq!(intent.issuer, self.issuer.as_str());
-        assert_eq!(
-            intent.required,
-            [ServiceId::new("api-drive"), ServiceId::new("api-github")].into()
-        );
+        assert_eq!(intent.required, self.required);
         if self.unavailable.load(Ordering::SeqCst) {
             return Err(StoreError::Unavailable("synthetic outage".into()));
         }
@@ -83,16 +84,22 @@ impl GrantAuthority for SyntheticGrants {
         state: &str,
         s256_challenge: &str,
     ) -> Result<Option<Url>, StoreError> {
-        assert_eq!(intent.requested, [ServiceId::new("api-github")].into());
+        assert_eq!(intent.requested, *self.missing.lock().await);
         assert_eq!(
             intent.redirect_uri,
             "https://app.example/auth/service-authorization/callback"
         );
         *self.challenge.lock().await = s256_challenge.into();
+        let scope = intent
+            .requested
+            .iter()
+            .map(ServiceId::as_str)
+            .collect::<Vec<_>>()
+            .join(" ");
         let mut url = self.issuer.join("/approve").unwrap();
         url.query_pairs_mut().extend_pairs([
             ("state", state),
-            ("scope", "api-github"),
+            ("scope", scope.as_str()),
             ("code_challenge", s256_challenge),
             ("code_challenge_method", "S256"),
         ]);
@@ -181,10 +188,15 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
+        Self::with_services(&["api-drive", "api-github"], &["api-github"]).await
+    }
+
+    async fn with_services(required: &[&str], missing: &[&str]) -> Self {
         let store = Arc::new(MemoryAuthStore::default());
         let grants = Arc::new(SyntheticGrants {
             issuer: Url::parse("https://provider.example/").unwrap(),
-            missing: Mutex::new([ServiceId::new("api-github")].into()),
+            required: required.iter().copied().map(ServiceId::new).collect(),
+            missing: Mutex::new(missing.iter().copied().map(ServiceId::new).collect()),
             challenge: Mutex::new(String::new()),
             account: Mutex::new(Some(true)),
             unavailable: AtomicBool::new(false),
