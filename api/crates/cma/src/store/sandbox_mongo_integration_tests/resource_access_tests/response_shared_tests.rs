@@ -115,6 +115,10 @@ fn events(bytes: &[u8]) -> Vec<Value> {
 async fn shared_response_snapshot_remains_available_during_observer_handoff() {
     let (f, id) = retained(100).await;
     let replicas = servers(&f).await;
+    let initial_slots: Vec<_> = replicas
+        .iter()
+        .map(|replica| replica.relay.available_test_slots())
+        .collect();
     let destination = replicas[0]
         .observation
         .destination(&f.agent.id, &f.agent.created_at)
@@ -151,7 +155,7 @@ async fn shared_response_snapshot_remains_available_during_observer_handoff() {
         .unwrap();
     assert_eq!(denied.status(), reqwest::StatusCode::NOT_FOUND);
     assert!(!denied.text().await.unwrap().contains("retained answer"));
-    observation_capacity::available(&replicas, &[100, 100]).await;
+    observation_capacity::available(&replicas, &initial_slots).await;
     drop(replicas);
     f.client.database(&f.name).drop().await.unwrap();
 }
