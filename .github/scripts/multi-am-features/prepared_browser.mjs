@@ -159,14 +159,12 @@ class PreparedAgentPage {
       const composer = this.page.getByRole('textbox', {name: 'Message', exact: true});
       await browserOperation('prepared_browser_composer_fill_failed', () => composer.fill(input, {timeout: 15000}));
       await adapter.releaseTurn({caseId});
-      const [submitted] = await browserOperation('prepared_browser_send_transport_failed', () => Promise.all([
-        this.page.waitForResponse(response => {
-          const request = response.request();
-          return request.method() === 'POST' && new URL(response.url()).pathname === '/api/v1/agui/run'
-            && request.postDataJSON()?.threadId === agentId;
-        }, {timeout: 30000}),
-        this.page.getByRole('button', {name: 'Send message', exact: true}).click({timeout: 15000}),
-      ]));
+      const [submitted] = await Promise.all([
+        browserOperation('prepared_browser_send_response_missing', () => this.page.waitForResponse(
+          response => isPreparedSend(response.request(), agentId, input), {timeout: 30000})),
+        browserOperation('prepared_browser_send_click_failed', () =>
+          this.page.getByRole('button', {name: 'Send message', exact: true}).click({timeout: 15000})),
+      ]);
       check(submitted.ok(), 'prepared_browser_send_refused');
       sendRequest = await requestHash(submitted);
       await browserOperation('prepared_browser_answer_render_failed', () =>
@@ -178,6 +176,21 @@ class PreparedAgentPage {
     return {answer_sha256: hash(answer), effects: 1, ready_request_sha256: readyRequest,
       send_request_sha256: sendRequest};
   }
+}
+
+export function isPreparedSend(request, agentId, input) {
+  if (request.method() !== 'POST') return false;
+  const path = new URL(request.url()).pathname;
+  if (path === `/api/v2/agents/${agentId}/responses`) {
+    const body = request.postDataJSON();
+    return body?.input === input && body.stream === true;
+  }
+  if (path === '/api/v1/agui/run') {
+    const body = request.postDataJSON();
+    return body?.threadId === agentId && Array.isArray(body.messages) && body.messages.length === 1
+      && body.messages[0]?.role === 'user' && body.messages[0].content === input;
+  }
+  return false;
 }
 
 async function requestHash(response) {

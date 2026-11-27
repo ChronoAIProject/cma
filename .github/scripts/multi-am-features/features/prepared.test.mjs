@@ -3,6 +3,7 @@ import {readFile} from 'node:fs/promises';
 import test from 'node:test';
 import {runInNewContext} from 'node:vm';
 import {preparedJourney} from '../prepared_suite.mjs';
+import {isPreparedSend} from '../prepared_browser.mjs';
 import {hash} from '../cma/core.mjs';
 
 function fixture({consumed = true, readyIds = ['candidate-a', 'candidate-b'], repeatReservation = false,
@@ -247,4 +248,21 @@ test('the snapshot binds the reservation installation digest to the original boo
   assert.equal((await read()).installation_bound, false);
   rows.agents.record.origin = {operation_id: 'other-operation'};
   assert.equal((await read()).agent_ready, false);
+});
+test('prepared browser observes the exact message on both public Send transports', () => {
+  const request = (path, body, method = 'POST') => ({method: () => method,
+    url: () => 'http://127.0.0.1:1234' + path, postDataJSON: () => body});
+  const v2 = '/api/v2/agents/agt_fixture/responses';
+  const v1 = '/api/v1/agui/run';
+  const input = 'Original fixture message';
+  const agui = {threadId: 'agt_fixture', messages: [{role: 'user', content: input}]};
+  for (const [value, expected] of [
+    [request(v2, {input, stream: true}), true],
+    [request(v1, agui), true],
+    [request(v2 + '/receipt', {input, stream: true}), false],
+    [request(v2, {input, stream: true}, 'GET'), false],
+    [request(v2, {input: 'Changed', stream: true}), false],
+    [request(v2, {input, stream: false}), false],
+    [request(v1, {...agui, threadId: 'agt_other'}), false],
+  ]) assert.equal(isPreparedSend(value, 'agt_fixture', input), expected);
 });
