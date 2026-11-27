@@ -5,6 +5,7 @@ use layer2_core::profiles::{
 use layer2_core::released_runtime::ReleasedLane;
 use layer2_core::sandbox::{
     Sandbox, SandboxOrigin, SandboxRuntimeImageOrigin, SandboxStatus, SandboxStoreError,
+    SandboxWorkStep,
 };
 use mongodb::{bson::doc, ClientSession};
 
@@ -88,6 +89,8 @@ fn qualify_successor(current: &Sandbox, at: &str) -> Result<Sandbox, SandboxStor
 }
 
 fn original_image(sandbox: &Sandbox) -> Option<&str> {
+    // Managed credentials schedule their next rotation during activation.
+    // An unclaimed wait is idle for retained image rotation as well.
     if !matches!(
         sandbox.status,
         SandboxStatus::Active | SandboxStatus::Paused
@@ -96,7 +99,10 @@ fn original_image(sandbox: &Sandbox) -> Option<&str> {
         || sandbox.lifecycle.runtime_migration_admission.is_some()
         || sandbox.lifecycle.operation.is_some()
         || sandbox.work.lease.is_some()
-        || sandbox.work.step.is_pending()
+        || !matches!(
+            sandbox.work.step,
+            SandboxWorkStep::None | SandboxWorkStep::WaitForCredentialRotation
+        )
     {
         return None;
     }
