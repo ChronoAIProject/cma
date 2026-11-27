@@ -13,6 +13,31 @@ pub(super) async fn save(
     expected_revision: u64,
     agent: Agent,
 ) -> Result<(), SandboxStoreError> {
+    save_with_format(store, expected_revision, agent, None).await
+}
+
+/// Connection recovery changes only the durable work schedule. Its exact
+/// predecessor can be either a legacy or an adopted Agent.
+pub(in crate::store) async fn save_connection_recovery(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    next: Agent,
+) -> Result<(), SandboxStoreError> {
+    if current.conversation != next.conversation
+        || (store.agent_ownership.is_some()
+            && layer2_core::agent_ownership::execution_owner().is_none())
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
+    save_with_format(store, current.revision, next, Some(current)).await
+}
+
+async fn save_with_format(
+    store: &MongoSandboxStore,
+    expected_revision: u64,
+    agent: Agent,
+    recovery_source: Option<&Agent>,
+) -> Result<(), SandboxStoreError> {
     if agent.revision
         != expected_revision
             .checked_add(1)
@@ -20,7 +45,7 @@ pub(super) async fn save(
     {
         return Err(SandboxStoreError::Conflict);
     }
-    let filter = doc! {
+    let mut filter = doc! {
         "_id": agent.id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "revision": signed(expected_revision, "expected agent revision")
@@ -60,6 +85,21 @@ pub(super) async fn save(
         .map_err(driver)?
         .ok_or(SandboxStoreError::Conflict)?;
     let current = read_agent(&current_row)?;
+    if let Some(source) = recovery_source {
+        let bound =
+            super::super::agent_capacity_recovery::source::envelope_filter(source, &current_row)?;
+        filter.extend(bound);
+        filter.insert(
+            "record.revision",
+            signed(source.revision, "recovery Agent revision")
+                .map_err(SandboxStoreError::Corrupt)?,
+        );
+        filter.insert(
+            "record.conversation.last_seq",
+            signed(source.conversation.last_seq, "recovery Agent head")
+                .map_err(SandboxStoreError::Corrupt)?,
+        );
+    }
     if current.conversation.turn_timeout != agent.conversation.turn_timeout {
         return Err(SandboxStoreError::Conflict);
     }
@@ -75,6 +115,8 @@ pub(super) async fn save(
     let result = update(store, &agent.id, filter, fields, new_obligation).await?;
     if result.matched_count == 1 {
         Ok(())
+    } else if recovery_source.is_some() {
+        Err(SandboxStoreError::Conflict)
     } else {
         Err(classify_miss(&store.agents, &agent.id).await?)
     }

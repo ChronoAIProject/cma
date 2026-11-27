@@ -28,7 +28,12 @@ pub(crate) struct LiveAgentAttachmentIdentity {
 pub(crate) trait LiveAgentConnectionLossHandler: Send + Sync {
     async fn connection_lost(&self, attachment: LiveAgentAttachmentIdentity);
 
-    async fn missing_attachment(&self, _target: &AgentRuntimeTarget) {}
+    async fn missing_attachment(
+        &self,
+        _target: &AgentRuntimeTarget,
+        _registry: &LiveAgentRegistry,
+    ) {
+    }
 
     async fn publication_lost(&self, attachment: LiveAgentAttachmentIdentity) {
         self.connection_lost(attachment).await;
@@ -67,8 +72,8 @@ impl LiveAgentConnectionLossHandler for DurableAgentConnectionLossHandler {
         self.recover(attachment, true).await;
     }
 
-    async fn missing_attachment(&self, target: &AgentRuntimeTarget) {
-        let result = self.schedule_missing(target).await;
+    async fn missing_attachment(&self, target: &AgentRuntimeTarget, registry: &LiveAgentRegistry) {
+        let result = self.schedule_missing(target, registry).await;
         tracing::info!(agent_id = %target.agent_id, outcome = ?result,
             "Claimed command attachment recovery decision");
     }

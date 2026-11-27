@@ -15,7 +15,7 @@ use super::sandbox_mongo::{
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION,
 };
 
-mod save;
+pub(super) mod save;
 
 pub(super) const LIVE_STATUSES: &[&str] =
     &["starting", "ready", "working", "waiting_approval", "paused"];

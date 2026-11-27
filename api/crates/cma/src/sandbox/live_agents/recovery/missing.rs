@@ -14,40 +14,40 @@ impl LiveAgentRegistry {
                 "Claimed command attachment recovery deferred");
             return;
         }
-        let reason = {
-            let state = self.lock();
-            match state.entries.get(&target.agent_id) {
-                Some(entry)
-                    if entry.runtime_generation != target.runtime_generation
-                        || entry.conversation_id != target.conversation_id =>
-                {
-                    "stale_target"
-                }
-                Some(entry)
-                    if entry
-                        .manager_authority
-                        .as_ref()
-                        .is_some_and(|owner| !owner.is_current()) =>
-                {
-                    "stale_owner"
-                }
-                Some(entry) if !entry.published => "unpublished",
-                Some(entry) if entry.input.sender().is_none() => "missing_sender",
-                Some(_) => return,
-                None if state.staged.contains_key(&target.agent_id) => "unpublished",
-                None => "missing_receiver",
-            }
-        };
-        tracing::info!(agent_id = %target.agent_id, reason,
-            "Claimed command attachment unavailable");
         if let Some(handler) = self.loss_handler.get() {
-            handler.missing_attachment(target).await;
+            handler.missing_attachment(target, self).await;
         }
+    }
+
+    fn unresolved_reason(&self, target: &AgentRuntimeTarget) -> Option<&'static str> {
+        let state = self.lock();
+        Some(match state.entries.get(&target.agent_id) {
+            Some(entry)
+                if entry.runtime_generation != target.runtime_generation
+                    || entry.conversation_id != target.conversation_id =>
+            {
+                "stale_target"
+            }
+            Some(entry)
+                if entry
+                    .manager_authority
+                    .as_ref()
+                    .is_some_and(|owner| !owner.is_current()) =>
+            {
+                "stale_owner"
+            }
+            Some(entry) if !entry.published => "unpublished",
+            Some(entry) if entry.input.sender().is_none() => "missing_sender",
+            Some(_) => return None,
+            None if state.staged.contains_key(&target.agent_id) => "unpublished",
+            None => "missing_receiver",
+        })
     }
 }
 
 #[derive(Debug)]
 pub(super) enum MissingRecovery {
+    Attached,
     Scheduled,
     AlreadyScheduled,
     Superseded,
@@ -58,7 +58,11 @@ pub(super) enum MissingRecovery {
 }
 
 impl DurableAgentConnectionLossHandler {
-    pub(super) async fn schedule_missing(&self, target: &AgentRuntimeTarget) -> MissingRecovery {
+    pub(super) async fn schedule_missing(
+        &self,
+        target: &AgentRuntimeTarget,
+        registry: &LiveAgentRegistry,
+    ) -> MissingRecovery {
         use MissingRecovery::*;
         let current = match self.store.get_agent(&target.agent_id).await {
             Ok(Some(agent)) => agent,
@@ -73,6 +77,14 @@ impl DurableAgentConnectionLossHandler {
         {
             return Superseded;
         }
+        // Take the durable predecessor before rechecking the receiver. A
+        // concurrent connection publication either satisfies this check or
+        // changes the revision and loses the scheduling CAS below.
+        let Some(reason) = registry.unresolved_reason(target) else {
+            return Attached;
+        };
+        tracing::info!(agent_id = %target.agent_id, reason,
+            "Claimed command attachment unavailable");
         match self.store.agent_inspection_parked(&target.agent_id).await {
             Ok(true) => return InspectionParked,
             Ok(false) => {}
