@@ -246,6 +246,17 @@ pub enum RefusalCode {
     CreationExpired,
 }
 
+/// The local semantic validation result to bind to the creation proof.
+#[derive(Clone, Copy, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ValidationRefusal {
+    TaskTemplate {
+        code: &'static str,
+        field: Option<&'static str>,
+    },
+    DesktopInitialMessageRequired,
+}
+
 impl RefusalCode {
     pub const fn code(self) -> &'static str {
         match self {
