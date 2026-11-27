@@ -1,9 +1,13 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 import { toneDot } from '../ui/Badge';
 import { statusLabel, statusTone } from '../vocabulary/status';
-import { CharacterAvatar, characterPhase } from '../character/CharacterAvatar';
-import { characterForStatus } from '../character/status';
+import { AgentMascot, type AgentMascotSize } from '../brand/AgentMascot';
+import { agentVisual, type AgentVisualAction } from '../brand/agentVisual';
+import type { AgentStatus, SandboxSummary } from '../api/types';
+import type { TaskPresentation } from './taskPresentation';
+import type { TaskStatus } from './taskStatus';
 import type { StatusTone } from '../vocabulary/status';
+import './Tree.css';
 
 interface ObservedPresentation {
   readonly label: string;
@@ -28,31 +32,43 @@ export function stateMeta(
   );
 }
 
-/**
- * An Agent row's leading slot (§10, §28): the Agent's character, posed by its
- * status and wearing its Sandbox's colour. Only work in progress or a person
- * being asked moves, so the rows that move are worth looking at. The word
- * stays in the hover title and the row's accessible name; the character itself
- * is decorative.
- */
-export function agentSignal(
-  status: Parameters<typeof statusLabel>[0],
-  agentId: string,
-  size: number,
-  color?: string,
-  observation?: ObservedPresentation,
+const taskActions = {
+  loading: 'preparing',
+  not_started: 'ready',
+  completed: 'ready',
+  task_accepted: 'love',
+  needs_attention: 'question',
+  working: 'working',
+  waiting_approval: 'question',
+  starting: 'preparing',
+  paused: 'rest',
+  interrupted: 'rest',
+  stopped: 'rest',
+  failed: 'failed',
+  unknown: 'rest',
+} satisfies Record<TaskStatus, AgentVisualAction>;
+
+export function agentListAction(
+  status: AgentStatus | undefined,
+  sandbox: SandboxSummary,
+  task?: TaskPresentation,
 ) {
-  const presence = characterForStatus(status);
+  if (task && task.parentNotice === undefined) return taskActions[task.status];
+  return agentVisual({ status, sandbox, task: task?.status }).action;
+}
+
+export function agentSignal(
+  action: AgentVisualAction,
+  label: string,
+  size: AgentMascotSize,
+  color?: string,
+) {
   return (
-    <span className="tree-row__signal" title={observation?.label ?? statusLabel(status)}>
-      <CharacterAvatar
-        pose={presence.pose}
-        tone={observation?.tone === 'error' ? 'error' : presence.tone}
-        color={color}
-        still={presence.pose === 'preparing' || observation !== undefined || !presence.animate}
-        phase={characterPhase(agentId)}
-        size={size}
-      />
+    <span className="tree-row__signal" aria-hidden="true" title={label}>
+      <AgentMascot visual={{ action, label }} size={size} decorative />
+      {color ? (
+        <span className="tree-row__signal-color" style={{ backgroundColor: color }} />
+      ) : null}
     </span>
   );
 }

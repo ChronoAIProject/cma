@@ -105,11 +105,46 @@ fn same_retained_target(previous: &AuthorizedResource, next: &AuthorizedResource
     comparable_agent.updated_at.clone_from(&agent.updated_at);
     // Output can advance the history cursor while the same turn is active.
     // Keep the turn, retained boot, settings and lifecycle in the comparison.
-    if agent.conversation.active_turn.is_some()
-        && agent.conversation.active_turn == updated_agent.conversation.active_turn
-        && agent.conversation.last_seq <= updated_agent.conversation.last_seq
+    let conversation = &agent.conversation;
+    let updated = &updated_agent.conversation;
+    if conversation.active_turn == updated.active_turn && conversation.last_seq <= updated.last_seq
     {
-        comparable_agent.conversation.last_seq = agent.conversation.last_seq;
+        // The recorder commits a new usage checkpoint together with a log
+        // entry. It does not alter the authority or the target of an append.
+        let previous_usage = conversation.observations.usage.as_ref();
+        let usage_advanced = conversation.last_seq < updated.last_seq
+            && updated.observations.usage.as_ref().is_some_and(|usage| {
+                Some(&usage.conversation_id) == updated.conversation_id.as_ref()
+                    && previous_usage.is_none_or(|previous| {
+                        previous.input_tokens <= usage.input_tokens
+                            && previous.output_tokens <= usage.output_tokens
+                    })
+                    && match conversation.active_turn {
+                        Some(sequence) => usage
+                            .current_turn
+                            .as_ref()
+                            .is_some_and(|turn| turn.turn_sequence == sequence),
+                        // An idle usage fold appends one usage entry and leaves
+                        // the last turn's accounting intact.
+                        None => {
+                            conversation.last_seq.checked_add(1) == Some(updated.last_seq)
+                                && previous_usage != Some(usage)
+                                && previous_usage
+                                    .and_then(|previous| previous.current_turn.as_ref())
+                                    == usage.current_turn.as_ref()
+                        }
+                    }
+            });
+        if conversation.active_turn.is_some() || usage_advanced {
+            comparable_agent.conversation.last_seq = conversation.last_seq;
+        }
+        if usage_advanced {
+            comparable_agent
+                .conversation
+                .observations
+                .usage
+                .clone_from(&conversation.observations.usage);
+        }
     }
     let mut comparable_sandbox = next.sandbox.clone();
     comparable_sandbox.revision = previous.sandbox.revision;

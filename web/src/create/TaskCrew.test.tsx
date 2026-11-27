@@ -1,7 +1,41 @@
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
+import { renderTree } from '../shell/Tree.test-support';
 import { navigationFixture, parkedRuntimeUpdateFixture } from '../test/hierarchy';
 import { TaskCrew } from './TaskCrew';
+
+it.each(['working', 'ready'] as const)('shows parent artwork for a %s Agent', (status) => {
+  const [item] = navigationFixture('active', status);
+  const [workspace] = item!.workspaces;
+  const agents = workspace!.agents.map((agent) => ({
+    ...agent,
+    taskStatus: status === 'working' ? ('working' as const) : ('completed' as const),
+    taskAcceptance: {
+      task_id: 'task-fixture',
+      turn_sequence: 1,
+      verdict: { status: 'succeeded' as const },
+      unconfirmed_outputs: [],
+    },
+  }));
+  const parked = parkedRuntimeUpdateFixture();
+  const updating = { ...parked, runtimeUpdate: undefined };
+  for (const [sandbox, poster, label] of [
+    [item!.sandbox, status === 'working' ? 'working' : 'love', ''],
+    [updating, 'preparing', 'Updating runtime'],
+    [{ ...updating, status: 'active' }, 'preparing', 'Updating runtime'],
+    [parked, 'failed', 'Runtime update failed'],
+  ] as const) {
+    const items = [{ sandbox, workspaces: [{ ...workspace!, agents }] }];
+    const crew = render(<TaskCrew navigation={{ status: 'ready', items }} onNavigate={vi.fn()} />);
+    const tree = renderTree({ view: 'agent', items, route: { kind: 'agent', agentId: 'agt_1' } });
+    for (const role of ['button', 'treeitem']) {
+      const row = screen.getByRole(role, { name: new RegExp(`^Agent one.*${label}`) });
+      expect(row.querySelector('img')?.getAttribute('src')).toContain(`/${poster}/poster-`);
+    }
+    crew.unmount();
+    tree.unmount();
+  }
+});
 
 it('renders only a real reply and its source time, never a resource timestamp or placeholder', () => {
   const navigation = { status: 'ready' as const, items: navigationFixture('active', 'working') };
@@ -26,7 +60,7 @@ it('renders only a real reply and its source time, never a resource timestamp or
   );
   expect(screen.getByText(text)).toBeVisible();
   const card = screen.getByRole('button', { name: 'Agent one, Working' });
-  expect(card.querySelector('img')).toBeNull();
+  expect(card.querySelectorAll('img')).toHaveLength(1);
   expect(card.querySelector('time')).toHaveAttribute('datetime', '2026-11-23T10:00:00Z');
   expect(within(card).queryByText('Working')).toBeNull();
   expect(screen.getByText('Working')).toBeVisible();

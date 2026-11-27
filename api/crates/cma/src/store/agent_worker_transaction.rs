@@ -3,8 +3,8 @@
 use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
     agent_cleanup_capacity_retry, validate_agent_cleanup_capacity_log_with_retry,
-    validate_agent_work_mutation, AgentWorkMutation, AgentWorkPublication,
-    AgentWorkPublicationParents, SandboxStoreError,
+    validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox, AgentWorkMutation,
+    AgentWorkPublication, AgentWorkPublicationParents, SandboxStoreError,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogEntry, AgentStatus, AgentWorkStep, Sandbox, SandboxEvent, Worktree,
@@ -192,10 +192,15 @@ async fn apply_publication_observed(
                 prepared,
                 &mut scope,
             )
-            .await?,
+            .await
+            .map_err(|error| contention::phase(mutation, "segmented_adoption", error))?,
         )
     } else if format.is_some() {
-        Some(segmented::publish(store, &current_row, &current, mutation, &mut scope).await?)
+        Some(
+            segmented::publish(store, &current_row, &current, mutation, &mut scope)
+                .await
+                .map_err(|error| contention::phase(mutation, "segmented_publication", error))?,
+        )
     } else {
         None
     };
@@ -216,7 +221,11 @@ async fn apply_publication_observed(
     store
         .fence_agent_effect_transaction(&mutation.agent.id, session)
         .await
-        .map_err(|error| contention::ownership_error(mutation, error))?;
+        .map_err(|error| match error {
+            crate::store::agent_ownership::FenceError::Domain(error) => ApplyError::Domain(error),
+            crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
+        })
+        .map_err(|error| contention::phase(mutation, "manager_authority", error))?;
     // Decide eligibility in the publication's own snapshot. The same consumed
     // preparation revision is fenced below; no independent preflight can turn
     // a different snapshot into an unnecessary ordinary startup fallback.
@@ -268,7 +277,47 @@ async fn apply_publication_observed(
     if current.work.step == AgentWorkStep::WaitForWorkspace
         && mutation.agent.work.step == AgentWorkStep::AddWorktree
     {
-        rebuild_parents::fence_workspace_binding(store, &current, mutation, session).await?;
+        let sandbox = store
+            .sandboxes
+            .find_one(doc! {"_id": current.sandbox_id.as_str()})
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .as_ref()
+            .map(super::sandboxes::read_sandbox)
+            .transpose()
+            .map_err(ApplyError::Domain)?
+            .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        let workspace = store
+            .workspaces
+            .find_one(doc! {"_id": current.workspace_id.as_str()})
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .as_ref()
+            .map(super::workspaces::read_workspace)
+            .transpose()
+            .map_err(ApplyError::Domain)?
+            .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+        layer2_core::sandbox::store::validate_agent_workspace_binding(
+            &current, mutation, &sandbox, &workspace,
+        )
+        .map_err(ApplyError::Domain)?;
+        for (collection, id, revision) in [
+            (&store.sandboxes, sandbox.id.as_str(), sandbox.revision),
+            (&store.workspaces, workspace.id.as_str(), workspace.revision),
+        ] {
+            let written = collection.update_one(crate::store::work_schema::for_collection(collection, doc! {"_id": id,
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "revision": signed(revision, "bootstrap parent revision").map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+                "owned_workspace_cleanup_admission_v1": {"$exists": false},
+                "channel_reuse_cleanup_execution": {"$exists": false}}),
+                doc! {"$inc": {"agent_bootstrap_binding_fence": 1_i64}})
+                .session(&mut *session).await.map_err(ApplyError::Driver)?;
+            if written.matched_count != 1 {
+                return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+            }
+        }
     }
     if let Some(observed) = observed {
         layer2_core::sandbox::store::validate_prepared_agent_open_ready(
@@ -277,7 +326,7 @@ async fn apply_publication_observed(
             entry_count,
             mutation,
         )
-        .map_err(|error| contention::validation_error(&current, mutation, error))?;
+        .map_err(ApplyError::Domain)?;
         prepared_open_ready::fence(
             store,
             &current,
@@ -299,7 +348,7 @@ async fn apply_publication_observed(
             ))
         && mutation.agent.work.receipts == current.work.receipts
     {
-        rebuild_parents::fence_runtime_free_cleanup(
+        persistence::fence_retired_sandbox(
             store,
             &current,
             &current_worktree,
@@ -310,7 +359,7 @@ async fn apply_publication_observed(
         .await?;
     } else {
         validate_agent_work_mutation(&current, &current_worktree, entry_count, mutation)
-            .map_err(|error| contention::validation_error(&current, mutation, error))?;
+            .map_err(ApplyError::Domain)?;
     }
 
     owner_stop::settle(
@@ -390,7 +439,9 @@ async fn apply_publication_observed(
     )
     .await?;
     if let Some(versioned) = mutation.worktree.as_ref() {
-        advance_worktree(store, &current_worktree, &versioned.worktree, session).await?;
+        advance_worktree(store, &current_worktree, &versioned.worktree, session)
+            .await
+            .map_err(|error| contention::phase(mutation, "worktree_write", error))?;
     }
     let event = match mutation.sandbox_event.as_ref() {
         Some(kind) => Some(

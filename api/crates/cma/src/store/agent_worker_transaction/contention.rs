@@ -1,83 +1,5 @@
 //! Back off only between definitively aborted Agent publication transactions.
 use super::*;
-use layer2_core::sandbox::store::PreparedAgentOpenContext;
-use sha2::{Digest, Sha256};
-
-pub(super) enum PublicationFailure {
-    KnownAbortedCas,
-    OwnerAuthorityRefused,
-    WorkLeaseChanged,
-    UnknownCommit,
-}
-
-pub(super) fn diagnose(mutation: &AgentWorkMutation, failure: PublicationFailure) {
-    let failure = match failure {
-        PublicationFailure::KnownAbortedCas => "known_aborted_cas",
-        PublicationFailure::OwnerAuthorityRefused => "owner_authority_refused",
-        PublicationFailure::WorkLeaseChanged => "work_lease_changed",
-        PublicationFailure::UnknownCommit => "unknown_commit",
-    };
-    tracing::info!(
-        target: "agent_scheduler_failure",
-        phase = "publication",
-        failure,
-        next_step = mutation.agent.work.step.operation_name(),
-        agent_sha256 = %format_args!("{:x}", Sha256::digest(mutation.agent.id.as_str().as_bytes())),
-        "Agent publication boundary"
-    );
-}
-
-pub(super) fn diagnose_write_conflict(mutation: &AgentWorkMutation, error: &mongodb::error::Error) {
-    const WRITE_CONFLICT: i32 = 112;
-    if code(error) == Some(WRITE_CONFLICT) {
-        diagnose(mutation, PublicationFailure::KnownAbortedCas);
-    }
-}
-
-pub(super) fn diagnose_prepared_commit(
-    mutation: &AgentWorkMutation,
-    observed: &PreparedAgentOpenContext,
-) {
-    let work_lease = format!("{}:{}", mutation.fence, mutation.holder);
-    tracing::info!(
-        target: "agent_scheduler_failure",
-        phase = "prepared_commit",
-        agent_sha256 = %format_args!("{:x}", Sha256::digest(mutation.agent.id.as_str().as_bytes())),
-        work_lease_sha256 = %format_args!("{:x}", Sha256::digest(work_lease.as_bytes())),
-        sandbox_revision = observed.sandbox.revision,
-        workspace_revision = observed.workspace.revision,
-        "Prepared Agent Ready publication committed"
-    );
-}
-
-pub(super) fn ownership_error(
-    mutation: &AgentWorkMutation,
-    error: super::super::agent_ownership::FenceError,
-) -> ApplyError {
-    use super::super::agent_ownership::FenceError;
-    match error {
-        FenceError::Domain(error) => {
-            if matches!(&error, SandboxStoreError::Conflict) {
-                diagnose(mutation, PublicationFailure::OwnerAuthorityRefused);
-            }
-            ApplyError::Domain(error)
-        }
-        FenceError::Driver(error) => ApplyError::Driver(error),
-    }
-}
-
-pub(super) fn validation_error(
-    current: &Agent,
-    mutation: &AgentWorkMutation,
-    error: SandboxStoreError,
-) -> ApplyError {
-    if matches!(&error, SandboxStoreError::Conflict)
-        && !current.work.owns(&mutation.holder, mutation.fence)
-    {
-        diagnose(mutation, PublicationFailure::WorkLeaseChanged);
-    }
-    ApplyError::Domain(error)
-}
 
 /// Reuse the transaction's seed to de-synchronize writers that collided.
 /// Each retry adds at most 15 ms; attempt count and error semantics are unchanged.
@@ -91,10 +13,11 @@ pub(super) fn exhausted(
     mutation: &AgentWorkMutation,
     last: Option<&mongodb::error::Error>,
 ) -> SandboxStoreError {
+    let code = last.and_then(driver_code);
     tracing::warn!(
         agent_id = %mutation.agent.id,
         authority_fence = mutation.fence,
-        driver_code = last.and_then(code),
+        driver_code = code,
         "Agent publication contention exhausted the bounded retry budget"
     );
     // This exit is reachable only before commit or after Mongo explicitly
@@ -103,7 +26,7 @@ pub(super) fn exhausted(
     SandboxStoreError::Conflict
 }
 
-fn code(error: &mongodb::error::Error) -> Option<i32> {
+fn driver_code(error: &mongodb::error::Error) -> Option<i32> {
     match error.kind.as_ref() {
         mongodb::error::ErrorKind::Command(error) => Some(error.code),
         mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(error)) => {
@@ -111,6 +34,19 @@ fn code(error: &mongodb::error::Error) -> Option<i32> {
         }
         _ => None,
     }
+}
+
+pub(super) fn phase(
+    mutation: &AgentWorkMutation,
+    phase: &'static str,
+    error: ApplyError,
+) -> ApplyError {
+    if matches!(&error, ApplyError::Driver(driver) if driver_code(driver) == Some(112)) {
+        tracing::warn!(agent_id = %mutation.agent.id, authority_fence = mutation.fence, phase,
+            work_step = ?mutation.agent.work.step, driver_code = 112,
+            "Agent work publication write conflict");
+    }
+    error
 }
 
 /// Diagnose slow publications without logging documents or driver error bodies.
