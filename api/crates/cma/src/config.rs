@@ -51,6 +51,7 @@ pub use rate_limits::RateLimitConfig;
 mod inspection_refusal;
 pub(crate) use inspection_refusal::InspectionRefusalControl;
 mod relay_capacity;
+mod repository_runtime_images;
 mod runtime;
 mod staging_sandbox;
 mod startup_failure_fixture;
@@ -292,9 +293,10 @@ impl Config {
     }
 
     fn with_provider(
-        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        lookup: impl FnMut(&str) -> Result<Option<String>, String>,
         provider: runtime::Provider,
     ) -> Result<Self, String> {
+        let mut lookup = repository_runtime_images::with_bundle(lookup)?;
         let shell_settings::ServerSettings {
             bind,
             metrics_bind,

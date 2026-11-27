@@ -9,6 +9,8 @@ mod native;
 #[path = "runtime_canary_tests.rs"]
 mod runtime_canaries;
 pub(crate) use runtime_canaries::{desktop_canary_config, retained_runtime_config};
+#[path = "repository_runtime_images_tests.rs"]
+mod repository_runtime_images;
 mod home_tests {
     include!("home_tests.rs");
 }
