@@ -403,6 +403,7 @@ try {
       generation_retirements: runtimeLoss.generation_retirements, post_loss_replies: runtimeLoss.post_loss_replies,
       previous_pod_sha256: runtimeLoss.previous_pod_sha256, replacement_pod_sha256: runtimeLoss.replacement_pod_sha256} : null,
     trigger_owner_relinquishment: trigger?.owner_relinquishment ?? null,
+    trigger_orchestration: trigger?.orchestration ?? null,
     lifecycle_owner_relinquishments: rows.filter(row => row.case === 'writer.lifecycle_owner_relinquishment_browser'
       && row.verdict === 'PASS').map(row => ({phase: row.phase, ...row.owner_relinquishment})),
     ownerless_revival: revival ? {ingress: revival.ingress, replay_ingress: revival.replay_ingress,

@@ -46,7 +46,7 @@ async function exerciseTrigger({adapter, user, admin, outsider, config, browser}
   });
   check(id(trigger.id) && Number.isSafeInteger(trigger.draft_version), 'trigger_draft_identity_missing');
   const triggerPath = '/api/v1/triggers/' + encodeURIComponent(trigger.id);
-  let launchPath, observed, resources, relinquishment;
+  let launchPath, observed, resources, relinquishment, orchestration;
   const recordFailure = (stage, error) => retainFailure(config.output_dir, stage, error,
     {case: 'trigger_origin_always_on_and_replay'});
 
@@ -67,7 +67,7 @@ async function exerciseTrigger({adapter, user, admin, outsider, config, browser}
     const startBody = trust ? {trust_confirmed_digest: trust} : {};
     const startKey = randomUUID();
     await outsider.request('b', 'POST', launchPath + '/start', {body: startBody, key: randomUUID(), allowed: [404]});
-    await user.request('b', 'POST', launchPath + '/start', {body: startBody, key: startKey, allowed: [202]});
+    orchestration = await startAcrossOrchestrationPause({admin, user, launchPath, launch, startBody, startKey, recordFailure});
     observed = await poll(async () => {
       const {body} = await user.request('a', 'GET', launchPath);
       check(body.id === launch.id && body.revision_digest === launch.revision_digest, 'trigger_launch_identity_changed');
@@ -171,7 +171,53 @@ async function exerciseTrigger({adapter, user, admin, outsider, config, browser}
     },
     recordFailure), recordFailure);
   return {launch_sha256: hash(observed.id), sandbox_sha256: hash(resources.sandbox),
-    owner_relinquishment: relinquishment};
+    owner_relinquishment: relinquishment, orchestration};
+}
+
+async function startAcrossOrchestrationPause({admin, user, launchPath, launch, startBody, startKey, recordFailure}) {
+  const readSettings = async am => (await admin.request(am, 'GET', '/api/v1/admin/settings')).body;
+  const writeOrchestration = async (am, command) => (await admin.request(am, 'POST', '/api/v1/admin/triggers/' + command)).body;
+  const start = am => user.request(am, 'POST', launchPath + '/start', {body: startBody, key: startKey, allowed: [202]});
+  const before = await readSettings('a');
+  check(before.settings.triggers.enabled && !before.settings.triggers.orchestration_paused,
+    'trigger_orchestration_baseline_not_running');
+  let paused, resumed;
+  await withRestoration(async () => {
+    paused = await writeOrchestration('a', 'pause');
+    const peer = await readSettings('b');
+    check(paused.revision === before.revision + 1 && peer.revision === paused.revision
+      && paused.settings.triggers.orchestration_paused === true && peer.settings.triggers.orchestration_paused === true,
+    'trigger_orchestration_pause_not_visible');
+    for (const am of ['b', 'a']) {
+      const {body} = await start(am);
+      check(body.id === launch.id && body.revision_digest === launch.revision_digest, 'trigger_paused_admission_receipt_changed');
+    }
+    const readLaunch = async am => (await user.request(am, 'GET', launchPath)).body;
+    const blocked = await poll(() => readLaunch('a'), value => value.blocked_reason?.type === 'orchestration_paused',
+      {timeout: 30000, code: 'trigger_launch_orchestration_pause_not_observed'});
+    const peerLaunch = await readLaunch('b');
+    check([blocked, peerLaunch].every(value => value.id === launch.id
+      && value.blocked_reason?.type === 'orchestration_paused' && value.revision_digest === launch.revision_digest
+      && value.resolution?.agent?.state === 'pending' && value.resolution?.sandbox?.state === 'pending'),
+    'trigger_launch_allocated_or_changed_while_paused');
+    resumed = await writeOrchestration('b', 'resume');
+    const restored = await readSettings('a');
+    check(resumed.revision === paused.revision + 1 && restored.revision === resumed.revision
+      && restored.settings.triggers.enabled && restored.settings.triggers.orchestration_paused === false,
+    'trigger_orchestration_resume_not_visible');
+  }, async () => {
+    const current = await readSettings('b');
+    if (current.settings.triggers.orchestration_paused === true) await writeOrchestration('b', 'resume');
+  }, recordFailure);
+  for (const am of ['a', 'b']) {
+    const {body: audit} = await admin.request(am, 'GET', '/api/v1/admin/activity?action=configure&limit=10');
+    const hasChange = (revision, state) => audit.items.filter(row => row.action === 'configure'
+      && row.target?.kind === 'resource' && row.target.id === 'triggers' && row.outcome?.status === 'succeeded'
+      && row.detail?.revision === String(revision) && row.detail.status === state).length === 1;
+    check(hasChange(paused.revision, 'paused') && hasChange(resumed.revision, 'running'),
+      'trigger_orchestration_audit_not_retained');
+  }
+  return {launch_sha256: hash(launch.id), pause_revision: paused.revision, resume_revision: resumed.revision};
 }
 
 async function retireLaunchedResources(client, resources, owner) {

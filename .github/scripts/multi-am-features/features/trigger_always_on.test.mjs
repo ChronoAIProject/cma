@@ -6,12 +6,14 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
   const agent = 'fixture-agent', sandbox = 'fixture-sandbox', subject = 'fixture-owner';
   const trigger = 'fixture-trigger', launch = 'fixture-launch', calls = [];
   const initial = {id: launch, trigger_id: trigger, revision_digest: 'fixture-digest',
-    resolution: {agent: {state: 'pending'}}, trust: {confirmation_digest: 'fixture-trust'}};
+    resolution: {agent: {state: 'pending'}, sandbox: {state: 'pending'}}, trust: {confirmation_digest: 'fixture-trust'}};
   const admitted = {...initial, state: 'ready', resolution: {
     agent: {state: 'created', id: agent}, sandbox: {state: 'created', id: sandbox},
   }};
   let alwaysOn = false, revision = 1, agentState = 'ready', sandboxState = 'active';
   let triggers = {enabled: false, orchestration_paused: false};
+  let settingsRevision = 1;
+  const audit = [];
   let createKey, startKey, ownerReceipt, ownerKey;
   const adapter = {ownerOf: async input => {
     assert.equal(input.agentId, agent);
@@ -20,12 +22,23 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
   const admin = {request: async (am, method, path, options) => {
     if (path === '/api/v1/admin/settings') {
       if (method === 'PATCH') {
-        assert.equal(options.body.expected_revision, 1);
+        assert.equal(options.body.expected_revision, settingsRevision++);
         triggers = options.body.triggers;
         calls.push(triggers.enabled ? 'enable-triggers' : 'restore-triggers');
       }
-      return {body: {revision: 1, settings: {triggers}}};
+      return {body: {revision: settingsRevision, settings: {triggers}}};
     }
+    if (path === '/api/v1/admin/triggers/pause' || path === '/api/v1/admin/triggers/resume') {
+      const paused = path.endsWith('/pause');
+      assert.equal(am, paused ? 'a' : 'b');
+      triggers = {...triggers, orchestration_paused: paused};
+      settingsRevision += 1;
+      audit.push({action: 'configure', target: {kind: 'resource', id: 'triggers'},
+        outcome: {status: 'succeeded'}, detail: {revision: String(settingsRevision), status: paused ? 'paused' : 'running'}});
+      calls.push(paused ? 'pause-orchestration' : 'resume-orchestration');
+      return {body: {revision: settingsRevision, settings: {triggers}}};
+    }
+    if (path.startsWith('/api/v1/admin/activity?')) return {body: {items: audit}};
     if (path === '/api/v1/triggers') return {body: {id: trigger, draft_version: 1}};
     if (path.endsWith('/publish')) return {body: {public_id: 'fixture-public'}};
     if (path.endsWith('/retire')) {
@@ -97,9 +110,10 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
       if (startKey) assert.equal(options.key, startKey);
       calls.push(startKey ? 'replay-start-' + am : 'start');
       startKey = options.key;
-      return {status: 202, body: admitted};
+      return {status: 202, body: triggers.orchestration_paused ? initial : admitted};
     }
-    if (path.endsWith(launch)) return {body: admitted};
+    if (path.endsWith(launch)) return {body: triggers.orchestration_paused
+      ? {...initial, blocked_reason: {type: 'orchestration_paused'}} : admitted};
     if (path.endsWith('/provenance')) return {body: {agent_id: agent, creation_origin: 'trigger',
       details: {trigger: {trigger_id: trigger, launch_id: launch}}}};
     if (path.startsWith('/api/v1/agents?')) return {body: {items: []}};
@@ -164,7 +178,7 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
   }};
   const result = await triggerAlwaysOn({adapter, user, admin, outsider, browser,
     config: {owner_id: subject, public_origin: 'https://fixture.example'}});
-  assert.deepEqual(calls, ['enable-triggers', 'create', 'start', 'enable',
+  assert.deepEqual(calls, ['enable-triggers', 'create', 'pause-orchestration', 'start', 'replay-start-a', 'resume-orchestration', 'enable',
     'replay-create-a', 'replay-start-a', 'replay-create-b', 'replay-start-b',
     'owner-self-approval-refused', 'stale-owner-relinquishment-refused', 'foreign-relinquishment-refused',
     'owner-relinquishment', 'owner-relinquishment-replay',
@@ -173,5 +187,6 @@ test('Trigger policy toggles replay the original visitor receipts and retire the
     'restore-triggers']);
   assert.equal(result.owner_relinquishment.ingress, 'b');
   assert.equal(result.owner_relinquishment.revisions_advanced, 1);
+  assert.equal(result.orchestration.resume_revision, result.orchestration.pause_revision + 1);
   assert.equal(new Set(Object.values(result.owner_relinquishment.request_sha256)).size, 4);
 });
