@@ -20,7 +20,7 @@ async fn cleanup_capacity_retries_preserve_reserve_until_runtime_recovers() {
         })
         .await
         .unwrap();
-    let fenced = claim(&store, &agent.id, MINUTE).await;
+    let fenced = claim_interaction_fence(&store, &agent.id).await;
     store
         .commit_agent_work(advance(&fenced, AgentWorkStep::CloseProcess, MINUTE))
         .await

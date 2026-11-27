@@ -20,7 +20,7 @@ async fn complete_scan_callers_distinguish_worker_settlement_proof_and_public_pr
         .await
         .unwrap();
     isolated_test(async {
-        let fenced = claim(&store, &agent.id, MINUTE).await;
+        let fenced = claim_interaction_fence(&store, &agent.id).await;
         store
             .commit_agent_work(advance(&fenced, AgentWorkStep::CloseProcess, MINUTE))
             .await
@@ -197,7 +197,7 @@ async fn prepared_capacity_zero_entry_retry_still_refuses_middle_gap() {
         })
         .await
         .unwrap();
-    let fenced = claim(&store, &agent.id, MINUTE).await;
+    let fenced = claim_interaction_fence(&store, &agent.id).await;
     store
         .commit_agent_work(advance(&fenced, AgentWorkStep::CloseProcess, MINUTE))
         .await
