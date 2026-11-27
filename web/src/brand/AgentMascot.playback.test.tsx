@@ -34,8 +34,8 @@ function fixture() {
   const view = render(element('working'));
   return {
     scope,
-    show: (action: AgentVisualAction, current = scope) =>
-      view.rerender(element(action, { scope: current, enabled: true })),
+    show: (action: AgentVisualAction, current = scope, enabled = true) =>
+      view.rerender(element(action, { scope: current, enabled })),
     intersect: (...values: boolean[]) =>
       act(() => visibility(values.map((isIntersecting) => ({ isIntersecting })))),
     motion: (matches: boolean) =>
@@ -59,6 +59,16 @@ const cycle = (action: AgentVisualAction) =>
     (total: number, duration) => total + duration,
     0,
   );
+
+it('plays acceptance for the observed turn after a static turn-ended poster', () => {
+  const player = fixture();
+  player.intersect(true);
+  player.show('ready', player.scope, false);
+  expect(player.sprite()).toBeNull();
+  player.show('love');
+  advance(0);
+  expect(player.sprite()).not.toBeNull();
+});
 
 it.each([
   ['working', 2],

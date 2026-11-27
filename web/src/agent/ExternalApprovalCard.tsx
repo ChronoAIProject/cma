@@ -11,11 +11,13 @@ export function ExternalApprovalCard({
   policy,
   active,
   readOnly,
+  hideCharacter,
 }: {
   readonly approval: ExternalApprovalRequest;
   readonly policy?: ExternalApprovalReviewPolicy;
   readonly active: boolean;
   readonly readOnly: boolean;
+  readonly hideCharacter?: boolean;
 }) {
   const waiting = active && approval.decision === undefined;
   const href =
@@ -26,7 +28,7 @@ export function ExternalApprovalCard({
   return (
     <section className="approval" aria-labelledby={heading}>
       <div className="approval__head">
-        {waiting ? (
+        {waiting && !hideCharacter ? (
           <CharacterAvatar
             pose="approval"
             tone="warning"

@@ -36,11 +36,13 @@ for (const theme of ['light', 'dark']) {
       await page.goto('/agents/agt_contract');
       const wait = page.getByRole('heading', { name: 'Waiting for your approval', exact: true });
       const review = page.getByRole('link', { name: 'Review and approve', exact: true });
+      const progress = page.locator('.turn-activity');
       await expect(wait).toBeVisible();
       await expect(review).toBeVisible();
-      await expect(page.locator('.approval .character-avatar')).toHaveAttribute(
-        'data-tone',
-        'warning',
+      await expect(progress.getByText('Waiting for approval', { exact: true })).toBeVisible();
+      await expect(progress.locator('.agent-mascot__artwork')).toHaveAttribute(
+        'aria-hidden',
+        'true',
       );
       await expect(page.locator('.thinking')).toHaveCount(0);
       await expect(page.getByRole('heading', { name: 'Working on it', exact: true })).toHaveCount(
@@ -69,6 +71,9 @@ for (const theme of ['light', 'dark']) {
       await popup.close();
       await page.bringToFront();
       await page.clock.fastForward(600_000);
+      await expect(
+        progress.getByText('Waiting for the server to confirm the approval outcome'),
+      ).toBeVisible();
       await expect(wait).toBeVisible();
       await expect(page.locator('.approval time')).toHaveAttribute('datetime', request.deadline_at);
       expect(fixture.writes).toEqual([]);
@@ -85,7 +90,7 @@ for (const theme of ['light', 'dark']) {
       });
       await expect(wait).toHaveCount(0);
       await expect(review).toHaveCount(0);
-      await expect(page.getByText('Thinking', { exact: true })).toBeVisible();
+      await expect(progress.getByText('Waiting for more activity', { exact: true })).toBeVisible();
       fixture.append({ ...request, revision: 3 });
       await expect(wait).toHaveCount(0);
       fixture.append({ ...request, approval_id: 'ea_browser_second' });
