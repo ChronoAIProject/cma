@@ -28,6 +28,7 @@ import {suggestionsCase} from './features/suggestions.mjs';
 import {sharedIngressReceipt} from './features/conversation_ingress.mjs';
 import {generatedTitleCustody, titleCustodyAfterRestart} from './features/title_custody.mjs';
 import {competingRenames} from './features/rename_contention.mjs';
+import {accountAppearance, accountBuildVersion, accountTextSize} from './features/account_browser.mjs';
 
 const root = dirname(fileURLToPath(import.meta.url));
 // Synthetic credentials travel over the parent's pipe, never a config file or argv.
@@ -97,6 +98,26 @@ async function withBrowser(am_origins, run, name) {
   return outcome;
 }
 
+async function accountBrowserCases(ams) {
+  const cases = [['user.account_appearance', accountAppearance], ['user.account_text_size', accountTextSize],
+    ['user.account_build_version', accountBuildVersion]];
+  await withBrowser(ams, async browser => {
+    for (let iteration = 1; iteration <= 3; iteration++) {
+      for (const am of ['a', 'b']) {
+        await browser.forIngress(am, async ({page}) => {
+          for (const [name, exercise] of cases) {
+            const start = performance.now();
+            const row = {case: name, phase, iteration, ams: [am], real_browser: true, verdict: 'RUNNING'};
+            try { await exercise(page, config.expected_api_source); row.verdict = 'PASS'; }
+            catch (error) { row.verdict = 'FAIL'; throw error; }
+            finally { row.elapsed_ms = performance.now() - start; await record(row); }
+          }
+        });
+      }
+    }
+  }, 'account_browser');
+}
+
 async function heldCases(context, exercise, repetitions = 3) {
   const previousRecorder = context.api.router.record;
   context.api.router.record = async proof => { observations.push(proof); await previousRecorder(proof); };
@@ -147,6 +168,7 @@ try {
     // The same admin groups run before and after actual owner loss. Their public
     // mutations use CAS, peer readback, stale-revision refusal and restoration.
     Object.assign(normal.ams, context.config.ams);
+    await accountBrowserCases(context.config.ams);
     admin.router = new NonOwnerRouter({adapter: context.adapter,
       record: proof => { adminOwnerProofs.push(proof); observations.push(proof); }});
     admin.bindSandbox(context.record.sandboxId, context.record.agentId);
