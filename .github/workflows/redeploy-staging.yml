@@ -119,6 +119,7 @@ jobs:
     permissions:
       contents: read
       actions: read
+      pull-requests: read
     concurrency:
       group: cma-staging-deploy-set
       queue: max

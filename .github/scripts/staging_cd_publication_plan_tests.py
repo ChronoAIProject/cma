@@ -1,6 +1,8 @@
 """The manual staging publication plan binds a single immutable public run."""
 import base64
 import json
+import time
+import os
 from pathlib import Path
 import tempfile
 from types import SimpleNamespace
@@ -8,7 +10,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 from staging_cd_common import Refusal
-from staging_cd_publication_plan import INPUT_FILE, REPORT_FILE, execute, private_policy, selector, write
+from staging_cd_clock import timestamp
+from staging_cd_publication_plan import INPUT_FILE, REPORT_FILE, admit, execute, private_policy, selector, write
+import staging_cd_tools
 
 
 class PublicationPlanTests(unittest.TestCase):
@@ -29,6 +33,41 @@ class PublicationPlanTests(unittest.TestCase):
                 path.write_text(json.dumps(dict(event, inputs=dict(inputs, **change))))
                 with self.assertRaises(Refusal):
                     selector(env)
+
+    def test_dispatch_clock_reaches_both_actual_tool_entry_points(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event_path, env_path = root / "event.json", root / "github.env"
+            started = timestamp(time.time() - 10)
+            repo = "ChronoAIProject/cma"
+            sha = "a" * 40
+            event_path.write_text(json.dumps({
+                "ref": "develop", "repository": {"full_name": repo},
+                "inputs": {"deployables": "eg", "mode": "publication-plan", "publication_run": "101",
+                           "publication_attempt": "1", "publication_signal": "b" * 64},
+            }))
+            env = {"GITHUB_REPOSITORY": repo, "GITHUB_REF": "refs/heads/develop",
+                   "GITHUB_EVENT_NAME": "workflow_dispatch", "GITHUB_SHA": sha,
+                   "GITHUB_EVENT_PATH": str(event_path), "GITHUB_RUN_ID": "102",
+                   "GITHUB_ENV": str(env_path), "GITHUB_ACTOR": "fixture",
+                   "GITHUB_TRIGGERING_ACTOR": "fixture", "RUNNER_TEMP": directory}
+            run = {"id": 102, "event": "workflow_dispatch", "head_branch": "develop",
+                   "head_sha": sha, "path": ".github/workflows/redeploy-staging.yml",
+                   "repository": {"full_name": repo}, "created_at": started}
+            api = Mock()
+            api.request.side_effect = [{"role_name": "maintain"}, {"role_name": "admin"}, run]
+            admit(env, api)
+            key, value = env_path.read_text().strip().split("=", 1)
+            self.assertEqual((key, value), ("CD_STARTED_AT", started))
+            with patch.dict(os.environ, dict(env, CD_STARTED_AT=value), clear=True), \
+                 patch("staging_cd_tools.run_process", return_value=0) as runner:
+                for command in ("install", "requirements"):
+                    with patch("sys.argv", ["staging_cd_tools.py", command]):
+                        self.assertEqual(staging_cd_tools.main(), 0)
+                    self.assertEqual(runner.call_args.args[0][-1], "_" + command)
+                    self.assertGreater(runner.call_args.args[2], 0)
+                    self.assertLess(runner.call_args.args[2], 120)
+            self.assertEqual(runner.call_count, 2)
 
     def test_policy_fetch_reads_data_from_only_the_pinned_private_file(self):
         reader = Mock()
@@ -60,7 +99,7 @@ class PublicationPlanTests(unittest.TestCase):
                 with self.assertRaises(Refusal):
                     execute({}, (102, 1, target[2]), private, root)
                 private.StagingChronoCD.assert_not_called()
-                execute({}, target, private, root)
+                execute({"CD_STARTED_AT": timestamp()}, target, private, root)
             private.Coordinator.return_value.execute.assert_called_once()
             self.assertTrue(private.Coordinator.return_value.execute.call_args.kwargs["read_only"])
             report = json.loads((root / REPORT_FILE).read_bytes())

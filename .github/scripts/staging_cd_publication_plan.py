@@ -9,9 +9,9 @@ import sys
 from cd_target import STAGING, name as target_name
 from staging_cd_admission import event_identity, maintainer_dispatch
 from staging_cd_app_metadata import REPOSITORY as PRIVATE_REPOSITORY, github_reader
+from staging_cd_clock import dispatch_started
 from staging_cd_common import matches, require
 from staging_cd_github import GitHub
-from staging_cd_invoke import private_script
 from staging_cd_publication_signal import qualification_publication
 from staging_cd_runtime import run_private
 from staging_cd_tools import environment as tool_environment
@@ -32,6 +32,14 @@ def selector(env):
     require(matches(r"[1-9][0-9]{0,19}", run) and attempt == "1"
             and matches(r"[0-9a-f]{64}", signal), "Publication plan selector is invalid")
     return int(run), int(attempt), signal
+
+
+def admit(env, api):
+    selector(env)
+    maintainer_dispatch(env, api.request)
+    started = dispatch_started(env, api.request)
+    with open(env["GITHUB_ENV"], "a", encoding="utf-8") as stream:
+        stream.write("CD_STARTED_AT=" + started + "\n")
 
 
 def private_policy(env, read=github_reader):
@@ -87,7 +95,7 @@ def execute(env, target, private, root):
     [batch] = private.releases(signal, config)
     tools = tool_environment(env)
     os.environ.update(tools)
-    started = private.timestamp()
+    started = env["CD_STARTED_AT"]
     client = private.StagingReadOnly(private.StagingChronoCD())
     options = {}
     if "asset_continuity" in batch.get("web", {}):
@@ -109,6 +117,12 @@ def execute(env, target, private, root):
 def main():
     def operation(masker):
         env = os.environ
+        if sys.argv[1:] == ["admit"]:
+            admit(env, GitHub(env.get("GH_TOKEN")))
+            return True
+
+        from staging_cd_invoke import private_script
+
         target = selector(env)
         scripts = private_script(env).parent
         require(not (scripts / "staging_publication_promotion.py").is_symlink(),

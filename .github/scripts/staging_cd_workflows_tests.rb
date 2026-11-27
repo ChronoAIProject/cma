@@ -792,7 +792,7 @@ class StagingWorkflowTest < Minitest::Test
     publishers = %w[am eg runtime runtime_omarchy]
     assert_equal ['allocate', 'release_web', 'protected_web', *publishers.map { |name| "release_#{name}" }], signal['needs']
     assert_includes signal['if'], "vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true'"
-    assert_equal({ 'contents' => 'read', 'actions' => 'read' }, signal['permissions'])
+    assert_equal({ 'contents' => 'read', 'actions' => 'read', 'pull-requests' => 'read' }, signal['permissions'])
     refute signal.key?('environment')
     checkout, verify, retain, notify = signal['steps']
     assert_equal 0, checkout['with']['fetch-depth']
@@ -864,19 +864,24 @@ class StagingWorkflowTest < Minitest::Test
     manual = workflow('redeploy-staging')['jobs']
     assert_includes manual['resolve']['if'], "inputs.mode != 'publication-plan'"
     caller = manual.fetch('publication_plan')
-    assert_equal({'contents' => 'read', 'actions' => 'read'}, caller['permissions'])
+    assert_equal({'contents' => 'read', 'actions' => 'read', 'pull-requests' => 'read'}, caller['permissions'])
     assert_equal './.github/workflows/staging-publication-plan.yml', caller['uses']
     deploy = workflow('staging-deploy')['jobs']
     plan = workflow('staging-publication-plan')['jobs'].fetch('publication_plan')
     assert_equal deploy['deploy']['environment'], plan['environment']
     assert_equal caller['permissions'], plan['permissions']
     assert_includes plan['if'], "github.event_name == 'workflow_dispatch'"
+    commands = plan['steps'].map { |step| step['run'].to_s }
+    admission = commands.index('python3 -B .github/scripts/staging_cd_publication_plan.py admit')
+    assert_operator admission, :<, commands.index('python3 -B .github/scripts/staging_cd_tools.py install')
+    assert_operator admission, :<, commands.index('python3 -B .github/scripts/staging_cd_tools.py requirements')
     keyed = plan['steps'].select { |step| step.fetch('env', {}).key?('CD_NYXID_CLIENT_SECRET') }
     assert_equal ['Observe the staging release plan'], keyed.map { |step| step['name'] }
     refute keyed.first['env'].key?('GH_TOKEN')
     refute keyed.first['env'].key?('CD_INFRA_TOKEN')
     signal = workflow('staging-cd')['jobs']['publication_signal']
     assert_includes signal['if'], "github.run_attempt == '1'"
+    assert_equal 'read', signal['permissions']['pull-requests']
     assert_equal "vars.CMA_PUBLICATION_SIGNAL_ENABLED == 'true'", signal['steps'].last['if']
   end
 
