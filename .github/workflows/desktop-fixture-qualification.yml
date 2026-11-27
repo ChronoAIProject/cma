@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  FIXTURE_SOURCE: 53f8de370252f1289207cc2aeee718dd2ebc5994
+  FIXTURE_SOURCE: 6555d074c0ab547393ed7d80b27a2aa9262d3bd7
 
 jobs:
   desktop:
@@ -96,5 +96,18 @@ jobs:
         run: |
           python3 -B .github/scripts/export-ci-native-image.py \
             "$CD_COMPONENT" "$FIXTURE_SOURCE" "$RUNNER_TEMP/ci-native-image"
-          python3 -B .github/scripts/ci_image_secret_scan.py \
-            "$CD_COMPONENT" "$RUNNER_TEMP/ci-native-image" "$FIXTURE_SOURCE"
+          PYTHONPATH=.github/scripts python3 -B - \
+            "$CD_COMPONENT" "$RUNNER_TEMP/ci-native-image" "$FIXTURE_SOURCE" <<'PY'
+          import ci_image_secret_scan as scan
+          from image_scan_evidence import project
+
+          report_refusal = scan.report_refusal
+
+          def report(component, error):
+              if isinstance(error.package_report, dict) and error.package_report.get("complete") is True:
+                  error.evidence = project(error.package_report, error.outcome)
+              report_refusal(component, error)
+
+          scan.report_refusal = report
+          raise SystemExit(scan.main())
+          PY
