@@ -197,13 +197,12 @@ export function AgentSidePanel({
       : previousRuntime;
   const environmentReady = environment.state.status === 'ready';
   const environmentAllowsListing = !features || features.files.state === 'available';
-  const transientEnvironment =
-    environment.state.status === 'error' && environment.state.transient === true;
+  const recheckingEnvironment =
+    environment.state.status === 'loading' ||
+    (environment.state.status === 'error' && environment.state.transient === true);
   const nextListingAllowed = environmentReady
     ? environmentAllowsListing
-    : environment.state.status === 'error'
-      ? transientEnvironment && listingAllowed !== false
-      : listingAllowed;
+    : recheckingEnvironment && listingAllowed;
   if (!sameFileEnvironment || listingAllowed !== nextListingAllowed || runtime !== previousRuntime)
     setFileEnvironment({
       client,
@@ -213,20 +212,14 @@ export function AgentSidePanel({
       runtime,
       listingAllowed: nextListingAllowed,
     });
-  const keepFilesActiveDuringEnvironmentCheck =
-    filesOpen &&
-    document.visibilityState !== 'hidden' &&
-    client.files?.environment &&
-    (transientEnvironment
-      ? listingAllowed !== false
-      : environment.state.status === 'loading' && listingAllowed === true);
-  const mayRead =
+  const hasFileAccess =
     computerOpen &&
     !lifecycleHeld &&
-    (!shared || authorized?.capabilities.includes('view_files') === true) &&
-    (!client.files?.environment ||
-      (environmentReady && environmentAllowsListing) ||
-      keepFilesActiveDuringEnvironmentCheck);
+    (!shared || authorized?.capabilities.includes('view_files') === true);
+  const mayRead =
+    hasFileAccess && (!client.files?.environment || (environmentReady && environmentAllowsListing));
+  const preserveListing =
+    filesOpen && hasFileAccess && listingAllowed === true && recheckingEnvironment;
   const mayRetain =
     (!shared ||
       authorized?.capabilities.includes('view_files') === true ||
@@ -403,6 +396,7 @@ export function AgentSidePanel({
               panel
               embedded
               active={mayRead}
+              preserveListing={preserveListing}
               client={client.files}
               agentId={agentId}
               readOnly={!mayWrite}
