@@ -320,7 +320,7 @@ class OwnershipTests(unittest.TestCase):
             fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'publication_conflict')
         fixture.mongo.assert_called_once()
 
-    def test_prepared_parent_envelope_selector_validates_the_pair_and_holds_sandbox_writes(self):
+    def test_prepared_parent_envelope_selector_validates_the_pair_and_holds_sandbox_reads(self):
         fixture = Fixture.__new__(Fixture)
         run_id = 'cma-ci-' + 'a' * 12
         fixture.client = SimpleNamespace(namespace='cma-native-am')
@@ -336,6 +336,32 @@ class OwnershipTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'prepared_parent_envelope_versions_required'):
                 fixture.preparedSchemaRace('inject', 'exact-operation', ['exact-reservation'], 'parent_envelope', pair)
         self.assertEqual(fixture.mongo.call_count, 2)
+
+    def test_prepared_pause_observes_the_worktree_read_without_writing_fixture_state(self):
+        fixture = Fixture.__new__(Fixture)
+        run_id = 'cma-ci-' + 'a' * 12
+        fixture.client = SimpleNamespace(namespace='cma-native-am')
+        fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': 'https://127.0.0.1:12345'}
+        fixture.mongo = Mock()
+        fixture.preparedSchemaBarrier(True, parentPause=True)
+        hold = fixture.mongo.call_args.args[0]
+        self.assertIn('"namespace": "cma_native_am.worktrees"', hold)
+        self.assertIn('"failCommands": ["find"]', hold)
+        self.assertIn('"blockTimeMS": 12000', hold)
+        for action in ('sample', 'read'):
+            fixture.preparedSchemaRace(action, 'exact-operation', ['exact-reservation'], 'parent_pause')
+            scope, _ = json.JSONDecoder().raw_decode(
+                fixture.mongo.call_args.args[0].removeprefix('const scope = '))
+            self.assertEqual(scope, {'action': action, 'operationId': 'exact-operation',
+                                     'reservations': ['exact-reservation'], 'barrier': 'parent_pause',
+                                     'app': PREPARED_MONGO_APP})
+        for action in ('inject', 'restore'):
+            with self.assertRaisesRegex(ValueError, 'prepared_schema_race_lineage_required'):
+                fixture.preparedSchemaRace(action, 'exact-operation', ['exact-reservation'], 'parent_pause')
+        with self.assertRaisesRegex(ValueError, 'prepared_schema_race_action_required'):
+            fixture.preparedSchemaBarrier(True, parentEnvelope=True, parentPause=True)
+        self.assertEqual(fixture.mongo.call_count, 3)
 
     def test_artifact_abort_targets_only_the_feature_fixture_insert(self):
         fixture = Fixture.__new__(Fixture)

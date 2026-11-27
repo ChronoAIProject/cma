@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {preparedSchemaRefusal} from './prepared_schema_refusal.mjs';
+import {preparedParentPauseRefusal, preparedSchemaRefusal} from './prepared_schema_refusal.mjs';
 
 function fixture({aborts = 1, refusals = {a: 1, b: 0}, partial = false, restoreFails = false, changedNativeEffect = false,
   barrier = 'worktree_schema'} = {}) {
@@ -85,4 +85,59 @@ test('cleanup retains a schema restoration failure alongside the assertion failu
   await assert.rejects(preparedSchemaRefusal(context), /partial_publication/);
   assert.ok(context.kept.some(row => row[0] === 'restoration' && row[1] === 'restore_failure'));
   assert.equal(context.calls.at(-1), 'disarm');
+});
+
+
+test('the public pause must commit during the exact prepared Ready transaction', async () => {
+  const before = {agentId: 'agent-1', sandboxId: 'sandbox-1', state: 'starting', step: 'open_conversation',
+    sandboxStatus: 'active', receipt_count: 2, conversation_unpublished: true, ready_fences_absent: true,
+    transactionSha256: 'a'.repeat(64)};
+  const record = {operationId: 'op-1'};
+  const calls = [];
+  let paused = false, wrongTransaction = false, committed = false;
+  const context = {api: {
+    request: async (ingress, method, path, options) => {
+      assert.deepEqual([ingress, method, path], ['b', 'POST', '/api/v1/sandboxes/sandbox-1/pause']);
+      assert.equal(options.direct, true);
+      assert.deepEqual(options.allowed, [202]);
+      paused = true;
+      calls.push('pause');
+      return {status: 202, body: {id: 'sandbox-1', status: 'pausing'},
+        timing: {am: 'b', request_id: 'pause-request'}};
+    },
+  }, adapter: {
+    preparedReady: async () => ['sandbox-1'],
+    preparedSchemaBarrier: async value => {
+      calls.push(value.arm ? 'arm' : 'disarm');
+      assert.deepEqual(value, value.arm ? {arm: true, parentPause: true} : {arm: false});
+    },
+    preparedSchemaRace: async ({action, ...scope}) => {
+      assert.deepEqual(scope, {operationId: 'op-1', reservations: ['sandbox-1'], barrier: 'parent_pause'});
+      calls.push(action);
+      if (!paused) return before;
+      return {...before, sandboxStatus: 'pausing', transactionSha256: wrongTransaction ? 'b'.repeat(64) :
+        before.transactionSha256};
+    },
+    ownerOf: async () => ({agent_id: 'agent-1', am: 'a', pod_uid: 'pod-1', epoch: 12}),
+    publicationEvidence: async () => ({a: {known_aborted_cas: {publish_connection: 1},
+      prepared_commit_work_lease_sha256: committed ? ['c'.repeat(64)] : []}, b: {}}),
+  }, admit: async () => {calls.push('admit'); return record;},
+  cleanup: async observed => {assert.equal(observed, record); calls.push('cleanup');}};
+
+  const result = await preparedParentPauseRefusal(context);
+  assert.deepEqual(calls, ['arm', 'admit', 'sample', 'pause', 'sample', 'disarm', 'read', 'cleanup']);
+  assert.equal(result.prepared_parent_pause_refused, true);
+  assert.equal(result.owner_epoch, 12);
+  assert.doesNotMatch(JSON.stringify(result), /agent-1|sandbox-1|pause-request/);
+
+  paused = false;
+  wrongTransaction = true;
+  await assert.rejects(preparedParentPauseRefusal(context), /prepared_parent_pause_order_unproven/);
+  assert.equal(calls.at(-1), 'disarm');
+
+  paused = false;
+  wrongTransaction = false;
+  committed = true;
+  await assert.rejects(preparedParentPauseRefusal(context), /prepared_parent_pause_publication_unproven/);
+  assert.equal(calls.at(-1), 'disarm');
 });

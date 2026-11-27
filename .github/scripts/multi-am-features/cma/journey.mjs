@@ -395,7 +395,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
       return {coordination_enabled: true, shared_database: true, am_pod_uid_hashes: ['a', 'b'].map(am => hash(t.ams[am].pod_uid))};
     });
     if (preparedHook) {
-      await preparedHook({adapter, admit, create, openBoth, cleanup, step, complete});
+      await preparedHook({api, adapter, admit, create, openBoth, cleanup, step, complete});
       result.verdict = 'LOCAL_PREPARED_TWO_AM_PASS';
       return result;
     }

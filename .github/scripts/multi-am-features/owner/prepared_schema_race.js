@@ -8,6 +8,7 @@
   const leaseChange = scope.barrier === 'work_lease';
   const publicationConflict = scope.barrier === 'publication_conflict';
   const parentEnvelope = scope.barrier === 'parent_envelope';
+  const parentPause = scope.barrier === 'parent_pause';
 
   const field = schemaChange ? schema : cleanup;
   const successor = schemaChange ? NumberLong('999') : true;
@@ -77,6 +78,34 @@
       }
     }
     return observed;
+  }
+
+  async function samplePausePublication() {
+    const rows = await lineage(d);
+    if (!rows) return null;
+    // The prepared transaction reads the exact Agent and claimed reservation
+    // before reading its Worktree and taking any parent write locks.
+    const active = await admin.aggregate([{$currentOp: {allUsers: true}}, {$match: {
+      appName: scope.app, active: true, 'command.find': 'worktrees', 'command.filter._id': rows.tree._id,
+      'command.autocommit': false,
+    }}]).toArray();
+    const matches = [];
+    for (const {command, opid} of active) {
+      if (!command.lsid || command.txnNumber == null) continue;
+      const reads = await d.getCollection('system.profile').find({
+        appName: scope.app, 'command.autocommit': false,
+        'command.lsid': command.lsid, 'command.txnNumber': command.txnNumber,
+        $or: [{'command.find': 'agents', 'command.filter._id': rows.agent._id},
+          {'command.find': 'native_prepared_sandboxes', 'command.filter._id': rows.reservation._id}],
+      }, {command: 1}).limit(8).toArray();
+      if (new Set(reads.map(row => row.command.find)).size === 2) {
+        matches.push(require('crypto').createHash('sha256')
+          .update(JSON.stringify([opid, command.lsid, command.txnNumber.toString()])).digest('hex'));
+      }
+    }
+    if (matches.length > 1) throw Error('prepared_parent_pause_multiple_transactions');
+    return matches.length === 1 ? {...proof(rows), sandboxStatus: rows.sandbox.status,
+      transactionSha256: matches[0]} : null;
   }
 
   // A held read provides time to install the envelopes. It might be
@@ -223,6 +252,7 @@
     try {
       await session.startTransaction({readConcern: {level: 'snapshot'}});
       const rows = await lineage(session.getDatabase(d.getName()));
+      if (parentPause) return rows && {...proof(rows), sandboxStatus: rows.sandbox.status};
       const observed = rows && (leaseChange ? rows.agent[marker] : rows.tree[marker]);
       if (observed?.operation !== operationId || observed?.barrier !== scope.barrier) {
         throw Error('prepared_schema_race_marker_missing');
@@ -284,6 +314,7 @@
     return {restored: 1};
   }
 
+  if (scope.action === 'sample') print(JSON.stringify(await samplePausePublication()));
   if (scope.action === 'inject') print(JSON.stringify(await inject()));
   if (scope.action === 'read') print(JSON.stringify(await read()));
   if (scope.action === 'restore') print(JSON.stringify(await restore()));

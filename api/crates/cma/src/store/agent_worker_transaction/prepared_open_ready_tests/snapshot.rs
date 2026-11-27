@@ -112,15 +112,43 @@ async fn prepared_open_ready_fences_each_supported_parent_envelope() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
 async fn prepared_open_ready_cannot_publish_after_its_sandbox_begins_pause() {
+    use layer2_core::sandbox::{
+        store::{
+            SandboxLifecycleCommand, SandboxLifecycleCommandDisposition,
+            SandboxLifecycleCommandResult, SandboxLifecycleCommandStore,
+        },
+        SandboxLifecycleOperation, SandboxStatus,
+    };
+
     let (client, name, store, agent, observed) = fixture().await;
-    let mut paused = observed.sandbox.clone();
-    paused
-        .begin_pause(layer2_core::now_rfc3339(), None)
-        .unwrap();
-    store
-        .save_sandbox(observed.sandbox.revision, paused.clone())
+    let SandboxLifecycleCommandResult::Accepted(pause) = store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+            observed.sandbox.id.clone(),
+            observed.sandbox.owner.clone(),
+            layer2_core::now_rfc3339(),
+            None,
+        ))
         .await
+        .unwrap()
+    else {
+        panic!("owner pause admission was refused");
+    };
+    assert_eq!(
+        pause.disposition,
+        SandboxLifecycleCommandDisposition::Scheduled
+    );
+    assert_eq!(pause.sandbox.status, SandboxStatus::Pausing);
+    assert!(matches!(
+        pause.sandbox.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Pause { .. })
+    ));
+    assert!(pause.sandbox.lifecycle.home.is_some());
+    let paused = store
+        .get_sandbox(&observed.sandbox.id)
+        .await
+        .unwrap()
         .unwrap();
+    assert_eq!(paused, pause.sandbox);
     let done = completion(&agent, &observed.worktree);
     let stale = store
         .commit_prepared_agent_open_ready(done.clone(), observed.clone())

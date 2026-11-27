@@ -6,7 +6,7 @@ import {runJourney} from './cma/journey.mjs';
 import {readConfig} from './config.mjs';
 import {journeyFailureSummary, retainFailure, withRestoration} from './failure.mjs';
 import {openPreparedBrowser} from './prepared_browser.mjs';
-import {preparedSchemaRefusal} from './features/prepared_schema_refusal.mjs';
+import {preparedParentPauseRefusal, preparedSchemaRefusal} from './features/prepared_schema_refusal.mjs';
 import {writerCoverage} from './writer_coverage.mjs';
 
 const isDigest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
@@ -253,6 +253,9 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
       await context.step('prepared_work_lease_refusal', () => preparedSchemaRefusal({...context,
         barrier: 'work_lease', recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
           {case: 'prepared_work_lease_refusal'})}));
+      await context.step('prepared_parent_pause_refusal', () => preparedParentPauseRefusal({...context,
+        recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
+          {case: 'prepared_parent_pause_refusal'})}));
       await preparedParentEnvelopes({...context,
         recordFailure: (stage, error) => retainFailure(config.output_dir, stage, error,
           {case: 'prepared_parent_envelope'})});
@@ -274,14 +277,14 @@ if (process.argv[1]?.endsWith('/prepared_suite.mjs')) {
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
       browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
-      prepared_work_lease_refused}) => ({
+      prepared_work_lease_refused, prepared_parent_pause_refused}) => ({
       name, verdict, elapsed_ms, create_to_ready_ms, parent_schema_versions, owner_epoch, ingress, owner,
       ingress_instance_sha256, owner_instance_sha256, request_sha256, publication_diagnostics, observed_known_abort,
       ready_before_collision_lease_deadline, prepared_commit_parent_revisions,
       atomic_publication_fence_count, startup_receipt_count, runtime_receipt_format, runtime_receipt_count,
       browser_starting_read, browser_ready_read, browser_reply_sha256, browser_send_transport,
       prepared_reservation_sha256, agent_sha256, lifecycle_operation_sha256, prepared_schema_refused, prepared_cleanup_refused,
-      prepared_work_lease_refused,
+      prepared_work_lease_refused, prepared_parent_pause_refused,
     })),
   }, null, 2) + '\n', {flag: 'wx', mode: 0o600});
   process.exitCode = verdict === 'PASS' ? 0 : 1;
