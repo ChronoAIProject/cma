@@ -20,7 +20,7 @@ mod evidence;
 mod report;
 #[cfg(test)]
 mod tests;
-pub(crate) use cli::command;
+pub(crate) use cli::run_if_requested;
 use report::{Entry, Report};
 const INDEX: &str = "agent_command_admission_cohort";
 const MAX_ROWS: u64 = 10_000;

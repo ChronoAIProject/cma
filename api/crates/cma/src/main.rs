@@ -201,23 +201,7 @@ async fn run() {
         }
         return;
     }
-    if arguments
-        .first()
-        .is_some_and(|argument| argument == "--task-audit")
-    {
-        if arguments.len() != 3 {
-            eprintln!("usage: cma --task-audit PRIVATE_SELECTION PRIVATE_NEW_FILE");
-            std::process::exit(2);
-        }
-        if let Err(error) = store::task_audit::command(
-            std::path::Path::new(&arguments[1]),
-            std::path::Path::new(&arguments[2]),
-        )
-        .await
-        {
-            eprintln!("task audit refused: {error}");
-            std::process::exit(2);
-        }
+    if store::task_audit::run_if_requested(&arguments).await {
         return;
     }
     if arguments.len() == 3 && arguments[0] == "--ledger-census" {
