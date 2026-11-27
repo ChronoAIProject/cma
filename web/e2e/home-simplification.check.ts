@@ -74,9 +74,10 @@ for (const theme of ['dark', 'light']) {
       });
       if (state === 'empty') {
         await page.setViewportSize({ width: 320, height: 900 });
+        await page.clock.runFor(200);
         const mascot = page.locator('.task-home__first-mascot');
         await expect(mascot).toHaveCSS('height', '48px');
-        await expect(input).toBeVisible();
+        await expect(input).toBeInViewport({ ratio: 1 });
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
           true,
         );
