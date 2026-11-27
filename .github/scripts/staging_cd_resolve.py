@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 
+from cd_target import STAGING, name as target_name
 from staging_cd_admission import event_identity, maintainer_dispatch
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub
@@ -142,9 +143,18 @@ def main():
             if env.get("GITHUB_STEP_SUMMARY"):
                 with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
                     stream.write(f"Publication-and-preparation seconds: {elapsed(publication_started):.2f}\n")
-        elif command == "verify":
+        elif command in ("verify", "verify-web-at-deploy"):
             started, mode = env.get("CD_STARTED_AT"), env.get("CD_DEPLOY_MODE")
-            remaining(started, mode=mode, env=env)
+            admitted = document(env["CD_RELEASE_SET"])
+            refresh_web = command == "verify-web-at-deploy"
+            if refresh_web:
+                require(target_name(env) == STAGING and env["GITHUB_EVENT_NAME"] == "push"
+                        and mode == "release" and set(admitted["receipts"]) == {"web"},
+                        "Fresh admission requires a protected staging Web release")
+                run_created(env, api.request)
+                elapsed(started)  # Validate the original timestamp, including future dates.
+            else:
+                remaining(started, mode=mode, env=env)
             inputs = maintainer_dispatch(env, api.request) if env["GITHUB_EVENT_NAME"] == "workflow_dispatch" else None
             if inputs is not None:
                 # A retry retains the run-created timestamp, never run_started_at.
@@ -152,7 +162,6 @@ def main():
                 require(mode == inputs.get("mode", "release"), "Dispatch mode changed")
             else:
                 require(mode == "release", "Automatic bootstrap is forbidden")
-            admitted = document(env["CD_RELEASE_SET"])
             try:
                 value = verify_set(admitted, api, registry, automatic=inputs is None, inputs=inputs)
             except OvertakenByNewerFinal as error:
@@ -165,6 +174,8 @@ def main():
                                       "A newer final's run owns this deployment.\n")
                 return SKIPPED
             record_withheld(env, admitted["receipts"], value["receipts"])
+            if refresh_web:
+                started = timestamp()
             remaining(started, mode=mode, env=env)
         else:
             return False
