@@ -19,6 +19,20 @@ const preparedControls = readFileSync(new URL('./multi-am-features/startup-contr
   .trim().split('\n');
 const preparedFilter = `package(=cma) and (${preparedControls.map(name => `test(=${name})`).join(' or ')})`;
 
+function runCoordinator(f, scenario, expectedStatus) {
+  try {
+    execFileSync('bash', f.args, {env: f.env, timeout: runnerSetupTimeoutMs, stdio: 'pipe'});
+  } catch (error) {
+    if (error.code === 'ETIMEDOUT') {
+      throw new Error(`Mock Mongo runner exceeded its ${runnerSetupTimeoutMs} ms setup deadline in ${scenario}`, {cause: error});
+    }
+    if (expectedStatus === 0 || error.status !== expectedStatus) throw error;
+    return String(error.stderr);
+  }
+  assert.equal(expectedStatus, 0, `${scenario} should exit with coordinator status ${expectedStatus}`);
+  return '';
+}
+
 for (const reuse of [false, true]) {
   const mode = reuse ? 'archive' : 'source';
   test(`${mode}: prepared startup requires a complete listing before making a fixture`, () => {
@@ -94,9 +108,7 @@ for (const reuse of [false, true]) {
     for (const scenario of ['entropy-error', 'entropy-malformed', 'success', 'scale-error', 'owner-error', 'audit-error', 'diagnostics-error', 'scan-error', 'bson-error', 'first-response-error', 'history-error', 'ranked-projection-error', 'tc070-control-error', 'response-replay-error', 'test-error']) {
       const f = fixture(scenario, reuse);
       try {
-        const run = () => execFileSync('bash', f.args, { env: f.env, timeout: runnerSetupTimeoutMs, stdio: 'pipe' });
-        let stderr = '';
-        if (scenario === 'success') run(); else assert.throws(run, error => { stderr = String(error.stderr); return true; });
+        const stderr = runCoordinator(f, scenario, scenario === 'success' ? 0 : 1);
         if (scenario.startsWith('entropy-')) { assert.deepEqual(f.calls().map(row => [row.command,row.args[1]]), [['cargo','list']]); continue; }
         assert.equal(stderr.includes('per-test budget of nextest profile mongo-ordinary'), scenario === 'test-error',
           'only a failed ordinary partition names the budget remedy');
@@ -225,7 +237,7 @@ for (const reuse of [false, true]) {
     for (const scenario of ['volume-list-error', 'foreign-volume', 'volume-create-error', 'run-error', 'volume-owner-mismatch']) {
       const f = fixture(scenario, reuse);
       try {
-        assert.throws(() => execFileSync('bash', f.args, {env: f.env, timeout: runnerSetupTimeoutMs, stdio: 'pipe'}));
+        runCoordinator(f, scenario, 1);
         const calls = f.calls();
         assert.equal(calls.filter(row => row.command === 'cargo' && row.args[1] === 'run').length, 0);
         assert.equal(f.containers().length, 0);
@@ -285,8 +297,7 @@ for (const reuse of [false, true]) {
     for (const scenario of ['batches', 'batches-error']) {
       const f = fixture(scenario, reuse);
       try {
-        const run = () => execFileSync('bash', f.args, {env:f.env, timeout:runnerSetupTimeoutMs, stdio:'pipe'});
-        if (scenario === 'batches') run(); else assert.throws(run);
+        runCoordinator(f, scenario, scenario === 'batches' ? 0 : 1);
         const calls = f.calls();
         assert.equal(calls.filter(row => row.command === 'cargo' && row.args[1] === 'list').length, 1);
         const cargo = calls.filter(row => row.command === 'cargo' && row.args[1] === 'run');
