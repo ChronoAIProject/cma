@@ -31,15 +31,27 @@ impl NativeWarmPools {
             if !self.store.candidate_protected(&target).await? {
                 return self.retire_claimed(provider, target).await.map(|_| true);
             }
-            if self.matches_fixed_preparation(&target).await? {
-                return reconcile_claimed(
-                    self.store.as_ref(),
-                    provider,
-                    target,
-                    self.target_fencing,
-                )
-                .await
-                .map(|_| true);
+            if let Some(withdrawn) = self.store.fixed_preparation(&target).await? {
+                if withdrawn {
+                    if self.store.candidate_pending(&target).await? {
+                        return self.settle_candidate(provider, target).await;
+                    }
+                    self.store.withdraw_fixed_preparation(&target).await?;
+                    return Ok(true);
+                }
+                if target.binding.is_some()
+                    && target.error.is_none()
+                    && target.applied_revision == target.revision
+                    && !self.store.candidate_pending(&target).await?
+                {
+                    self.store.finish(&target, true).await?;
+                    return Ok(true);
+                }
+                if self.authorize_fixed_preparation(&target).await? {
+                    return self.apply_fixed_preparation(provider, target).await;
+                }
+                self.store.defer_quarantined_retirement(&target).await?;
+                return Ok(false);
             }
             return self.reconcile_candidate(provider, target).await;
         }
@@ -92,6 +104,7 @@ impl NativeWarmPools {
                                     let activity = activity.clone();
                                     tasks.spawn(async move {
                                         let _phase = activity.reconciliation();
+                                        pools.retry_fixed_prewarm().await;
                                         for _ in 0..20 {
                                             let result = pools.reconcile_one().await;
                                             crate::telemetry::worker::completed("native_warm_pools", "execution", match &result { Ok(true) => "attempted", Ok(false) => "idle", Err(_) => "error" });

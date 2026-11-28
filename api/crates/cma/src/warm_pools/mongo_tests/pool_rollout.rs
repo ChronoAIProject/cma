@@ -24,14 +24,14 @@ async fn fixed_rollout_keeps_both_incumbents_until_each_exact_candidate_is_ready
         &incumbent,
         Some((&machine, 1)),
     )
-    .with_fixed_pool_prewarm(prepare.clone());
+    .with_fixed_pool_prewarm(prepare.clone(), Some(1));
     let new = resize::deployment(
         store.clone(),
         planner.clone(),
         &next,
         Some((&next_machine, 1)),
     )
-    .with_fixed_pool_prewarm(prepare);
+    .with_fixed_pool_prewarm(prepare, Some(1));
     old.ensure_fixed_defaults().await.unwrap();
     let a = old.active_default_target(&incumbent, false).await.unwrap();
     let m = old.active_default_target(&machine, true).await.unwrap();
@@ -46,7 +46,7 @@ async fn fixed_rollout_keeps_both_incumbents_until_each_exact_candidate_is_ready
         let target = new.active_default_target(image, machine).await.unwrap();
         assert!(target.activated_at.is_none());
         let claimed = store.claim_target(&target.id).await.unwrap().unwrap();
-        assert!(old.matches_fixed_preparation(&claimed).await.unwrap());
+        assert!(old.authorize_fixed_preparation(&claimed).await.unwrap());
         let binding = resize::Planner::binding(&target.plan);
         store.authorize_provider_create(&claimed).await.unwrap();
         store.bind(&claimed, &binding).await.unwrap();
@@ -167,5 +167,100 @@ async fn unbound_retirement_fences_late_provider_creation_and_keeps_uncertain_ro
         }
     }
     assert!(planner.retirement_calls.lock().unwrap().is_empty());
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn supersession_and_withdrawal_keep_the_incumbent_startable_across_managers() {
+    let (db, store) = fixture().await;
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let peer = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let peer = Arc::new(
+        MongoNativeWarmPools::open(&peer.database(db.name()), "test")
+            .await
+            .unwrap(),
+    );
+    let planner = resize::Planner::default();
+    let a = resize::pinned("standard", 'a');
+    let b = resize::pinned("standard", 'b');
+    let c = resize::pinned("standard", 'c');
+    let first = resize::deployment(store.clone(), planner.clone(), &a, None)
+        .with_fixed_pool_prewarm([Some(b.clone()), None], Some(1));
+    let second = resize::deployment(peer.clone(), planner.clone(), &a, None)
+        .with_fixed_pool_prewarm([Some(c.clone()), None], Some(2));
+    let withdraw = resize::deployment(peer.clone(), planner.clone(), &a, None)
+        .with_fixed_pool_prewarm([None, None], Some(3));
+
+    first.ensure_fixed_defaults().await.unwrap();
+    let active = first.active_default_target(&a, false).await.unwrap();
+    let prepared = first.active_default_target(&b, false).await.unwrap();
+    let claimed = store.claim_target(&prepared.id).await.unwrap().unwrap();
+    assert!(first.authorize_fixed_preparation(&claimed).await.unwrap());
+    store
+        .bind(&claimed, &resize::Planner::binding(&claimed.plan))
+        .await
+        .unwrap();
+
+    second.ensure_fixed_defaults().await.unwrap();
+    first.ensure_fixed_defaults().await.unwrap();
+    assert!(!first.authorize_fixed_preparation(&claimed).await.unwrap());
+    assert_eq!(store.fixed_preparation(&claimed).await.unwrap(), Some(true));
+    assert!(store.candidate_pending(&claimed).await.unwrap());
+    let c_before = second.active_default_target(&c, false).await.unwrap();
+    assert!(c_before.activated_at.is_none());
+
+    // The original effect fails to settle. A takeover may fence the original
+    // binding, but the serving incumbent stays available under either Manager.
+    store.finish(&claimed, false).await.unwrap();
+    db.collection::<Document>("native_warm_pool_targets")
+        .update_one(
+            doc! {"_id": &claimed.id},
+            doc! {"$set": {"reconcile_after": DateTime::from_millis(0)}},
+        )
+        .await
+        .unwrap();
+    let taken = peer.claim_target(&claimed.id).await.unwrap().unwrap();
+    assert!(second.settle_candidate(&planner, taken).await.unwrap());
+    assert!(peer.find(&claimed.id).await.unwrap().unwrap().retiring);
+    assert!(matches!(
+        planner.retirement_calls.lock().unwrap().as_slice(),
+        [resize::RetirementCall::Begin(_)]
+    ));
+
+    peer.resize(
+        &active.id,
+        &ResizeWarmPoolBody {
+            expected_revision: active.revision as u64,
+            target_replicas: 2,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    second.ensure_fixed_defaults().await.unwrap();
+    let c_after = second.active_default_target(&c, false).await.unwrap();
+    assert_eq!(c_after.revision, c_before.revision + 1);
+    assert_eq!(c_after.target_replicas, 2);
+    assert!(c_after.activated_at.is_none());
+
+    withdraw.ensure_fixed_defaults().await.unwrap();
+    second.ensure_fixed_defaults().await.unwrap();
+    let abandoned = peer.claim_target(&c_after.id).await.unwrap().unwrap();
+    assert_eq!(
+        peer.fixed_preparation(&abandoned).await.unwrap(),
+        Some(true)
+    );
+    assert!(!peer.candidate_pending(&abandoned).await.unwrap());
+    peer.withdraw_fixed_preparation(&abandoned).await.unwrap();
+    assert!(!peer.candidate_protected(&abandoned).await.unwrap());
+    assert_eq!(
+        withdraw
+            .active_default_target(&a, false)
+            .await
+            .unwrap()
+            .activated_at,
+        active.activated_at
+    );
     db.drop().await.unwrap();
 }

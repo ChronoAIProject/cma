@@ -4,6 +4,7 @@ pub(super) const SHA256_SEPARATOR: &str = "@sha256:";
 #[derive(Clone, Default, PartialEq, Eq)]
 pub(crate) struct PoolRollout {
     pub(crate) fixed_prewarm: [Option<String>; 2],
+    pub(crate) fixed_prewarm_generation: Option<i64>,
     pub(crate) pool_create_cutover_epoch: Option<uuid::Uuid>,
 }
 
@@ -22,7 +23,22 @@ impl PoolRollout {
             prewarm("CHRONO_NATIVE_STANDARD_POOL_PREWARM_IMAGE")?,
             prewarm("CHRONO_NATIVE_MACHINE_POOL_PREWARM_IMAGE")?,
         ];
-        if fixed_prewarm.iter().any(Option::is_some) && !fixed_native {
+        let fixed_prewarm_generation = lookup("CHRONO_NATIVE_POOL_PREWARM_GENERATION")?
+            .map(|value| {
+                value
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|value| *value > 0)
+                    .ok_or_else(|| {
+                        "CHRONO_NATIVE_POOL_PREWARM_GENERATION must be a positive integer"
+                            .to_owned()
+                    })
+            })
+            .transpose()?;
+        if fixed_prewarm.iter().any(Option::is_some) && fixed_prewarm_generation.is_none() {
+            return Err("fixed-pin prewarm requires a deployment generation".into());
+        }
+        if fixed_prewarm_generation.is_some() && !fixed_native {
             return Err(
                 "fixed-pin pool prewarm requires native allocation and fixed runtime pins".into(),
             );
@@ -39,6 +55,7 @@ impl PoolRollout {
             .transpose()?;
         Ok(Self {
             fixed_prewarm,
+            fixed_prewarm_generation,
             pool_create_cutover_epoch,
         })
     }

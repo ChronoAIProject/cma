@@ -34,13 +34,16 @@ impl NativeWarmPools {
                 qualified.push(target);
             }
         }
-        if !qualified.is_empty() {
+        if let Some(generation) = self
+            .fixed_prewarm_generation
+            .filter(|_| !qualified.is_empty())
+        {
             let provider = self
                 .adapter
                 .native_pools()
                 .ok_or(WarmPoolError::Unavailable)?;
             self.store
-                .activate_fixed_pools(&qualified, provider, self.target_fencing)
+                .activate_fixed_pools(&qualified, provider, self.target_fencing, generation)
                 .await?;
         }
         Ok(self.default_holds.lane(false) || self.default_holds.lane(true))

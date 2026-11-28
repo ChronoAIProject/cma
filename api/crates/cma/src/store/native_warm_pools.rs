@@ -274,29 +274,37 @@ impl PoolTargetStore for MongoNativeWarmPools {
     async fn prepare_fixed_pool(
         &self,
         active: &PoolTarget,
-        target: PoolTarget,
+        target: Option<PoolTarget>,
+        generation: i64,
     ) -> Result<(), WarmPoolError> {
-        self.record_fixed_preparation(active, target).await
+        self.record_fixed_preparation(active, target, generation)
+            .await
     }
-
     async fn activate_fixed_pools(
         &self,
         targets: &[PoolTarget],
         provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
         target_fencing: bool,
+        generation: i64,
     ) -> Result<(), WarmPoolError> {
-        self.select_fixed_preparations(targets, provider, target_fencing)
+        self.select_fixed_preparations(targets, provider, target_fencing, generation)
             .await
     }
-
-    async fn fixed_pool_prepared_from(
+    async fn fixed_preparation(&self, target: &PoolTarget) -> Result<Option<bool>, WarmPoolError> {
+        self.read_fixed_preparation(target).await
+    }
+    async fn begin_fixed_preparation(
         &self,
         target: &PoolTarget,
         active: &PoolTarget,
+        generation: i64,
     ) -> Result<bool, WarmPoolError> {
-        self.confirm_fixed_preparation(target, active).await
+        self.authorize_fixed_effect(target, active, generation)
+            .await
     }
-
+    async fn withdraw_fixed_preparation(&self, target: &PoolTarget) -> Result<(), WarmPoolError> {
+        self.clear_withdrawn_fixed_preparation(target).await
+    }
     async fn pool_creates_fenced(&self, epoch: uuid::Uuid) -> Result<bool, WarmPoolError> {
         self.create_cutover_is_current(epoch).await
     }

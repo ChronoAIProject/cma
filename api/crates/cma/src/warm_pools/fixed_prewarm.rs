@@ -25,8 +25,11 @@ impl NativeWarmPools {
     pub(crate) fn with_fixed_pool_prewarm(
         mut self: Arc<Self>,
         images: [Option<String>; 2],
+        generation: Option<i64>,
     ) -> Arc<Self> {
-        Arc::make_mut(&mut self).fixed_pool_prewarm = images;
+        let pools = Arc::make_mut(&mut self);
+        pools.fixed_pool_prewarm = images;
+        pools.fixed_prewarm_generation = generation;
         self
     }
 
@@ -36,26 +39,20 @@ impl NativeWarmPools {
         replicas: u32,
         machine: bool,
     ) -> Result<Option<PoolTarget>, WarmPoolError> {
-        let Some(candidate) = &self.fixed_pool_prewarm[usize::from(machine)] else {
+        let candidate = self.fixed_pool_prewarm[usize::from(machine)].as_deref();
+        if candidate != Some(image.uri.as_str()) {
             self.ensure_fixed_image(image, replicas, machine).await?;
-            return Ok(None);
-        };
-        if candidate != &image.uri {
-            self.ensure_fixed_image(image, replicas, machine).await?;
-            let active = self.active_default_target(&image.uri, machine).await?;
-            if active.target_replicas == 0 {
+            if let Err(error) = self.prepare_fixed_lane(image, machine).await {
                 tracing::warn!(
                     machine,
-                    "fixed pool prewarm requires an operator-authorized positive target"
+                    ?error,
+                    "fixed pool preparation will retry while the incumbent serves"
                 );
-                return Ok(None);
             }
-            let target = self.candidate_target(candidate, &active)?;
-            self.store.prepare_fixed_pool(&active, target).await?;
             return Ok(None);
         }
 
-        let target = self.active_default_target(candidate, machine).await?;
+        let target = self.active_default_target(&image.uri, machine).await?;
         let provider = self
             .adapter
             .native_pools()
@@ -64,10 +61,53 @@ impl NativeWarmPools {
         Ok(Some(target))
     }
 
-    pub(super) async fn matches_fixed_preparation(
+    pub(super) async fn retry_fixed_prewarm(&self) {
+        if self.fixed_prewarm_generation.is_none() {
+            return;
+        }
+        let released = self.released_images();
+        if let Err(error) = self.prepare_fixed_lane(&released.agent, false).await {
+            tracing::warn!(?error, "Standard pool preparation will retry");
+        }
+        if let Some((machine, _)) = released.machine {
+            if let Err(error) = self.prepare_fixed_lane(&machine, true).await {
+                tracing::warn!(?error, "Machine pool preparation will retry");
+            }
+        }
+    }
+
+    async fn prepare_fixed_lane(
+        &self,
+        image: &RuntimeImage,
+        machine: bool,
+    ) -> Result<(), WarmPoolError> {
+        let Some(generation) = self.fixed_prewarm_generation else {
+            return Ok(());
+        };
+        let candidate = self.fixed_pool_prewarm[usize::from(machine)].as_deref();
+        if candidate == Some(image.uri.as_str()) {
+            return Ok(());
+        }
+        let active = self.active_default_target(&image.uri, machine).await?;
+        let target = if active.target_replicas > 0 {
+            candidate
+                .map(|image| self.candidate_target(image, &active))
+                .transpose()?
+        } else {
+            None
+        };
+        self.store
+            .prepare_fixed_pool(&active, target, generation)
+            .await
+    }
+
+    pub(super) async fn authorize_fixed_preparation(
         &self,
         target: &PoolTarget,
     ) -> Result<bool, WarmPoolError> {
+        let Some(generation) = self.fixed_prewarm_generation else {
+            return Ok(false);
+        };
         if self.fixed_pool_prewarm[usize::from(target.machine)].as_deref()
             != Some(target.plan.spec.image.uri.as_str())
         {
@@ -85,7 +125,9 @@ impl NativeWarmPools {
         let active = self
             .active_default_target(&incumbent.uri, target.machine)
             .await?;
-        self.store.fixed_pool_prepared_from(target, &active).await
+        self.store
+            .begin_fixed_preparation(target, &active, generation)
+            .await
     }
 }
 

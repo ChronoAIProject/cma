@@ -143,7 +143,8 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     async fn prepare_fixed_pool(
         &self,
         _active: &PoolTarget,
-        _target: PoolTarget,
+        _target: Option<PoolTarget>,
+        _generation: i64,
     ) -> Result<(), WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
@@ -152,15 +153,23 @@ pub(crate) trait PoolTargetStore: Send + Sync {
         _targets: &[PoolTarget],
         _provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
         _target_fencing: bool,
+        _generation: i64,
     ) -> Result<(), WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
-    async fn fixed_pool_prepared_from(
+    async fn fixed_preparation(&self, _target: &PoolTarget) -> Result<Option<bool>, WarmPoolError> {
+        Ok(None)
+    }
+    async fn begin_fixed_preparation(
         &self,
         _target: &PoolTarget,
         _active: &PoolTarget,
+        _generation: i64,
     ) -> Result<bool, WarmPoolError> {
         Ok(false)
+    }
+    async fn withdraw_fixed_preparation(&self, _target: &PoolTarget) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
     }
     async fn pool_creates_fenced(&self, _epoch: uuid::Uuid) -> Result<bool, WarmPoolError> {
         Ok(false)
@@ -234,6 +243,7 @@ pub(crate) struct NativeWarmPools {
     allow_empty_startup: bool,
     pool_create_cutover_epoch: Option<uuid::Uuid>,
     fixed_pool_prewarm: [Option<String>; 2],
+    fixed_prewarm_generation: Option<i64>,
     default_holds: Arc<DefaultPoolHolds>,
 }
 
@@ -260,6 +270,7 @@ impl NativeWarmPools {
             allow_empty_startup: false,
             pool_create_cutover_epoch: None,
             fixed_pool_prewarm: Default::default(),
+            fixed_prewarm_generation: None,
             default_holds: Arc::default(),
         })
         .with_target_fencing(false)

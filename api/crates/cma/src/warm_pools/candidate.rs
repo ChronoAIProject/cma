@@ -35,7 +35,25 @@ impl NativeWarmPools {
         Ok(false)
     }
 
-    async fn settle_candidate(
+    pub(super) async fn apply_fixed_preparation(
+        &self,
+        provider: &dyn NativePoolControl,
+        target: PoolTarget,
+    ) -> Result<bool, WarmPoolError> {
+        let deadline = candidate_deadline(&target);
+        if let Some(result) = dispatch_before(
+            deadline,
+            reconcile_claimed(self.store.as_ref(), provider, target.clone(), true),
+        )
+        .await
+        {
+            return result.map(|_| true);
+        }
+        self.store.finish(&target, false).await?;
+        Ok(false)
+    }
+
+    pub(super) async fn settle_candidate(
         &self,
         provider: &dyn NativePoolControl,
         mut target: PoolTarget,
