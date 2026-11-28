@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use layer2_core::sandbox::store::{
-    SandboxMaintenanceStore, SandboxReconciliationStore, SandboxRuntimeLossOutcome,
-    SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
+    ReconciliationSandbox, SandboxMaintenanceStore, SandboxReconciliationStore,
+    SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest, SandboxStoreError,
 };
 use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxStatus};
 use layer2_core::{rfc3339_at, seconds_from_rfc3339, SandboxId};
@@ -54,14 +54,10 @@ mod telemetry;
 mod transient;
 
 pub(crate) trait ReconciliationStore:
-    SandboxReconciliationStore + SandboxMaintenanceStore + SandboxStore
+    SandboxReconciliationStore + SandboxMaintenanceStore
 {
 }
-
-impl<T> ReconciliationStore for T where
-    T: SandboxReconciliationStore + SandboxMaintenanceStore + SandboxStore
-{
-}
+impl<T: SandboxReconciliationStore + SandboxMaintenanceStore> ReconciliationStore for T {}
 
 pub(crate) struct SandboxReconciler {
     store: Arc<dyn ReconciliationStore>,
@@ -188,7 +184,11 @@ impl SandboxReconciler {
         {
             return Ok(());
         }
-        if let Some(current) = self.store.get_sandbox(&id).await? {
+        let current = self.store.reconciliation_sandbox(&id).await?;
+        if matches!(current, ReconciliationSandbox::Quarantined) {
+            return Ok(());
+        }
+        if let ReconciliationSandbox::Present(current) = current {
             current
                 .validate()
                 .map_err(|error| corrupt(&error.to_string()))?;

@@ -10,7 +10,7 @@ use crate::sandbox::{
 };
 use crate::{seconds_from_rfc3339, SandboxId};
 
-use super::{Page, PageRequest, SandboxStoreError};
+use super::{Page, PageRequest, SandboxStore, SandboxStoreError};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SandboxRuntimeLossRequest {
@@ -59,8 +59,26 @@ pub enum SandboxRuntimeLossApplication {
     Complete(SandboxRuntimeLossOutcome),
 }
 
+pub enum ReconciliationSandbox {
+    Missing,
+    Quarantined,
+    Present(Box<Sandbox>),
+}
+
 #[async_trait]
-pub trait SandboxReconciliationStore: Send + Sync {
+pub trait SandboxReconciliationStore: SandboxStore {
+    /// Read the owned row after checking unowned authority. Quarantine holds its
+    /// provider resources even when the stored aggregate cannot be decoded.
+    async fn reconciliation_sandbox(
+        &self,
+        id: &SandboxId,
+    ) -> Result<ReconciliationSandbox, SandboxStoreError> {
+        Ok(match self.get_sandbox(id).await? {
+            Some(sandbox) => ReconciliationSandbox::Present(Box::new(sandbox)),
+            None => ReconciliationSandbox::Missing,
+        })
+    }
+
     /// Read the exact unowned home reservation before the fresh owned Sandbox read.
     async fn unowned_home_reservation(
         &self,
