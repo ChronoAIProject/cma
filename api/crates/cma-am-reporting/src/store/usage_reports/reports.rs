@@ -19,6 +19,7 @@ impl ReportingStore {
             .ok_or(MetricsError::NotFound)?;
         let report: Report = decode(&d)?;
         if report.expires_at <= at
+            || matches!(d.get_str("state"), Ok("retired" | "view_retired"))
             || d.get_i64("retire_after")
                 .is_ok_and(|until| until <= at as i64)
         {
@@ -42,7 +43,9 @@ impl ReportingStore {
             if report.status == ReportStatus::Failed {
                 return Err(MetricsError::Unavailable);
             }
-            if report.expires_at <= at {
+            if report.expires_at <= at
+                || matches!(d.get_str("state"), Ok("retired" | "view_retired"))
+            {
                 return Err(MetricsError::Expired);
             }
             return Ok(Some(report));

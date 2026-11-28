@@ -77,7 +77,10 @@ for (const theme of ['light', 'dark']) {
     );
     await page.goto('/operations?tab=sandboxes');
     const panel = page.getByRole('region', { name: 'Deferred runtime bindings' });
-    await expect(panel.getByText('1 observed Sandboxes')).toBeVisible();
+    await expect(panel.getByText('1 Sandbox with deferred bindings')).toBeVisible();
+    await expect(
+      panel.getByText(/counts only Sandboxes whose runtime binding has been deferred/),
+    ).toBeVisible();
     await expect(
       panel.getByRole('heading', { name: `Sandbox ${sandbox}`, exact: true }),
     ).toHaveCount(1);
@@ -87,7 +90,9 @@ for (const theme of ['light', 'dark']) {
     await expect(panel.getByText('Retrying at observation time', { exact: true })).toBeVisible();
     await expect(panel.getByText(/Eligible no earlier than/)).toBeVisible();
     await expect(panel.getByText(/Incomplete observation/)).toBeVisible();
-    await expect(panel.getByText(/does not establish deployment-wide health/)).toBeVisible();
+    await expect(
+      panel.getByText(/Registered reporters may omit starting or unreachable processes/),
+    ).toBeVisible();
     const button = panel.getByRole('button', { name: 'Refresh binding observations' });
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: 1000 });
@@ -119,7 +124,7 @@ for (const theme of ['light', 'dark']) {
     await button.focus();
     await expect(button).toBeFocused();
     await page.keyboard.press('Enter');
-    await expect(panel.getByText('0 observed Sandboxes')).toBeVisible();
+    await expect(panel.getByText('0 Sandboxes with deferred bindings')).toBeVisible();
     await expect(
       panel.getByText('No held bindings were observed in the returned samples.'),
     ).toBeVisible();
@@ -200,7 +205,7 @@ test('LOCAL binding refresh clears rejected rows and honors Retry-After without 
   await expect(button).toBeEnabled({ timeout: 5000 });
   expect(reads).toHaveLength(2);
   await button.click();
-  await expect(panel.getByText('0 observed Sandboxes')).toBeVisible();
+  await expect(panel.getByText('0 Sandboxes with deferred bindings')).toBeVisible();
   expect(reads).toHaveLength(3);
   expect(reads[2]! - reads[1]!).toBeGreaterThanOrEqual(1000);
   expect(boundary.writes).toEqual([]);
