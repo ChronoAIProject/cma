@@ -132,6 +132,10 @@ enum PinFault {
     UnknownUnapplied,
 }
 
+// Cover both the application's commit loop and the driver's retries of each
+// commit command. The failpoint is cleared before checking the durable row.
+const UNKNOWN_COMMIT_RESPONSES: i32 = 20;
+
 async fn workspace_pin_fault(fault: PinFault) {
     let f = Fixture::new().await;
     let parent = sandbox("sbx_pin_fault");
@@ -162,9 +166,11 @@ async fn workspace_pin_fault(fault: PinFault) {
             async {
                 match fault {
                     PinFault::KnownAbort => f.fail("update", 1, false).await,
-                    PinFault::UnknownApplied => f.fail("commitTransaction", 5, true).await,
+                    PinFault::UnknownApplied => {
+                        f.fail("commitTransaction", UNKNOWN_COMMIT_RESPONSES, true).await;
+                    }
                     PinFault::UnknownUnapplied => {
-                        f.fail_command(5, doc! {
+                        f.fail_command(UNKNOWN_COMMIT_RESPONSES, doc! {
                             "failCommands": ["commitTransaction"],
                             "errorCode": 112_i32,
                             "errorLabels": ["UnknownTransactionCommitResult", "TransientTransactionError"],
