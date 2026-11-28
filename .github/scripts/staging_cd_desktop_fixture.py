@@ -95,9 +95,15 @@ def qualify(archive, component, config_digest, revision, directory, runner):
         runner(["python3", "-B", str(ROOT / ".github/scripts/runtime_image_hygiene.py"),
                 "--image", local, "--component", component,
                 "--output", str(directory / "hygiene.json")], cwd=ROOT, timeout=1200)
-        smoke = directory / "desktop.json"
-        runner(["node", ".github/scripts/desktop-runtime-evidence.mjs", local, revision, str(smoke)],
-               cwd=ROOT, timeout=900)
+        if component == "runtime-omarchy":
+            smoke = directory / "omarchy" / "verification.json"
+            probe = ["node", ".github/scripts/omarchy-runtime-evidence.mjs",
+                     revision, str(smoke.parent), config_digest]
+        else:
+            smoke = directory / "desktop.json"
+            probe = ["node", ".github/scripts/desktop-runtime-evidence.mjs",
+                     config_digest, revision, str(smoke)]
+        runner(probe, cwd=ROOT, timeout=900)
         evidence = json.loads(smoke.read_text())
         require(evidence.get("image") == config_digest and evidence.get("revision") == revision
                 and evidence.get("result") == "pass" and evidence.get("cleanup") is True,
@@ -110,24 +116,30 @@ def qualify(archive, component, config_digest, revision, directory, runner):
 def publish_archive(archive, component, digest, config_digest, scanned, directory, actor, credential, registry, runner):
     require(checksum(archive) == scanned, "Desktop archive changed after scanning")
     repository = "ghcr.io/chronoaiproject/" + DEPLOYABLES[component]
+    image = f"{repository}@{digest}"
     tag = STAGING_DESKTOP_TAG_PREFIX + digest[7:]
-    if registry.manifest(repository, tag, absent=True) is None:
-        auth = directory / "registry-auth.json"
-        auth.touch(mode=0o600, exist_ok=False)
+    auth = directory / "registry-auth.json"
+    auth.touch(mode=0o600, exist_ok=False)
+    try:
         auth.write_text('{"auths":{}}', encoding="utf-8")
-        try:
-            runner(["skopeo", "login", "--authfile", str(auth), "--username", actor,
-                    "--password-stdin", "ghcr.io"], data=credential.encode(), timeout=60)
+        runner(["skopeo", "login", "--authfile", str(auth), "--username", actor,
+                "--password-stdin", "ghcr.io"], data=credential.encode(), timeout=60)
+        if registry.manifest(repository, tag, absent=True) is None:
             push(archive, repository, tag, digest, auth, registry, runner,
                  lambda: True, {})
-        finally:
-            auth.unlink()
-    published = registry.manifest(repository, digest, settle=True)
-    tagged = registry.manifest(repository, tag, settle=True)
-    require(published == tagged and published[0] == digest
-            and published[1]["config"]["digest"] == config_digest and checksum(archive) == scanned,
-            "Registry readback differs from the qualified Desktop archive")
-    return f"{repository}@{digest}", tag
+        published = registry.manifest(repository, digest, settle=True)
+        tagged = registry.manifest(repository, tag, settle=True)
+        require(published == tagged and published[0] == digest
+                and published[1]["config"]["digest"] == config_digest,
+                "Registry manifest readback differs from the qualified Desktop archive")
+        config = runner(["skopeo", "inspect", "--raw", "--config", "--retry-times", "3",
+                         "--authfile", str(auth), "docker://" + image], timeout=120)
+        require("sha256:" + hashlib.sha256(config).hexdigest() == config_digest,
+                "Registry config bytes differ from the qualified Desktop archive")
+        require(checksum(archive) == scanned, "Desktop archive changed after scanning")
+    finally:
+        auth.unlink()
+    return image, tag
 
 
 def main():
