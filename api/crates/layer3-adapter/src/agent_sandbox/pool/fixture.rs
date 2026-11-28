@@ -30,6 +30,7 @@ pub(super) struct State {
     pub relay_outcomes: VecDeque<super::fixture_exec::RelayOutcome>,
     pub relay_opens: usize,
     pub relay_requests: usize,
+    pub relay_first_marker: Option<tokio::time::Instant>,
     pub response_gates: VecDeque<ResponseGate>,
     version: u64,
 }

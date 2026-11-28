@@ -10,12 +10,14 @@ use tokio_tungstenite::{
     },
 };
 
+#[derive(Clone, Copy)]
 pub(super) enum RelayOutcome {
     EarlyExit,
     ReplacedPod,
     InvalidMarker,
     Status,
     DisconnectAfterWrite,
+    ListenerReadyAt(tokio::time::Instant),
 }
 
 pub(super) async fn serve_relay(
@@ -66,7 +68,9 @@ pub(super) async fn serve_relay(
         }
         outcome
     };
-    if matches!(outcome, RelayOutcome::EarlyExit | RelayOutcome::ReplacedPod) {
+    if matches!(outcome, RelayOutcome::EarlyExit | RelayOutcome::ReplacedPod)
+        || matches!(outcome, RelayOutcome::ListenerReadyAt(at) if tokio::time::Instant::now() < at)
+    {
         ws.send(Message::Binary(b"\x03{\"status\":\"Failure\"}".to_vec()))
             .await
             .unwrap();
@@ -93,6 +97,11 @@ pub(super) async fn serve_relay(
         }
         return;
     }
+    state
+        .lock()
+        .unwrap()
+        .relay_first_marker
+        .get_or_insert_with(tokio::time::Instant::now);
     let mut input = Vec::new();
     let request = loop {
         let Some(Ok(Message::Binary(bytes))) = ws.next().await else {
