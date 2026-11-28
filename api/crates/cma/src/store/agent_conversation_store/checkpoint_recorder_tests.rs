@@ -6,8 +6,7 @@ use crate::store::sandbox_maintenance::mongo_integration_tests::{
 };
 use layer2_core::sandbox::store::SandboxStore;
 use layer2_core::sandbox::{
-    AgentConversationError, AgentUpdateRecorder, DurableAgentUpdateRecorder, SandboxOrigin,
-    SandboxRuntimeImageOrigin,
+    AgentConversationError, AgentUpdateRecorder, DurableAgentUpdateRecorder,
 };
 use layer3_adapter::{
     ContentBlock, ContentChunk, ConversationUpdate, MessageId, PromptResponse, SessionUpdate,
@@ -204,17 +203,12 @@ async fn incremental_working(
     store: &MongoSandboxStore,
     name: &str,
     image: &str,
-    origin: SandboxRuntimeImageOrigin,
     segmented: bool,
 ) -> Agent {
     let mut sandbox = active_sandbox(name);
-    sandbox.origin = SandboxOrigin::Lifecycle {
-        operation_id: format!("prepare-{name}"),
-    };
     sandbox.profile.content.runtime_image = Some(image.into());
     sandbox.profile.digest =
         layer2_core::profiles::content_digest(&sandbox.profile.content).unwrap();
-    sandbox.lifecycle.runtime_image_origin = Some(origin);
     sandbox.runtime.as_mut().unwrap().runtime_version = image.into();
     store.create_sandbox(sandbox.clone()).await.unwrap();
     let agent = ready_agent(&sandbox, &format!("agt_{name}"));
@@ -436,17 +430,14 @@ async fn incremental_terminal_commits_one_reply_for_standard_and_omarchy_in_both
         .await
         .unwrap();
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    for (profile, origin) in [
-        ("standard", SandboxRuntimeImageOrigin::ManagedDesktop),
-        ("omarchy", SandboxRuntimeImageOrigin::ManagedMachine),
-    ] {
+    for profile in ["standard", "omarchy"] {
         let image = format!(
             "example.invalid/runtime-{profile}@sha256:{}",
             "a".repeat(64)
         );
         for segmented in [false, true] {
             let id = format!("sbx_incremental_{profile}_{segmented}");
-            let current = incremental_working(&store, &id, &image, origin, segmented).await;
+            let current = incremental_working(&store, &id, &image, segmented).await;
             let row = store
                 .agents
                 .find_one(doc! { "_id": current.id.as_str() })
@@ -456,14 +447,8 @@ async fn incremental_terminal_commits_one_reply_for_standard_and_omarchy_in_both
             assert_eq!(segments::read_format(&row).unwrap().is_some(), segmented);
             record_incremental_terminal(&store, &current).await;
 
-            let current = incremental_working(
-                &store,
-                &format!("{id}_lifecycle"),
-                &image,
-                origin,
-                segmented,
-            )
-            .await;
+            let current =
+                incremental_working(&store, &format!("{id}_lifecycle"), &image, segmented).await;
             close_without_runtime_terminal(&store, &current).await;
         }
     }
