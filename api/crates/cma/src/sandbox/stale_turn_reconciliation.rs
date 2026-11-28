@@ -10,7 +10,7 @@ use layer3_adapter::{
     stale_turn::{StaleTurnHold, StaleTurnProducer, MAX_SEAL_BYTES},
     RuntimeHandle, SandboxAdapter,
 };
-use mongodb::bson::DateTime;
+use mongodb::bson::{DateTime, Document};
 use tokio::{
     sync::watch,
     task::JoinHandle,
@@ -21,7 +21,7 @@ use super::LiveAgentRegistry;
 use crate::{
     background::{self, BackgroundWork},
     store::{
-        stale_turns::{Candidate, Observation, ProofBudget, StaleTurnStore},
+        stale_turns::{Candidate, Observation, OwnedPosition, ProofBudget, StaleTurnStore},
         MongoSandboxStore,
     },
     worker_supervision::{self, Activity},
@@ -45,6 +45,7 @@ pub(super) struct Worker {
     ownership: Arc<OwnershipCoordinator>,
     registry: Arc<LiveAgentRegistry>,
     terminal_adapter: Option<Arc<dyn SandboxAdapter>>,
+    owned_position: OwnedPosition,
     work: BackgroundWork,
     reported: HashMap<Candidate, (&'static str, Instant)>,
 }
@@ -61,6 +62,7 @@ impl Worker {
             ownership,
             registry,
             terminal_adapter,
+            owned_position: OwnedPosition::default(),
             work: BackgroundWork::new(background::shared(), NAME, SWEEP_DEADLINE, INTERVAL),
             reported: HashMap::new(),
         }
@@ -104,31 +106,84 @@ impl Worker {
             outcome("ownership_unavailable");
             return Ok(());
         }
+        if self.terminal_adapter.is_some() {
+            return self.sweep_owned().await;
+        }
         let Some(lease) = self.store.claim().await.map_err(store_error)? else {
             outcome("scan_busy");
             return Ok(());
         };
         let page = self.store.page(&lease).await.map_err(store_error)?;
+        let examined = self.observe_page(&page.rows, lease.now).await?;
+        let last_examined = examined
+            .checked_sub(1)
+            .map(|index| command_key(&page.rows[index]))
+            .transpose()?;
+        let eof = page.eof && examined == page.rows.len();
+        if self
+            .store
+            .advance(&lease, last_examined, eof)
+            .await
+            .map_err(store_error)?
+        {
+            outcome("complete");
+        } else {
+            outcome("scan_lease_lost");
+        }
+        Ok(())
+    }
+
+    async fn sweep_owned(&mut self) -> Result<(), SandboxStoreError> {
+        let agents: Vec<_> = self
+            .ownership
+            .owned()
+            .await
+            .into_iter()
+            .filter(|authority| authority.is_current())
+            .map(|authority| authority.token.agent_id.clone())
+            .collect();
+        let page = self
+            .store
+            .owned_page(&agents, &self.owned_position)
+            .await
+            .map_err(store_error)?;
+        let examined = match page.rows.first() {
+            Some(row) => {
+                let now = *row.get_datetime("scan_now").map_err(|_| {
+                    SandboxStoreError::Corrupt("stale-turn scan clock is invalid".into())
+                })?;
+                self.observe_page(&page.rows, now).await?
+            }
+            None => 0,
+        };
+        self.owned_position
+            .advance(&page, examined)
+            .map_err(store_error)?;
+        outcome("complete");
+        Ok(())
+    }
+
+    async fn observe_page(
+        &mut self,
+        rows: &[Document],
+        now: DateTime,
+    ) -> Result<usize, SandboxStoreError> {
         let stop_investigating = Instant::now() + INVESTIGATION_DEADLINE;
         self.reported
             .retain(|_, (_, until)| *until > Instant::now());
-        let mut last_examined = None;
         let mut examined = 0;
         let mut investigations = 0;
         let mut oldest = None;
-        for row in &page.rows {
+        for row in rows {
             if !self.ownership.is_ready()
                 || investigations == MAX_INVESTIGATIONS
                 || Instant::now() >= stop_investigating
             {
                 break;
             }
-            let key = row.get_str("_id").map_err(|_| {
-                SandboxStoreError::Corrupt("stale-turn scan cursor is invalid".into())
-            })?;
-            last_examined = Some(key);
+            command_key(row)?;
             examined += 1;
-            let Some(candidate) = Candidate::from_row(row, lease.now) else {
+            let Some(candidate) = Candidate::from_row(row, now) else {
                 continue;
             };
             if let Some(reason) = Candidate::early_hold(row) {
@@ -140,10 +195,10 @@ impl Worker {
             let observation = tokio::time::timeout_at(stop_investigating, async {
                 if self.terminal_adapter.is_some() {
                     self.store
-                        .observe_for_terminal(&candidate, lease.now, &mut budget)
+                        .observe_for_terminal(&candidate, now, &mut budget)
                         .await
                 } else {
-                    self.store.observe(&candidate, lease.now, &mut budget).await
+                    self.store.observe(&candidate, now, &mut budget).await
                 }
             })
             .await;
@@ -169,7 +224,7 @@ impl Worker {
                         stop_investigating,
                         self.try_terminal(
                             &candidate,
-                            lease.now,
+                            now,
                             target,
                             evidence,
                             &mut budget,
@@ -196,18 +251,7 @@ impl Worker {
         if let Some(age) = oldest {
             metrics::histogram!("cma_stale_turn_oldest_eligible_age_seconds").record(age as f64);
         }
-        let eof = page.eof && examined == page.rows.len();
-        if self
-            .store
-            .advance(&lease, last_examined, eof)
-            .await
-            .map_err(store_error)?
-        {
-            outcome("complete");
-        } else {
-            outcome("scan_lease_lost");
-        }
-        Ok(())
+        Ok(examined)
     }
 
     async fn try_terminal<'producer>(
@@ -377,6 +421,11 @@ impl Worker {
         }
         metrics::counter!("cma_stale_turn_hold_total", "reason" => reason).increment(1);
     }
+}
+
+fn command_key(row: &Document) -> Result<&str, SandboxStoreError> {
+    row.get_str("_id")
+        .map_err(|_| SandboxStoreError::Corrupt("stale-turn scan cursor is invalid".into()))
 }
 
 fn outcome(outcome: &'static str) {
