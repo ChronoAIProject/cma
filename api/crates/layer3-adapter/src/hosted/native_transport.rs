@@ -160,6 +160,30 @@ impl ProviderHostedControlTransport {
         limit: usize,
         policy: (native_pool::NativeHttpLane, RuntimeWorkloadClass),
     ) -> crate::Result<NativeHttpResponse> {
+        let Some((runtime, pod)) = endpoint.native_binding() else {
+            return Err(native_pool::retired());
+        };
+        let digest = endpoint
+            .native_identity()
+            .and_then(|identity| identity.request_sha256.as_deref());
+        let (lease, _request) =
+            crate::agent_sandbox::relay_readiness_retry::prepare(runtime, pod, digest, |fresh| {
+                Box::pin(self.prepare_native_http(endpoint, policy, fresh))
+            })
+            .await?;
+        let mut cancelled = lease.slot.cancellation();
+        tokio::select! { biased;
+            _ = cancelled.wait_for(|cancelled| *cancelled) => Err(cancelled_exchange()),
+            result = self.native_http_once(endpoint, method, url, body, limit, lease) => result,
+        }
+    }
+
+    async fn prepare_native_http(
+        &self,
+        endpoint: &RuntimeEndpoint,
+        policy: (native_pool::NativeHttpLane, RuntimeWorkloadClass),
+        fresh: bool,
+    ) -> crate::Result<(NativeLease, crate::agent_sandbox::RuntimePermit)> {
         let (lane, class) = policy;
         let class = class.effective();
         let request = self
@@ -180,10 +204,11 @@ impl ProviderHostedControlTransport {
         let mut cancelled = slot.cancellation();
         let exchange = async {
             let mut lease = self.native_checkout(endpoint, slot.clone()).await?;
-            if lease
-                .connection
-                .as_ref()
-                .is_some_and(|connection| connection.sender.is_closed())
+            if fresh
+                || lease
+                    .connection
+                    .as_ref()
+                    .is_some_and(|connection| connection.sender.is_closed())
             {
                 lease.connection.take();
             }
@@ -214,6 +239,13 @@ impl ProviderHostedControlTransport {
                 }
             } else {
                 // Opening a new stream retains the original pre/post-open fences.
+                if fresh {
+                    let RuntimeDiscovery::AgentSandbox(client) = &self.client else {
+                        return Err(native_pool::retired());
+                    };
+                    crate::agent_sandbox::relay_readiness_retry::verify_reconnect(client).await?;
+                    lease.current().await?;
+                }
                 let stream = match self.native_request_stream(endpoint, &request).await {
                     Ok(stream) => stream,
                     Err(error) => {
@@ -259,16 +291,13 @@ impl ProviderHostedControlTransport {
                     .await?;
                 lease.current().await?;
             }
-            self.native_http_once(endpoint, method, url, body, limit, lease)
-                .await
+            Ok(lease)
         };
-        tokio::select! { biased;
-            _ = cancelled.wait_for(|cancelled| *cancelled) => {
-                NativeHttpObservation::record_origin(SettlementFailure::Unclassified);
-                Err(native_pool::retired())
-            },
+        let lease = tokio::select! { biased;
+            _ = cancelled.wait_for(|cancelled| *cancelled) => Err(cancelled_exchange()),
             result = exchange => result,
-        }
+        }?;
+        Ok((lease, request))
     }
 
     pub(super) async fn native_http_once(
@@ -394,3 +423,9 @@ fn unavailable(message: &str) -> AdapterError {
 #[cfg(test)]
 #[path = "native_transport_tests.rs"]
 mod tests;
+
+fn cancelled_exchange() -> AdapterError {
+    crate::agent_sandbox::relay_readiness_retry::clear_marker();
+    NativeHttpObservation::record_origin(SettlementFailure::Unclassified);
+    native_pool::retired()
+}

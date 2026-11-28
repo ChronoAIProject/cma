@@ -7,6 +7,27 @@ use tokio::{
     process::{Child, ChildStdin, ChildStdout, Command},
 };
 
+#[tokio::test]
+async fn relay_readiness_distinguishes_an_early_close_from_protocol_rejection() {
+    assert_eq!(
+        read_ready(&mut &b""[..]).await,
+        Err(RelayReadinessFailure::Unreadable)
+    );
+    assert_eq!(
+        read_ready(&mut &b"BAD-EXEC-1\n"[..]).await,
+        Err(RelayReadinessFailure::Invalid)
+    );
+    assert_eq!(
+        read_ready(&mut &b"B"[..]).await,
+        Err(RelayReadinessFailure::Invalid)
+    );
+    assert_eq!(
+        read_ready(&mut &b"CMA"[..]).await,
+        Err(RelayReadinessFailure::Unreadable)
+    );
+    assert_eq!(read_ready(&mut &READY[..]).await, Ok(()));
+}
+
 async fn start() -> (Child, ChildStdin, ChildStdout, TcpStream) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     // Only the port changes so independent tests never contend for runtime port 9090.
