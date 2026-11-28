@@ -211,7 +211,7 @@ pub(super) async fn reserve_command(
                 Ok(reset_at) => CommandLedgerError::OwnerBudgetExhausted { reset_at },
                 Err(_) => CommandLedgerError::Budget(BudgetError::OwnerExhausted),
             };
-            refusal.into()
+            super::agent_commands::ApplyError::Domain(refusal)
         }
         other => other.into(),
     })?;
