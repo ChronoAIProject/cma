@@ -75,6 +75,9 @@ pub(crate) async fn bind<T>(
     let Ok(initial) = INITIAL_STATUS.try_with(Arc::clone) else {
         return status.await;
     };
+    if crate::owner_protocol::current_authority().is_some() {
+        return status.await;
+    }
     if request.metadata.get("cma/home-identity") != Some(&initial.home.identity()?) {
         return Err(rejected("native relay differs from its initial home"));
     }
