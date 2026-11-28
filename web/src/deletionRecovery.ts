@@ -143,8 +143,14 @@ export function forgetDeletion(viewerId: string, key: string): void {
   }
 }
 
+export function acceptedDeletion(request: DeletionRequest): DeletionRequest {
+  return request.action.kind === 'delete_agent'
+    ? { ...request, accepted: true, acceptedAt: new Date().toISOString() }
+    : { ...request, accepted: true };
+}
+
 export function acknowledgeRetainedDeletion(viewerId: string, sent: DeletionRequest): void {
   const retained = matchingDeletion(viewerId, sent);
   if (!retained?.stop || retained.deleteSent === false) return;
-  persistDeletion(viewerId, { ...retained, accepted: true });
+  persistDeletion(viewerId, acceptedDeletion(retained));
 }
