@@ -12,6 +12,7 @@ export type ProvisioningStepState =
   | 'Waiting'
   | 'Queued'
   | 'In progress'
+  | 'Retrying'
   | 'Ready'
   | 'Waiting for connection'
   | 'Needs attention'
@@ -23,6 +24,7 @@ export function provisioningStepDot(state: ProvisioningStepState): StateDotState
     case 'Ready':
       return 'done';
     case 'In progress':
+    case 'Retrying':
       return 'ongoing';
     case 'Waiting for connection':
       return 'warning';
@@ -40,21 +42,21 @@ export function orderedProvisioningEvents(operation?: AgentLifecycleOperationVie
 export function provisioningStepState(
   phase: string,
   events: readonly AgentLifecycleOperationEvent[],
+  status: string,
   operation?: AgentLifecycleOperationView,
 ): ProvisioningStepState {
   const latest = events.filter((event) => event.phase === phase).at(-1);
   if (
     latest?.status === 'ready' ||
-    (phase === 'agent_startup' && operation?.status === 'succeeded' && operation.agent_id)
+    (phase === 'agent_startup' && status === 'succeeded' && operation?.agent_id)
   )
     return 'Ready';
   if (latest?.status === 'failed') return 'Needs attention';
-  if (operation?.status === 'failed')
-    return latest?.status === 'running' ? 'Needs attention' : 'Not reported';
-  if (operation?.status === 'succeeded') return 'Not reported';
+  if (status === 'failed') return latest?.status === 'running' ? 'Needs attention' : 'Not reported';
+  if (status === 'succeeded') return 'Not reported';
   if (latest?.status !== 'running') return 'Waiting';
-  if (operation?.status === 'waiting_for_connection') return 'Waiting for connection';
-  if (operation?.status === 'queued') return 'Queued';
+  if (status === 'waiting_for_connection') return 'Waiting for connection';
+  if (status === 'queued') return operation?.phase === phase ? 'Retrying' : 'Queued';
   return 'In progress';
 }
 
@@ -69,7 +71,7 @@ export function provisioningDuration(start: string | undefined, end: number): st
     : `${Math.floor(minutes / 60)}h ${minutes % 60}m ${seconds % 60}s`;
 }
 
-export function provisioningStepDuration(
+export function provisioningStepTiming(
   phase: string,
   events: readonly AgentLifecycleOperationEvent[],
   status: string,
@@ -79,6 +81,9 @@ export function provisioningStepDuration(
   const start = phaseEvents.find((event) => event.status === 'running')?.occurred_at;
   const latest = phaseEvents.at(-1);
   const finished = latest?.status === 'ready' || latest?.status === 'failed';
-  if (!finished && (status === 'succeeded' || status === 'failed')) return undefined;
-  return provisioningDuration(start, finished ? Date.parse(latest.occurred_at) : now);
+  if (!finished && (status === 'succeeded' || status === 'failed')) return {};
+  return {
+    start,
+    duration: provisioningDuration(start, finished ? Date.parse(latest.occurred_at) : now),
+  };
 }

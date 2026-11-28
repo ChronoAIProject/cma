@@ -163,8 +163,8 @@ it.each(['queued', 'running', 'failed', 'waiting_for_connection', 'succeeded'])(
     expect(screen.getByText('Request accepted')).toBeVisible();
     expect(screen.getAllByRole('status')).toHaveLength(1);
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
-    fireEvent.click(screen.getByText('Setup details'));
     expect(screen.getByRole('region', { name: 'Agent provisioning progress' })).toBeVisible();
+    expect(screen.getByText('Setup details').closest('details')).not.toHaveAttribute('open');
   },
 );
 

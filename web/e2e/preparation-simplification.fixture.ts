@@ -31,14 +31,14 @@ export async function preparationFixture(page: Page, baseURL: string) {
           json: {
             id: 'preparation-operation',
             status: completed ? 'succeeded' : failed ? 'failed' : 'running',
-            phase: stalled ? 'recoverable_pending' : 'sandbox_runtime',
+            phase: stalled ? 'recoverable_pending' : 'sandbox_ready',
             accepted_at: acceptedAt,
             ...(bound ? { agent_id: local.boundary.agent.id } : {}),
             ...(failed ? { error: 'Synthetic current setup failure' } : {}),
             events: [
               {
                 sequence: 1,
-                phase: 'sandbox_runtime',
+                phase: 'sandbox_ready',
                 status: 'running',
                 message: 'Recorded progress',
                 occurred_at: progressAt,

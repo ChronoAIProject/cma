@@ -1,14 +1,26 @@
-import { useEffect, useState } from 'react';
 import type { AgentLifecycleCreateReceipt, AgentLifecycleOperationView } from '../api/client';
+import type { PreparationStage } from '../preparation/preparationPresentation';
 import { StateDot } from '../ui/StateDot';
 import {
   agentProvisioningSteps,
   orderedProvisioningEvents,
   provisioningDuration,
   provisioningStepDot,
-  provisioningStepDuration,
+  provisioningStepTiming,
   provisioningStepState,
 } from './agentProvisioning';
+import { useProvisioningClock } from './useProvisioningClock';
+import './AgentLifecycleCard.css';
+
+const slowPhaseAfterMs = 15_000;
+
+const phaseActivity: Readonly<Record<string, string>> = {
+  sandbox_ready: 'getting the cloud computer ready',
+  workspace_runtime: 'preparing the workspace',
+  key_scope_ready: 'setting up service access',
+  agent_startup: 'starting the Agent',
+  desktop_preparation: 'preparing the shared desktop',
+};
 
 /**
  * Agent setup as four reported milestones — the shared style contracts"Confirmed
@@ -21,93 +33,130 @@ import {
 export function AgentProvisioningProgress({
   receipt,
   operation,
-  announce = true,
-  presentation,
+  task,
 }: {
-  readonly receipt: AgentLifecycleCreateReceipt;
+  readonly receipt?: AgentLifecycleCreateReceipt;
   readonly operation?: AgentLifecycleOperationView;
-  readonly announce?: boolean;
-  readonly presentation?: 'task';
+  readonly task?: {
+    readonly stage: PreparationStage;
+    readonly label: string;
+    readonly now: number;
+  };
 }) {
-  const status = operation?.status ?? receipt.status ?? 'queued';
+  const status =
+    task?.stage === 'failed' ? 'failed' : (operation?.status ?? receipt?.status ?? 'queued');
   const events = orderedProvisioningEvents(operation);
   const active = ['queued', 'running', 'waiting_for_connection'].includes(status);
-  const [now, setNow] = useState(Date.now);
-  useEffect(() => {
-    if (!active) return;
-    const tick = () => {
-      if (!document.hidden) setNow(Date.now());
-    };
-    tick();
-    const timer = setInterval(tick, 1000);
-    document.addEventListener('visibilitychange', tick);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener('visibilitychange', tick);
-    };
-  }, [active]);
-  const startedAt = events.find((event) => event.status === 'running')?.occurred_at;
-  const completedAt = events
-    .filter((event) => event.phase === 'agent_startup' && event.status === 'ready')
+  const ownClock = useProvisioningClock(active && task === undefined);
+  const now = task?.now ?? ownClock;
+  const startedAt = task
+    ? operation?.accepted_at
+    : (operation?.accepted_at ?? events.find((event) => event.status === 'running')?.occurred_at);
+  const timedEvents = events.filter((event) => Number.isFinite(Date.parse(event.occurred_at)));
+  const completedAt = timedEvents
+    .filter((event) =>
+      status === 'failed'
+        ? event.status === 'failed'
+        : event.phase === 'agent_startup' && event.status === 'ready',
+    )
     .at(-1)?.occurred_at;
+  const lastKnownTime =
+    task && !active && !completedAt ? timedEvents.at(-1)?.occurred_at : undefined;
   const elapsed = provisioningDuration(
     startedAt,
-    active ? now : status === 'succeeded' ? Date.parse(completedAt ?? '') : NaN,
+    active ? now : Date.parse(completedAt ?? lastKnownTime ?? ''),
   );
+  const elapsedLabel = task
+    ? lastKnownTime
+      ? 'Setup elapsed at last update'
+      : 'Setup elapsed'
+    : 'Provisioning elapsed';
   const reportedSteps = events.some((event) => event.phase === 'desktop_preparation')
     ? [...agentProvisioningSteps, { phase: 'desktop_preparation', label: 'Desktop preparation' }]
     : agentProvisioningSteps;
   const steps = reportedSteps.map(({ phase, label }) => ({
     phase,
     label,
-    state: provisioningStepState(phase, events, operation),
-    duration: provisioningStepDuration(phase, events, status, now),
+    state: provisioningStepState(phase, events, status, operation),
+    ...provisioningStepTiming(phase, events, status, now),
   }));
   // Four Ready steps are not success: only the operation's own success with
   // the Agent it created may say the Agent is ready to open.
   const succeeded = status === 'succeeded' && operation?.agent_id !== undefined;
-  const current = steps.find((step) =>
-    ['In progress', 'Waiting for connection', 'Needs attention'].includes(step.state),
+  const activeSteps = steps.filter(
+    (step) => step.state === 'In progress' || step.state === 'Retrying',
   );
+  const lastActive = events
+    .filter((event) => activeSteps.some((step) => step.phase === event.phase))
+    .at(-1);
+  const current =
+    activeSteps.find((step) => step.phase === operation?.phase) ??
+    activeSteps.find((step) => step.phase === lastActive?.phase);
+  const slow = current?.start !== undefined && now - Date.parse(current.start) >= slowPhaseAfterMs;
+  const activity = current && phaseActivity[current.phase];
+  let message = task?.label ?? 'Waiting for the next confirmed stage.';
+  if (status === 'failed') {
+    message = task?.label ?? operation?.error ?? 'Agent provisioning failed.';
+  } else if (task?.stage === 'interrupted') {
+    message = 'Checking setup updates';
+  } else if (task?.stage === 'waiting' || status === 'waiting_for_connection') {
+    message = task
+      ? 'Waiting for connection. Connect the required service to continue.'
+      : 'Connect the required services to continue setting up your Agent.';
+  } else if (succeeded) {
+    message = task?.label ?? 'Your Agent is ready to open.';
+  } else if (task?.stage === 'stalled' || task?.stage === 'ready') {
+    message = task.label;
+  } else if (current) {
+    message = `${current.label} · ${current.state}`;
+    if (task && activity) {
+      if (current.state === 'Retrying') message = `Still ${activity}. Setup is retrying.`;
+      else if (slow) message = `Still ${activity}.`;
+      else message = `${activity.charAt(0).toUpperCase()}${activity.slice(1)}.`;
+    }
+  }
   return (
     <section
       className="agent-lifecycle-provisioning"
-      data-presentation={presentation}
+      data-presentation={task ? 'task' : undefined}
       aria-label="Agent provisioning progress"
     >
       <h3>
-        {status === 'failed'
-          ? 'Agent provisioning needs attention'
-          : succeeded
-            ? 'Agent ready'
-            : 'Preparing your Agent'}
-      </h3>
-      <p role={announce ? 'status' : undefined}>
-        {status === 'failed'
-          ? (operation?.error ?? 'Agent provisioning failed.')
-          : status === 'waiting_for_connection'
-            ? 'Connect the required services to continue setting up your Agent.'
+        {task
+          ? 'Setup progress'
+          : status === 'failed'
+            ? 'Agent provisioning needs attention'
             : succeeded
-              ? 'Your Agent is ready to open.'
-              : current === undefined
-                ? 'Waiting for the next confirmed stage.'
-                : `${current.label} · ${current.state}`}
+              ? 'Agent ready'
+              : 'Preparing your Agent'}
+      </h3>
+      <p className="agent-lifecycle-provisioning__status" role="status">
+        {task?.stage === 'preparing' && current === undefined ? <StateDot state="ongoing" /> : null}
+        {message}
       </p>
       <ol className="agent-lifecycle-steps" aria-label="Agent setup steps">
-        {steps.map(({ phase, label, state, duration }) => (
-          <li
-            key={phase}
-            data-state={provisioningStepDot(state)}
-            aria-current={state === 'In progress' ? 'step' : undefined}
-          >
-            <StateDot state={provisioningStepDot(state)} placement="agent-lifecycle-steps__dot" />
-            <strong>{label}</strong>
-            <span className="agent-lifecycle-steps__state">{state}</span>
-            {duration === undefined ? null : <small>{duration} elapsed</small>}
-          </li>
-        ))}
+        {steps.map(({ phase, label, state, duration }) => {
+          const isCurrent =
+            (task === undefined || task.stage === 'preparing') && phase === current?.phase;
+          const dot = provisioningStepDot(state);
+          const visibleDot = dot === 'ongoing' && !isCurrent ? 'neutral' : dot;
+          return (
+            <li key={phase} data-state={visibleDot} aria-current={isCurrent ? 'step' : undefined}>
+              <StateDot state={visibleDot} placement="agent-lifecycle-steps__dot" />
+              <strong>{label}</strong>
+              <span className="agent-lifecycle-steps__state">
+                {task && state === 'Needs attention' ? 'Failed' : state}
+              </span>
+              {duration === undefined ? null : <small>{duration} elapsed</small>}
+            </li>
+          );
+        })}
       </ol>
-      {elapsed === undefined ? null : <p>Provisioning elapsed: {elapsed}</p>}
+      {elapsed === undefined ? null : (
+        <p>
+          {elapsedLabel}: {elapsed}
+        </p>
+      )}
     </section>
   );
 }

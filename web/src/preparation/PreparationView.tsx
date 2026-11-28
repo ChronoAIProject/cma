@@ -1,8 +1,10 @@
 import { useMemo, type ReactNode } from 'react';
 import type { CmaWebClient } from '../api/client';
 import { AgentMascot } from '../brand/AgentMascot';
+import { AgentProvisioningProgress } from '../create/AgentProvisioningProgress';
+import { provisioningDuration } from '../create/agentProvisioning';
+import { useProvisioningClock } from '../create/useProvisioningClock';
 import { Badge } from '../ui/Badge';
-import { activityLabel } from '../shell/treePresentation';
 import type { PreparationPresentation } from './preparationPresentation';
 import { PreparationMessage } from './PreparationMessage';
 import './PreparationView.css';
@@ -20,12 +22,12 @@ interface PreparationMotion extends PreparationMotionContext {
   readonly incarnation?: string;
 }
 
-function EvidenceTime({ value }: { readonly value: string }) {
+function EvidenceTime({ value, now }: { readonly value: string; readonly now: number }) {
   const absolute = new Date(value).toLocaleString();
-  const relative = activityLabel(value);
+  const relative = provisioningDuration(value, now);
   return (
     <time dateTime={value} title={absolute} aria-label={absolute} tabIndex={0}>
-      {relative === 'Now' ? 'Just now' : `${relative} ago`}
+      {relative === undefined || relative === '0s' ? 'Just now' : `${relative} ago`}
     </time>
   );
 }
@@ -54,12 +56,14 @@ export function PreparationView({
     () => ({ client, viewerId, authEpoch, requestKey, agentId, incarnation }),
     [client, viewerId, authEpoch, requestKey, agentId, incarnation],
   );
+  const updating = model.accepted && !model.ready && !model.started && model.stage !== 'failed';
+  const now = useProvisioningClock(updating && visible !== false);
   if (model.started) return null;
   return (
     <section className="preparation" aria-label="Task preparation">
       <header className="preparation__header">
         <h1 id={titleId}>{model.title}</h1>
-        <Badge tone={model.stage === 'failed' ? 'warning' : 'neutral'} wrap live>
+        <Badge tone={model.stage === 'failed' ? 'warning' : 'neutral'} wrap>
           {model.label}
         </Badge>
       </header>
@@ -91,7 +95,7 @@ export function PreparationView({
           <strong>{model.accepted ? 'Request accepted' : 'Checking request acceptance'}</strong>
           {model.accepted ? (
             model.acceptedAt ? (
-              <EvidenceTime value={model.acceptedAt} />
+              <EvidenceTime value={model.acceptedAt} now={now} />
             ) : (
               <span>Acceptance time unavailable</span>
             )
@@ -112,7 +116,7 @@ export function PreparationView({
           </strong>
           {model.progressAt ? (
             <span>
-              Last progress <EvidenceTime value={model.progressAt} />
+              Last progress <EvidenceTime value={model.progressAt} now={now} />
             </span>
           ) : null}
         </li>
@@ -122,6 +126,11 @@ export function PreparationView({
           </strong>
         </li>
       </ol>
+      <AgentProvisioningProgress
+        receipt={model.receipt}
+        operation={model.operation}
+        task={{ now, stage: model.stage, label: model.label }}
+      />
       {model.error ? (
         <p className="preparation__error" role="alert">
           {model.error}

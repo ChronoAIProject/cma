@@ -2,7 +2,6 @@ import type { ReactNode } from 'react';
 import type { AgentLifecycleOperationView } from '../api/client';
 import type { Intent } from './lifecycleIntentStorage';
 import { DocsLink } from '../services/DocsLink';
-import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import { DiscardWaitingCreation } from './DiscardWaitingCreation';
 import { PreparationView, type PreparationMotionContext } from '../preparation/PreparationView';
 import { derivePreparationView } from '../preparation/preparationPresentation';
@@ -99,14 +98,6 @@ export function TaskCreationStatus({
               </dd>
             </div>
           </dl>
-          {intent.receipt ? (
-            <AgentProvisioningProgress
-              receipt={intent.receipt}
-              operation={operation}
-              announce={false}
-              presentation="task"
-            />
-          ) : null}
           {intent.body.repository ? (
             <section aria-label="Requested repository">
               <p className="task-submitted__literal">{intent.body.repository.url}</p>
