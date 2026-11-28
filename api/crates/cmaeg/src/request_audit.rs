@@ -219,3 +219,126 @@ fn unavailable() -> Response {
     ))
     .into_response()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::auth::{Administrator, Creator, CreatorAuthState, CreatorAuthenticator};
+    use axum::{body::Body, routing::post, Json, Router};
+    use tower::ServiceExt;
+
+    #[derive(Clone)]
+    struct Auth(CreatorAuthenticator);
+
+    impl CreatorAuthState for Auth {
+        fn creator_auth(&self) -> &CreatorAuthenticator {
+            &self.0
+        }
+    }
+
+    #[tokio::test]
+    async fn verified_creator_and_admin_refusals_keep_the_actor() {
+        let events = Arc::new(std::sync::Mutex::new(Vec::<Event>::new()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin = format!("http://{}", listener.local_addr().unwrap());
+        let mock = Router::new()
+            .route(
+                PATH,
+                post({
+                    let events = events.clone();
+                    move |Json(event): Json<Event>| {
+                        let events = events.clone();
+                        async move {
+                            events.lock().unwrap().push(event);
+                            StatusCode::NO_CONTENT
+                        }
+                    }
+                }),
+            )
+            .route(
+                "/oauth/introspect",
+                post({
+                    let issuer = origin.clone();
+                    move || {
+                        let issuer = issuer.clone();
+                        async move {
+                            Json(serde_json::json!({
+                                "active": true, "sub": "fixture-verified", "iss": issuer,
+                                "token_type": "access", "exp": 4102444800_u64, "permissions": [],
+                            }))
+                        }
+                    }
+                }),
+            );
+        let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
+        let writer = Arc::new(Writer {
+            endpoint: format!("{origin}{PATH}"),
+            client: reqwest::Client::new(),
+            auth: crate::service_auth::ServiceAuth::Static(cmaeg_core::channel::Secret::new(
+                "fixture",
+            )),
+            slots: Semaphore::new(1),
+        });
+        let auth = Auth(
+            CreatorAuthenticator::new(&origin).unwrap().with_service(
+                cma_service_auth::NyxIdAuth::new(
+                    &origin,
+                    cma_service_auth::Service::EventGateway,
+                    "fixture",
+                    "fixture",
+                )
+                .unwrap(),
+            ),
+        );
+        let app = Router::new()
+            .route(
+                "/v1/channels",
+                post(|_: Creator| async { StatusCode::NO_CONTENT }),
+            )
+            .route(
+                "/v1/admin/change",
+                post(|_: Administrator| async { StatusCode::NO_CONTENT }),
+            )
+            .with_state(auth)
+            .layer(axum::middleware::from_fn_with_state(writer, audit));
+        for (path, authenticated, expected) in [
+            ("/v1/channels", true, StatusCode::FORBIDDEN),
+            ("/v1/admin/change", true, StatusCode::FORBIDDEN),
+            ("/v1/channels", false, StatusCode::UNAUTHORIZED),
+        ] {
+            let mut request = Request::post(path).header("x-cmaeg-owner", "unverified-owner");
+            if authenticated {
+                request = request.header("authorization", "Bearer fixture-user");
+            }
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+            let id = response.headers()["x-request-id"].to_str().unwrap();
+            let recorded = events
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|event| event.request_id() == id)
+                .cloned()
+                .collect::<Vec<_>>();
+            assert!(
+                matches!(recorded.first(), Some(Event::Reserve { route, .. }) if route == path)
+            );
+            assert!(
+                matches!(recorded.last(), Some(Event::Finish { status, .. }) if *status == expected.as_u16())
+            );
+            if authenticated {
+                assert!(
+                    matches!(recorded.as_slice(), [_, Event::Bind { identity, .. }, _]
+                    if identity.subject == "fixture-verified" && identity.scope == Scope::Personal && identity.organization.is_none())
+                );
+            } else {
+                assert_eq!(recorded.len(), 2);
+            }
+        }
+        server.abort();
+    }
+}

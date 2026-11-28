@@ -38,7 +38,7 @@ where
             .authenticate(&parts.headers)
             .await
             .map_err(service_error)?;
-        principal.require("cma-eg:admin").map_err(service_error)?;
+        super::require_permission(&principal, "cma-eg:admin").await?;
         let creator = auth
             .service_creator(principal.subject.clone(), &parts.headers)
             .await?;

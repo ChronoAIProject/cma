@@ -172,9 +172,7 @@ impl CreatorAuthenticator {
         }
         if let Some(service) = &self.service {
             let principal = service.authenticate(headers).await.map_err(service_error)?;
-            principal
-                .require("cma-eg:channels:read")
-                .map_err(service_error)?;
+            require_permission(&principal, "cma-eg:channels:read").await?;
             let creator = self
                 .service_creator(principal.subject.clone(), headers)
                 .await?;
@@ -391,6 +389,17 @@ impl CreatorAuthenticator {
             }
         }
     }
+}
+
+pub(super) async fn require_permission(
+    principal: &cma_service_auth::Principal,
+    permission: &str,
+) -> Result<(), CreatorAuthError> {
+    if let Err(error) = principal.require(permission) {
+        crate::request_audit::bind(&principal.subject, None, AuditCredential::Bearer).await?;
+        return Err(service_error(error));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]

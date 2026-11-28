@@ -42,7 +42,7 @@ where
                 .authenticate(&parts.headers)
                 .await
                 .map_err(service_error)?;
-            principal.require(permission).map_err(service_error)?;
+            super::require_permission(&principal, permission).await?;
             let creator = auth
                 .service_creator(principal.subject.clone(), &parts.headers)
                 .await?;
