@@ -9,9 +9,11 @@ impl PoolTarget {
         let ready = exact
             .filter(|_| observed)
             .map(|status| status.ready_replicas);
+        let applied = self.applied_revision == self.revision;
+        let at_zero = self.target_replicas == 0 && ready == Some(0);
         let status = if !available || self.error.is_some() {
             "unavailable"
-        } else if self.applied_revision != self.revision || !observed {
+        } else if !applied || !observed {
             "pending"
         } else {
             match (self.target_replicas, ready) {
@@ -20,8 +22,11 @@ impl PoolTarget {
                 _ => "pending",
             }
         };
+        // A later retirement error can hold the pool definition and its homes
+        // while the applied zero target and exact provider observation still
+        // confirm the spare capacity is drained.
         let retirement_status = self.retiring.then(|| {
-            if status == "disabled" {
+            if available && applied && at_zero {
                 "drained".into()
             } else {
                 "pending".into()
