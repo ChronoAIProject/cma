@@ -121,8 +121,14 @@ impl HierarchyReadStore for MongoSandboxStore {
         if page.limit == 0 || page.limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
         }
+        let filter = super::sandbox_quarantine::exclude(owner_filter(
+            owner,
+            status,
+            exclude_retired,
+            page.cursor.as_deref(),
+        ));
         let mut cursor = self.sandboxes.aggregate(vec![
-            doc! {"$match":owner_filter(owner, status, exclude_retired, page.cursor.as_deref())},
+            doc! {"$match":filter},
             doc! {"$sort":{"_id":1}},
             doc! {"$lookup":{"from":RESOURCE_POLICIES,"localField":"_id","foreignField":"_id","as":"inventory_policy"}},
             doc! {"$match":{"inventory_policy.owner_kind":{"$ne":"organization"}}},
