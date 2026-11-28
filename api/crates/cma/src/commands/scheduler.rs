@@ -8,7 +8,8 @@ use layer2_core::sandbox::agent_io::{
     AgentCommandWorker, CommandLedgerError, ScheduledAgentCommand,
 };
 use layer2_core::sandbox::store::{Page, PageRequest};
-use tokio::sync::{watch, Notify};
+use layer2_core::AgentId;
+use tokio::sync::{broadcast, watch, Notify};
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
 use tokio::time::{Instant, MissedTickBehavior};
 
@@ -26,6 +27,7 @@ pub(crate) struct CommandScheduler {
     drain_timeout: Duration,
     reconcile_pacing: bool,
     cancel_wake: Option<Arc<Notify>>,
+    turn_terminal: Option<broadcast::Sender<AgentId>>,
 }
 
 #[async_trait::async_trait]
@@ -70,6 +72,7 @@ impl CommandScheduler {
             drain_timeout: Duration::from_secs(25),
             reconcile_pacing: false,
             cancel_wake: None,
+            turn_terminal: None,
         }
     }
 
@@ -80,6 +83,11 @@ impl CommandScheduler {
 
     pub(crate) fn with_cancel_wake(mut self, wake: Option<Arc<Notify>>) -> Self {
         self.cancel_wake = wake;
+        self
+    }
+
+    pub(crate) fn with_turn_terminal_wake(mut self, wake: broadcast::Sender<AgentId>) -> Self {
+        self.turn_terminal = Some(wake);
         self
     }
 
@@ -99,6 +107,7 @@ impl CommandScheduler {
         let interval = self.interval;
         let drain_timeout = self.drain_timeout;
         let cancel_wake = self.cancel_wake;
+        let turn_terminal = self.turn_terminal;
         let work = ScheduledWork::new(self.worker, self.concurrency, self.reconcile_pacing);
         crate::worker_supervision::spawn(
             work,
@@ -106,6 +115,7 @@ impl CommandScheduler {
             shutdown,
             move |work, activity, mut shutdown| {
                 let cancel_wake = cancel_wake.clone();
+                let mut turn_terminal = turn_terminal.as_ref().map(broadcast::Sender::subscribe);
                 Box::pin(async move {
                     work.activity = Some(activity.clone());
                     let telemetry = crate::telemetry::worker::Worker::start("agent_commands");
@@ -136,6 +146,17 @@ impl CommandScheduler {
                                 if let Some(result) = result { work.completed(result); }
                             }
                             _ = ticker.tick() => work.poll(),
+                            agent = async {
+                                if let Some(wake) = &mut turn_terminal {
+                                    wake.recv().await.ok()
+                                } else {
+                                    std::future::pending().await
+                                }
+                            } => {
+                                if let Some(agent) = agent {
+                                    work.turn_terminal(&agent);
+                                }
+                            }
                             _ = async {
                                 tokio::time::sleep_until(next_cancel_scan).await;
                                 if let Some(wake) = &cancel_wake {
@@ -179,7 +200,7 @@ impl CommandScheduler {
 
 enum TaskKind {
     Discover,
-    Command(ScheduledAgentCommand),
+    Command(ScheduledAgentCommand, bool),
 }
 enum TaskOutput {
     Discovered(Page<ScheduledAgentCommand>),
@@ -194,7 +215,7 @@ struct ScheduledWork {
     tasks: JoinSet<TaskResult>,
     kinds: HashMap<Id, TaskKind>,
     in_flight: BTreeSet<AgentCommandId>,
-    not_before: HashMap<AgentCommandId, Instant>,
+    not_before: HashMap<AgentCommandId, (Instant, Option<AgentId>)>,
     queued: VecDeque<ScheduledAgentCommand>,
     reconciliation: super::reconcile_schedule::ReconcileSchedule,
     polling: bool,
@@ -230,7 +251,7 @@ impl ScheduledWork {
 
     fn poll(&mut self) {
         let now = Instant::now();
-        self.not_before.retain(|_, deadline| *deadline > now);
+        self.not_before.retain(|_, (deadline, _)| *deadline > now);
         self.reconciliation.prune(now);
         if !self.can_poll() {
             return;
@@ -254,6 +275,18 @@ impl ScheduledWork {
         self.polling = true;
     }
 
+    fn turn_terminal(&mut self, agent: &AgentId) {
+        self.not_before
+            .retain(|_, (_, waiting_agent)| waiting_agent.as_ref() != Some(agent));
+        for kind in self.kinds.values_mut() {
+            if let TaskKind::Command(item, woken) = kind {
+                if item.turn_wait_agent.as_ref() == Some(agent) {
+                    *woken = true;
+                }
+            }
+        }
+    }
+
     fn fill_slots(&mut self) {
         while self.in_flight.len() < self.concurrency {
             let Some(item) = self.queued.pop_front() else {
@@ -263,7 +296,7 @@ impl ScheduledWork {
             if self
                 .not_before
                 .get(id)
-                .is_some_and(|deadline| *deadline > Instant::now())
+                .is_some_and(|(deadline, _)| *deadline > Instant::now())
                 || !self.in_flight.insert(id.clone())
             {
                 continue;
@@ -273,7 +306,7 @@ impl ScheduledWork {
             let task = self
                 .tasks
                 .spawn(async move { worker.run_one(&work_id).await.map(TaskOutput::Completed) });
-            self.kinds.insert(task.id(), TaskKind::Command(item));
+            self.kinds.insert(task.id(), TaskKind::Command(item, false));
         }
     }
 
@@ -295,7 +328,7 @@ impl ScheduledWork {
         crate::telemetry::worker::completed("agent_commands", phase, outcome);
         match self.kinds.remove(&id) {
             Some(TaskKind::Discover) => self.polling = false,
-            Some(TaskKind::Command(item)) => {
+            Some(TaskKind::Command(item, woken)) => {
                 let id = item.id;
                 self.in_flight.remove(&id);
                 let now = Instant::now();
@@ -320,9 +353,10 @@ impl ScheduledWork {
                     }
                     _ => Duration::ZERO,
                 };
-                if !delay.is_zero() && self.not_before.len() < MAX_DEFERRED {
+                if !woken && !delay.is_zero() && self.not_before.len() < MAX_DEFERRED {
                     // Backoff belongs to discovery, not a scarce execution slot.
-                    self.not_before.insert(id, now + delay);
+                    self.not_before
+                        .insert(id, (now + delay, item.turn_wait_agent));
                 }
             }
             None => {}

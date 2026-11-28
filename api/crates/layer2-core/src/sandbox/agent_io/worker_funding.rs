@@ -65,6 +65,7 @@ impl AgentCommandWorker {
                 .entry(id.to_string())
                 .or_insert_with(|| ScheduledAgentCommand {
                     id,
+                    turn_wait_agent: None,
                     dispatched: false,
                     reconcile_current: false,
                 });

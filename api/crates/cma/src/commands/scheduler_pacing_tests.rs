@@ -20,6 +20,37 @@ async fn advance(duration: Duration) {
 }
 
 #[tokio::test(start_paused = true)]
+async fn terminal_wake_rechecks_only_the_matching_agents_queued_command() {
+    let probe = Arc::new(Probe::default());
+    let first = probe.put("cmd_first", Behavior::Deferred(Duration::from_secs(15)));
+    let second = probe.put("cmd_second", Behavior::Deferred(Duration::from_secs(15)));
+    let first_agent = AgentId("agt_first".into());
+    let second_agent = AgentId("agt_second".into());
+    probe.turn_waits.lock().unwrap().extend([
+        (first.clone(), first_agent.clone()),
+        (second.clone(), second_agent),
+    ]);
+    let (wake, _) = broadcast::channel(8);
+    let (shutdown, signal) = watch::channel(false);
+    let scheduler = probe
+        .scheduler(2)
+        .with_turn_terminal_wake(wake.clone())
+        .spawn(signal);
+    settle().await;
+    assert_eq!(probe.count(&first), 1);
+    assert_eq!(probe.count(&second), 1);
+
+    wake.send(first_agent).unwrap();
+    settle().await;
+    advance(POLL_INTERVAL).await;
+    assert_eq!(probe.count(&first), 2);
+    assert_eq!(probe.count(&second), 1);
+
+    shutdown.send(true).unwrap();
+    scheduler.await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
 async fn cancel_wake_scans_before_the_periodic_tick_and_coalesces_at_fifty_ms() {
     let probe = Arc::new(Probe::default());
     let wake = Arc::new(Notify::new());

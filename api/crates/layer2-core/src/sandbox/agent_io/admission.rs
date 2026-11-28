@@ -101,6 +101,21 @@ pub struct AgentCommandEnvelope {
 }
 
 impl AgentCommandEnvelope {
+    pub fn is_ordinary_append(&self) -> bool {
+        self.continuation.is_none()
+            && matches!(
+                self.source.kind,
+                AgentSourceKind::UserInterface | AgentSourceKind::Api
+            )
+            && matches!(
+                self.command,
+                AgentCommand::Message {
+                    order: super::AgentInputOrder::Append,
+                    ..
+                }
+            )
+    }
+
     /// Integrity checking is not authorization. Only the authorization service
     /// may select these identity fields before the ledger writes this record.
     pub fn validate_integrity(&self) -> Result<(), AgentOperationError> {
