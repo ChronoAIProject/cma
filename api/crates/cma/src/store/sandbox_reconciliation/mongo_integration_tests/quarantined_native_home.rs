@@ -6,6 +6,7 @@ use crate::store::{
     sandbox_quarantine::FIELD,
     work_schema,
 };
+use layer2_core::sandbox::SandboxHomeRecovery;
 use layer3_adapter::agent_sandbox::{
     NativePoolBinding, NativePoolClaim, NativePoolClaimRequest, NativePoolCleanup,
     NativePoolConfiguration, NativePoolControl, NativePoolSpec, NativePoolStatus,
@@ -132,8 +133,7 @@ async fn retained_sandbox_quarantine_preserves_native_claim_and_home_through_sta
         CommitOutcome::Committed
     ));
 
-    let mut sandbox =
-        crate::store::sandbox_mongo_integration_tests::sandbox("sbx_quarantined_home");
+    let mut sandbox = active_sandbox("sbx_quarantined_home");
     let retained = native_home(&sandbox.id);
     let attachment = retained.attachment().unwrap();
     let claim = retained
@@ -145,7 +145,17 @@ async fn retained_sandbox_quarantine_preserves_native_claim_and_home_through_sta
         .unwrap()
         .clone();
     sandbox.lifecycle.home = Some(Box::new(retained));
+    sandbox.lifecycle.home_recovery = Some(Box::new(SandboxHomeRecovery {
+        home_identity: attachment.identity().unwrap(),
+        source_generation: 1,
+        resume_pause: None,
+    }));
+    let mut suspended_runtime = sandbox.runtime.take().unwrap();
+    suspended_runtime.runtime_id = "agent-sandbox:member:sandbox-uid".into();
+    suspended_runtime.runtime_version = claim.request.pool.spec.image.uri.clone();
+    sandbox.lifecycle.suspended_runtime = Some(Box::new(suspended_runtime));
     sandbox.status = SandboxStatus::Paused;
+    sandbox.work = SandboxWorkState::new(SandboxWorkStep::None, sandbox.updated_at.clone());
     let mut raw = sandbox_document(&sandbox, 0).unwrap();
     raw.insert("document_schema_version", work_schema::RENEWED_VERSION);
     let record = raw.get_document_mut("record").unwrap();
