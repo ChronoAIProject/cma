@@ -469,6 +469,6 @@ async fn account_erasure_invalidates_aggregate_before_first_commit() {
         .unwrap()
         .unwrap();
     assert_eq!(job.get_i64("bytes").unwrap(), original_bytes);
-    assert!(job.get_datetime("expires_at").is_ok());
+    assert_eq!(job.get("expires_at"), Some(&mongodb::bson::Bson::Null));
     store.db.drop().await.unwrap();
 }

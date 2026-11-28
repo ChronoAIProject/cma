@@ -23,7 +23,9 @@ it('groups the same Sandbox without adding distinct reporter attempts or exposin
   expect(screen.getByText('Retrying at observation time')).toBeVisible();
   expect(screen.getByText('Not recorded')).toBeVisible();
   expect(screen.getByText(/1 sampled reporters were unavailable/)).toBeVisible();
-  expect(screen.getByText(/counts only Sandboxes whose runtime binding has been deferred/)).toBeVisible();
+  expect(
+    screen.getByText(/counts only Sandboxes whose runtime binding has been deferred/),
+  ).toBeVisible();
   expect(client.admin.retireSandbox).not.toHaveBeenCalled();
   expect(client.admin.bindingHolds).toHaveBeenCalledTimes(1);
 });

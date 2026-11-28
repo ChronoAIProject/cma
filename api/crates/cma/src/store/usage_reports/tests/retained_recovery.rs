@@ -28,7 +28,7 @@ async fn retained_cleanup_charges_bytes_until_child_deletion_is_acknowledged() {
         .database("admin")
         .run_command(doc! {
             "configureFailPoint":"failCommand","mode":{"times":1},
-            "data":{"failCommands":["delete"],"errorCode":2}
+            "data":{"failCommands":["delete"],"errorCode":50}
         })
         .await
         .unwrap();
