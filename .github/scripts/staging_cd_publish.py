@@ -324,7 +324,7 @@ def main():
                     with timings.stage("reuse"):
                         if native_artifact:
                             prepared = fetch_native(release, native_artifact, directory, source, api,
-                                                    env.get("GH_TOKEN"), reuse_misses.append)
+                                                    env.get("GH_TOKEN"), reuse_misses.append, root=root)
                             archive = prepared.path if prepared is not None else None
                             if prepared is not None:
                                 prepared_checksum = prepared.sha256
