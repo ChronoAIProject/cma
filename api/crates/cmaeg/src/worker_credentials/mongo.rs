@@ -204,16 +204,16 @@ impl WorkerHistory for MongoWorkerHistory {
     fn cutover(&self) -> BoxFuture<'_, Result<Option<Cutover>, RecordError>> {
         Box::pin(async move {
             tokio::time::timeout(Duration::from_secs(4), async {
-                self.cutovers
+                let row = self
+                    .cutovers
+                    .clone_with_type::<Document>()
                     .find_one(doc! {"_id":"owner-lane"})
                     .max_time(Duration::from_secs(2))
                     .await
-                    .map_err(|error| match error.kind.as_ref() {
-                        mongodb::error::ErrorKind::BsonDeserialization(_) => {
-                            RecordError::Malformed("worker cutover attestation".into())
-                        }
-                        _ => failure(error),
-                    })
+                    .map_err(failure)?;
+                row.map(mongodb::bson::deserialize_from_document)
+                    .transpose()
+                    .map_err(|_| RecordError::Malformed("worker cutover attestation".into()))
             })
             .await
             .map_err(|_| RecordError::Unavailable("worker cutover read timed out".into()))?
