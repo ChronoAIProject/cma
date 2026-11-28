@@ -5,7 +5,7 @@
 //! permissions. Accepted commands retain that admission's permission ceiling;
 //! the owner's renewable credential is execution custody, never a replacement
 //! for the proxy's authority. Ending a NyxBot turn does not cancel work CMA has
-//! already accepted. New requests always require a fresh valid assertion.
+//! already accepted. Legacy ingress checks assertion expiry on each request.
 
 use axum::http::HeaderMap;
 use layer2_core::resource_access::CredentialSource;
@@ -58,6 +58,20 @@ mod diagnostic_tests;
 pub use crate::ProxyGrant;
 
 impl AuthState {
+    /// Refuse identity-only proxy ingress while retaining accepted-command custody.
+    pub fn with_proxy_require_request_proof(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("configure before sharing")
+            .proxy_require_request_proof = enabled;
+        self
+    }
+
+    pub(super) fn rejects_unverified_proxy_headers(&self, headers: &HeaderMap) -> bool {
+        self.proxy_require_request_proof
+            && (headers.contains_key(HEADER)
+                || headers.contains_key(super::resource_request::HEADER))
+    }
+
     pub fn with_identity_proxy(
         mut self: Arc<Self>,
         enabled: bool,

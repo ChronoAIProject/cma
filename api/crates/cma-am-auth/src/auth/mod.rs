@@ -143,6 +143,7 @@ pub struct AuthState {
     agent_key_service_id: Option<String>,
     oauth_api_resource: Option<String>,
     resource_request_enabled: bool,
+    proxy_require_request_proof: bool,
     silent_sign_in_enabled: bool,
     pub(super) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
     browser_session_join_enabled: bool,
@@ -211,6 +212,7 @@ impl AuthState {
             agent_key_service_id: None,
             oauth_api_resource: None,
             resource_request_enabled: false,
+            proxy_require_request_proof: false,
             silent_sign_in_enabled: false,
             legal_terms: None,
             browser_session_join_enabled: false,
@@ -306,6 +308,9 @@ impl AuthState {
         personal_inventory: bool,
         browser_proof: Option<&mut Option<relay::BrowserRelayProof>>,
     ) -> Result<Option<RequestAuth>, StoreError> {
+        if self.rejects_unverified_proxy_headers(headers) {
+            return Ok(None);
+        }
         if headers.contains_key(nyxid_proxy::HEADER) {
             if self.identity_proxy.is_some() {
                 return self.proxy_request(headers, personal_inventory).await;

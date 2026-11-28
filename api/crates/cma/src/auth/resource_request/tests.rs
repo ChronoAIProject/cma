@@ -141,6 +141,7 @@ async fn inspect(Extension(context): Extension<CallerContext>, request: Request)
         .is_none());
     for name in [
         HEADER,
+        crate::auth::nyxid_proxy::HEADER,
         header::AUTHORIZATION.as_str(),
         header::COOKIE.as_str(),
     ] {
@@ -181,6 +182,43 @@ async fn exact_reads_reverify_each_time_without_browser_or_api_custody() {
     assert_eq!(forms.len(), 2);
     assert_eq!(forms[0]["request_path_and_query"], "/api/v1/agents");
     assert!(!forms[0].contains_key("request_content_type"));
+}
+
+#[tokio::test]
+async fn enforced_proxy_read_uses_only_the_bound_proof_identity() {
+    use crate::auth::nyxid_proxy::jwt::Signer;
+
+    let fixture = Fixture::new().await;
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let legacy_identity = Signer::primary().token(
+        &json!({
+            "iss": "https://issuer.example", "aud": "https://cma.example",
+            "nyx_service_id": "cma-service", "sub": "different-subject",
+            "iat": now, "exp": now + 60, "jti": uuid::Uuid::new_v4().to_string(),
+            "permissions": ["cma:sandbox:create"],
+        }),
+        "fixture-key",
+    );
+    let auth = fixture
+        .auth(true)
+        .await
+        .with_proxy_require_request_proof(true);
+    let mut read = request(Method::GET, "/api/v1/agents");
+    read.headers_mut().insert(
+        crate::auth::nyxid_proxy::HEADER,
+        legacy_identity.parse().unwrap(),
+    );
+    let response = app(auth).oneshot(read).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 4096).await.unwrap();
+    assert_eq!(
+        serde_json::from_slice::<Value>(&body).unwrap(),
+        json!({"subject":"owner","use":true})
+    );
+    assert_eq!(fixture.forms.read().await.len(), 1);
 }
 
 #[tokio::test]
