@@ -45,6 +45,16 @@ it('does not replace a document whose browser exposes its history index', () => 
   expect(history.state).toEqual({ legacy: true });
 });
 
+it('preserves the replayed fields of a JSON array in legacy browser state', () => {
+  vi.stubGlobal('navigation', undefined);
+  history.replaceState(['retained'], '', '/artifacts');
+  const replace = vi.fn();
+  expect(prepareHistoryDocument(replace)).toBe(false);
+  history.replaceState(null, '', replace.mock.calls[0]![0] as string);
+  expect(prepareHistoryDocument(replace)).toBe(true);
+  expect(history.state).toMatchObject({ 0: 'retained', cmaNavigation: { documentBoundary: true } });
+});
+
 it.each([
   '{',
   JSON.stringify({ state: [], destination: 'https://example.invalid' }),

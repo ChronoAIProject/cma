@@ -83,13 +83,13 @@ export function prepareHistoryDocument(
 
   // A distinct URL creates a new Document; replacing/reloading the identical URL does not.
   // Carry only existing history state across that replacement, never an editor draft.
-  if (!jsonState(window.history.state)) throw new Error('History state cannot be retained.');
+  const current = window.history.state;
+  if (!jsonState(current)) throw new Error('History state cannot be retained.');
+  // Replay has always spread the prior state onto the navigation record.
+  const state = current === null ? null : { ...current };
   // A successful replay removes its own key. Other entries may be retained for diagnosis.
   const id = crypto.randomUUID();
-  sessionStorage.setItem(
-    handoffPrefix + id,
-    JSON.stringify({ state: window.history.state, destination: url.href }),
-  );
+  sessionStorage.setItem(handoffPrefix + id, JSON.stringify({ state, destination: url.href }));
   url.searchParams.set(handoffParameter, id);
   replace(url.href);
   return false;
