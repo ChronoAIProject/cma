@@ -149,6 +149,7 @@ pub struct AuthState {
     pub(super) legal_terms: Option<layer2_core::legal_consent::LegalTerms>,
     browser_session_join_enabled: bool,
     service_authorization: Option<Arc<dyn service_authorization::GrantAuthority>>,
+    retirement_wake: Option<Arc<dyn service_authorization::RetirementWake>>,
     #[cfg(test)]
     preference_clock: fn() -> SystemTime,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
@@ -218,6 +219,7 @@ impl AuthState {
             legal_terms: None,
             browser_session_join_enabled: false,
             service_authorization: None,
+            retirement_wake: None,
             #[cfg(test)]
             preference_clock: SystemTime::now,
             identity_proxy: None,

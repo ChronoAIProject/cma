@@ -64,6 +64,8 @@ pub struct RetirementAuthorityVersion {
     pub grant: [u8; 16],
     pub scope: [u8; 32],
     pub granted_at_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_generation: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,12 +74,32 @@ pub struct RetirementCredentialRecovery {
     pub newer_than_ms: u64,
     pub expected_scope: [u8; 32],
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_token_generation: Option<u64>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub authorization_updated: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub admitted: Option<RetirementAuthorityVersion>,
 }
 
 impl RetirementCredentialRecovery {
     pub fn admits(&self, authority: RetirementAuthorityVersion) -> bool {
-        authority.granted_at_ms > self.newer_than_ms && authority.scope == self.expected_scope
+        let Some(generation) = authority.token_generation else {
+            return self.previous_token_generation.is_none()
+                && authority.granted_at_ms > self.newer_than_ms
+                && authority.scope == self.expected_scope;
+        };
+        if let Some(previous) = self.previous_token_generation {
+            return authority.scope == self.expected_scope
+                && generation >= previous
+                && (generation > previous
+                    || authority.granted_at_ms > self.newer_than_ms
+                    || self.authorization_updated);
+        }
+        // Retained rows may contain the hash of the entire historical consent.
+        // A verified authorization update can recheck the actual Sandbox scope.
+        self.authorization_updated
+            || (authority.scope == self.expected_scope
+                && authority.granted_at_ms > self.newer_than_ms)
     }
 }
 
@@ -249,12 +271,15 @@ mod retirement_authority_tests {
         let recovery = RetirementCredentialRecovery {
             newer_than_ms: 42,
             expected_scope: [1; 32],
+            previous_token_generation: None,
+            authorization_updated: false,
             admitted: None,
         };
         let version = RetirementAuthorityVersion {
             grant: [1; 16],
             scope: [1; 32],
             granted_at_ms: 43,
+            token_generation: None,
         };
         assert!(recovery.admits(version));
         assert!(!recovery.admits(RetirementAuthorityVersion {
@@ -263,6 +288,40 @@ mod retirement_authority_tests {
         }));
         assert!(!recovery.admits(RetirementAuthorityVersion {
             scope: [2; 32],
+            ..version
+        }));
+    }
+
+    #[test]
+    fn retirement_authority_accepts_fresh_token_for_unchanged_consent() {
+        let recovery = RetirementCredentialRecovery {
+            newer_than_ms: 42,
+            expected_scope: [1; 32],
+            previous_token_generation: Some(3),
+            authorization_updated: false,
+            admitted: None,
+        };
+        let version = RetirementAuthorityVersion {
+            grant: [1; 16],
+            scope: [1; 32],
+            granted_at_ms: 42,
+            token_generation: Some(4),
+        };
+        assert!(recovery.admits(version));
+        assert!(!recovery.admits(RetirementAuthorityVersion {
+            token_generation: Some(3),
+            ..version
+        }));
+        assert!(!recovery.admits(RetirementAuthorityVersion {
+            scope: [2; 32],
+            ..version
+        }));
+        let updated = RetirementCredentialRecovery {
+            authorization_updated: true,
+            ..recovery
+        };
+        assert!(!updated.admits(RetirementAuthorityVersion {
+            token_generation: Some(2),
             ..version
         }));
     }

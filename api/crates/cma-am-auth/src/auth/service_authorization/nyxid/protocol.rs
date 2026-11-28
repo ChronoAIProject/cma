@@ -147,6 +147,7 @@ impl Consent {
             grant,
             scope: Sha256::digest(scope).into(),
             granted_at_ms,
+            token_generation: None,
         }))
     }
 

@@ -173,7 +173,9 @@ pub(super) fn park_reauthorization(
     {
         return None;
     }
-    let newer_than_ms = if missing {
+    let newer_than_ms = if previous.token_generation.is_some() && previous.granted_at_ms == 0 {
+        i64::MAX as u64
+    } else if missing && previous.token_generation.is_none() {
         let stopped_ms = now
             .duration_since(SystemTime::UNIX_EPOCH)
             .ok()
@@ -183,15 +185,24 @@ pub(super) fn park_reauthorization(
     } else {
         previous.granted_at_ms
     };
+    let first_probe = sandbox
+        .work
+        .retirement_credential_recovery
+        .is_none_or(|recovery| recovery.admitted.is_some())
+        && previous.token_generation.is_some();
     sandbox.work.retirement_credential_recovery =
         Some(layer2_core::sandbox::RetirementCredentialRecovery {
             newer_than_ms,
             expected_scope: previous.scope,
+            previous_token_generation: previous.token_generation,
+            authorization_updated: false,
             admitted: None,
         });
-    Some(rfc3339_at(
-        now + layer2_core::sandbox::work_retry::WORK_RETRY_PROBE_INTERVAL,
-    ))
+    Some(rfc3339_at(if first_probe {
+        now
+    } else {
+        now + layer2_core::sandbox::work_retry::WORK_RETRY_PROBE_INTERVAL
+    }))
 }
 
 impl SandboxWorker {
@@ -208,10 +219,9 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        use layer2_core::sandbox::{
-            SandboxEventKind, SandboxStatus, SandboxWorkStep, TypedFailure,
-        };
+        use layer2_core::sandbox::{SandboxEventKind, SandboxStatus, TypedFailure};
 
+        let step = sandbox.work.step;
         let Some(mut recovery) = sandbox.work.retirement_credential_recovery else {
             return Err(SandboxStoreError::Conflict);
         };
@@ -245,7 +255,7 @@ impl SandboxWorker {
             _ => (
                 now + layer2_core::sandbox::work_retry::WORK_RETRY_PROBE_INTERVAL,
                 SandboxEventKind::WorkStepFailed {
-                    step: SandboxWorkStep::RevokeRetirementCredentials,
+                    step,
                     failure: TypedFailure {
                         class: "owner_reauthorization_required".into(),
                         detail: "waiting for verified owner reauthorization".into(),
@@ -254,13 +264,6 @@ impl SandboxWorker {
             ),
         };
         sandbox.work.retirement_credential_recovery = Some(recovery);
-        self.advance_at(
-            sandbox,
-            SandboxWorkStep::RevokeRetirementCredentials,
-            now,
-            ready_at,
-            event,
-        )
-        .await
+        self.advance_at(sandbox, step, now, ready_at, event).await
     }
 }

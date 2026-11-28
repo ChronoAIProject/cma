@@ -185,6 +185,7 @@ pub(crate) mod request_limits;
 mod resource_access;
 mod retained_reopen;
 pub(crate) mod retirement_archive;
+mod retirement_wake;
 mod sandbox_admission;
 #[cfg(test)]
 pub(crate) mod sandbox_admission_mongo_integration_tests;
