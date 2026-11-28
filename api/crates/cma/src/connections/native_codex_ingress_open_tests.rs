@@ -154,6 +154,23 @@ fn replaced_cache_path_cannot_redirect_the_opened_cursor() {
 }
 
 #[test]
+fn cache_open_after_atomic_replacement_reads_the_new_document() {
+    let fixture = Fixture::new();
+    let (_, policy) = policy();
+    let home = fixture.home(&policy);
+    let input = input(&policy);
+    fs::write(fixture.path(), valid()).unwrap();
+    let mut renewed: serde_json::Value = serde_json::from_slice(&valid()).unwrap();
+    renewed["tokens"]["login_owner_id"] = "synthetic-login".into();
+    let renewed = serde_json::to_vec(&renewed).unwrap();
+    let replacement = fixture.0.join("home/renewed.json");
+    fs::write(&replacement, &renewed).unwrap();
+    fs::rename(replacement, fixture.path()).unwrap();
+    let opened = prepare(&home, &input, &policy).unwrap().open().unwrap();
+    assert_eq!(opened.read().outcome.unwrap().expose().as_bytes(), renewed);
+}
+
+#[test]
 fn symlink_entry_is_invalid_even_when_target_is_valid() {
     let fixture = Fixture::new();
     let (_, policy) = policy();
