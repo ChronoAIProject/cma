@@ -222,6 +222,11 @@ fn raw_sandbox_document(
 }
 
 pub(super) fn read_sandbox(document: &Document) -> Result<Sandbox, SandboxStoreError> {
+    if super::sandbox_quarantine::contains(document) {
+        return Err(SandboxStoreError::Corrupt(
+            "retained Sandbox is quarantined".into(),
+        ));
+    }
     let sandbox: Sandbox =
         super::work_schema::read(document).map_err(SandboxStoreError::Corrupt)?;
     sandbox.validate().map_err(|error| {

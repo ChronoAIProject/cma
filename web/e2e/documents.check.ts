@@ -123,6 +123,52 @@ for (const width of [1600, 390]) {
     });
   }
 }
+
+test('LOCAL unresolved document recipients leave sharing unchanged', async ({ page, baseURL }) => {
+  const fixture = new LocalDocuments();
+  fixture.markdown = '# Product brief';
+  await fixture.route(page, baseURL!);
+  await page.goto(`/artifacts/${documentId}`);
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
+  const search = page.getByRole('textbox', { name: 'Find share recipients' });
+  const add = page.getByRole('button', { name: 'Add person' });
+  const grants = page.getByRole('list', { name: 'People with access' }).getByRole('listitem');
+  for (const subject of ['missing.recipient@example.test', 'definitely-not-a-nyxid-user']) {
+    const lookup = page.waitForResponse((response) => {
+      const url = new URL(response.url());
+      return url.pathname.endsWith('/share-recipients') && url.searchParams.get('q') === subject;
+    });
+    await search.fill(subject);
+    const response = await lookup;
+    expect(response.ok()).toBe(true);
+    expect(await response.json()).toEqual([]);
+    await expect(page.getByText('No matching people.')).toBeVisible();
+    await expect(search).toHaveValue(subject);
+    await expect(add).toBeDisabled();
+    await search.press('Enter');
+    await expect(grants).toHaveCount(0);
+  }
+  expect(fixture.writes).toEqual([]);
+
+  await search.fill('reviewer');
+  await page.getByRole('button', { name: 'Select Local Reviewer (Reviewer-A)' }).click();
+  await add.click();
+  await expect(grants).toHaveCount(1);
+  await expect(grants.first().getByText('Reviewer-A', { exact: true })).toBeVisible();
+  await expect(grants.first().getByText('Can view', { exact: true })).toBeVisible();
+  expect(fixture.writes).toEqual([
+    expect.objectContaining({
+      method: 'PUT',
+      path: `/api/v1/documents/${documentId}/shares/Reviewer-A`,
+    }),
+  ]);
+  await page.reload();
+  await page.getByRole('button', { name: 'Share', exact: true }).click();
+  await expect(grants).toHaveCount(1);
+  await expect(grants.first()).toContainText('Reviewer-A');
+  expect(fixture.boundary.errors).toEqual([]);
+});
+
 test('LOCAL shared document keeps fragment in headers and disables content editing', async ({
   page,
   baseURL,

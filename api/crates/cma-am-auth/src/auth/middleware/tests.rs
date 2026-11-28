@@ -92,6 +92,71 @@ async fn trusted_identity_is_attached_with_its_authority() {
 }
 
 #[tokio::test]
+async fn proxy_proof_policy_refuses_unverified_headers_before_ambient_auth() {
+    let path = "/api/v1/agents";
+    for enforced in [false, true] {
+        let auth = AuthState::in_memory(
+            AuthMode::Trusted {
+                subject: "direct-subject".into(),
+            },
+            None,
+        )
+        .with_proxy_require_request_proof(enforced);
+        let app = Router::new()
+            .route(
+                path,
+                axum::routing::post(|| async { StatusCode::NO_CONTENT }),
+            )
+            .layer(axum::middleware::from_fn_with_state(
+                auth.clone(),
+                attach_subject,
+            ));
+
+        for proxy_header in [None, Some(crate::auth::nyxid_proxy::HEADER)] {
+            let mut direct = Request::post(path).body(Body::empty()).unwrap();
+            if let Some(name) = proxy_header {
+                direct
+                    .headers_mut()
+                    .insert(name, "legacy-fixture".parse().unwrap());
+            }
+            let refused = enforced && proxy_header.is_some();
+            assert_eq!(
+                auth.resolve_request(direct.headers())
+                    .await
+                    .unwrap()
+                    .is_none(),
+                refused
+            );
+            let response = app.clone().oneshot(direct).await.unwrap();
+            assert_eq!(
+                response.status(),
+                if refused {
+                    StatusCode::UNAUTHORIZED
+                } else {
+                    StatusCode::NO_CONTENT
+                }
+            );
+        }
+
+        let proof = Request::post(path)
+            .header(crate::auth::resource_request::HEADER, "proof-fixture")
+            .body(Body::empty())
+            .unwrap();
+        assert_eq!(
+            auth.resolve_request(proof.headers())
+                .await
+                .unwrap()
+                .is_none(),
+            enforced
+        );
+        assert_eq!(
+            app.oneshot(proof).await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+    }
+}
+
+#[tokio::test]
 async fn public_preview_routes_ignore_ambient_credentials() {
     let app = public_trigger_app_with_unavailable_auth();
 

@@ -14,6 +14,7 @@ pub(crate) mod docs;
 pub mod event_attestation;
 pub mod events;
 pub mod form_preparation;
+mod telegram_refusal_notice;
 
 pub mod history;
 pub(crate) mod html;

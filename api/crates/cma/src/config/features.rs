@@ -130,6 +130,7 @@ pub(crate) struct FeatureFlags {
     pub github_connection_recovery: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    pub nyxid_proxy_require_request_proof: bool,
     /// Gated writer for the stable proxy replay principal (reader floor landed first).
     pub nyxid_proxy_replay_principal: bool,
     pub service_authorization: bool,
@@ -398,6 +399,7 @@ impl FeatureFlags {
             github_connection_recovery: tail.github_connection_recovery,
             nyxid_resource_request: tail.nyxid_resource_request,
             nyxid_proxy: tail.nyxid_proxy,
+            nyxid_proxy_require_request_proof: tail.nyxid_proxy_require_request_proof,
             nyxid_proxy_replay_principal: tail.nyxid_proxy_replay_principal,
             service_authorization: tail.service_authorization,
             silent_sign_in: tail.silent_sign_in,
