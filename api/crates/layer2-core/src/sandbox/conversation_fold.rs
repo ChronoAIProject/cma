@@ -10,6 +10,8 @@ use super::{
     AgentMessageAssembly, AgentPlanStep, AgentStatus,
 };
 
+#[path = "conversation_capture.rs"]
+mod capture;
 #[path = "conversation_fold_text.rs"]
 mod text;
 use text::fold_message_chunk;

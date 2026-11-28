@@ -189,6 +189,8 @@ pub enum AgentReadError {
     ResourcesUnsupported(String),
     #[error("history runtime is unavailable")]
     HistoryRuntimeUnavailable,
+    #[error("Agent output capture advanced")]
+    CaptureAdvanced,
     #[error("agent data is not usable: {0}")]
     Corrupt(String),
     #[error("agent read dependency is unavailable: {0}")]
@@ -207,7 +209,7 @@ impl AgentReadError {
             Self::CapabilityUnsupported { .. } => "agent_capability_unsupported",
             Self::ResourcesUnsupported(_) => "agent_resources_unsupported",
             Self::HistoryRuntimeUnavailable => "history_runtime_unavailable",
-            Self::Corrupt(_) => "stored_agent_corrupt",
+            Self::Corrupt(_) | Self::CaptureAdvanced => "stored_agent_corrupt",
             Self::Unavailable(_) => "agent_read_unavailable",
         }
     }

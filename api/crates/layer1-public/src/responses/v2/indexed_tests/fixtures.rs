@@ -11,6 +11,7 @@ pub(super) struct Counts {
     pub source_rows: AtomicUsize,
     pub fail: AtomicBool,
     pub stall: AtomicBool,
+    pub fail_points: AtomicBool,
     pub entered: tokio::sync::Notify,
     pub release: tokio::sync::Notify,
 }
@@ -113,6 +114,9 @@ impl AgentOutputReader for Reader {
         if self.counts.stall.load(Ordering::SeqCst) {
             self.counts.entered.notify_one();
             self.counts.release.notified().await;
+        }
+        if self.counts.fail_points.load(Ordering::SeqCst) {
+            return Err(SandboxStoreError::Corrupt("private output fixture".into()));
         }
         seqs.iter()
             .map(|s| {

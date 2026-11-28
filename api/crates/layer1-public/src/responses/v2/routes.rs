@@ -299,6 +299,7 @@ async fn submit(
         admitted.receipt,
         None,
         Some(admitted.turn_sequence.is_some()),
+        true,
     )
     .await
 }
@@ -402,6 +403,7 @@ pub(super) async fn replay(
         // cursor error contract while allowing submit to use the unbound
         // header fast path; a bound replay still carries the known hint.
         status.turn_sequence.map(|_| true),
+        false,
     )
     .await
 }

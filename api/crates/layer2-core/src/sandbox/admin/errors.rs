@@ -14,6 +14,7 @@ impl OperatorError {
             | SandboxStoreError::CheckpointInProgress
             | SandboxStoreError::LifecycleBusy { .. }
             | SandboxStoreError::Duplicate
+            | SandboxStoreError::CaptureAdvanced
             | SandboxStoreError::SequenceConflict
             | SandboxStoreError::LimitReached { .. }
             | SandboxStoreError::SandboxNotReady

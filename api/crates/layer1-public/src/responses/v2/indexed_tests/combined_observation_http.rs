@@ -221,7 +221,8 @@ async fn legacy_stream_refuses_an_indexed_format_change_at_its_original_cursor()
         .authorize_event_stream(&context("owner-a"), None, &f.agent.id)
         .await
         .unwrap();
-    let response = crate::responses::v2::stream::open(state, held, receipt, None, Some(true)).await;
+    let response =
+        crate::responses::v2::stream::open(state, held, receipt, None, Some(true), false).await;
     assert_eq!(response.status(), StatusCode::OK);
     source.switch.store(true, Ordering::SeqCst);
     let bytes = tokio::time::timeout(

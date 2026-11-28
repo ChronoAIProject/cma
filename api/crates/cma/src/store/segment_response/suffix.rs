@@ -15,7 +15,12 @@ pub(super) async fn read(
     let Some(tail) = previous.entries.last() else {
         return Ok(None);
     };
-    if tail.agent_id != agent.id || previous.through >= agent.conversation.last_seq {
+    if turn == 0
+        || tail.seq < turn
+        || tail.seq > previous.through
+        || tail.agent_id != agent.id
+        || previous.through >= agent.conversation.last_seq
+    {
         return Err(SandboxStoreError::SequenceConflict);
     }
     let mut session = store
@@ -24,12 +29,21 @@ pub(super) async fn read(
         .snapshot(true)
         .await
         .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    let head = PreparedIntegrity
-        .read_head(store, &agent.id, &mut session)
-        .await?
-        .ok_or(SandboxStoreError::NotFound)?;
-    if head.last_seq != agent.conversation.last_seq {
+    let (head, captured) = read_response_head(store, &agent.id, &mut session).await?;
+    if captured.revision == agent.revision && captured != *agent {
         return Err(SandboxStoreError::SequenceConflict);
+    }
+    if head.last_seq != agent.conversation.last_seq {
+        return Err(advance::legacy(
+            store,
+            agent,
+            &captured,
+            &head,
+            Some(turn),
+            Some(tail),
+            &mut session,
+        )
+        .await?);
     }
     if !head.trusted {
         return Ok(None);

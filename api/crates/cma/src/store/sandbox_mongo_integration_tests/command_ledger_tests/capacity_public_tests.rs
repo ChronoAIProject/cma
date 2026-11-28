@@ -1,4 +1,6 @@
 use super::*;
+#[path = "capacity_public_tests/capture_advance.rs"]
+mod capture_advance;
 #[path = "capacity_public_tests/retained_output.rs"]
 mod retained_output;
 use crate::store::sandbox_mongo_integration_tests::capacity_fixtures::{

@@ -47,12 +47,16 @@ pub(super) async fn running_with(
     let mut agent = store.get_agent(&agent.id).await.unwrap().unwrap();
     assert!(agent.conversation.active_turn.is_some());
     if segmented {
-        agent = adopt(&store, &agent).await;
+        agent = adopt(&store, &agent, AgentLogKind::ConversationGap { frames: 1 }).await;
     }
     (store, agent, parent, policy)
 }
 
-async fn adopt(store: &MongoSandboxStore, agent: &Agent) -> Agent {
+pub(in super::super) async fn adopt(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    kind: AgentLogKind,
+) -> Agent {
     let db = store.client.database(&store.agents.namespace().db);
     segments::schema::migrate(&db).await.unwrap();
     crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;
@@ -75,7 +79,6 @@ async fn adopt(store: &MongoSandboxStore, agent: &Agent) -> Agent {
         commit_transaction(&mut session).await,
         CommitOutcome::Committed
     ));
-    let kind = AgentLogKind::ConversationGap { frames: 1 };
     store
         .append_agent_log_keyed(
             &agent.id,

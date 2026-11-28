@@ -12,6 +12,16 @@ pub enum AgentResponseObservation<T> {
     Legacy(AgentEventStreamSnapshot),
 }
 
+pub enum AgentResponseObservationError {
+    Authorization(AgentReadError),
+    Source(AgentReadError),
+    Release(AgentReadError),
+    SourceAndRelease {
+        source: AgentReadError,
+        release: AgentReadError,
+    },
+}
+
 impl AgentReadService {
     pub fn with_response_logs(
         self: &Arc<Self>,
@@ -101,14 +111,37 @@ impl AgentReadService {
                 &'a mut indexed::AgentOutputObservation<'b>,
             ) -> indexed::OutputReadFuture<'a, T>,
     {
+        self.read_response_observation(authorization, turn, operation)
+            .await
+            .map_err(|failure| match failure {
+                AgentResponseObservationError::Authorization(error)
+                | AgentResponseObservationError::Source(error)
+                | AgentResponseObservationError::Release(error) => error,
+                AgentResponseObservationError::SourceAndRelease { release, .. } => release,
+            })
+    }
+
+    pub async fn read_response_observation<T: Send, F>(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+        turn: u64,
+        operation: F,
+    ) -> Result<AgentResponseObservation<T>, AgentResponseObservationError>
+    where
+        F: Send
+            + for<'a, 'b> FnOnce(
+                &'a mut indexed::AgentOutputObservation<'b>,
+            ) -> indexed::OutputReadFuture<'a, T>,
+    {
+        use AgentResponseObservationError::{Authorization, Release, Source, SourceAndRelease};
         authorization
             .bounded(async {
+                let current = self.current_event_stream_snapshot(authorization).await?;
+                let agent = current
+                    .lineage
+                    .agent
+                    .ok_or_else(|| corrupt("authorized response has no Agent"))?;
                 let result = async {
-                    let current = self.current_event_stream_snapshot(authorization).await?;
-                    let agent = current
-                        .lineage
-                        .agent
-                        .ok_or_else(|| corrupt("authorized response has no Agent"))?;
                     let personal = authorization.resource().2;
                     if let Some(result) = self
                         .read_output_observation(&agent, Some(turn), personal, operation)
@@ -126,10 +159,15 @@ impl AgentReadService {
                     Ok(AgentResponseObservation::Legacy(snapshot))
                 }
                 .await;
-                self.current_event_stream_snapshot(authorization).await?;
-                result
+                let release = self.current_event_stream_snapshot(authorization).await;
+                Ok(match (result, release) {
+                    (result, Ok(_)) => result.map_err(Source),
+                    (Ok(_), Err(error)) => Err(Release(error)),
+                    (Err(source), Err(release)) => Err(SourceAndRelease { source, release }),
+                })
             })
             .await
+            .map_err(Authorization)?
     }
 
     async fn read_response_window(
@@ -161,7 +199,7 @@ impl AgentReadService {
             Some(previous) if previous.through < agent.conversation.last_seq => reader
                 .agent_response_log_suffix(agent, previous)
                 .await
-                .map_err(log_store_error)?,
+                .map_err(capture_open_error)?,
             _ => None,
         };
         let window = match suffix {
@@ -169,7 +207,7 @@ impl AgentReadService {
             None => reader
                 .agent_response_log_window(agent, turn_sequence)
                 .await
-                .map_err(log_store_error)?,
+                .map_err(capture_open_error)?,
         };
         window
             .map(|window| {

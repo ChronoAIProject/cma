@@ -305,7 +305,7 @@ impl AgentReadService {
         let Some(reader) = store
             .agent_output_reader(agent, turn)
             .await
-            .map_err(log_store_error)?
+            .map_err(capture_open_error)?
         else {
             return Ok(None);
         };

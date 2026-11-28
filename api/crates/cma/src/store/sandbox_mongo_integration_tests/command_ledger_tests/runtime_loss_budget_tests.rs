@@ -81,5 +81,6 @@ async fn runtime_loss_closes_real_admitted_turn_budget() {
 mod atomicity;
 #[path = "runtime_loss_budget_fixtures.rs"]
 mod fixtures;
+pub(super) use fixtures::adopt;
 #[path = "runtime_loss_budget_recovery.rs"]
 mod recovery;

@@ -73,7 +73,9 @@ pub use cursor::AgentHistoryCursor;
 mod output_memo;
 #[path = "agent_reads/response.rs"]
 mod response;
-pub use response::{indexed::AgentOutputObservation, AgentResponseObservation};
+pub use response::{
+    indexed::AgentOutputObservation, AgentResponseObservation, AgentResponseObservationError,
+};
 #[path = "agent_reads/buffered.rs"]
 mod buffered;
 pub use buffered::AgentBufferedEventRequest;
@@ -448,11 +450,18 @@ fn lineage_store_error(error: SandboxStoreError) -> AgentReadError {
     }
 }
 
+fn capture_open_error(error: SandboxStoreError) -> AgentReadError {
+    match error {
+        SandboxStoreError::CaptureAdvanced => AgentReadError::CaptureAdvanced,
+        other => log_store_error(other),
+    }
+}
+
 fn log_store_error(error: SandboxStoreError) -> AgentReadError {
     match error {
-        SandboxStoreError::NotFound | SandboxStoreError::SequenceConflict => {
-            corrupt("agent log is incomplete or inconsistent")
-        }
+        SandboxStoreError::NotFound
+        | SandboxStoreError::SequenceConflict
+        | SandboxStoreError::CaptureAdvanced => corrupt("agent log is incomplete or inconsistent"),
         other => store_error(other),
     }
 }

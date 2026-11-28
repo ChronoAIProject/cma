@@ -1,4 +1,8 @@
-use super::{error, projection, ResponsesV2State, V2ResponseObject};
+use super::{
+    error, projection,
+    read_cycle::{read_category, read_cycle, FirstFailure, ReadFailure},
+    ResponsesV2State, V2ResponseObject,
+};
 use crate::stream_telemetry::{self, CloseReason, Contract, ContractKind, Kind, Poll};
 use axum::response::{
     sse::{Event, KeepAlive},
@@ -21,7 +25,9 @@ pub(super) async fn snapshot(
         .reads
         .observe_output_stream(&mut authorization)
         .map_err(error::read)?;
-    snapshot_mode(state, &authorization, receipt, true, None).await
+    snapshot_mode(state, &authorization, receipt, true)
+        .await
+        .map_err(http_error)
 }
 
 async fn snapshot_mode(
@@ -29,52 +35,22 @@ async fn snapshot_mode(
     authorization: &AgentEventStreamAuthorization,
     receipt: &CommandReceiptView,
     indexed_allowed: bool,
-    evidence: Option<&Contract>,
-) -> Result<(V2ResponseObject, bool), Response> {
-    let id = receipt
-        .response_id
-        .as_ref()
-        .ok_or_else(error::unavailable)?;
+) -> Result<(V2ResponseObject, bool), ReadFailure> {
+    let id = receipt.response_id.as_ref().ok_or(ReadFailure::Receipt)?;
     let reading = state
         .commands
         .response_for_stream(authorization, id)
         .await
-        .inspect_err(|err| {
-            if let Some(evidence) = evidence {
-                evidence.record(CloseReason::command(err));
-            }
-        })
-        .map_err(error::admission)?;
+        .map_err(ReadFailure::Command)?;
     if reading.command.receipt != *receipt {
-        return Err(error::unavailable());
+        return Err(ReadFailure::Receipt);
     }
-    let bound = reading.command.turn_sequence.is_some();
-    if !bound {
-        let history = state
+    let history = if let Some(turn) = reading.command.turn_sequence {
+        let origin = state.agent_page_origin.clone();
+        let indexed_reading = reading.clone();
+        let observation = state
             .reads
-            .response_event_stream_snapshot(authorization, None)
-            .await
-            .inspect_err(|err| {
-                if let Some(evidence) = evidence {
-                    evidence.record(CloseReason::read(err));
-                }
-            })
-            .map_err(error::read)?;
-        return super::shared_projection::project(state, reading, &history)
-            .map(|response| (response, false))
-            .ok_or_else(error::unavailable);
-    }
-    let origin = state.agent_page_origin.clone();
-    let indexed_reading = reading.clone();
-    let observation = state
-        .reads
-        .with_response_observation(
-            authorization,
-            reading
-                .command
-                .turn_sequence
-                .expect("bound response has a turn"),
-            move |source| {
+            .read_response_observation(authorization, turn, move |source| {
                 Box::pin(async move {
                     if !indexed_allowed {
                         return Err(layer2_core::sandbox::AgentReadError::Unavailable(
@@ -83,29 +59,100 @@ async fn snapshot_mode(
                     }
                     projection::indexed::complete(source, &origin, indexed_reading).await
                 })
-            },
-        )
-        .await
-        .inspect_err(|err| {
-            if let Some(evidence) = evidence {
-                evidence.record(CloseReason::read(err));
+            })
+            .await
+            .map_err(ReadFailure::from)?;
+        match observation {
+            AgentResponseObservation::Indexed(result) => {
+                return result
+                    .map(|response| (response, true))
+                    .ok_or(ReadFailure::Pagination)
             }
-        })
-        .map_err(error::read)?;
-    let history = match observation {
-        AgentResponseObservation::Indexed(result) => {
-            return result.map(|response| (response, bound)).ok_or_else(|| {
-                if let Some(evidence) = evidence {
-                    evidence.record(CloseReason::PaginationRequired);
-                }
-                pagination_required()
-            });
+            AgentResponseObservation::Legacy(history) => history,
         }
-        AgentResponseObservation::Legacy(history) => history,
+    } else {
+        state
+            .reads
+            .response_event_stream_snapshot(authorization, None)
+            .await
+            .map_err(ReadFailure::Source)?
     };
-    super::shared_projection::project(state, reading, &history)
-        .map(|response| (response, bound))
-        .ok_or_else(error::unavailable)
+    let bound = reading.command.turn_sequence.is_some();
+    let response = super::shared_projection::project(state, reading, &history)
+        .ok_or(ReadFailure::Projection)?;
+    state
+        .reads
+        .validate_event_stream(authorization)
+        .await
+        .map_err(ReadFailure::Release)?;
+    Ok((response, bound))
+}
+
+fn http_error(failure: ReadFailure) -> Response {
+    match failure {
+        ReadFailure::Command(error) => error::admission(error),
+        ReadFailure::Header(error)
+        | ReadFailure::Source(error)
+        | ReadFailure::Release(error)
+        | ReadFailure::SourceAndRelease { release: error, .. } => error::read(error),
+        ReadFailure::Pagination => pagination_required(),
+        _ => error::unavailable(),
+    }
+}
+
+async fn legacy_refresh(
+    state: &ResponsesV2State,
+    authorization: &AgentEventStreamAuthorization,
+    receipt: &CommandReceiptView,
+    next: u64,
+    first_failure: &mut FirstFailure,
+) -> Result<PreparedLegacy, ReadFailure> {
+    struct Context<'a> {
+        state: &'a ResponsesV2State,
+        authorization: &'a AgentEventStreamAuthorization,
+        receipt: &'a CommandReceiptView,
+        first_failure: &'a mut FirstFailure,
+    }
+    read_cycle(
+        &mut Context {
+            state,
+            authorization,
+            receipt,
+            first_failure,
+        },
+        authorization.read_deadline(),
+        authorization.revalidation_deadline(),
+        |context| {
+            Box::pin(async {
+                let (response, bound) =
+                    snapshot_mode(context.state, context.authorization, context.receipt, false)
+                        .await?;
+                Ok(PreparedLegacy {
+                    pending: projection::events(&response, bound).into(),
+                    terminal: response.terminal(),
+                    response_id: response.id,
+                })
+            })
+        },
+        |context, failure, available| {
+            let retry = available && failure.advanced();
+            context.first_failure.record(
+                "legacy",
+                next,
+                failure.diagnostic(),
+                false,
+                if retry { "recapture" } else { "none" },
+            );
+            retry
+        },
+    )
+    .await
+}
+
+struct PreparedLegacy {
+    pending: VecDeque<Value>,
+    terminal: bool,
+    response_id: String,
 }
 
 pub(super) async fn open(
@@ -114,6 +161,7 @@ pub(super) async fn open(
     receipt: CommandReceiptView,
     after: Option<u64>,
     known_bound: Option<bool>,
+    post: bool,
 ) -> Response {
     // Queued responses are not bound to a runtime turn and cannot contain
     // output. Avoid probing the output format and scanning the Agent log just
@@ -126,21 +174,32 @@ pub(super) async fn open(
         // The response may bind after admission. Start with the metadata-only
         // header path, then let stream_pages select indexed or legacy output
         // from the first bound observation instead of freezing legacy routing.
-        return super::stream_pages::open(state, authorization, receipt, after).await;
+        return super::stream_pages::open(state, authorization, receipt, after, post).await;
     }
+    let mut first_failure = FirstFailure::new(&receipt, post);
+    let next = after.map_or(0, |after| after.saturating_add(1));
     let indexed = match state.reads.output_is_indexed(&authorization).await {
         Ok(indexed) => indexed,
-        Err(value) => return error::read(value),
+        Err(value) => {
+            first_failure.record(
+                "format",
+                next,
+                ("source_format", read_category(&value)),
+                false,
+                "none",
+            );
+            return error::read(value);
+        }
     };
     if state.paged_events || indexed {
-        return super::stream_pages::open(state, authorization, receipt, after).await;
+        return super::stream_pages::open(state, authorization, receipt, after, post).await;
     }
-    let (initial, bound) = match snapshot_mode(&state, &authorization, &receipt, false, None).await
-    {
-        Ok(value) => value,
-        Err(error) => return error,
-    };
-    open_legacy(state, authorization, receipt, after, initial, bound)
+    let initial =
+        match legacy_refresh(&state, &authorization, &receipt, next, &mut first_failure).await {
+            Ok(value) => value,
+            Err(error) => return http_error(error),
+        };
+    open_legacy(state, authorization, receipt, after, initial, first_failure)
 }
 
 fn open_legacy(
@@ -148,28 +207,28 @@ fn open_legacy(
     authorization: AgentEventStreamAuthorization,
     receipt: CommandReceiptView,
     after: Option<u64>,
-    initial: V2ResponseObject,
-    bound: bool,
+    initial: PreparedLegacy,
+    first_failure: FirstFailure,
 ) -> Response {
-    let events = projection::events(&initial, bound);
-    if after.is_some_and(|after| after >= events.len() as u64) {
+    if after.is_some_and(|after| after >= initial.pending.len() as u64) {
         return error::field(
             "starting_after",
             "invalid_replay_cursor",
             "The cursor is ahead of this response's durable events.",
         );
     }
-    let response_id = initial.id.clone();
+    let response_id = initial.response_id;
     let command_id = receipt.command_id.to_string();
     let evidence = Contract::new(ContractKind::ResponsesV2);
     let open = Open {
         evidence: evidence.clone(),
+        first_failure,
         state,
         authorization,
         receipt,
         next: after.map_or(0, |value| value + 1),
-        pending: events.into(),
-        terminal: initial.terminal(),
+        pending: initial.pending,
+        terminal: initial.terminal,
         failed: false,
     };
     let body = stream::unfold(open, |mut open| async move {
@@ -189,6 +248,13 @@ fn open_legacy(
                     .validate_event_stream(&open.authorization)
                     .await
                 {
+                    open.first_failure.record(
+                        "legacy",
+                        open.next,
+                        ("frame_authorization", read_category(&error)),
+                        false,
+                        "none",
+                    );
                     open.evidence.record(CloseReason::read(&error));
                     return open.fail();
                 }
@@ -210,18 +276,18 @@ fn open_legacy(
                 .map_or(wake, |expires| expires.min(wake));
             tokio::time::sleep_until(wake).await;
             let poll = Poll::new(Kind::ResponsesV2);
-            match snapshot_mode(
+            match legacy_refresh(
                 &open.state,
                 &open.authorization,
                 &open.receipt,
-                false,
-                Some(&open.evidence),
+                open.next,
+                &mut open.first_failure,
             )
             .await
             {
-                Ok((response, bound)) => {
-                    open.terminal = response.terminal();
-                    open.pending = projection::events(&response, bound).into();
+                Ok(page) => {
+                    open.terminal = page.terminal;
+                    open.pending = page.pending;
                     // Projection sequences increase monotonically; inspect only the tail.
                     poll.complete(open.pending.back().is_some_and(|event| {
                         event["sequence_number"]
@@ -229,7 +295,10 @@ fn open_legacy(
                             .is_some_and(|seq| seq >= open.next)
                     }));
                 }
-                Err(_) => return open.fail(),
+                Err(failure) => {
+                    open.evidence.record(failure.close_reason());
+                    return open.fail();
+                }
             }
         }
     });
@@ -267,6 +336,7 @@ pub(super) fn response(
 }
 struct Open {
     evidence: Contract,
+    first_failure: FirstFailure,
     state: ResponsesV2State,
     authorization: AgentEventStreamAuthorization,
     receipt: CommandReceiptView,

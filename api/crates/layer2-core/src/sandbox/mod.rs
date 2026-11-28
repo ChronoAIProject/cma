@@ -297,15 +297,15 @@ pub use agent_read_types::{
     AgentTranscriptMessage, AgentTranscriptRole, AgentTranscriptTurn, AgentTurnOutcome, AgentUsage,
     AgentUsageReading, SandboxResourceReadError, SandboxResourceReader, SandboxResourceReading,
 };
-pub use agent_reads::privacy_export;
 pub use agent_reads::{
-    AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
+    privacy_export, AgentBufferedEventRequest, AgentConfigurationRead, AgentDetailReading,
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentEventStreamSnapshot,
     AgentHistoryCursor, AgentHistoryReading, AgentOriginalRequest, AgentOutputObservation,
     AgentReadService, AgentReplayEntry, AgentReplayWindow, AgentResponseBinding,
-    AgentResponseObservation, AgentRetainedOutput, AgentRetainedOutputAvailability,
-    AgentRetainedOutputPage, AgentSourceReadError, AgentSourceReading, AgentVisibleLogEntry,
-    SharedAgentDetail, SharedAgentOrigin, RETAINED_OUTPUT_CHUNK_BYTES,
+    AgentResponseObservation, AgentResponseObservationError, AgentRetainedOutput,
+    AgentRetainedOutputAvailability, AgentRetainedOutputPage, AgentSourceReadError,
+    AgentSourceReading, AgentVisibleLogEntry, SharedAgentDetail, SharedAgentOrigin,
+    RETAINED_OUTPUT_CHUNK_BYTES,
 };
 pub use agent_runtime::{
     AgentRuntimeConnection, AgentRuntimeError, AgentRuntimeInput, AgentRuntimeInputError,

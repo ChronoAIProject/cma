@@ -228,6 +228,8 @@ pub enum SandboxStoreError {
     },
     #[error("event sequence would not be gap-free")]
     SequenceConflict,
+    #[error("Agent output capture advanced")]
+    CaptureAdvanced,
     #[error("agent log capacity exceeded")]
     AgentLogCapacityExceeded,
     #[error("sandbox limit reached: {live} of {limit}")]
