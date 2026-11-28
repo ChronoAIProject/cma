@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use futures_util::TryStreamExt;
 use layer1_public::rest::admin::warm_pools::{ResizeWarmPoolBody, WarmPoolError};
 use layer2_core::StoreError;
-use layer3_adapter::agent_sandbox::{NativePoolBinding, NativePoolConfiguration, NativePoolDrain};
+use layer3_adapter::agent_sandbox::{NativePoolBinding, NativePoolConfiguration};
 use mongodb::{
     bson::{doc, DateTime, Document},
     options::{IndexOptions, ReturnDocument},
@@ -11,12 +11,14 @@ use mongodb::{
 };
 
 use super::durability::majority_collection;
-use crate::warm_pools::{OperatorReplicas, PoolTarget, PoolTargetStore};
+use crate::warm_pools::{OperatorReplicas, PoolTarget, PoolTargetStore, RetirementScan};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
 mod activation;
 mod released;
 mod retirement;
+#[cfg(test)]
+pub(crate) use retirement::eligibility_tests::quarantined_retirement_fixture;
 mod schema;
 
 const MAX_TARGETS: i64 = 1000;
@@ -184,13 +186,22 @@ impl PoolTargetStore for MongoNativeWarmPools {
         let durable = self.current_retirement_image(target, image).await?;
         retirement::homes(self, target, &durable).await
     }
-    async fn retirement_drain_homes(
+    async fn scan_retirement_drain(
         &self,
         target: &PoolTarget,
         image: &str,
-    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
+    ) -> Result<RetirementScan, WarmPoolError> {
         let durable = self.current_retirement_image(target, image).await?;
         retirement::drain_homes(self, target, &durable).await
+    }
+    async fn defer_quarantined_retirement(&self, target: &PoolTarget) -> Result<(), WarmPoolError> {
+        self.check_fenced_write(self.targets.update_one(fence(target), doc! {
+            "$set": {
+                "lease": mongodb::bson::Bson::Null,
+                "lease_until": DateTime::from_millis(0),
+                "reconcile_after": DateTime::from_millis(DateTime::now().timestamp_millis() + 15_000),
+            }
+        }).await).await
     }
     async fn begin_retirement(&self, target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         retirement::begin(self, target).await

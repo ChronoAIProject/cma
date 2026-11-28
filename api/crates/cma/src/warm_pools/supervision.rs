@@ -25,11 +25,11 @@ impl NativeWarmPools {
             return Ok(false);
         };
         if target.retiring {
-            return self.retire_claimed(provider, target).await;
+            return self.retire_claimed(provider, target).await.map(|_| true);
         }
         if !self.current_plan(&target)? {
             if !self.store.candidate_protected(&target).await? {
-                return self.retire_claimed(provider, target).await;
+                return self.retire_claimed(provider, target).await.map(|_| true);
             }
             return self.reconcile_candidate(provider, target).await;
         }

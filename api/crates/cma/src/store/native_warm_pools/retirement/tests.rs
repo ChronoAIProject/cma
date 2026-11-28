@@ -2,6 +2,19 @@ use super::*;
 mod machine;
 use crate::store::sandbox_maintenance::mongo_integration_tests::active_sandbox;
 
+impl MongoNativeWarmPools {
+    async fn retirement_drain_homes(
+        &self,
+        target: &PoolTarget,
+        image: &str,
+    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
+        Ok(self
+            .scan_retirement_drain(target, image)
+            .await?
+            .into_drain())
+    }
+}
+
 fn drain_homes_only(homes: Vec<HomeVolumeAttachment>) -> Option<NativePoolDrain> {
     Some(NativePoolDrain {
         homes,
