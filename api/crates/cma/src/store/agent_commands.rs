@@ -36,23 +36,7 @@ pub(super) use records::document as command_document;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read as read_command;
 
-#[derive(Debug)]
-pub(super) enum ApplyError {
-    Domain(CommandLedgerError),
-    Driver(mongodb::error::Error),
-}
-
-impl From<CommandLedgerError> for ApplyError {
-    fn from(value: CommandLedgerError) -> Self {
-        Self::Domain(value)
-    }
-}
-
-impl From<mongodb::error::Error> for ApplyError {
-    fn from(value: mongodb::error::Error) -> Self {
-        Self::Driver(value)
-    }
-}
+pub(super) use cma_am_agent_commands::ApplyError;
 
 #[async_trait::async_trait]
 impl AgentCommandStore for MongoSandboxStore {

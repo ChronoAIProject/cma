@@ -62,13 +62,7 @@ fn domain(reason: BudgetError) -> ApplyError {
 }
 
 fn decode<T: serde::de::DeserializeOwned>(document: &Document) -> Result<T, ApplyError> {
-    if document
-        .get_document("record")
-        .is_ok_and(certification::present)
-    {
-        return Err(domain(BudgetError::Unavailable));
-    }
-    super::sandbox_mongo::read_record(document).map_err(|_| domain(BudgetError::Unavailable))
+    cma_am_spend::decode(document).map_err(domain)
 }
 
 async fn save<T: Serialize>(

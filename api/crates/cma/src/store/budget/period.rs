@@ -121,10 +121,7 @@ pub(super) fn snapshot(
     })
 }
 
-pub(in crate::store) fn period_key(period_start: u64) -> String {
-    let start = std::time::UNIX_EPOCH + std::time::Duration::from_secs(period_start);
-    format!("platform:{}", layer2_core::rfc3339_at(start))
-}
+pub(in crate::store) use cma_am_spend::period_key;
 
 /// The evaluator pre-creates the row (rule 6). An admission that still finds
 /// it missing inserts it; a concurrent insert surfaces as the callers' existing

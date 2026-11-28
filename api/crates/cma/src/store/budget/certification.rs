@@ -1,4 +1,3 @@
-use mongodb::bson::Document;
 use serde::{Deserialize, Serialize};
 
 use super::{BudgetError, TurnRecord};
@@ -58,9 +57,7 @@ enum BookingSource {
     Conservative,
 }
 
-pub(super) fn present(record: &Document) -> bool {
-    record.contains_key("certification")
-}
+pub(super) use cma_am_spend::has_turn_certification as present;
 
 impl Certification {
     pub(super) fn valid(&self, record: &TurnRecord, valid_id: impl Fn(&str) -> bool) -> bool {

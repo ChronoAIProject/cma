@@ -1,20 +1,8 @@
 //! Independent erasure evidence for missing admitted Trigger inputs.
 use super::{documents, driver_error, MongoTriggerDefinitionStore};
+use cma_am_triggers::definitions::revision_fenced;
 use layer2_core::trigger_domain::{PublicTriggerId, TriggerId, TriggerStoreError};
-use mongodb::bson::{doc, Bson, Document};
-
-pub(super) fn revision_fenced(row: &Document) -> Result<bool, TriggerStoreError> {
-    match (
-        row.get("account_erasure_fenced"),
-        row.get("account_erasure_fenced_at"),
-    ) {
-        (None | Some(Bson::Boolean(false)), None) => Ok(false),
-        (Some(Bson::Boolean(true)), Some(Bson::DateTime(_))) => Ok(true),
-        _ => Err(TriggerStoreError::Corrupt(
-            "invalid publisher erasure fence authority".into(),
-        )),
-    }
-}
+use mongodb::bson::doc;
 
 pub(super) async fn prove(
     store: &MongoTriggerDefinitionStore,

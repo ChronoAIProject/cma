@@ -1,12 +1,14 @@
 //! Preserve legacy CAS, joining an owner fence for scoped transport effects.
 use super::super::native_retirement_action;
 use super::super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, start_transaction, CommitOutcome, TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, signed, start_transaction, CommitOutcome,
+    TRANSACTION_ATTEMPTS,
 };
 use super::*;
 use crate::store::agent_ownership::FenceError;
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use layer2_core::SandboxId;
+use mongodb::bson::Bson;
 
 pub(super) async fn save(
     store: &MongoSandboxStore,

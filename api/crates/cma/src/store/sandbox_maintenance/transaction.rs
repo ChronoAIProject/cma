@@ -54,6 +54,12 @@ pub(super) enum ApplyError {
     Driver(mongodb::error::Error),
 }
 
+impl From<SandboxStoreError> for ApplyError {
+    fn from(error: SandboxStoreError) -> Self {
+        Self::Domain(error)
+    }
+}
+
 impl From<LifecycleLoadError> for ApplyError {
     fn from(error: LifecycleLoadError) -> Self {
         match error {

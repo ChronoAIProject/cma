@@ -1,6 +1,6 @@
 use super::*;
 use layer2_core::StoreError;
-use mongodb::{Client, Database};
+use mongodb::{bson::Bson, options::IndexOptions, Client, Database, IndexModel};
 
 const INDEX: &str = "workspaces_sandbox";
 

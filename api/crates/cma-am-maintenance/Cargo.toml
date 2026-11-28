@@ -1,0 +1,12 @@
+[package]
+name = "cma-am-maintenance"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+cma-am-agent-log = { path = "../cma-am-agent-log" }
+cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
+cma-am-sandbox-state = { path = "../cma-am-sandbox-state" }
+layer2-core = { workspace = true }
+mongodb = { workspace = true }

@@ -426,11 +426,17 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "cma-allocator-qualification",
+ "cma-am-agent-commands",
  "cma-am-agent-log",
  "cma-am-auth",
+ "cma-am-bindings",
+ "cma-am-catalog",
+ "cma-am-maintenance",
  "cma-am-mongo-primitives",
  "cma-am-reporting",
  "cma-am-sandbox-state",
+ "cma-am-spend",
+ "cma-am-triggers",
  "cma-qualification",
  "cma-service-auth",
  "cmaeg",
@@ -482,6 +488,16 @@ name = "cma-allocator-qualification"
 version = "0.1.0"
 
 [[package]]
+name = "cma-am-agent-commands"
+version = "0.1.0"
+dependencies = [
+ "cma-am-mongo-primitives",
+ "futures-util",
+ "layer2-core",
+ "mongodb",
+]
+
+[[package]]
 name = "cma-am-agent-log"
 version = "0.1.0"
 dependencies = [
@@ -527,6 +543,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "cma-am-bindings"
+version = "0.1.0"
+dependencies = [
+ "cma-am-mongo-primitives",
+ "layer2-core",
+ "mongodb",
+]
+
+[[package]]
+name = "cma-am-catalog"
+version = "0.1.0"
+dependencies = [
+ "cma-am-mongo-primitives",
+ "layer2-core",
+ "mongodb",
+ "serde",
+]
+
+[[package]]
+name = "cma-am-maintenance"
+version = "0.1.0"
+dependencies = [
+ "cma-am-agent-log",
+ "cma-am-mongo-primitives",
+ "cma-am-sandbox-state",
+ "layer2-core",
+ "mongodb",
+]
+
+[[package]]
 name = "cma-am-mongo-primitives"
 version = "0.1.0"
 dependencies = [
@@ -555,6 +601,28 @@ dependencies = [
 
 [[package]]
 name = "cma-am-sandbox-state"
+version = "0.1.0"
+dependencies = [
+ "cma-am-mongo-primitives",
+ "layer2-core",
+ "mongodb",
+ "serde",
+]
+
+[[package]]
+name = "cma-am-spend"
+version = "0.1.0"
+dependencies = [
+ "cma-am-mongo-primitives",
+ "futures-util",
+ "layer2-core",
+ "mongodb",
+ "serde",
+ "sha2 0.10.9",
+]
+
+[[package]]
+name = "cma-am-triggers"
 version = "0.1.0"
 dependencies = [
  "cma-am-mongo-primitives",
