@@ -13,7 +13,16 @@ describe('warm pool tables', () => {
       within(table)
         .getAllByRole('columnheader')
         .map((column) => column.textContent),
-    ).toEqual(['Size', 'Status', 'Desired', 'Ready', 'Provider target', 'Pending', 'Target', 'Actions']);
+    ).toEqual([
+      'Size',
+      'Status',
+      'Desired',
+      'Ready',
+      'Provider target',
+      'Pending',
+      'Target',
+      'Actions',
+    ]);
     expect(within(cell(row, 'Status')).getByText('Pending').closest('.badge')).toHaveAttribute(
       'data-tone',
       'active',
