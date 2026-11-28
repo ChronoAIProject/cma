@@ -140,7 +140,14 @@ impl WorkAuthority {
                     biased;
                     _ = tokio::time::sleep_until(deadline) => return Err(SandboxStoreError::Conflict),
                     _ = tokio::time::sleep_until(next) => {
-                        next = self.heartbeat(&mut renew).await?;
+                        // Publication and renewal can contend on the same row.
+                        // Let work holding that row proceed under the current grant.
+                        tokio::select! {
+                            biased;
+                            _ = tokio::time::sleep_until(deadline) => return Err(SandboxStoreError::Conflict),
+                            renewal = self.heartbeat(&mut renew) => next = renewal?,
+                            result = &mut work => return result,
+                        }
                     }
                     result = &mut work => return result,
                 }
