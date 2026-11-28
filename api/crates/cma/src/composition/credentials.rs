@@ -147,6 +147,7 @@ pub(super) fn authentication(
         silent_sign_in: config.features.silent_sign_in,
         browser_session_join: config.browser_session_join_enabled,
         identity_proxy: config.features.nyxid_proxy,
+        proxy_require_request_proof: config.features.nyxid_proxy_require_request_proof,
         proxy_issuer: &config.nyxid_proxy_issuer,
         proxy_jwks: &config.nyxid_proxy_jwks_url,
         proxy_audience: &config.nyxid_proxy_audience,
@@ -190,6 +191,7 @@ pub(super) fn account_authentication(
         silent_sign_in: config.silent_sign_in,
         browser_session_join: config.browser_session_join,
         identity_proxy: config.nyxid_proxy,
+        proxy_require_request_proof: config.nyxid_proxy_require_request_proof,
         proxy_issuer: &config.nyxid_proxy_issuer,
         proxy_jwks: &config.nyxid_proxy_jwks_url,
         proxy_audience: &config.nyxid_proxy_audience,
@@ -209,6 +211,7 @@ struct Authentication<'a> {
     silent_sign_in: bool,
     browser_session_join: bool,
     identity_proxy: bool,
+    proxy_require_request_proof: bool,
     proxy_issuer: &'a Option<String>,
     proxy_jwks: &'a Option<String>,
     proxy_audience: &'a Option<String>,
@@ -237,6 +240,7 @@ impl Authentication<'_> {
         .with_agent_key_service(self.service_id.clone())
         .with_oauth_api_resource(self.oauth_resource.clone())
         .with_resource_request_enabled(self.resource_request)
+        .with_proxy_require_request_proof(self.proxy_require_request_proof)
         .with_silent_sign_in(self.silent_sign_in)
         .with_browser_session_join(self.browser_session_join)
         .with_identity_proxy(

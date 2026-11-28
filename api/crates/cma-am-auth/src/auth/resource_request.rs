@@ -153,6 +153,9 @@ pub(super) async fn attach(auth: &AuthState, request: Request, next: Next) -> Re
     parts.headers.remove(HEADER);
     parts.headers.remove(header::AUTHORIZATION);
     parts.headers.remove(header::COOKIE);
+    if auth.proxy_require_request_proof {
+        parts.headers.remove(super::nyxid_proxy::HEADER);
+    }
     parts
         .extensions
         .remove::<layer1_public::DelegatedCredential>();
