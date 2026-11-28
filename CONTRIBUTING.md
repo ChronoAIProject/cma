@@ -50,10 +50,17 @@ For vulnerabilities, read the [security reporting policy](.github/SECURITY.md)
 before sharing any technical detail. Community participation expectations remain
 in the [code of conduct draft](.github/CODE_OF_CONDUCT.md).
 
-For dependency or vendored-asset changes, run the
-[source license inventory](.github/scripts/license-inventory/README.md), review
-new license declarations and preserve their provenance. Generated notices remain
-drafts until the selected distribution has been reviewed.
+When you add or update a dependency, commit any resulting lockfile changes and
+review the licenses of the resolved packages. For copied code, media, or fonts,
+record the upstream revision, the files you copied, and any changes you made.
+Update the vendor catalog and keep the applicable upstream copyright, license,
+and NOTICE text. Run the source license inventory and include any missing terms
+or collection errors in your PR. Keep generated drafts in private storage.
+[Source license inventory](.github/scripts/license-inventory/README.md)
+
+Open your PR against `develop`. Request a review from a maintainer other than
+the author. For changes to CI or security-sensitive code, request review from
+the responsible maintainer. [Community decisions](.github/COMMUNITY_DECISIONS.md)
 
 ## Development and review
 

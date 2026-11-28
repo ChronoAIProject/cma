@@ -1,44 +1,33 @@
 # Security policy
 
-The maintainers for private vulnerability reports are `@chronoai-shining` and the
-repository owner. This policy covers the first source-only OSS release.
+This policy covers the first source-only CMA release. The security contacts are
+`@chronoai-shining` and the repository owner.
 
-## Report privately
+## Report a vulnerability privately
 
-Do not disclose suspected vulnerabilities, exploit details, credentials or
-private data in public issues, pull requests, discussions or logs.
+Keep vulnerability details, credentials, and private data in the private report.
+Use public issues, pull requests, and discussions for ordinary bugs.
 
-Use [GitHub private vulnerability reporting](https://github.com/ChronoAIProject/cma/security/advisories/new).
-Do not disclose suspected vulnerabilities, exploit details, credentials or
-private data in public issues, pull requests, discussions or logs. There is no
-email fallback; if the private GitHub channel is unavailable, withhold technical
-details and contact a maintainer through an existing private GitHub channel.
+1. Open the repository's private report form.
+   [Report a vulnerability](https://github.com/ChronoAIProject/cma/security/advisories/new)
+2. Include the affected component, version or commit, expected and observed
+   behavior, and likely impact. If you have a minimal example using synthetic
+   data or a proposed mitigation, include it.
+3. Share only the details needed to investigate. Redact credentials, personal
+   data, and unrelated records. Limit testing to accounts, systems, and data
+   you are authorized to use.
 
-Once a private channel is verified, include the affected version or commit,
-affected component, expected and observed behavior, a minimal synthetic
-reproduction, likely impact and any proposed mitigation. Share only information
-necessary to reproduce the problem; redact credentials and unrelated data.
-Testing must be limited to systems and data you are authorized to examine.
+If you cannot open the form, reach a maintainer through an existing private
+GitHub channel and wait for the maintainer to confirm a private reporting
+route before sharing details.
 
-## Triage and coordinated disclosure
+## Coordinate disclosure
 
-- Security responsibility: `@chronoai-shining` and the repository owner.
-- Acknowledgement target: No response-time SLA is promised by this source-only
-  release; maintainers will acknowledge reports when they can access them.
-- Progress update cadence: Maintainers will use the private report thread for
-  material updates when investigation continues.
-- Disclosure process: Maintainers coordinate remediation and advisory timing
-  through the private GitHub report. Do not publish unpatched details. Reporter
-  credit is handled according to the reporter's preference where practical.
+Use the private report for follow-up. The maintainers restrict access to the
+people investigating or fixing the issue and share material updates in the
+report thread. Agree on disclosure timing and any reporter credit before
+publication.
 
-Share reports only with people needed for investigation and remediation. Agree on
-disclosure timing through the private channel and avoid publishing unpatched
-details before coordination.
-
-## Supported versions and release scope
-
-The first OSS release is source-only. No binary, image or hosted-service support
-matrix is asserted by this policy. Hosted service operations and future packaged
-distributions require a separately published support statement.
-
-Reference: [GitHub's private reporting instructions](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/report-privately).
+The release has no published response-time commitment. The supported scope is
+the source release described in the contribution guide.
+[Contribution guide](../CONTRIBUTING.md) · [GitHub's private reporting instructions](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/report-privately)
