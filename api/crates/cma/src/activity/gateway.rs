@@ -40,7 +40,7 @@ async fn write(
     service: Option<Extension<VerifiedAuditWriter>>,
     Json(event): Json<Event>,
 ) -> StatusCode {
-    if !service.is_some_and(|service| service.subject() == &writer.principal) {
+    if service.is_none_or(|service| service.subject() != &writer.principal) {
         return StatusCode::FORBIDDEN;
     }
     tokio::time::timeout(Duration::from_secs(2), writer.apply(event))
@@ -199,6 +199,51 @@ fn safe_route(route: &str) -> bool {
                 .all(|byte| byte.is_ascii_alphanumeric() || b"/{}*-._".contains(&byte)))
 }
 
+fn identity_values(identity: &Identity) -> Option<[(DetailKey, &'static str); 3]> {
+    let valid_subject = |subject: &str| {
+        !subject.is_empty()
+            && subject.len() <= 256
+            && subject.trim() == subject
+            && !subject.chars().any(char::is_control)
+    };
+    if !valid_subject(&identity.subject)
+        || (identity.scope == Scope::Organization) != identity.organization.is_some()
+        || identity
+            .organization
+            .as_ref()
+            .is_some_and(|owner| !valid_subject(owner))
+        || (identity.client == Client::Web) != (identity.credential == Credential::WebSession)
+    {
+        return None;
+    }
+    Some([
+        (
+            DetailKey::ActivityChannel,
+            match identity.client {
+                Client::Web => "web",
+                Client::Api => "api",
+                Client::Cli => "cli",
+                Client::Sdk => "sdk",
+            },
+        ),
+        (
+            DetailKey::CredentialKind,
+            match identity.credential {
+                Credential::WebSession => "web_session",
+                Credential::Bearer => "bearer",
+                Credential::OwnerKey => "agent_key",
+            },
+        ),
+        (
+            DetailKey::ActorScope,
+            match identity.scope {
+                Scope::Personal => "personal",
+                Scope::Organization => "organization",
+            },
+        ),
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,49 +315,4 @@ mod tests {
         assert_eq!(writer.apply(finish(202)).await, StatusCode::NOT_FOUND);
         assert!(store.rows.lock().unwrap().is_empty());
     }
-}
-
-fn identity_values(identity: &Identity) -> Option<[(DetailKey, &'static str); 3]> {
-    let valid_subject = |subject: &str| {
-        !subject.is_empty()
-            && subject.len() <= 256
-            && subject.trim() == subject
-            && !subject.chars().any(char::is_control)
-    };
-    if !valid_subject(&identity.subject)
-        || (identity.scope == Scope::Organization) != identity.organization.is_some()
-        || identity
-            .organization
-            .as_ref()
-            .is_some_and(|owner| !valid_subject(owner))
-        || (identity.client == Client::Web) != (identity.credential == Credential::WebSession)
-    {
-        return None;
-    }
-    Some([
-        (
-            DetailKey::ActivityChannel,
-            match identity.client {
-                Client::Web => "web",
-                Client::Api => "api",
-                Client::Cli => "cli",
-                Client::Sdk => "sdk",
-            },
-        ),
-        (
-            DetailKey::CredentialKind,
-            match identity.credential {
-                Credential::WebSession => "web_session",
-                Credential::Bearer => "bearer",
-                Credential::OwnerKey => "agent_key",
-            },
-        ),
-        (
-            DetailKey::ActorScope,
-            match identity.scope {
-                Scope::Personal => "personal",
-                Scope::Organization => "organization",
-            },
-        ),
-    ])
 }
