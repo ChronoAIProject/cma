@@ -67,6 +67,21 @@ class PlatformHttpTests(unittest.TestCase):
                     with isolate.relays(root, inside=False):
                         self.assertIs(build.call_args_list[0].args[1], isolate.PlatformHttp)
 
+    def test_both_platform_listeners_relay_to_the_same_restricted_socket(self):
+        platform = (("platform", "127.0.0.2", 9092),)
+        with mock.patch.object(isolate, "PROXIES", platform), \
+                mock.patch.object(isolate, "TcpServer") as server, \
+                mock.patch.object(isolate.threading, "Thread"):
+            legacy, canonical, https = (mock.Mock() for _ in range(3))
+            server.side_effect = [legacy, canonical, https]
+            with isolate.relays("/fixture", inside=True):
+                server.assert_has_calls([
+                    mock.call(("127.0.0.2", 9092), isolate.Relay),
+                    mock.call(("127.0.0.1", 9092), isolate.Relay),
+                ])
+                self.assertEqual(legacy.destination, "/fixture/platform.sock")
+                self.assertEqual(canonical.destination, legacy.destination)
+
     def test_only_delegated_cma_actions_and_explicit_service_slugs_are_allowed(self):
         for path in isolate.CMA_OPERATIONS:
             target = self.prefix + "cma/" + path
