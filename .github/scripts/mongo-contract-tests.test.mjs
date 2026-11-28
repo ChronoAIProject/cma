@@ -250,7 +250,7 @@ for (const reuse of [false, true]) {
     for (const scenario of ['batches', 'batches-error']) {
       const f = fixture(scenario, reuse);
       try {
-        const run = () => execFileSync('bash', f.args, {env:f.env, timeout:30000, stdio:'pipe'});
+        const run = () => execFileSync('bash', f.args, {env:f.env, timeout:runnerSetupTimeoutMs, stdio:'pipe'});
         if (scenario === 'batches') run(); else assert.throws(run);
         const calls = f.calls();
         assert.equal(calls.filter(row => row.command === 'cargo' && row.args[1] === 'list').length, 1);
