@@ -20,8 +20,8 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
   const ingress = other(owner.am);
   const agent = '/api/v1/agents/' + agentId;
   const read = async (am, path) => (await api.rawRequest(am, 'GET', agent + path)).body;
-  const patch = (am, revision, system_prompt) => api.rawRequest(am, 'PATCH', agent + '/preferences', {
-    key: randomUUID(), body: {expected_revision: revision, system_prompt}, timeout: 8000,
+  const patch = (am, revision, title) => api.rawRequest(am, 'PATCH', agent + '/preferences', {
+    key: randomUUID(), body: {expected_revision: revision, title}, timeout: 8000,
     prefer: 'cma-settings-reasons',
   });
   const control = progressControl(adapter, {agentId, sandboxId, operationId});
@@ -29,10 +29,12 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
   const baseline = await read(owner.am, '/preferences');
   check(original?.agent_id === agentId && original.creation_origin === 'manual'
     && equal(original, await read(ingress, '/provenance')), 'provenance_progress_original_public_readback_invalid');
-  check(baseline?.prompt_supported === true && baseline.prompt_pending === false
-    && Number.isSafeInteger(baseline.revision), 'provenance_progress_prompt_not_supported');
+  check(Number.isSafeInteger(baseline?.revision), 'provenance_progress_preferences_revision_missing');
 
-  const prompt = 'Provenance proof ' + randomUUID();
+  // The witness is retired by the journey. Its title write changes the durable
+  // Agent revision without requiring a Runtime configuration dispatch.
+  const title = 'Provenance proof ' + randomUUID();
+  check(title !== baseline.title, 'provenance_progress_title_change_required');
   let armed, disarmed, digest;
   await withRestoration(async () => {
     armed = await control('arm');
@@ -43,10 +45,10 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
     check(/^[a-f0-9]{64}$/.test(held.commit_transaction_sha256 ?? ''), 'provenance_progress_claim_not_bound');
     const {body: updated} = await api.router.dispatch(agentId, am => {
       check(am === ingress, 'provenance_progress_owner_changed');
-      return patch(am, baseline.revision, prompt);
+      return patch(am, baseline.revision, title);
     });
-    check(updated?.system_prompt === prompt && updated.revision === baseline.revision + 1
-      && updated.prompt_pending === false, 'provenance_progress_peer_write_unbound');
+    check(updated?.title === title && updated.revision === baseline.revision + 1,
+      'provenance_progress_peer_write_unbound');
     check((await control('sample'))?.transaction_sha256 === digest,
       'provenance_progress_peer_write_outside_transaction');
     const transaction = held.commit_transaction_sha256;
@@ -60,27 +62,19 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
       'provenance_progress_peer_revision_lost');
     for (const am of [owner.am, ingress]) {
       const preferences = await read(am, '/preferences');
-      check(preferences?.system_prompt === prompt && preferences.revision === updated.revision,
-        'provenance_progress_peer_prompt_lost');
+      check(preferences?.title === title && preferences.revision === updated.revision,
+        'provenance_progress_peer_title_lost');
       const derived = await read(am, '/provenance');
       check(derived?.agent_id === agentId && derived.created_at === original.created_at
         && derived.creation_origin === 'legacy_unknown', 'provenance_progress_legacy_readback_invalid');
     }
-  }, () => withRestoration(async () => {
+    const effects = await adapter.titleEffects({agentId, title});
+    check(effects?.length === 1 && Number.isSafeInteger(effects[0]) && effects[0] > 0,
+      'provenance_progress_peer_title_publication_unbound');
+  }, async () => {
     disarmed = await control('restore');
     check(disarmed?.restored === true && disarmed.configured === false, 'provenance_progress_restore_failed');
-  }, async () => {
-    const current = await read(owner.am, '/preferences');
-    if (current.system_prompt !== baseline.system_prompt) {
-      check(current.system_prompt === prompt && Number.isSafeInteger(current.revision), 'provenance_progress_prompt_restore_foreign_value');
-      await patch(ingress, current.revision, baseline.system_prompt);
-    }
-    for (const am of [owner.am, ingress]) {
-      const restored = await read(am, '/preferences');
-      check(restored?.system_prompt === baseline.system_prompt && restored.prompt_pending === false,
-        'provenance_progress_prompt_restore_failed');
-    }
-  }, recordFailure), recordFailure);
+  }, recordFailure);
   for (const am of [owner.am, ingress]) {
     check(equal(await read(am, '/provenance'), original), 'provenance_progress_original_creation_not_restored');
   }

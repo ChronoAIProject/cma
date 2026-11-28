@@ -15,7 +15,7 @@ import {runtimeLoss} from '../features/runtime_loss.mjs';
 import {lifecycleFailureSummary, lifecyclePollFailure, provenanceRequestFailure} from '../failure.mjs';
 
 export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook,
-  preparedHook, triggerHook, retirementHook, navigationHook, firstAgentHook} = {}) {
+  preparedHook, triggerHook, retirementHook, navigationHook, provenanceHook, firstAgentHook} = {}) {
   const config = normalizeConfig(raw);
   check(config.adapter_module && config.output_dir && config.owner_id, 'config_missing');
   let runtimes = runtimeBindings(config);
@@ -445,6 +445,19 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
         result.verdict = 'LOCAL_ROLLBACK_OWNER_HOOK_PASS';
       } finally {if (socket) await closeDesktop(socket);}
       return result;
+    }
+    if (provenanceHook) {
+      let witness;
+      await step('provenance_create_a_ready_b', async () => {
+        witness = await create('a', false);
+        return {agent_sha256: hash(witness.agentId)};
+      });
+      await step('provenance_open_both', () => openBoth(witness));
+      await provenanceHook({api, adapter, record: witness, step});
+      await step('provenance_public_stop_retire', async () => {
+        await cleanup(witness);
+        return {retired: true};
+      });
     }
     let plain;
     await step('plain_create_a_ready_b', async () => {

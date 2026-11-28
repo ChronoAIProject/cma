@@ -254,7 +254,7 @@ async function heldCases(context, exercise, repetitions = 3) {
 }
 
 try {
-  result.journey = await runJourney(config, {firstAgentHook: async context => {
+  result.journey = await runJourney(config, {provenanceHook: async context => {
     const run = (name, operation) => context.step(name, () => operation({...context,
       recordFailure: (stage, error) => retainFailure(config.matrix_output, stage, error, {case: name})}));
     await run('provenance_progress_known_abort', provenanceKnownAbort);
