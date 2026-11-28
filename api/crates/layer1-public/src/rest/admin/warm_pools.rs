@@ -64,6 +64,9 @@ pub struct WarmPoolView {
     /// The deployment-seeded shared desktop pool, resized against `machine_image`.
     #[serde(default)]
     pub machine: bool,
+    /// The retained pool still matches its lane's released plan and policy.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_runtime: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -78,6 +81,28 @@ pub struct WarmPoolList {
     /// Configured shared desktop image; null when this deployment seeds no desktop pool.
     #[serde(default)]
     pub machine_image: Option<String>,
+    /// Exact default Desktop configuration, null when it cannot be planned.
+    #[serde(default)]
+    pub machine_config_sha256: Option<String>,
+    /// Inventory-confirmed target IDs for new default-size requests by runtime.
+    #[serde(default)]
+    pub default_claim_pool_id: Option<String>,
+    #[serde(default)]
+    pub machine_claim_pool_id: Option<String>,
+    /// Inventory-confirmed default pools whose capacity can be reported even when a claim is ineligible.
+    #[serde(default)]
+    pub default_capacity_pool_id: Option<String>,
+    #[serde(default)]
+    pub machine_capacity_pool_id: Option<String>,
+    /// Registry-verified release labels keyed by the full immutable image.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub runtime_versions: Vec<WarmPoolRuntimeVersion>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct WarmPoolRuntimeVersion {
+    pub image: String,
+    pub version: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -1,3 +1,4 @@
+import { openSettingsEditors } from './settingsTestSupport';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
@@ -47,6 +48,7 @@ async function addModel(user: ReturnType<typeof userEvent.setup>) {
 it('saves explicit owner and model policies with CAS, keeping enforcement disabled', async () => {
   const { client, user, budget } = setup();
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   await screen.findByLabelText('Enable spend controls');
   await addOwner(user);
   await addModel(user);
@@ -79,6 +81,7 @@ it('saves explicit owner and model policies with CAS, keeping enforcement disabl
 it('starts added rows blank and retains invalid inputs without a write', async () => {
   const { client, user } = setup();
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   await user.click(await screen.findByRole('button', { name: 'Add owner override' }));
   await user.click(screen.getByRole('button', { name: 'Add request model' }));
   for (const name of ['Owner override 1', 'Request model 1'])
@@ -111,6 +114,7 @@ it.each([false, undefined])(
       model_request_budget_writes_available: gate,
     });
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Enable spend controls');
     expect(screen.getByRole('button', { name: 'Add request model' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Refresh settings availability' })).toBeEnabled();
@@ -146,6 +150,7 @@ it.each(['owners', 'request_models'] as const)(
       new ApiError(409, 'Conflict', 'settings_conflict'),
     );
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Enable spend controls');
     if (key === 'owners') await addOwner(user);
     else await addModel(user);
@@ -180,6 +185,7 @@ it('retains new model edits after stale availability closes and only saves after
     new ApiError(503, 'Unavailable', 'model_budget_writes_unavailable'),
   );
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   await screen.findByLabelText('Enable spend controls');
   await addModel(user);
   await user.click(save());

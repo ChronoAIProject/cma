@@ -88,6 +88,12 @@ pub struct NativePoolStatus {
     pub observed: bool,
 }
 
+impl NativePoolStatus {
+    pub fn has_ready_spare(&self) -> bool {
+        self.observed && self.desired_replicas > 0 && self.ready_replicas > 0
+    }
+}
+
 /// Durable authority for one logical Sandbox/generation, recorded before claim I/O.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

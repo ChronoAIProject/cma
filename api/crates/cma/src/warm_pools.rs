@@ -24,6 +24,7 @@ pub(crate) use failure::PoolFailure;
 mod fixed_prewarm;
 pub(crate) use fixed_prewarm::observe_fixed_spare;
 mod holds;
+mod inventory;
 pub(crate) use holds::DefaultPoolHolds;
 mod released;
 mod retirement;
@@ -31,6 +32,7 @@ pub(crate) use retirement::RetirementScan;
 pub(crate) mod startup;
 mod supervision;
 pub(crate) mod telemetry;
+mod versions;
 mod view;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -245,6 +247,7 @@ pub(crate) struct NativeWarmPools {
     fixed_pool_prewarm: [Option<String>; 2],
     fixed_prewarm_generation: Option<i64>,
     default_holds: Arc<DefaultPoolHolds>,
+    versions: Option<Arc<versions::RuntimeVersions>>,
 }
 
 impl NativeWarmPools {
@@ -272,8 +275,14 @@ impl NativeWarmPools {
             fixed_pool_prewarm: Default::default(),
             fixed_prewarm_generation: None,
             default_holds: Arc::default(),
+            versions: None,
         })
         .with_target_fencing(false)
+    }
+
+    pub(crate) fn with_runtime_versions(mut self: Arc<Self>) -> Arc<Self> {
+        Arc::make_mut(&mut self).versions = versions::RuntimeVersions::new().map(Arc::new);
+        self
     }
 
     /// The integrator binds this to the default-off AM replica writer gate.
@@ -305,37 +314,7 @@ pub(super) fn default_config_sha256(
 impl WarmPoolAdministration for NativeWarmPools {
     async fn list(&self, caller: &Caller) -> Result<WarmPoolList, WarmPoolError> {
         authorize(caller)?;
-        let released = self.released_images();
-        let default_config_sha256 = self.default_config_sha256(&released.agent);
-        let targets = self.store.list().await?;
-        let inventory = match self.adapter.native_pools() {
-            Some(provider) if self.home.is_some() => {
-                tokio::time::timeout(Duration::from_secs(8), provider.inventory())
-                    .await
-                    .ok()
-                    .and_then(Result::ok)
-            }
-            _ => None,
-        };
-        let available = inventory.is_some();
-        let live = inventory.unwrap_or_default();
-        Ok(WarmPoolList {
-            items: targets
-                .iter()
-                .map(|target| {
-                    let status = live
-                        .iter()
-                        .find(|status| target.binding.as_ref() == Some(&status.binding));
-                    target.view(status, available)
-                })
-                .collect(),
-            default_image: released.agent.uri,
-            default_cpu_millis: self.default_capacity.cpu_millis,
-            default_memory_mib: self.default_capacity.memory_mib,
-            default_config_sha256,
-            available,
-            machine_image: released.machine.map(|(image, _)| image.uri),
-        })
+        self.inventory().await
     }
 
     async fn configure(

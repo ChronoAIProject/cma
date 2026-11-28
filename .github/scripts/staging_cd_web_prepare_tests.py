@@ -9,6 +9,7 @@ import tempfile
 import unittest
 
 from staging_cd_common import Refusal
+from staging_cd_web_catalog import incumbent_catalog, prepare_catalog
 from staging_cd_web_overlay import (
     BASE_LABEL, BUILD_INFO, FALLBACK, HTML, MANIFEST_LABEL, REPOSITORY, assemble,
     assemble_prepare, catalog_bytes, hashed,
@@ -48,6 +49,12 @@ class WebPrepareTests(unittest.TestCase):
         self.assertEqual(result["candidate_digest"], published.digest)
         self.assertEqual(result["incumbent_assets"], json.loads(catalog_bytes(old)))
         self.assertEqual(result["incumbent_catalog_sha256"], hashed(catalog_bytes(old)))
+        self.assertEqual(incumbent_catalog(incumbent, self.root),
+                         (result["incumbent_assets"], result["incumbent_catalog_sha256"]))
+        bound_prepare = replace(incumbent, archive=recipe["archive"], digest=recipe["digest"])
+        self.assertEqual(prepare_catalog(bound_prepare, result["asset_manifest_sha256"], self.root), result["assets"])
+        with self.assertRaisesRegex(Refusal, "catalog differs from its image label"):
+            prepare_catalog(bound_prepare, "f" * 64, self.root)
         self.assertEqual(result["sentinels"]["incumbent"]["html_sha256"], hashed(original_html))
         labels = config["config"]["Labels"]
         self.assertEqual(labels.pop(BASE_LABEL), REPOSITORY + "@" + incumbent.digest)

@@ -136,9 +136,7 @@ impl AgentSandboxPools {
                     == Some(&format!("{}Mi", pool.binding.spec.memory_mib))
                 && pool.binding.spec.home == home.policy
                 && pool.binding.pod_policy == policy
-                && pool.desired_replicas > 0
-                && pool.ready_replicas > 0
-                && pool.observed
+                && pool.has_ready_spare()
         });
         if let Some(pool) = selected {
             self.verify_binding(&pool.binding).await?;
@@ -253,9 +251,7 @@ impl AgentSandboxPools {
         let selected = self.inventory().await?.into_iter().find(|status| {
             status.binding.spec == *spec
                 && status.binding.pod_policy == policy
-                && status.desired_replicas > 0
-                && status.ready_replicas > 0
-                && status.observed
+                && status.has_ready_spare()
         });
         if let Some(status) = selected {
             self.verify_binding(&status.binding).await?;

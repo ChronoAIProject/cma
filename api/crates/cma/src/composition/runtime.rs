@@ -86,6 +86,7 @@ impl RuntimeServices {
             config.runtime.pool_rollout.fixed_prewarm_generation,
         )
         .with_unbound_retirement_fencing(config.runtime.pool_rollout.pool_create_cutover_epoch)
+        .with_runtime_versions()
         .with_target_fencing(config.agent_manager_replicas.is_some())
         .with_default_pool_holds(stores.sandbox_model.default_pool_holds.clone())
         .with_empty_pool_startup(config.features.am_empty_warm_pool_startup)

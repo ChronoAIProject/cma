@@ -57,6 +57,7 @@ fn enable(settings: &Settings, at: SystemTime, threshold: u64) {
 async fn live() -> (Arc<fixtures::Store>, SandboxReconciler, Arc<Settings>) {
     let (store, mut reconciler) = setup(3, Duration::ZERO).await;
     let settings = Arc::new(Settings(Mutex::new(Some(StoredPlatformSettings {
+        changes: Default::default(),
         revision: 1,
         settings: PlatformSettings::default(),
     }))));

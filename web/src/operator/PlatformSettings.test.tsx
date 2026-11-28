@@ -1,3 +1,4 @@
+import { openSettingsEditors } from './settingsTestSupport';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -10,6 +11,7 @@ describe('platform settings', () => {
   it('does not expose CMA snapshot scheduling or retired profile configuration', async () => {
     const client = operatorClient();
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Pause after (seconds)');
     expect(screen.queryByText('Snapshots')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Save progress every (minutes)')).not.toBeInTheDocument();
@@ -36,6 +38,7 @@ describe('platform settings', () => {
     const client = operatorClient();
     const user = userEvent.setup();
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     const pause = await screen.findByLabelText('Pause after (seconds)');
     await user.clear(pause);
     await user.type(pause, '600');
@@ -57,6 +60,7 @@ describe('platform settings', () => {
     const client = operatorClient();
     const user = userEvent.setup();
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Enable auto pause');
     expect(screen.queryByLabelText('Pause after hours')).not.toBeInTheDocument();
     await user.click(screen.getByLabelText('Enable auto pause'));
@@ -96,6 +100,7 @@ describe('platform settings', () => {
       new ApiError(409, 'Conflict', 'settings_conflict'),
     );
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     const pause = await screen.findByLabelText('Pause after (seconds)');
     await user.clear(pause);
     await user.type(pause, '600');
@@ -127,6 +132,7 @@ describe('platform settings', () => {
       new ApiError(409, 'Conflict', 'settings_conflict'),
     );
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     const pause = await screen.findByLabelText('Pause after (seconds)');
     await user.clear(pause);
     await user.type(pause, '600');
@@ -147,6 +153,7 @@ describe('platform settings', () => {
       .mockResolvedValue({ ...stored, revision: 5 });
     client.admin.replaceSettings.mockRejectedValue(new Error('Disconnected'));
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Pause after (seconds)');
     await user.click(screen.getByRole('button', { name: 'Save settings' }));
     await screen.findByText(/current settings could not be read/);
@@ -166,11 +173,12 @@ describe('platform settings', () => {
       }),
     );
     render(<PlatformSettings client={client} />);
-    await screen.findByLabelText('Sandboxes per user');
+    await openSettingsEditors();
+    await screen.findByLabelText('Sandboxes per user', { selector: 'input' });
     const save = screen.getByRole('button', { name: 'Save settings' });
     await user.dblClick(save);
     expect(client.admin.replaceSettings).toHaveBeenCalledTimes(1);
-    expect(screen.getByLabelText('Sandboxes per user')).toBeDisabled();
+    expect(screen.getByLabelText('Sandboxes per user', { selector: 'input' })).toBeDisabled();
     await act(async () =>
       reject(
         new ApiError(400, 'Too many Sandboxes', 'invalid_request', 'req-1', undefined, {
@@ -179,19 +187,23 @@ describe('platform settings', () => {
       ),
     );
     await waitFor(() =>
-      expect(screen.getByLabelText('Sandboxes per user')).toHaveAttribute('aria-invalid', 'true'),
+      expect(screen.getByLabelText('Sandboxes per user', { selector: 'input' })).toHaveAttribute(
+        'aria-invalid',
+        'true',
+      ),
     );
-    expect(screen.getByLabelText('Sandboxes per user')).toHaveAccessibleDescription(
-      'Review the settings fields before saving again.',
-    );
+    expect(
+      screen.getByLabelText('Sandboxes per user', { selector: 'input' }),
+    ).toHaveAccessibleDescription('Review the settings fields before saving again.');
     expect(screen.getByText('req-1')).toBeInTheDocument();
-    expect(screen.getByLabelText('Sandboxes per user')).toHaveValue(10);
+    expect(screen.getByLabelText('Sandboxes per user', { selector: 'input' })).toHaveValue(10);
   });
 
   it('bounds numeric values and does not save an invalid native form', async () => {
     const client = operatorClient();
     const user = userEvent.setup();
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     const pause = await screen.findByLabelText('Pause after (seconds)');
     fireEvent.change(pause, { target: { value: '59' } });
     expect(pause).toBeInvalid();
@@ -199,10 +211,10 @@ describe('platform settings', () => {
     expect(client.admin.replaceSettings).not.toHaveBeenCalled();
     fireEvent.change(pause, { target: { value: '' } });
     expect(pause).toBeInvalid();
-    fireEvent.change(screen.getByLabelText('Visitor launches per day'), {
+    fireEvent.change(screen.getByLabelText('Visitor launches per day', { selector: 'input' }), {
       target: { value: '4294967296' },
     });
-    expect(screen.getByLabelText('Visitor launches per day')).toBeInvalid();
+    expect(screen.getByLabelText('Visitor launches per day', { selector: 'input' })).toBeInvalid();
   });
 
   it('retains exact defaults without querying the retired marketplace', async () => {
@@ -212,7 +224,8 @@ describe('platform settings', () => {
       new ApiError(403, 'Disabled', 'marketplace_disabled'),
     );
     render(<PlatformSettings client={client} />);
-    await screen.findByLabelText('Sandboxes per user');
+    await openSettingsEditors();
+    await screen.findByLabelText('Sandboxes per user', { selector: 'input' });
     expect(client.listPublicProfiles).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Save settings' }));
     await screen.findByText('Settings saved at revision 5.');

@@ -1,3 +1,4 @@
+import { openSettingsEditors } from './settingsTestSupport';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
@@ -7,13 +8,14 @@ import { operatorClient, settings, stored } from './testFixtures';
 it('refreshes clean settings after edited numeric values are restored', async () => {
   const client = operatorClient();
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   for (const label of [
     'Agent log retention (days)',
     'Sandboxes per user',
     'Visitor Sandboxes',
     'Visitor launches per day',
   ]) {
-    const input = (await screen.findByLabelText(label)) as HTMLInputElement;
+    const input = (await screen.findByLabelText(label, { selector: 'input' })) as HTMLInputElement;
     const original = input.value;
     fireEvent.change(input, { target: { value: '-1' } });
     fireEvent.change(input, { target: { value: original } });
@@ -34,6 +36,7 @@ it('loads a newer revision on a clean refresh and preserves compatibility fields
   };
   client.admin.readSettings.mockResolvedValueOnce(stored).mockResolvedValue(latest);
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   await userEvent.click(
     await screen.findByRole('button', { name: 'Refresh settings availability' }),
   );
@@ -51,7 +54,8 @@ it('loads a newer revision on a clean refresh and preserves compatibility fields
 it('retains actual edits across a refresh and allows explicit review', async () => {
   const client = operatorClient();
   render(<PlatformSettings client={client} />);
-  const input = await screen.findByLabelText('Sandboxes per user');
+  await openSettingsEditors();
+  const input = await screen.findByLabelText('Sandboxes per user', { selector: 'input' });
   fireEvent.change(input, { target: { value: '11' } });
   await userEvent.click(screen.getByRole('button', { name: 'Refresh settings availability' }));
   await screen.findByText(/Your draft is retained/);
@@ -66,7 +70,8 @@ it('keeps the draft after refresh failure without sending a write', async () => 
     .mockResolvedValueOnce(stored)
     .mockRejectedValue(new Error('Unavailable'));
   render(<PlatformSettings client={client} />);
-  const input = await screen.findByLabelText('Sandboxes per user');
+  await openSettingsEditors();
+  const input = await screen.findByLabelText('Sandboxes per user', { selector: 'input' });
   fireEvent.change(input, { target: { value: '11' } });
   await userEvent.click(screen.getByRole('button', { name: 'Refresh settings availability' }));
   await screen.findByRole('alert');
@@ -84,11 +89,12 @@ it('prevents edits and overlapping writes while a clean refresh is pending', asy
       }),
   );
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   const refresh = await screen.findByRole('button', { name: 'Refresh settings availability' });
   await userEvent.dblClick(refresh);
   expect(client.admin.readSettings).toHaveBeenCalledTimes(2);
   expect(refresh).toBeDisabled();
-  expect(screen.getByLabelText('Sandboxes per user')).toBeDisabled();
+  expect(screen.getByLabelText('Sandboxes per user', { selector: 'input' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Refreshing' })).toBeDisabled();
   await act(async () => finish({ ...stored, revision: 8 }));
   expect(screen.getByText('Revision 8')).toBeInTheDocument();
@@ -98,7 +104,8 @@ it('prevents edits and overlapping writes while a clean refresh is pending', asy
 it('clears draft review after all edits are restored without clearing write recovery', async () => {
   const client = operatorClient();
   render(<PlatformSettings client={client} />);
-  const input = await screen.findByLabelText('Sandboxes per user');
+  await openSettingsEditors();
+  const input = await screen.findByLabelText('Sandboxes per user', { selector: 'input' });
   fireEvent.change(input, { target: { value: '11' } });
   await userEvent.click(screen.getByRole('button', { name: 'Refresh settings availability' }));
   await screen.findByText(/Your draft is retained/);
@@ -112,6 +119,7 @@ it('keeps an uncertain write in review across repeated clean refreshes', async (
   const client = operatorClient();
   client.admin.replaceSettings.mockRejectedValue(new Error('Disconnected'));
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   await userEvent.click(await screen.findByRole('button', { name: 'Save settings' }));
   await screen.findByText(/Your draft is retained/);
   for (let attempt = 0; attempt < 2; attempt += 1) {

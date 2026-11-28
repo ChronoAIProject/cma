@@ -148,11 +148,13 @@ pub(super) fn matches(rule: Erasure, row: &Document, context: &Context) -> bool 
                     std::slice::from_ref(&context.subject),
                 ) || has(&["record.sandbox_id"], &context.ids(Set::Sandboxes)))
         }
-        // These bounded singleton/receipt codecs perform their own precise
+        Erasure::Reference(Ref::PlatformSettings) => super::references::settings_mentions(
+            row,
+            &std::collections::BTreeSet::from([context.subject.clone()]),
+        ),
+        // These bounded receipt codecs perform their own precise
         // precheck before decoding. They never recursively match arbitrary text.
-        Erasure::Reference(
-            Ref::ShareReceipts | Ref::PlatformSettings | Ref::LogGates | Ref::Identities,
-        ) => true,
+        Erasure::Reference(Ref::ShareReceipts | Ref::LogGates | Ref::Identities) => true,
         _ => false,
     }
 }

@@ -456,6 +456,7 @@ export function ActiveAgentSurface({
                     ? 'checking'
                     : controller.responseControls
             }
+            responseStopState={{ turn: conversation.activeRunId, request: controller.stopRequest }}
             inputCoolingDown={controller.inputCoolingDown}
             requestPending={
               controller.pendingMessage !== undefined || controller.pendingControl === true
@@ -474,7 +475,7 @@ export function ActiveAgentSurface({
               connections.pending ||
               (controller.pending !== undefined && controller.pending !== 'send')
             }
-            stopping={stopping}
+            stopping={state.v2 === undefined && stopping}
             onSend={(content, accepted, brokerReport) =>
               brokerReport
                 ? submitMessage(content, accepted, undefined, undefined, brokerReport)

@@ -329,7 +329,7 @@ it('backs off an unchanged action, pauses while hidden and promptly observes com
   vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() =>
     visible ? 'visible' : 'hidden',
   );
-  const hook = renderHook(() => useControlStatus(h.session, unchangedIdentity));
+  const hook = renderHook(() => useControlStatus(h.session, undefined, unchangedIdentity).notice);
   await advance(60000);
   expect(h.command.mock.calls.length).toBeLessThanOrEqual(10);
   expect(h.currentUser).toHaveBeenCalledTimes(2 * h.command.mock.calls.length);
@@ -357,7 +357,7 @@ it('does not retry a control with the wrong target or hide its error', async () 
   const h = fixture();
   retainControl(h);
   h.command.mockImplementation(async () => json(commandStatus(null, 2)));
-  const hook = renderHook(() => useControlStatus(h.session, unchangedIdentity));
+  const hook = renderHook(() => useControlStatus(h.session, undefined, unchangedIdentity).notice);
   await advance(60000);
   expect(h.command).toHaveBeenCalledTimes(1);
   expect(hook.result.current).toContain('status is unavailable');

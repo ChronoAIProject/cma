@@ -336,6 +336,13 @@ ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(
     'Runtime details for Research environment',
   );
   await clickText('[role="tab"]', 'Platform settings');
+  await page.waitForSelector('[aria-label="Settings overview"]');
+  assert.equal(
+    await page.$$eval('[aria-label="Settings overview"] a', (links) => links.length),
+    19,
+  );
+  await page.click('button[aria-label="Edit Idle threshold"]');
+  await page.click('button[aria-label="Edit Trigger orchestration"]');
   await page.waitForSelector('[aria-label="Pause after (seconds)"]');
   await page.locator('[aria-label="Pause after (seconds)"]').fill('600');
   assert.equal(await page.$('[aria-label="Default agent profile"]'), null);

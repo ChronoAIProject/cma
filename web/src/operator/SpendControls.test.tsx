@@ -1,3 +1,4 @@
+import { openSettingsEditors } from './settingsTestSupport';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
@@ -34,10 +35,11 @@ describe('admin spend controls', () => {
   it('saves configured units with the loaded revision and preserves policies when disabled', async () => {
     const { client, budget, initial, user } = setup();
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     const enabled = await screen.findByLabelText('Enable spend controls');
     expect(enabled).not.toBeChecked();
     expect(screen.getByLabelText('Day-boundary timezone (IANA)')).toHaveValue('Asia/Singapore');
-    expect(screen.getByText(/1 explicit owner overrides/)).toBeInTheDocument();
+    expect(screen.getAllByText('1 configured').length).toBeGreaterThan(0);
     await user.click(enabled);
     change('Per-turn cap (accounting units)', '80');
     await user.click(save());
@@ -63,6 +65,7 @@ describe('admin spend controls', () => {
   it('refuses precision loss and cross-field validation before writing', async () => {
     const { client, user } = setup();
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Enable spend controls');
     change('Platform period cap (accounting units)', '9007199254740991.1');
     change('Per-turn cap (accounting units)', '1001');
@@ -82,6 +85,7 @@ describe('admin spend controls', () => {
       settings: { ...settings, model_budget: { enabled: false, owners: [] } },
     });
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await user.click(await screen.findByLabelText('Enable spend controls'));
     await user.click(save());
     expect(await screen.findByRole('alert')).toHaveTextContent('Enabling requires');
@@ -115,6 +119,7 @@ describe('admin spend controls', () => {
         new ApiError(status, 'Save refused', status === 409 ? 'settings_conflict' : 'unavailable'),
       );
       render(<PlatformSettings client={client} />);
+      await openSettingsEditors();
       await screen.findByLabelText('Enable spend controls');
       change('Per-turn cap (accounting units)', '80');
       await user.click(save());
@@ -147,6 +152,7 @@ describe('admin spend controls', () => {
       new ApiError(409, 'Conflict', 'settings_conflict'),
     );
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await user.click(await screen.findByLabelText('Enable spend controls'));
     await user.click(save());
     await screen.findByText(/The current server no longer exposes/);
@@ -154,7 +160,10 @@ describe('admin spend controls', () => {
     expect(save()).toBeDisabled();
     await user.click(screen.getByRole('button', { name: 'Load current values' }));
     expect(screen.queryByLabelText('Enable spend controls')).not.toBeInTheDocument();
-    expect(screen.getByText(/Not yet available: this server/)).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/This server does not expose the supported spend-controls configuration/)
+        .length,
+    ).toBeGreaterThan(0);
   });
   it.each([403, 422, 429])(
     'shows an explicit %s refusal without a saved notice or automatic retry',
@@ -168,6 +177,7 @@ describe('admin spend controls', () => {
         ),
       );
       render(<PlatformSettings client={client} />);
+      await openSettingsEditors();
       await user.click(await screen.findByLabelText('Enable spend controls'));
       await user.click(save());
       await screen.findByRole('alert');
@@ -186,6 +196,7 @@ describe('admin spend controls', () => {
       }),
     );
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Enable spend controls');
     await user.click(save());
     expect(screen.getByLabelText('Per-turn cap (accounting units)')).toBeDisabled();

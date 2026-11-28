@@ -8,12 +8,13 @@ import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice } from './records';
 import { usageSettingsChanged } from '../usage/metrics/useMeasuredUsage';
 import { reviewSettingsDraft } from './settingsDraft';
-import { IdleThresholdFields, NumberField } from './SettingsFields';
-import { SpendControls } from './SpendControls';
+import { spendEditors } from './SpendControls';
 import { SpendStatus } from './SpendStatus';
 import { budgetChanged, spendBudget, spendListConflict } from './spendBudget';
 import { validateSpendBudget, type SpendErrors } from './spendValidation';
-import { SettingsAudit } from './SettingsAudit';
+import { SettingCard, SettingsOverview } from './SettingCard';
+import { settingsInventory } from './settingsInventory';
+import { settingEditors } from './settingsEditors';
 import { AutoPauseControls } from './AutoPauseControls';
 import { spendAvailability, type SpendAvailability } from './spendAvailability';
 
@@ -83,6 +84,7 @@ function SettingsEditor({
   const [draft, setDraft] = useState<Settings>(initial.settings);
   const [base, setBase] = useState<Settings>(initial.settings);
   const [revision, setRevision] = useState(initial.revision);
+  const [changes, setChanges] = useState(initial.setting_changes);
   const [availability, setAvailability] = useState<SpendAvailability>(initial);
   const [current, setCurrent] = useState<StoredPlatformSettings>();
   const [failure, setFailure] = useState<OperatorFailure>();
@@ -128,6 +130,7 @@ function SettingsEditor({
         setDraft(latest.settings);
         setBase(latest.settings);
         setRevision(latest.revision);
+        setChanges(latest.setting_changes);
         setCurrent(undefined);
         setNeedsReview(undefined);
         setSpendErrors({});
@@ -159,6 +162,7 @@ function SettingsEditor({
       setDraft(stored.settings);
       setBase(stored.settings);
       setRevision(stored.revision);
+      setChanges(stored.setting_changes);
       setAvailability(stored);
       setCurrent(undefined);
       setSaved(true);
@@ -183,6 +187,21 @@ function SettingsEditor({
   const canReviewBudget = !current || !spendChanged || !!spendBudget(current.settings.model_budget);
   const fieldError = (path: string) =>
     failure?.field?.replace(/^settings\./, '') === path ? failure.message : undefined;
+  const displayed = current ?? { revision, settings: base, setting_changes: changes };
+  const inventory = settingsInventory(displayed.settings);
+  const editors = settingEditors(draft, disabled, fieldError, update);
+  const spend = spendEditors({
+    value: draft.model_budget,
+    disabled: disabled || !writesAvailable,
+    writesAvailable,
+    requestWritesAvailable: availability.model_request_budget_writes_available === true,
+    platformWritesAvailable: availability.platform_spend_writes_available === true,
+    errors: spendErrors,
+    onChange: (model_budget) => {
+      update({ ...draft, model_budget });
+      setSpendErrors({});
+    },
+  });
   return (
     <form
       onSubmit={(event) => {
@@ -190,8 +209,8 @@ function SettingsEditor({
         void save();
       }}
     >
-      <p className="operator-notice">Revision {revision}</p>
-      <SettingsAudit key={revision} client={client} revision={revision} allowed={canReadAudit} />
+      <p className="operator-notice">Revision {displayed.revision}</p>
+      <SettingsOverview inventory={inventory} />
       <FailureNotice failure={failure} />
       <Presence>
         {needsReview ? (
@@ -210,6 +229,7 @@ function SettingsEditor({
                     setDraft(current.settings);
                     setBase(current.settings);
                     setRevision(current.revision);
+                    setChanges(current.setting_changes);
                     setAvailability(current);
                     setCurrent(undefined);
                     setNeedsReview(undefined);
@@ -227,6 +247,7 @@ function SettingsEditor({
                     setDraft(reviewSettingsDraft(base, draft, current.settings));
                     setBase(current.settings);
                     setRevision(current.revision);
+                    setChanges(current.setting_changes);
                     setAvailability(current);
                     setCurrent(undefined);
                     setNeedsReview(undefined);
@@ -262,19 +283,22 @@ function SettingsEditor({
           </div>
         ) : null}
       </Presence>
-      <SpendControls
-        value={draft.model_budget}
-        disabled={disabled || !writesAvailable}
-        writesAvailable={writesAvailable}
-        requestWritesAvailable={availability.model_request_budget_writes_available === true}
-        platformWritesAvailable={availability.platform_spend_writes_available === true}
-        errors={spendErrors}
-        onChange={(model_budget) => {
-          update({ ...draft, model_budget });
-          setSpendErrors({});
-        }}
-      />
-      <SpendStatus client={client} disabled={disabled} key={`spend-${revision}`} />
+      <div className="operator-setting-cards">
+        {inventory.map((setting) => {
+          const spendEditor = spend[setting.id];
+          return (
+            <SettingCard
+              key={setting.id}
+              setting={{ ...setting, readOnly: setting.readOnly ?? spendEditor?.readOnly }}
+              change={displayed.setting_changes?.[setting.id]}
+              canReadAudit={canReadAudit}
+              disabled={disabled}
+            >
+              {spendEditor?.editor ?? editors[setting.id]}
+            </SettingCard>
+          );
+        })}
+      </div>
       {!writesAvailable ||
       availability.model_request_budget_writes_available !== true ||
       availability.platform_spend_writes_available !== true ? (
@@ -289,151 +313,10 @@ function SettingsEditor({
           ) : null}
         </div>
       ) : null}
-      <section>
-        <h3>Inactivity</h3>
-        <label className="operator-switch">
-          <input
-            type="checkbox"
-            disabled={disabled}
-            checked={draft.inactivity.auto_pause_enabled ?? false}
-            onChange={(event) =>
-              update({
-                ...draft,
-                inactivity: {
-                  ...draft.inactivity,
-                  auto_pause_enabled: event.target.checked,
-                },
-              })
-            }
-          />
-          Enable auto pause
-        </label>
-        {(draft.inactivity.auto_pause_enabled ?? false) ? (
-          <IdleThresholdFields
-            seconds={draft.inactivity.pause_after_seconds}
-            disabled={disabled}
-            onChange={(seconds) =>
-              update({
-                ...draft,
-                inactivity: { ...draft.inactivity, pause_after_seconds: seconds },
-              })
-            }
-          />
-        ) : (
-          <NumberField
-            label="Pause after (seconds)"
-            value={draft.inactivity.pause_after_seconds}
-            minimum={60}
-            maximum={86400}
-            disabled={disabled}
-            error={fieldError('inactivity.pause_after_seconds')}
-            onChange={(value) =>
-              update({
-                ...draft,
-                inactivity: { ...draft.inactivity, pause_after_seconds: value },
-              })
-            }
-          />
-        )}
+      <SpendStatus client={client} disabled={disabled} key={`spend-${revision}`} />
+      <section className="operator-settings-tools" aria-label="Idle Sandbox operations">
+        <h3>Idle Sandbox operations</h3>
         <AutoPauseControls client={client} disabled={disabled} key={revision} />
-      </section>
-      <section>
-        <h3>Usage</h3>
-        <label className="operator-switch">
-          <input
-            type="checkbox"
-            disabled={disabled}
-            checked={draft.usage_reporting?.measured_visible === true}
-            onChange={(event) =>
-              update({
-                ...draft,
-                usage_reporting: {
-                  ...draft.usage_reporting,
-                  measured_visible: event.target.checked,
-                },
-              })
-            }
-          />
-          Show measured usage
-        </label>
-        <p className="operator-notice">
-          Show measured CPU, memory and disk alongside allocated resources when measurements are
-          available. Allocated resources remain visible when this setting is off.
-        </p>
-      </section>
-      <section>
-        <h3>Retention</h3>
-        <div className="operator-settings-grid">
-          <NumberField
-            label="Agent log retention (days)"
-            value={draft.retention.agent_log_days}
-            error={fieldError('retention.agent_log_days')}
-            disabled={disabled}
-            onChange={(value) =>
-              update({ ...draft, retention: { ...draft.retention, agent_log_days: value } })
-            }
-          />
-        </div>
-      </section>
-      <section>
-        <h3>Limits</h3>
-        <div className="operator-settings-grid">
-          <NumberField
-            label="Sandboxes per user"
-            value={draft.limits.max_sandboxes_per_user}
-            error={fieldError('limits.max_sandboxes_per_user')}
-            disabled={disabled}
-            onChange={(value) =>
-              update({ ...draft, limits: { ...draft.limits, max_sandboxes_per_user: value } })
-            }
-          />
-          <NumberField
-            label="Visitor Sandboxes"
-            value={draft.limits.visitor_max_sandboxes}
-            error={fieldError('limits.visitor_max_sandboxes')}
-            disabled={disabled}
-            onChange={(value) =>
-              update({ ...draft, limits: { ...draft.limits, visitor_max_sandboxes: value } })
-            }
-          />
-          <NumberField
-            label="Visitor launches per day"
-            value={draft.limits.visitor_max_launches_per_day}
-            error={fieldError('limits.visitor_max_launches_per_day')}
-            disabled={disabled}
-            onChange={(value) =>
-              update({ ...draft, limits: { ...draft.limits, visitor_max_launches_per_day: value } })
-            }
-          />
-        </div>
-      </section>
-      <section>
-        <h3>Triggers</h3>
-        <label className="operator-switch">
-          <input
-            type="checkbox"
-            disabled={disabled}
-            checked={draft.triggers.enabled}
-            onChange={(event) =>
-              update({ ...draft, triggers: { ...draft.triggers, enabled: event.target.checked } })
-            }
-          />
-          Triggers enabled
-        </label>
-        <label className="operator-switch">
-          <input
-            type="checkbox"
-            disabled={disabled}
-            checked={draft.triggers.orchestration_paused}
-            onChange={(event) =>
-              update({
-                ...draft,
-                triggers: { ...draft.triggers, orchestration_paused: event.target.checked },
-              })
-            }
-          />
-          Orchestration paused
-        </label>
       </section>
       <div className="operator-actions">
         <Button

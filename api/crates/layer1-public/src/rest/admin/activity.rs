@@ -76,7 +76,7 @@ impl From<layer2_core::ActivitySummary> for ActivityView {
     }
 }
 
-fn actor_reference(actor: &str) -> String {
+pub(super) fn actor_reference(actor: &str) -> String {
     let mut digest = Sha256::new();
     digest.update(b"cma:operator-activity:actor:v1\0");
     digest.update(actor.as_bytes());

@@ -36,6 +36,7 @@ export const warmPoolView = object({
   ),
   /** The deployment-seeded shared desktop pool; older servers omit it. */
   machine: optional(boolean),
+  current_runtime: optional(boolean),
 });
 export type WarmPoolView = Output<typeof warmPoolView>;
 export const warmPoolList = object({
@@ -47,6 +48,12 @@ export const warmPoolList = object({
   available: boolean,
   /** Configured shared desktop image; null when none is configured, absent from older servers. */
   machine_image: optional(nullable(text)),
+  machine_config_sha256: optional(nullable(text)),
+  default_claim_pool_id: optional(nullable(text)),
+  machine_claim_pool_id: optional(nullable(text)),
+  default_capacity_pool_id: optional(nullable(text)),
+  machine_capacity_pool_id: optional(nullable(text)),
+  runtime_versions: optional(array(object({ image: text, version: text }))),
 });
 export type WarmPoolList = Output<typeof warmPoolList>;
 export interface ConfigureWarmPoolBody {

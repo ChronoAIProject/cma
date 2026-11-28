@@ -5,7 +5,7 @@ pub(crate) mod operator;
 mod registry;
 pub(crate) use controller::RuntimePointerController;
 pub(crate) use registry::valid_digest;
-pub(crate) use registry::{RegistryRuntimePointers, RuntimePointerConfig};
+pub(crate) use registry::{RegistryRuntimePointers, RuntimePointerConfig, RuntimeRegistry};
 
 use async_trait::async_trait;
 use layer2_core::released_runtime::ReleasedLane;

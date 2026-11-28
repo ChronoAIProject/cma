@@ -30,9 +30,12 @@ class InvokeTests(unittest.TestCase):
                     patch.object(invoke, "run_process", return_value=10) as process:
                 self.assertEqual(invoke.execute(script, Path(directory) / "input", "bootstrap", timestamp(1000), {}), 20)
                 self.assertEqual(process.call_args.args[1][CONTROLLER_TOTAL_ENV], "600")
+                self.assertNotIn("CD_WEB_AVAILABILITY_SCRIPTS", process.call_args.args[1])
                 self.assertEqual(process.call_args.args[2], 590)
                 self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 10)
                 self.assertEqual(process.call_args.args[1][CONTROLLER_TOTAL_ENV], "990")
+                self.assertEqual(process.call_args.args[1]["CD_WEB_AVAILABILITY_SCRIPTS"],
+                                 str(Path(invoke.__file__).resolve().parent))
                 self.assertEqual(process.call_args.args[2], 980)
                 self.assertEqual(process.call_args.kwargs["grace_seconds"], 15)
                 process.return_value = 1

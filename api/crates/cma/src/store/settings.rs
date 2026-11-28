@@ -1,8 +1,11 @@
 //! MongoDB persistence for deployment-wide platform settings.
 
-use layer2_core::{PlatformSettings, PlatformSettingsStore, StoreError, StoredPlatformSettings};
+use layer2_core::{
+    PlatformSettingChanges, PlatformSettings, PlatformSettingsStore, StoreError,
+    StoredPlatformSettings,
+};
 use mongodb::{
-    bson::{doc, Document},
+    bson::{doc, Bson, Document},
     error::{Error, ErrorKind, WriteFailure},
     Client, Collection,
 };
@@ -25,6 +28,14 @@ struct SettingsDoc {
     document_schema_version: i64,
     settings: PlatformSettings,
     revision: i64,
+    #[serde(default)]
+    setting_changes: Option<Bson>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SettingChanges {
+    coverage_revision: u64,
+    entries: PlatformSettingChanges,
 }
 
 pub(super) fn read_settings(document: Document) -> Result<StoredPlatformSettings, StoreError> {
@@ -40,24 +51,46 @@ pub(super) fn read_settings(document: Document) -> Result<StoredPlatformSettings
 
 fn from_doc(document: SettingsDoc) -> Result<StoredPlatformSettings, StoreError> {
     schema::require_current(document.document_schema_version)?;
+    let revision = u64::try_from(document.revision).map_err(|_| {
+        StoreError::Malformed("platform settings revision must not be negative".into())
+    })?;
+    let changes = match document.setting_changes {
+        Some(Bson::Document(metadata)) => {
+            mongodb::bson::deserialize_from_document::<SettingChanges>(metadata)
+                .ok()
+                .filter(|metadata| metadata.coverage_revision == revision)
+                .map(|metadata| metadata.entries)
+                .unwrap_or_default()
+        }
+        _ => Default::default(),
+    };
     Ok(StoredPlatformSettings {
-        revision: u64::try_from(document.revision).map_err(|_| {
-            StoreError::Malformed("platform settings revision must not be negative".into())
-        })?,
+        revision,
         settings: document.settings,
+        changes,
     })
 }
 
-fn update_pipeline(settings: &PlatformSettings) -> Result<Vec<Document>, StoreError> {
+fn update_pipeline(
+    settings: &PlatformSettings,
+    changes: Option<(u64, &PlatformSettingChanges)>,
+) -> Result<Vec<Document>, StoreError> {
     let settings = mongodb::bson::serialize_to_bson(settings)
         .map_err(|error| StoreError::Malformed(format!("platform settings: {error}")))?;
-    Ok(vec![doc! {
-        "$set": {
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-            "settings": { "$literal": settings },
-            "revision": { "$add": [{ "$ifNull": ["$revision", 0_i64] }, 1_i64] },
-        }
-    }])
+    let mut set = doc! {
+        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        "settings": { "$literal": settings },
+        "revision": { "$add": [{ "$ifNull": ["$revision", 0_i64] }, 1_i64] },
+    };
+    if let Some((revision, entries)) = changes {
+        let metadata = mongodb::bson::serialize_to_bson(&SettingChanges {
+            coverage_revision: revision,
+            entries: entries.clone(),
+        })
+        .map_err(|error| StoreError::Malformed(format!("platform setting changes: {error}")))?;
+        set.insert("setting_changes", doc! { "$literal": metadata });
+    }
+    Ok(vec![doc! { "$set": set }])
 }
 
 /// Compare-and-set adapter for the singleton platform settings document.
@@ -131,6 +164,7 @@ impl PlatformSettingsStore for MongoPlatformSettingsStore {
             .map(|stored| {
                 stored.unwrap_or(StoredPlatformSettings {
                     revision: 0,
+                    changes: Default::default(),
                     settings: self.initial_settings.platform(),
                 })
             })
@@ -140,6 +174,28 @@ impl PlatformSettingsStore for MongoPlatformSettingsStore {
         &self,
         expected_revision: u64,
         settings: &PlatformSettings,
+    ) -> Result<StoredPlatformSettings, StoreError> {
+        self.replace_settings(expected_revision, settings, None)
+            .await
+    }
+
+    async fn replace_with_changes(
+        &self,
+        expected_revision: u64,
+        settings: &PlatformSettings,
+        changes: &PlatformSettingChanges,
+    ) -> Result<StoredPlatformSettings, StoreError> {
+        self.replace_settings(expected_revision, settings, Some(changes))
+            .await
+    }
+}
+
+impl MongoPlatformSettingsStore {
+    async fn replace_settings(
+        &self,
+        expected_revision: u64,
+        settings: &PlatformSettings,
+        changes: Option<&PlatformSettingChanges>,
     ) -> Result<StoredPlatformSettings, StoreError> {
         let expected =
             i64::try_from(expected_revision).map_err(|_| StoreError::RevisionConflict {
@@ -159,7 +215,10 @@ impl PlatformSettingsStore for MongoPlatformSettingsStore {
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "revision": expected,
                 },
-                pipeline: update_pipeline(settings)?,
+                pipeline: update_pipeline(
+                    settings,
+                    changes.map(|entries| (expected_revision + 1, entries)),
+                )?,
                 upsert: expected_revision == 0,
             },
         )
@@ -244,15 +303,47 @@ mod tests {
     }
 
     #[test]
+    fn previous_writer_advancing_revision_masks_last_change() {
+        let settings = PlatformSettings::default();
+        let entries = PlatformSettingChanges::from([(
+            "agent_log_retention".into(),
+            layer2_core::PlatformSettingChange {
+                actor: layer2_core::SubjectId::new("operator-test"),
+                at: "2026-01-02T03:04:05Z".into(),
+                revision: 1,
+            },
+        )]);
+        let metadata = mongodb::bson::serialize_to_bson(&SettingChanges {
+            coverage_revision: 1,
+            entries: entries.clone(),
+        })
+        .unwrap();
+        let current = SettingsDoc {
+            id: SETTINGS_ID.into(),
+            document_schema_version: DOCUMENT_SCHEMA_VERSION,
+            settings,
+            revision: 1,
+            setting_changes: Some(metadata),
+        };
+        assert_eq!(from_doc(current.clone()).unwrap().changes, entries);
+        let previous_writer = SettingsDoc {
+            revision: 2,
+            ..current
+        };
+        assert!(from_doc(previous_writer).unwrap().changes.is_empty());
+    }
+
+    #[test]
     fn stored_settings_validate_revision_and_quote_the_value() {
         assert!(from_doc(SettingsDoc {
             id: SETTINGS_ID.into(),
             document_schema_version: DOCUMENT_SCHEMA_VERSION,
             settings: PlatformSettings::default(),
             revision: -1,
+            setting_changes: None,
         })
         .is_err());
-        let pipeline = update_pipeline(&PlatformSettings::default()).unwrap();
+        let pipeline = update_pipeline(&PlatformSettings::default(), None).unwrap();
         let set = pipeline[0].get_document("$set").unwrap();
         assert_eq!(
             set.get_i64("document_schema_version").unwrap(),
@@ -268,7 +359,7 @@ mod tests {
     fn disabled_settings_pipeline_keeps_the_predecessor_inactivity_shape() {
         let mut settings = PlatformSettings::default();
         settings.inactivity.pause_after_seconds = 1_200;
-        let pipeline = update_pipeline(&settings).unwrap();
+        let pipeline = update_pipeline(&settings, None).unwrap();
         let literal = pipeline[0]
             .get_document("$set")
             .unwrap()

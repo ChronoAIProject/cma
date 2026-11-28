@@ -39,6 +39,7 @@ impl ActivityStore for NoopActivity {
 
 fn live_policy() -> (Arc<MemorySettings>, LiveSandboxPolicy) {
     let store = Arc::new(MemorySettings(Mutex::new(StoredPlatformSettings {
+        changes: Default::default(),
         revision: 1,
         settings: PlatformSettings::default(),
     })));

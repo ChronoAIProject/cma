@@ -3,13 +3,12 @@ import type { WarmPoolList, WarmPoolView } from '@cma/client';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { SkeletonRows } from '../ui/Skeleton';
-import { Table } from '../ui/Table';
 import { IconRefreshOutline16 } from '../ui/icons';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice } from './records';
 import { WarmPoolCreate } from './WarmPoolCreate';
-import { WarmPoolRow, warmPoolColumns } from './WarmPoolRow';
+import { WarmPoolRuntime } from './WarmPoolRuntime';
 import './WarmPools.css';
 
 export function WarmPools({ client }: { readonly client: OperatorClient }) {
@@ -53,26 +52,19 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
         : {
             ...current,
             items: current.items.some((item) => item.id === pool.id)
-              ? current.items.map((item) => (item.id === pool.id ? pool : item))
+              ? current.items.map((item) =>
+                  item.id === pool.id
+                    ? {
+                        ...item,
+                        ...pool,
+                        current_runtime: pool.current_runtime ?? item.current_runtime,
+                      }
+                    : item,
+                )
               : [...current.items, pool],
           },
     );
   };
-  // The deployment seeds the shared desktop pool for its own image; an operator only resizes it.
-  // A desktop pool for any other image is previous capacity like any other runtime.
-  const desktop = (pool: WarmPoolView) =>
-    pool.machine === true && !!data?.machine_image && pool.image === data.machine_image;
-  const agent = (pool: WarmPoolView) => pool.machine !== true && pool.image === data?.default_image;
-  const current = data?.items.filter(agent) ?? [];
-  const shared = data?.items.filter(desktop) ?? [];
-  const previous = data?.items.filter((pool) => !agent(pool) && !desktop(pool)) ?? [];
-  const previousNeedsAttention = previous.some(
-    (pool) =>
-      pool.target_replicas > 0 ||
-      (pool.ready_replicas ?? 0) > 0 ||
-      !pool.observed ||
-      pool.error !== null,
-  );
   return (
     <section className="warm-pools" aria-label="Warm pools">
       <header className="warm-pool-header">
@@ -104,97 +96,47 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
               runtime service is ready.
             </Alert>
           ) : null}
-          <div className="warm-pool-image">
-            <span>Current runtime image</span>
-            <code>{data.default_image || 'No runtime image configured'}</code>
-          </div>
-          <WarmPoolCreate
-            client={client}
+          <p className="operator-notice">
+            Set a target to 0 to disable spare capacity. Agents that have already claimed a Sandbox
+            keep running.
+          </p>
+          <WarmPoolRuntime
+            title="Standard runtime"
+            currentLabel="Current runtime pools"
             image={data.default_image}
-            cpuMillis={data.default_cpu_millis}
-            memoryMib={data.default_memory_mib}
+            configSha={data.default_config_sha256}
+            claimPoolId={data.default_claim_pool_id}
+            capacityPoolId={data.default_capacity_pool_id}
+            showMatchingSize
+            available={data.available}
+            pools={data.items.filter((pool) => pool.machine !== true)}
+            empty="No warm pools configured for the current runtime."
+            versions={data.runtime_versions}
+            client={client}
+            onChanged={changed}
+          >
+            <WarmPoolCreate
+              client={client}
+              image={data.default_image}
+              cpuMillis={data.default_cpu_millis}
+              memoryMib={data.default_memory_mib}
+              onChanged={changed}
+            />
+          </WarmPoolRuntime>
+          <WarmPoolRuntime
+            title="Shared desktop runtime"
+            currentLabel="Shared desktop pool"
+            image={data.machine_image}
+            configSha={data.machine_config_sha256}
+            claimPoolId={data.machine_claim_pool_id}
+            capacityPoolId={data.machine_capacity_pool_id}
+            available={data.available}
+            pools={data.items.filter((pool) => pool.machine === true)}
+            empty="No shared desktop pool is recorded for this image yet."
+            versions={data.runtime_versions}
+            client={client}
             onChanged={changed}
           />
-          <div className="warm-pool-list">
-            <p className="operator-notice">
-              Set a target to 0 to disable spare capacity. Agents that have already claimed a
-              Sandbox keep running.
-            </p>
-            <Table
-              label="Current runtime pools"
-              columns={warmPoolColumns(false)}
-              actions="Actions"
-              empty="No warm pools configured for the current runtime. New Agents can start without reserved capacity."
-            >
-              {current.map((pool) => (
-                <WarmPoolRow
-                  key={pool.id}
-                  client={client}
-                  pool={pool}
-                  currentDefault={
-                    !!data.default_config_sha256 &&
-                    pool.config_sha256 === data.default_config_sha256
-                  }
-                  onChanged={changed}
-                />
-              ))}
-            </Table>
-          </div>
-          {data.machine_image ? (
-            <div className="warm-pool-list">
-              <div className="warm-pool-image">
-                <span>Shared desktop pool</span>
-                <code>{data.machine_image}</code>
-              </div>
-              <p className="operator-notice">
-                The deployment seeds this pool for the shared desktop image above. Set a target to
-                resize it, or 0 to disable spare capacity. Claimed Sandboxes keep running.
-              </p>
-              <Table
-                label="Shared desktop pool"
-                columns={warmPoolColumns(false)}
-                actions="Actions"
-                empty="No shared desktop pool is recorded for this image yet."
-              >
-                {shared.map((pool) => (
-                  <WarmPoolRow key={pool.id} client={client} pool={pool} onChanged={changed} />
-                ))}
-              </Table>
-            </div>
-          ) : null}
-          {previousNeedsAttention ? (
-            <Alert tone="warning">
-              Previous runtime pools still have spare capacity or need attention. Review them below;
-              disable any remaining targets. Claimed Sandboxes keep running.
-            </Alert>
-          ) : null}
-          {previous.length > 0 ? (
-            <details className="warm-pool-create" open={previousNeedsAttention}>
-              <summary>Previous runtime pools ({previous.length})</summary>
-              <div className="warm-pool-list">
-                <p className="operator-notice">
-                  Previous runtime images are no longer prewarmed. Only disabling is available for a
-                  previous runtime; claimed Sandboxes keep running. These records remain available
-                  for capacity and cleanup checks.
-                </p>
-                <Table
-                  label="Previous runtime pools"
-                  columns={warmPoolColumns(true)}
-                  actions="Actions"
-                >
-                  {previous.map((pool) => (
-                    <WarmPoolRow
-                      key={pool.id}
-                      client={client}
-                      pool={pool}
-                      previousRuntime
-                      onChanged={changed}
-                    />
-                  ))}
-                </Table>
-              </div>
-            </details>
-          ) : null}
         </>
       ) : null}
     </section>

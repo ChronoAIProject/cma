@@ -22,6 +22,7 @@ fn view() -> WarmPoolView {
         error: None,
         reconciliation_failure: None,
         machine: false,
+        current_runtime: None,
     }
 }
 #[async_trait]
@@ -36,6 +37,12 @@ impl WarmPoolAdministration for Pools {
             default_config_sha256: Some("d".repeat(64)),
             available: false,
             machine_image: None,
+            machine_config_sha256: None,
+            default_claim_pool_id: None,
+            machine_claim_pool_id: None,
+            default_capacity_pool_id: None,
+            machine_capacity_pool_id: None,
+            runtime_versions: vec![],
         })
     }
     async fn configure(

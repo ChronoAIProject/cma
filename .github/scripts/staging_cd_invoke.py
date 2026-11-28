@@ -109,6 +109,8 @@ def execute(script, release_file, mode, started, env, *, timeout=None, target=ST
     if limit is None:
         limit = controller_seconds(mode, target)
     child_env = {**env, CONTROLLER_TOTAL_ENV: str(limit)}
+    if target == STAGING and mode == "release":
+        child_env["CD_WEB_AVAILABILITY_SCRIPTS"] = str(Path(__file__).resolve().parent)
     left = remaining(started, limit)
     wait = min(left, timeout) if timeout is not None else left
     args = [sys.executable, "-B", str(script), "--release-set", str(release_file),
