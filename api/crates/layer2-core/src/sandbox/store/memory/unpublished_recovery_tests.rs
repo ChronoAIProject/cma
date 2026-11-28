@@ -185,25 +185,32 @@ async fn explicit_stalled_reopen_update_supersedes_old_queue_through_owner_and_o
 }
 
 #[tokio::test]
-async fn automatic_stalled_reopen_keeps_queued_target_and_refuses_a_new_released_image() {
-    for released in ["image-latest", "image-v1", "image-queued"] {
+async fn automatic_stalled_reopen_uses_the_qualified_release_and_refuses_a_held_target() {
+    for (released, held) in [
+        ("image-latest", false),
+        ("image-queued", false),
+        ("image-latest", true),
+    ] {
         let (store, id) = stalled_reopen_fixture();
+        if held {
+            store.lock().held_runtime_target = Some(released.into());
+        }
         let store = Arc::new(store);
         let before = store.get_sandbox(&id).await.unwrap().unwrap();
         let service = SandboxRuntimeUpdateService::new(store.clone(), released.into())
             .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
         let result = service.recover_failed_unpublished(&id).await;
-        if released == "image-queued" {
-            let after = result.unwrap();
-            assert_eq!(after.admitted_runtime_update_target(), Some("image-queued"));
-            assert!(after.runtime_update_request().unwrap().automatic);
-        } else {
+        if held {
             assert!(matches!(
                 result,
                 Err(crate::sandbox::SandboxRuntimeUpdateError::NotAvailable)
             ));
             assert_eq!(store.get_sandbox(&id).await.unwrap().unwrap(), before);
             assert!(!store.lock().sandbox_events.contains_key(&id));
+        } else {
+            let after = result.unwrap();
+            assert_eq!(after.admitted_runtime_update_target(), Some(released));
+            assert!(after.runtime_update_request().unwrap().automatic);
         }
     }
 }

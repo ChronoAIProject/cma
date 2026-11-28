@@ -12,11 +12,13 @@ async fn quiescence_takeover_fences_stale_park_and_replays_lost_suspend_receipt(
             .harness
             .worker_with_runtime_image("first-manager", fixture.adapter(TARGET), TARGET);
     for _ in 0..WORK_RETRY_EXTERNAL_BUDGET {
-        now += Duration::from_secs(6);
+        let scheduled = fixture.harness.stored(&admitted.id).await;
+        now = now.max(stamp_time(&scheduled.work.ready_at));
         assert!(worker.run_one(&admitted.id, now).await.unwrap());
     }
 
-    now += Duration::from_secs(6);
+    let scheduled = fixture.harness.stored(&admitted.id).await;
+    now = now.max(stamp_time(&scheduled.work.ready_at));
     let expires = now + Duration::from_secs(60);
     let first_claim = fixture
         .harness
@@ -92,6 +94,7 @@ async fn quiescence_takeover_fences_stale_park_and_replays_lost_suspend_receipt(
 
     let retried = retry_parked_update(&fixture, &parked).await;
     assert_eq!(retried.lifecycle.operation, parked.lifecycle.operation);
+    now = now.max(stamp_time(&retried.work.ready_at));
     assert!(successor.run_one(&admitted.id, now).await.unwrap());
     let quiesced = fixture.harness.stored(&admitted.id).await;
     let state = quiesced.lifecycle.unpublished_recovery.as_ref().unwrap();
@@ -108,7 +111,7 @@ async fn quiescence_takeover_fences_stale_park_and_replays_lost_suspend_receipt(
     assert_eq!(provider_suspends(&fixture), 0);
 
     fixture.backend.lose_suspend.store(true, Ordering::SeqCst);
-    now += Duration::from_secs(6);
+    now = now.max(stamp_time(&quiesced.work.ready_at));
     assert!(successor.run_one(&admitted.id, now).await.unwrap());
     let awaiting_suspend_receipt = fixture.harness.stored(&admitted.id).await;
     assert_eq!(

@@ -41,40 +41,11 @@ async fn unset_signup_capacity_reuses_the_existing_settings_read() {
         uuid::Uuid::new_v4().simple()
     );
     let spend = Arc::new(MongoSandboxStore::open(&client, &name).await.unwrap());
-    let capacity = Arc::new(
-        MongoRegistrationCapacityStore::open(&client, &name, true)
-            .await
-            .unwrap(),
-    );
-    let auth = AuthState::in_memory(
-        AuthMode::Trusted {
-            subject: "test-owner".into(),
-        },
-        None,
-    )
-    .with_platform_spend(spend)
-    .with_registration_capacity(capacity);
     let settings = client
         .database(&name)
         .collection::<Document>("platform_settings");
-    for explicit in [false, true] {
-        let mutation = if explicit {
-            doc! {"$set":{"admission_ceilings":mongodb::bson::serialize_to_bson(&AdmissionCeilingsState::default()).unwrap()}}
-        } else {
-            doc! {"$unset":{"admission_ceilings":""}}
-        };
-        settings
-            .update_one(doc! {"_id":"platform"}, mutation)
-            .await
-            .unwrap();
-        trace.lock().unwrap().clear();
-        assert!(auth.registration_open().await);
-        assert_eq!(
-            *trace.lock().unwrap(),
-            vec![("find".into(), "platform_settings".into())]
-        );
-    }
-    let state = AdmissionCeilingsState::default()
+    let defaults = AdmissionCeilingsState::default();
+    let closed = defaults
         .changed(
             0,
             &SubjectId::new("operator"),
@@ -87,21 +58,44 @@ async fn unset_signup_capacity_reuses_the_existing_settings_read() {
         )
         .unwrap()
         .unwrap();
-    settings
-        .update_one(
-            doc! {"_id":"platform"},
-            doc! {"$set":{"admission_ceilings":mongodb::bson::serialize_to_bson(&state).unwrap()}},
+    let cases = [
+        (doc! {"$unset":{"admission_ceilings":""}}, true),
+        (
+            doc! {"$set":{"admission_ceilings":mongodb::bson::serialize_to_bson(&defaults).unwrap()}},
+            true,
+        ),
+        (
+            doc! {"$set":{"admission_ceilings":mongodb::bson::serialize_to_bson(&closed).unwrap()}},
+            false,
+        ),
+    ];
+    for activate in [false, true] {
+        let capacity = Arc::new(
+            MongoRegistrationCapacityStore::open(&client, &name, activate)
+                .await
+                .unwrap(),
+        );
+        let auth = AuthState::in_memory(
+            AuthMode::Trusted {
+                subject: "test-owner".into(),
+            },
+            None,
         )
-        .await
-        .unwrap();
-    trace.lock().unwrap().clear();
-    assert!(!auth.registration_open().await);
-    assert_eq!(
-        *trace.lock().unwrap(),
-        vec![
-            ("find".into(), "platform_settings".into()),
-            ("find".into(), "sandbox_admissions".into())
-        ]
-    );
+        .with_platform_spend(spend.clone())
+        .with_registration_capacity(capacity);
+        for (mutation, open) in &cases {
+            settings
+                .update_one(doc! {"_id":"platform"}, mutation.clone())
+                .await
+                .unwrap();
+            trace.lock().unwrap().clear();
+            assert_eq!(auth.registration_open().await, *open);
+            let mut reads = vec![("find".to_owned(), "platform_settings".to_owned())];
+            if activate || !open {
+                reads.push(("find".to_owned(), "sandbox_admissions".to_owned()));
+            }
+            assert_eq!(*trace.lock().unwrap(), reads);
+        }
+    }
     client.database(&name).drop().await.unwrap();
 }

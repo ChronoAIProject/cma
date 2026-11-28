@@ -51,13 +51,28 @@ async fn activity_summary_reads_are_bounded_projected_and_never_count_or_write()
     assert_eq!(query.get_i32("maxTimeMS").unwrap(), 5000);
     assert!(!query.contains_key("skip") && !query.contains_key("hint"));
     let projection = query.get_document("projection").unwrap();
-    assert_eq!(projection.len(), 9);
-    assert!(!projection.contains_key("record.detail") && !projection.contains_key("record"));
-    assert!(
-        projection.contains_key("_id")
-            && projection.contains_key("recorded_at")
-            && projection.contains_key("document_schema_version")
-    );
+    let fields = [
+        "_id",
+        "document_schema_version",
+        "recorded_at",
+        "record.id",
+        "record.at",
+        "record.actor",
+        "record.action",
+        "record.target",
+        "record.outcome",
+        "record.detail.activity_channel",
+        "record.detail.request_id",
+        "record.detail.request_method",
+        "record.detail.request_route",
+        "record.detail.credential_kind",
+        "record.detail.actor_scope",
+        "record.detail.http_status",
+    ];
+    assert_eq!(projection.len(), fields.len());
+    for field in fields {
+        assert_eq!(projection.get_i32(field).ok(), Some(1), "{field}");
+    }
     commands.lock().unwrap().clear();
     assert!(store
         .list_summaries(&ActivityQuery {
