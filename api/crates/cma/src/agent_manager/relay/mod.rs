@@ -50,6 +50,7 @@ pub(super) const MAX_BUFFERED_BODY_BYTES: usize = 64 * 1024 * 1024;
 pub(crate) struct Relay {
     coordinator: Arc<OwnershipCoordinator>,
     observation: std::sync::OnceLock<observation::Observation>,
+    observation_open_trace: std::sync::OnceLock<()>,
     maintenance: std::sync::OnceLock<maintenance::Maintenance>,
     reopen: std::sync::OnceLock<Arc<crate::sandbox::worker::SandboxWorker>>,
     updates: Weak<DurableAgentUpdateRecorder>,
@@ -90,6 +91,7 @@ impl Relay {
         Ok(Arc::new(Self {
             coordinator,
             observation: std::sync::OnceLock::new(),
+            observation_open_trace: std::sync::OnceLock::new(),
             maintenance: std::sync::OnceLock::new(),
             reopen: std::sync::OnceLock::new(),
             updates: Arc::downgrade(updates),

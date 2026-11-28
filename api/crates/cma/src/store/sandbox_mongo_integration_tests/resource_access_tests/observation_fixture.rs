@@ -8,6 +8,7 @@ pub(super) struct Server {
     pub updates: Arc<DurableAgentUpdateRecorder>,
     pub observation: Arc<MongoAgentObservation>,
     pub reads: Arc<AgentReadService>,
+    pub coordinator: Arc<OwnershipCoordinator>,
     pub stall: Arc<std::sync::atomic::AtomicBool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -30,16 +31,45 @@ pub(super) async fn servers_with_capacity(
     enabled: bool,
     capacity: crate::config::RelayCapacityConfig,
 ) -> Vec<Server> {
-    start_servers(f, enabled, enabled, capacity, None).await
+    start_servers(f, enabled, enabled, capacity, None, None).await
+}
+
+pub(super) async fn traced_servers(f: &Fixture, dispatch: tracing::Dispatch) -> Vec<Server> {
+    start_servers(f, true, true, Default::default(), None, Some(dispatch)).await
 }
 
 pub(super) async fn response_budget_servers(
     f: &Fixture,
     enabled: bool,
     idle_start: watch::Receiver<bool>,
+    trace_open: bool,
 ) -> Vec<Server> {
     let barrier = PollBarrier::ResponseReplay(idle_start);
-    start_servers(f, enabled, enabled, Default::default(), Some(barrier)).await
+    let dispatch = trace_open.then(|| {
+        tracing::Dispatch::new(
+            tracing_subscriber::fmt()
+                .with_ansi(false)
+                .with_env_filter("cma::agent_manager::observation_open=debug")
+                .with_writer(std::io::stderr)
+                .event_format(crate::diagnostic_format::text())
+                .finish(),
+        )
+    });
+    let replicas = start_servers(
+        f,
+        enabled,
+        enabled,
+        Default::default(),
+        Some(barrier),
+        dispatch,
+    )
+    .await;
+    if trace_open {
+        for replica in &replicas {
+            replica.relay.enable_observation_open_trace();
+        }
+    }
+    replicas
 }
 
 #[derive(Clone)]
@@ -54,6 +84,7 @@ async fn start_servers(
     bounded_responses: bool,
     capacity: crate::config::RelayCapacityConfig,
     idle_start: Option<PollBarrier>,
+    dispatch: Option<tracing::Dispatch>,
 ) -> Vec<Server> {
     let (auth, identity_server) = identity().await;
     let source = Arc::new(
@@ -168,6 +199,16 @@ async fn start_servers(
             ));
         }
         let router = relay.authenticated_routes(events.merge(responses), replica_auth);
+        let router = if let Some(dispatch) = dispatch.clone() {
+            use tracing::instrument::WithSubscriber;
+            router.layer(axum::middleware::from_fn(
+                move |request: axum::extract::Request, next: axum::middleware::Next| {
+                    next.run(request).with_subscriber(dispatch.clone())
+                },
+            ))
+        } else {
+            router
+        };
         let stall = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let delay = stall.clone();
         let router = router.layer(axum::middleware::from_fn(
@@ -184,10 +225,11 @@ async fn start_servers(
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });
+        let heartbeating = coordinator.clone();
         let heartbeat = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(3)).await;
-                coordinator.maintain().await.unwrap();
+                heartbeating.maintain().await.unwrap();
             }
         });
         servers.push(Server {
@@ -195,6 +237,7 @@ async fn start_servers(
             relay,
             updates,
             observation: store,
+            coordinator,
             reads,
             stall,
             tasks: vec![server, heartbeat],
@@ -250,6 +293,7 @@ pub(super) async fn budget_servers_with_observation(
             control_reserve: 0,
         },
         idle_start.map(PollBarrier::AgentEvents),
+        None,
     )
     .await
 }
