@@ -214,6 +214,17 @@ pub(crate) async fn callback(
     };
     // Anchor the provider lifetime before exchange/identity I/O. Durable
     // creation additionally reserves its bounded database operation budget.
+    if crate::request_audit::bind(
+        &creator.subject,
+        None,
+        cma_service_auth::request_audit::Credential::WebSession,
+    )
+    .await
+    .is_err()
+    {
+        console.sessions().revoke_unused(tokens.refresh);
+        return clear_login(pages::unavailable());
+    }
     tokens.expires_in = tokens.expires_in.saturating_sub(exchange_started.elapsed());
     let subject_hash = subject_hash_prefix(&creator.subject);
     let Ok((sid, _)) = console

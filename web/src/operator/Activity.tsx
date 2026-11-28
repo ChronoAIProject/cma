@@ -1,6 +1,6 @@
 import { Picker } from '../ui/Picker';
 import { useCallback, useEffect, useState } from 'react';
-import type { ActivityAction, ActivitySummary } from '@cma/client';
+import type { ActivityAction, ActivityChannel, ActivityResult, ActivitySummary } from '@cma/client';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -13,10 +13,12 @@ import { FailureNotice, RecordControls, Timestamp, stateWord, useRecords } from 
 const COLUMNS = [
   { header: 'Time (SGT)' },
   { header: 'Actor' },
+  { header: 'Channel' },
   { header: 'Action' },
   { header: 'Target' },
   { header: 'Outcome' },
   { header: 'Code' },
+  { header: 'Request ID' },
 ];
 
 // A refusal is the platform declining as designed; a failure is something broken.
@@ -28,6 +30,15 @@ const OUTCOMES = {
   ActivitySummary['outcome']['status'],
   { readonly label: string; readonly tone: StatusTone }
 >;
+
+const CHANNELS: Record<ActivityChannel, string> = {
+  web: 'Web',
+  api: 'API · client unknown',
+  cli: 'CLI · reported',
+  sdk: 'SDK · reported',
+  service: 'Service',
+  unknown: 'Unknown',
+};
 
 function actionWord(action: ActivityAction): string {
   return action.charAt(0).toUpperCase() + action.slice(1);
@@ -55,6 +66,17 @@ const actions: readonly ActivityAction[] = [
 
 type ActorOption = { readonly value: string; readonly label: string };
 
+type ActivityFilters = {
+  actor: string;
+  action: ActivityAction | 'audit' | '';
+  channel: ActivityChannel | '';
+  result: ActivityResult | '';
+  from: string;
+  before: string;
+};
+
+const singaporeTime = (value: string) => (value ? `${value}:00+08:00` : undefined);
+
 export function Activity({
   client,
   canSearchActors = false,
@@ -64,7 +86,18 @@ export function Activity({
 }) {
   const [actor, setActor] = useState('');
   const [action, setAction] = useState<ActivityAction | 'audit' | ''>('audit');
-  const [filters, setFilters] = useState({ actor, action });
+  const [channel, setChannel] = useState<ActivityChannel | ''>('');
+  const [outcome, setOutcome] = useState<ActivityResult | ''>('');
+  const [from, setFrom] = useState('');
+  const [before, setBefore] = useState('');
+  const [filters, setFilters] = useState<ActivityFilters>({
+    actor,
+    action,
+    channel,
+    result: outcome,
+    from,
+    before,
+  });
   const [search, setSearch] = useState('');
   const [reply, setReply] = useState<{ text: string; options?: readonly ActorOption[] }>();
   const [selection, setSelection] = useState<ActorOption>();
@@ -124,7 +157,7 @@ export function Activity({
         className="operator-filters"
         onSubmit={(event) => {
           event.preventDefault();
-          setFilters({ actor, action });
+          setFilters({ actor, action, channel, result: outcome, from, before });
         }}
       >
         <label className="operator-field">
@@ -167,6 +200,47 @@ export function Activity({
             ]}
           />
         </label>
+        <label className="operator-field">
+          <span>Channel</span>
+          <Picker
+            label="Activity channel"
+            value={channel}
+            onChange={(choice) => setChannel(choice as ActivityChannel | '')}
+            options={[
+              { value: '', label: 'All channels' },
+              ...Object.entries(CHANNELS).map(([value, label]) => ({ value, label })),
+            ]}
+          />
+        </label>
+        <label className="operator-field">
+          <span>Result</span>
+          <Picker
+            label="Activity result"
+            value={outcome}
+            onChange={(choice) => setOutcome(choice as ActivityResult | '')}
+            options={[
+              { value: '', label: 'All results' },
+              ...Object.entries(OUTCOMES).map(([value, { label }]) => ({ value, label })),
+            ]}
+          />
+        </label>
+        <label className="operator-field">
+          <span>Recorded from (SGT)</span>
+          <Input
+            type="datetime-local"
+            value={from}
+            onChange={(event) => setFrom(event.target.value)}
+          />
+        </label>
+        <label className="operator-field">
+          <span>Recorded before (SGT)</span>
+          <Input
+            type="datetime-local"
+            value={before}
+            min={from || undefined}
+            onChange={(event) => setBefore(event.target.value)}
+          />
+        </label>
         <Button type="submit" icon={<IconSearchOutline16 />}>
           Apply filters
         </Button>
@@ -187,7 +261,7 @@ function ActivitySummarys({
   onItemsLoaded,
 }: {
   readonly client: OperatorClient;
-  readonly filters: { readonly actor: string; readonly action: ActivityAction | 'audit' | '' };
+  readonly filters: ActivityFilters;
   readonly onItemsLoaded: (items: readonly ActivitySummary[]) => void;
 }) {
   const load = useCallback(
@@ -198,6 +272,10 @@ function ActivitySummarys({
         limit: 50,
         actor: filters.actor || undefined,
         action: filters.action === 'audit' ? undefined : filters.action || undefined,
+        channel: filters.channel || undefined,
+        result: filters.result || undefined,
+        recordedFrom: singaporeTime(filters.from),
+        recordedBefore: singaporeTime(filters.before),
         excludeSuccessfulReads: filters.action === 'audit' || undefined,
       }),
     [client, filters],
@@ -239,7 +317,17 @@ function ActivitySummarys({
               <Timestamp value={row.at} />
             </TableCell>
             <TableCell>{actorLabel(row)}</TableCell>
-            <TableCell>{actionWord(row.action)}</TableCell>
+            <TableCell>{CHANNELS[row.channel ?? 'unknown']}</TableCell>
+            <TableCell>
+              {actionWord(row.action)}
+              {row.method && row.route ? (
+                <div>
+                  <code className="operator-id">
+                    {row.method} {row.route}
+                  </code>
+                </div>
+              ) : null}
+            </TableCell>
             <TableCell>
               {row.target === null ? null : row.target.kind === 'subject' ? (
                 <>User {row.target_name?.trim() || 'Name unavailable'}</>
@@ -251,10 +339,13 @@ function ActivitySummarys({
             </TableCell>
             <TableCell>
               <Badge tone={OUTCOMES[row.outcome.status].tone}>
-                {OUTCOMES[row.outcome.status].label}
+                {'code' in row.outcome && row.outcome.code === 'outcome_unconfirmed'
+                  ? 'Outcome unconfirmed'
+                  : OUTCOMES[row.outcome.status].label}
               </Badge>
             </TableCell>
-            <TableCell mono>{'code' in row.outcome ? row.outcome.code : null}</TableCell>
+            <TableCell mono>{'code' in row.outcome ? row.outcome.code : row.http_status}</TableCell>
+            <TableCell mono>{row.request_id ?? 'Unknown'}</TableCell>
           </tr>
         ))}
       </Table>

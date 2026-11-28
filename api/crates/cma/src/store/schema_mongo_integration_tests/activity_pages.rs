@@ -1,8 +1,89 @@
 use super::*;
 use layer2_core::{
-    ActivityAction, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivityStore,
-    ActivitySummary, ActivityTarget, DetailKey, Page, SubjectId,
+    ActivityAction, ActivityChannel, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord,
+    ActivityResult, ActivityStore, ActivitySummary, ActivityTarget, DetailKey, Page, SubjectId,
+    ACTIVITY_OUTCOME_UNCONFIRMED,
 };
+
+#[tokio::test]
+#[ignore = "requires disposable replica-set MongoDB"]
+async fn request_activity_survives_reopen_and_filters_before_paging() {
+    let (client, name) = database().await;
+    let retention = Duration::from_secs(90 * 86400);
+    let first = MongoActivityStore::open(&client, &name, retention)
+        .await
+        .unwrap();
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let other_client = Client::with_uri_str(&uri).await.unwrap();
+
+    let mut admitted = row(0);
+    admitted.actor = None;
+    admitted.outcome = ActivityOutcome::Failed(ACTIVITY_OUTCOME_UNCONFIRMED.into());
+    admitted
+        .detail
+        .record(DetailKey::RequestId, "00000000-0000-4000-8000-000000000001");
+    first.append(&admitted).await.unwrap();
+    admitted.actor = Some(SubjectId::new("fixture"));
+    admitted.detail.record(DetailKey::ActivityChannel, "web");
+    first.identify_attempt(&admitted).await.unwrap();
+    drop(first);
+
+    let store = MongoActivityStore::open(&other_client, &name, retention)
+        .await
+        .unwrap();
+    let web = ActivityQuery {
+        channel: Some(ActivityChannel::Web),
+        limit: 1,
+        ..Default::default()
+    };
+    assert_eq!(
+        store.list_summaries(&web).await.unwrap().items[0].outcome,
+        admitted.outcome
+    );
+    store
+        .finish_attempt(&admitted.id, &ActivityOutcome::Succeeded, 202)
+        .await
+        .unwrap();
+    assert!(store
+        .finish_attempt(&admitted.id, &ActivityOutcome::Refused("403".into()), 403)
+        .await
+        .is_err());
+    store.append(&row(1)).await.unwrap();
+
+    let matching = store
+        .list_summaries(&ActivityQuery {
+            actor: admitted.actor.clone(),
+            channel: Some(ActivityChannel::Web),
+            action: Some(ActivityAction::Update),
+            result: Some(ActivityResult::Succeeded),
+            recorded_from: Some("2020-01-01T00:00:00Z".into()),
+            recorded_before: Some("2099-01-01T00:00:00Z".into()),
+            limit: 1,
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(matching.items.len(), 1);
+    assert!(matching.next_cursor.is_none());
+    let request = &matching.items[0];
+    assert_eq!(request.id, admitted.id);
+    assert_eq!(request.detail.get(DetailKey::HttpStatus), Some("202"));
+    assert_eq!(
+        request.detail.get(DetailKey::RequestId),
+        admitted.detail.get(DetailKey::RequestId)
+    );
+    assert_eq!(request.detail.get(DetailKey::ResourceName), None);
+    let legacy = store
+        .list_summaries(&ActivityQuery {
+            channel: Some(ActivityChannel::Unknown),
+            ..Default::default()
+        })
+        .await
+        .unwrap();
+    assert_eq!(legacy.items.len(), 1);
+    assert_eq!(legacy.items[0].id, row(1).id);
+    client.database(&name).drop().await.unwrap();
+}
 
 pub(super) fn row(index: usize) -> ActivityRecord {
     let mut row = ActivityRecord::new(

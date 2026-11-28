@@ -3,12 +3,33 @@
 use std::sync::Arc;
 
 use crate::{
-    ActivityQuery, ActivityRecord, ActivitySummary, Caller, Capability, CoreError, Page, StoreError,
+    ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivitySummary, Caller,
+    Capability, CoreError, Page, StoreError,
 };
 
 #[async_trait::async_trait]
 pub trait ActivityStore: Send + Sync {
     async fn append(&self, record: &ActivityRecord) -> Result<(), StoreError>;
+    async fn attempt(&self, _id: &ActivityId) -> Result<Option<ActivityRecord>, StoreError> {
+        Err(StoreError::Unavailable(
+            "activity lookup unavailable".into(),
+        ))
+    }
+    async fn identify_attempt(&self, _record: &ActivityRecord) -> Result<(), StoreError> {
+        Err(StoreError::Unavailable(
+            "activity identity updates are unavailable".into(),
+        ))
+    }
+    async fn finish_attempt(
+        &self,
+        _id: &ActivityId,
+        _outcome: &ActivityOutcome,
+        _status: u16,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Unavailable(
+            "activity outcome updates are unavailable".into(),
+        ))
+    }
     /// Adapters may batch this operation; retries must preserve record IDs.
     async fn append_many(&self, records: &[ActivityRecord]) -> Result<(), StoreError> {
         for record in records {
@@ -41,6 +62,23 @@ impl ActivityService {
 
     pub async fn record(&self, record: &ActivityRecord) -> Result<(), StoreError> {
         self.store.append(record).await
+    }
+
+    pub async fn attempt(&self, id: &ActivityId) -> Result<Option<ActivityRecord>, StoreError> {
+        self.store.attempt(id).await
+    }
+
+    pub async fn identify_attempt(&self, record: &ActivityRecord) -> Result<(), StoreError> {
+        self.store.identify_attempt(record).await
+    }
+
+    pub async fn finish_attempt(
+        &self,
+        id: &ActivityId,
+        outcome: &ActivityOutcome,
+        status: u16,
+    ) -> Result<(), StoreError> {
+        self.store.finish_attempt(id, outcome, status).await
     }
 
     pub async fn list_summaries(

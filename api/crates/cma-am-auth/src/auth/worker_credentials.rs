@@ -15,7 +15,19 @@ use serde_json::Value;
 use std::time::Duration;
 
 pub fn matches_path(path: &str) -> bool {
-    path == WORKER_CLASSIFIER_PATH
+    matches!(
+        path,
+        WORKER_CLASSIFIER_PATH | cma_service_auth::request_audit::PATH
+    )
+}
+
+#[derive(Clone)]
+pub struct VerifiedAuditWriter(pub(crate) SubjectId);
+
+impl VerifiedAuditWriter {
+    pub fn subject(&self) -> &SubjectId {
+        &self.0
+    }
 }
 
 pub(super) async fn attach(auth: &AuthState, mut request: Request, next: Next) -> Response {
@@ -37,7 +49,13 @@ pub(super) async fn attach(auth: &AuthState, mut request: Request, next: Next) -
     let Some(subject) = service_subject(&token) else {
         return observation.rejected(rejected());
     };
-    match tokio::time::timeout(Duration::from_secs(2), verify(auth, &token, &subject)).await {
+    let audit = request.uri().path() == cma_service_auth::request_audit::PATH;
+    match tokio::time::timeout(
+        Duration::from_secs(2),
+        verify(auth, &token, &subject, audit),
+    )
+    .await
+    {
         Ok(Ok(Some(subject))) => {
             if let Some(response) = auth
                 .account_gate(
@@ -55,9 +73,15 @@ pub(super) async fn attach(auth: &AuthState, mut request: Request, next: Next) -
             request
                 .extensions_mut()
                 .insert(layer1_public::AuthenticatedSubject(subject.clone()));
-            request
-                .extensions_mut()
-                .insert(VerifiedGatewayService::new(subject));
+            if audit {
+                request
+                    .extensions_mut()
+                    .insert(VerifiedAuditWriter(subject));
+            } else {
+                request
+                    .extensions_mut()
+                    .insert(VerifiedGatewayService::new(subject));
+            }
             next.run(request).await
         }
         Ok(Ok(None)) => observation.rejected(failure(
@@ -84,7 +108,12 @@ fn rejected() -> Response {
     )
 }
 
-async fn verify(auth: &AuthState, token: &str, subject: &str) -> Result<Option<SubjectId>, ()> {
+async fn verify(
+    auth: &AuthState,
+    token: &str,
+    subject: &str,
+    audit: bool,
+) -> Result<Option<SubjectId>, ()> {
     if !matches!(auth.mode, AuthMode::Provider { .. }) {
         return Err(());
     }
@@ -104,6 +133,13 @@ async fn verify(auth: &AuthState, token: &str, subject: &str) -> Result<Option<S
     let PermissionEvidence::Active(names) = verified.permissions else {
         return Ok(None);
     };
+    if audit
+        && !names
+            .iter()
+            .any(|name| name == cma_service_auth::request_audit::WRITE_PERMISSION)
+    {
+        return Ok(None);
+    }
     let grants = crate::permissions::capabilities_from_permissions(names);
     Ok((grants.allows(Capability::ManageProviderBindings)
         && grants.allows(Capability::ManageGatewayRecords))

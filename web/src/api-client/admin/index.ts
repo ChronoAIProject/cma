@@ -68,6 +68,7 @@ import {
 } from './settings.js';
 import {
   activityAction,
+  activityChannel,
   activityRecord,
   activitySummary,
   adminPage,
@@ -76,6 +77,8 @@ import {
   adminSandboxDetail,
   adminSandboxSummary,
   type ActivityAction,
+  type ActivityChannel,
+  type ActivityResult,
 } from './types.js';
 
 export type * from './types.js';
@@ -98,6 +101,10 @@ export interface AdminProfileListOptions extends PageOptions {
 export interface ActivityListOptions extends PageOptions {
   readonly actor?: string;
   readonly action?: ActivityAction;
+  readonly channel?: ActivityChannel;
+  readonly result?: ActivityResult;
+  readonly recordedFrom?: string;
+  readonly recordedBefore?: string;
   readonly excludeSuccessfulReads?: boolean;
 }
 
@@ -426,6 +433,7 @@ export class Administration {
   listActivitySummary(options: ActivityListOptions = {}) {
     bound(options);
     if (options.action !== undefined) input(activityAction, options.action);
+    if (options.channel !== undefined) input(activityChannel, options.channel);
     const request = (excludeSuccessfulReads: boolean) =>
       read(
         this.config,
@@ -433,6 +441,10 @@ export class Administration {
           view: 'summary',
           actor: options.actor,
           action: options.action,
+          channel: options.channel,
+          result: options.result,
+          recorded_from: options.recordedFrom,
+          recorded_before: options.recordedBefore,
           exclude_successful_reads: excludeSuccessfulReads ? 'true' : undefined,
           cursor: options.cursor,
           limit: options.limit,
@@ -457,11 +469,16 @@ export class Administration {
   listActivity(options: ActivityListOptions = {}) {
     bound(options);
     if (options.action !== undefined) input(activityAction, options.action);
+    if (options.channel !== undefined) input(activityChannel, options.channel);
     return read(
       this.config,
       query('/api/v1/admin/activity', {
         actor: options.actor,
         action: options.action,
+        channel: options.channel,
+        result: options.result,
+        recorded_from: options.recordedFrom,
+        recorded_before: options.recordedBefore,
         exclude_successful_reads: options.excludeSuccessfulReads === true ? 'true' : undefined,
         cursor: options.cursor,
         limit: options.limit,

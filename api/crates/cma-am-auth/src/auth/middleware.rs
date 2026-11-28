@@ -183,6 +183,45 @@ async fn attach_subject_inner(
         {
             return response;
         }
+        if crate::request_audit::active() {
+            use crate::request_audit::{self, Credential, VerifiedActor};
+            use layer2_core::resource_access::CredentialSource;
+            use layer2_core::ActivityChannel;
+
+            let (channel, credential, scope) = match resolved.credential_source {
+                _ if verified_proxy => (ActivityChannel::Api, Credential::IdentityProxy, "proxy"),
+                CredentialSource::Retained
+                    if matches!(auth.mode, super::AuthMode::Provider { .. }) =>
+                {
+                    (ActivityChannel::Web, Credential::WebSession, "personal")
+                }
+                CredentialSource::Binding => {
+                    (ActivityChannel::Service, Credential::BindingKey, "binding")
+                }
+                CredentialSource::Independent { .. } => {
+                    let credential = if super::bearer::bearer_token(request.headers())
+                        .is_some_and(|token| super::agent_keys::is_agent_key(&token))
+                    {
+                        Credential::AgentKey
+                    } else {
+                        Credential::DirectBearer
+                    };
+                    (ActivityChannel::Api, credential, "personal")
+                }
+                _ => (ActivityChannel::Unknown, Credential::Other, "unspecified"),
+            };
+            if request_audit::bind(VerifiedActor {
+                subject: resolved.subject.clone(),
+                channel,
+                credential,
+                scope,
+            })
+            .await
+            .is_err()
+            {
+                return store_failure();
+            }
+        }
         if request.uri().path() == "/api/v1/bots"
             || request.uri().path().starts_with("/api/v1/bots/")
         {
