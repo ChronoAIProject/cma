@@ -13,7 +13,7 @@ describe('warm pool tables', () => {
       within(table)
         .getAllByRole('columnheader')
         .map((column) => column.textContent),
-    ).toEqual(['Size', 'Status', 'Desired', 'Ready', 'Pending', 'Target', 'Actions']);
+    ).toEqual(['Size', 'Status', 'Desired', 'Ready', 'Provider target', 'Pending', 'Target', 'Actions']);
     expect(within(cell(row, 'Status')).getByText('Pending').closest('.badge')).toHaveAttribute(
       'data-tone',
       'active',
@@ -58,6 +58,6 @@ describe('warm pool tables', () => {
     expect(
       await screen.findByRole('cell', { name: /No warm pools configured for the current runtime/ }),
     ).toBeVisible();
-    expect(screen.getAllByRole('columnheader')).toHaveLength(7);
+    expect(screen.getAllByRole('columnheader')).toHaveLength(8);
   });
 });
