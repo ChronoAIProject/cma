@@ -25,14 +25,15 @@ pub(super) async fn seed_profiles(
     config: &Config,
     policy: &layer1_public::rest::ProfileRoutePolicy,
 ) -> Result<(), String> {
-    use layer2_core::PlatformSettingsStore;
-    let defaults = stores
+    let Some(stored) = stores
         .settings
-        .read()
+        .read_for_startup()
         .await
         .map_err(|e| e.to_string())?
-        .settings
-        .defaults;
+    else {
+        return Ok(());
+    };
+    let defaults = stored.settings.defaults;
     if defaults.agent_profile.id.as_str() != layer2_core::DEFAULT_AGENT_PROFILE_ID
         && defaults.workspace_profile.id.as_str() != layer2_core::DEFAULT_WORKSPACE_PROFILE_ID
         && defaults.sandbox_profile.id.as_str() != layer2_core::DEFAULT_SANDBOX_PROFILE_ID

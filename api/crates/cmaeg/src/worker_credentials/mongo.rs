@@ -208,7 +208,12 @@ impl WorkerHistory for MongoWorkerHistory {
                     .find_one(doc! {"_id":"owner-lane"})
                     .max_time(Duration::from_secs(2))
                     .await
-                    .map_err(failure)
+                    .map_err(|error| match error.kind.as_ref() {
+                        mongodb::error::ErrorKind::BsonDeserialization(_) => {
+                            RecordError::Malformed("worker cutover attestation".into())
+                        }
+                        _ => failure(error),
+                    })
             })
             .await
             .map_err(|_| RecordError::Unavailable("worker cutover read timed out".into()))?

@@ -128,7 +128,12 @@ impl MongoReleasedRuntimes {
             .lanes
             .find_one(doc! {"_id": self.id(lane)})
             .await
-            .map_err(unavailable)?
+            .map_err(|error| match error.kind.as_ref() {
+                mongodb::error::ErrorKind::BsonDeserialization(_) => SandboxStoreError::Corrupt(
+                    format!("unreadable {} release record", lane_key(lane)),
+                ),
+                _ => unavailable(error),
+            })?
         else {
             return Ok(None);
         };

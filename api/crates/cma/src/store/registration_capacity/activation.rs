@@ -108,9 +108,9 @@ async fn activate_once(
         .await
         .map_err(|error| match error {
             crate::store::settings_barrier::Error::Driver(error) => Error::Driver(error),
-            crate::store::settings_barrier::Error::Unreadable => {
-                Error::Unreadable(super::unavailable("activation settings are unreadable"))
-            }
+            crate::store::settings_barrier::Error::Unreadable => Error::Unreadable(
+                layer2_core::StoreError::Malformed("activation settings are unreadable".into()),
+            ),
         })?;
     if read(admissions, Some(&mut *session)).await? {
         return Ok(());

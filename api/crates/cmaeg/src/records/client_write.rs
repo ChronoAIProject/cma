@@ -7,7 +7,7 @@ impl RecordClient {
         issuer: &str,
     ) -> Result<bool, RecordError> {
         if !self.channel_cancellation_enabled()
-            || self.channel_create_issuer.as_deref() != Some(issuer)
+            || !matches!(&self.channel_create_authority, ChannelCreateAuthority::Fenced(expected) if expected.as_ref() == issuer)
         {
             return Ok(false);
         }
@@ -24,7 +24,7 @@ impl RecordClient {
         keys: &cmaeg_core::seal::MasterKeyRing,
     ) -> Result<super::super::CancelCreate, RecordError> {
         if !self.channel_cancellation_enabled()
-            || self.channel_create_issuer.as_deref() != Some(owner.issuer.as_str())
+            || !matches!(&self.channel_create_authority, ChannelCreateAuthority::Fenced(expected) if expected.as_ref() == owner.issuer)
         {
             return Err(RecordError::Unavailable(
                 "Channel create cancellation unavailable".into(),
@@ -49,7 +49,8 @@ impl RecordClient {
         blob: &[u8],
         claim: Option<&super::super::CreateConnectionClaim>,
     ) -> Result<u64, RecordError> {
-        let Some(issuer) = &self.channel_create_issuer else {
+        self.require_channel_create_authority()?;
+        let ChannelCreateAuthority::Fenced(issuer) = &self.channel_create_authority else {
             return self.put(record_id, &creator.subject, blob, None).await;
         };
         let database = self.database.as_ref().ok_or_else(|| {

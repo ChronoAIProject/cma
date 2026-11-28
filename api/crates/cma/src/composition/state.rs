@@ -3,18 +3,36 @@ use super::*;
 use axum::Router;
 mod openapi;
 
-impl ControlPlaneComposition {
+pub(crate) enum StartupComposition {
+    Execution(Box<ControlPlaneComposition>),
+    ReleaseQuarantined(Router),
+}
+
+impl StartupComposition {
     pub(crate) async fn build(
         config: &Config,
         #[cfg(feature = "qualification-hooks")] qualification: Option<cma_qualification::Registry>,
     ) -> Result<Self, String> {
         openapi::warm(layer1_public::rest::openapi_cache::warm).await?;
-        Self::assemble(
-            config,
-            #[cfg(feature = "qualification-hooks")]
-            qualification,
-        )
-        .await
+        let stores = stores::connect(config).await?;
+        if stores
+            .runtime_pointer
+            .as_ref()
+            .is_some_and(|source| source.is_quarantined())
+        {
+            return runtime_quarantine::compose(config, stores)
+                .await
+                .map(Self::ReleaseQuarantined);
+        }
+        Ok(Self::Execution(Box::new(
+            ControlPlaneComposition::assemble(
+                config,
+                stores,
+                #[cfg(feature = "qualification-hooks")]
+                qualification,
+            )
+            .await?,
+        )))
     }
 }
 
