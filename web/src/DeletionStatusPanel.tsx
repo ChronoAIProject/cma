@@ -13,6 +13,17 @@ import {
   stoppedProofMissing,
 } from './agent/stopDeletion';
 
+export function deletionStatusTitle(
+  target: string,
+  complete: boolean,
+  observation?: DeletionObservation,
+) {
+  if (complete) return `${target} deleted`;
+  if (observation?.agentDeletionFailure) return 'Agent deletion failed';
+  if (observation?.retirementFailed) return `${target} deletion stopped`;
+  return `Deleting ${target}`;
+}
+
 export function DeletionReference({ request }: { readonly request: DeletionRequest }) {
   const [copy, setCopy] = useState<'copied' | 'failed'>();
   return (
@@ -114,25 +125,27 @@ export function DeletionStatusPanel({
     observation?.agent?.status !== 'stopped';
   const state = complete
     ? 'Deleted'
-    : blocked
-      ? 'Needs attention'
-      : readError
-        ? 'Status unavailable'
-        : sending
-          ? 'Submitting'
-          : observation?.retirementFailed
-            ? 'Cleanup stopped'
-            : observation?.failure
-              ? 'Cleanup needs attention'
-              : observation?.retirementDelayed
-                ? 'Cleanup taking longer'
-                : observation?.inProgress
-                  ? 'Deleting'
-                  : request.accepted
-                    ? 'Deletion requested'
-                    : !unknownDelete && request.stop?.phase === 'accepted'
-                      ? 'Stopping'
-                      : 'Request unconfirmed';
+    : observation?.agentDeletionFailure
+      ? 'Deletion failed'
+      : blocked
+        ? 'Needs attention'
+        : readError
+          ? 'Status unavailable'
+          : sending
+            ? 'Submitting'
+            : observation?.retirementFailed
+              ? 'Cleanup stopped'
+              : observation?.failure
+                ? 'Cleanup needs attention'
+                : observation?.retirementDelayed
+                  ? 'Cleanup taking longer'
+                  : observation?.inProgress
+                    ? 'Deleting'
+                    : request.accepted
+                      ? 'Deletion requested'
+                      : !unknownDelete && request.stop?.phase === 'accepted'
+                        ? 'Stopping'
+                        : 'Request unconfirmed';
   return (
     <section className="deletion-status" aria-label="Deletion status">
       <span className="deletion-status__badge" data-complete={complete}>
@@ -150,11 +163,13 @@ export function DeletionStatusPanel({
                 ? 'Waiting for the Agent to stop. Deletion will follow only after stopping is confirmed.'
                 : sending
                   ? 'Submitting delete request.'
-                  : observation?.retirementFailed
-                    ? 'Automatic cleanup stopped after repeated failures. Contact support with this request reference.'
-                    : request.accepted
-                      ? 'Delete request accepted. Cleanup continues even if you close this page.'
-                      : 'The delete request has not been confirmed. Check the same request before trying another action.'}
+                  : observation?.agentDeletionFailure
+                    ? 'The Agent could not be deleted. Review the reason below.'
+                    : observation?.retirementFailed
+                      ? 'Automatic cleanup stopped after repeated failures. Contact support with this request reference.'
+                      : request.accepted
+                        ? 'Delete request accepted. Cleanup continues even if you close this page.'
+                        : 'The delete request has not been confirmed. Check the same request before trying another action.'}
       </p>
       {!complete && !request.accepted ? (
         <p>
@@ -171,7 +186,9 @@ export function DeletionStatusPanel({
         <p>
           {complete
             ? 'Agent deleted. Its Sandbox environment is retained and still counts toward your environment limit.'
-            : 'Only this Agent and its Worktree are being removed. Its Sandbox environment remains.'}{' '}
+            : observation?.agentDeletionFailure
+              ? 'Its Sandbox environment remains.'
+              : 'Only this Agent and its Worktree are being removed. Its Sandbox environment remains.'}{' '}
           {observation?.sandboxId ? (
             <a href={routePath({ kind: 'sandbox', sandboxId: observation.sandboxId })}>
               Review parent environment
@@ -197,7 +214,9 @@ export function DeletionStatusPanel({
           </time>
         </p>
       ) : null}
-      {observation?.failure === undefined || complete ? null : (
+      {complete ? null : observation?.agentDeletionFailure ? (
+        <p role="alert">{observation.agentDeletionFailure.detail}</p>
+      ) : observation?.failure === undefined ? null : (
         <p role="alert">
           Cleanup reported: {observation.failure.detail}. Deletion is not complete.
         </p>
