@@ -1,0 +1,187 @@
+[
+  {
+    "id": "EG-051",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Disable Consumer",
+    "entry_point": "/bots/{id} -> Disable Consumer",
+    "steps": [
+      "Invoke disable consumer once on a disposable Consumer.",
+      "Poll status and reconcile an uncertain result before any subsequent action."
+    ],
+    "expected_result": "Consumer becomes disabled and no new admitted work is started through it.",
+    "writes": true,
+    "api": [
+      "POST /api/v1/bots/{id}/disable",
+      "GET /api/v1/bots/{id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/bots/BotDetail.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "596fee7fa54be541e85bd99b418af11d28e0f57a85ee3d2342c632e6ad3cca8f"
+      },
+      {
+        "path": "sdk/typescript/src/bots.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "a21e643ec7f9e239d7d0719126d55e4c51721ba6df0e8ae3eb07841c2828b026"
+      }
+    ]
+  },
+  {
+    "id": "EG-052",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Enable Consumer",
+    "entry_point": "/bots/{id} -> Enable Consumer",
+    "steps": [
+      "Invoke enable consumer once on a disposable Consumer.",
+      "Poll status and reconcile an uncertain result before any subsequent action."
+    ],
+    "expected_result": "Consumer returns to active and an authorized test event completes.",
+    "writes": true,
+    "api": [
+      "POST /api/v1/bots/{id}/enable",
+      "GET /api/v1/bots/{id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/bots/BotDetail.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "596fee7fa54be541e85bd99b418af11d28e0f57a85ee3d2342c632e6ad3cca8f"
+      },
+      {
+        "path": "sdk/typescript/src/bots.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "a21e643ec7f9e239d7d0719126d55e4c51721ba6df0e8ae3eb07841c2828b026"
+      }
+    ]
+  },
+  {
+    "id": "EG-053",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Rotate Consumer credentials",
+    "entry_point": "/bots/{id} -> Rotate Consumer credentials",
+    "steps": [
+      "Invoke rotate consumer credentials once on a disposable Consumer.",
+      "Poll status and reconcile an uncertain result before any subsequent action."
+    ],
+    "expected_result": "Rotation completes for the intended Consumer; subsequent authorized work uses the new credentials without revealing their values.",
+    "writes": true,
+    "api": [
+      "POST /api/v1/bots/{id}/rotate-keys",
+      "GET /api/v1/bots/{id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/bots/BotDetail.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "596fee7fa54be541e85bd99b418af11d28e0f57a85ee3d2342c632e6ad3cca8f"
+      },
+      {
+        "path": "sdk/typescript/src/bots.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "a21e643ec7f9e239d7d0719126d55e4c51721ba6df0e8ae3eb07841c2828b026"
+      }
+    ]
+  },
+  {
+    "id": "EG-054",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Delete Consumer and linked resources",
+    "entry_point": "/bots/{id} -> Delete confirmation",
+    "steps": [
+      "Confirm deletion of only the test Consumer.",
+      "Poll deleting/deleted state and inspect its linked channel/resource cleanup."
+    ],
+    "expected_result": "Deletion is durable and the Consumer stops accepting new work; unrelated or shared owner resources remain.",
+    "writes": true,
+    "api": [
+      "DELETE /api/v1/bots/{id}",
+      "GET /api/v1/bots/{id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/bots/BotDetail.tsx",
+        "line": 232,
+        "anchor": "Delete ${bot.name}",
+        "sha256": "596fee7fa54be541e85bd99b418af11d28e0f57a85ee3d2342c632e6ad3cca8f"
+      },
+      {
+        "path": "sdk/typescript/src/bots.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "a21e643ec7f9e239d7d0719126d55e4c51721ba6df0e8ae3eb07841c2828b026"
+      }
+    ]
+  },
+  {
+    "id": "EG-055",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Bot Father conversational setup, identity connection and exact confirmation",
+    "entry_point": "Bot Father verified chat -> setup actions",
+    "steps": [
+      "Advance from an attested event; inspect identity/login/service choices and configuration.",
+      "Choose/customize and confirm the exact server plan; replay the same request locally."
+    ],
+    "expected_result": "Provisioning requires attested consent for the exact plan; replay/revision protection prevents duplicate or stale setup actions and ownership remains correct.",
+    "writes": true,
+    "api": [
+      "POST /api/v1/bot-setups/advance",
+      "POST /api/v1/bot-setups/actions"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/bot-setups.ts",
+        "line": 111,
+        "anchor": "Bot Father provider workflow",
+        "sha256": "dab817ae951c2c0cbaa5f28499bb14446a57663271edb1ccaee3a6cae3507ef2"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/bot_setups.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "54107c468b4a28b02e524838a9fcf1a032b4009b7fc767383ba02f86aa33d803"
+      }
+    ]
+  }
+]

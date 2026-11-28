@@ -4,6 +4,7 @@ use crate::store::transaction_terminal::GuardedTerminal as _;
 
 use crate::store::agent_capacity_recovery::observations::{cohort, Outcome, Stage};
 use crate::store::agent_write_coordination::CLEANUP_RETRY_DEADLINE;
+use futures_util::future::BoxFuture;
 use layer2_core::sandbox::store::{AgentWorkPublication, AgentWorkPublicationParents};
 
 #[derive(Default)]
@@ -109,7 +110,28 @@ pub(super) async fn try_publish(
     }
 }
 
-async fn run(
+// All publication callers await the same transaction future. Allocate it here
+// to keep independent copies of its state off the callers' poll frames.
+#[inline(never)]
+fn run<'a>(
+    store: &'a MongoSandboxStore,
+    mutation: AgentWorkMutation,
+    observed: Option<&'a layer2_core::sandbox::store::PreparedAgentOpenContext>,
+    repeated_marker: Option<&'a AgentLogEntry>,
+    attempts: Attempts,
+    skill_guard: Option<&'a layer2_core::sandbox::store::AgentSkillResultGuard>,
+) -> BoxFuture<'a, Result<Completion, SandboxStoreError>> {
+    Box::pin(run_transaction(
+        store,
+        mutation,
+        observed,
+        repeated_marker,
+        attempts,
+        skill_guard,
+    ))
+}
+
+async fn run_transaction(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
@@ -212,6 +234,7 @@ async fn run(
             }
             Err(ApplyError::StaleProposal) => {
                 let _ = session.abort_guarded().await;
+                contention::diagnose(&mutation, contention::PublicationFailure::KnownAbortedCas);
                 return Ok(Completion::KnownAborted);
             }
             Err(ApplyError::Domain(error)) => {
@@ -223,6 +246,7 @@ async fn run(
             }
             Err(ApplyError::Driver(error)) if positively_aborted(&error) => {
                 let _ = session.abort_guarded().await;
+                contention::diagnose_write_conflict(&mutation, &error);
                 last_transient = Some(error);
                 continue;
             }
@@ -259,11 +283,18 @@ async fn run(
                 }
                 history_cache.committed(store);
                 timing.committed();
+                if let Some(observed) = observed {
+                    contention::diagnose_prepared_commit(&mutation, observed);
+                }
                 crate::telemetry::work::published(&receipt.logs, "committed");
                 return Ok(Completion::Published);
             }
-            CommitOutcome::Retry(error) => last_transient = Some(error),
+            CommitOutcome::Retry(error) => {
+                contention::diagnose_write_conflict(&mutation, &error);
+                last_transient = Some(error);
+            }
             CommitOutcome::Unknown(error) => {
+                contention::diagnose(&mutation, contention::PublicationFailure::UnknownCommit);
                 if receipt.pending_adoption() {
                     cohort(Stage::Blocked, Outcome::Unknown);
                 }

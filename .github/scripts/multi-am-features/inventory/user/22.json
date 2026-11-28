@@ -1,0 +1,270 @@
+[
+  {
+    "id": "cma-user.triggers.placements",
+    "role": "user",
+    "feature": "Add or retire a Trigger source URL/placement",
+    "entry_point": "Trigger → Source URLs → Add source URL / Remove placement",
+    "steps": [
+      "Add a local test source URL with its label",
+      "Inspect the resulting placement",
+      "Retire that placement and verify it no longer admits new launches"
+    ],
+    "expected_result": "Placement identity and source URL stay bound to the intended Trigger; removing one placement does not retire another.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/triggers/{id}/placements",
+        "openapi_path": "/api/v1/triggers/{id}/placements",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/triggers/{id}/placements",
+        "openapi_path": "/api/v1/triggers/{id}/placements",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/triggers/{id}/placements/{placement_id}/retire",
+        "openapi_path": "/api/v1/triggers/{id}/placements/{placement_id}/retire",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/trigger-publisher/Placements.tsx",
+        "line": 13,
+        "sha256": "594793c9ae4e29faa5da3261d518e6549663f170fbe0f557ff7ae38a46bf74a2",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/trigger-publisher/EmbedPanel.tsx",
+        "line": 11,
+        "sha256": "299f684aac70dde89b917449292c971e661bd75515f613e8bbb88b76e82a787f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.triggers.embed-stats",
+    "role": "user",
+    "feature": "Preview/copy embed snippets and read Trigger statistics",
+    "entry_point": "/triggers/manage/{id}/embed",
+    "steps": [
+      "Select a placement",
+      "Preview its badge",
+      "Copy each offered snippet/link format privately",
+      "Read or retry statistics"
+    ],
+    "expected_result": "Snippets and badge refer to the selected published revision/placement; statistics failures remain visible.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/triggers/{id}/embed",
+        "openapi_path": "/api/v1/triggers/{id}/embed",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/triggers/{id}/stats",
+        "openapi_path": "/api/v1/triggers/{id}/stats",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/triggers/public/{public_id}/badge.svg",
+        "openapi_path": "/api/v1/triggers/public/{public_id}/badge.svg",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/trigger-publisher/EmbedPanel.tsx",
+        "line": 11,
+        "sha256": "299f684aac70dde89b917449292c971e661bd75515f613e8bbb88b76e82a787f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/trigger-publisher/SnippetTabs.tsx",
+        "line": 61,
+        "sha256": "ae62c525fdfc1b8a3db5fa8c26ff754da421c312718d9e40403fdd75f88dc7ff",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/trigger-publisher/BadgePreview.tsx",
+        "line": 27,
+        "sha256": "b701a324a7fa7d5bf18cfd4023667817649ee38c1302a68d38bf36cad8c690aa",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.triggers.retire",
+    "role": "user",
+    "feature": "Retire a Trigger",
+    "entry_point": "Trigger wizard → Retire Trigger",
+    "steps": [
+      "Select only the local test Trigger",
+      "Retire it",
+      "Open the old public link and try a new launch"
+    ],
+    "expected_result": "The retired Trigger refuses new launches with an accurate unavailable message; prior independent resources are not claimed deleted.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/triggers/{id}/retire",
+        "openapi_path": "/api/v1/triggers/{id}/retire",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/trigger-publisher/TriggerWizard.tsx",
+        "line": 33,
+        "sha256": "82b5ef66fc0f6a08daf6707660cda4cd2b1b78414a73e7eddbfadafe0fc8b637",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/public/PublicJourney.tsx",
+        "line": 34,
+        "sha256": "a168483bc5b94dd5e8bc6f5e6cb3d2caba1949e02fc4c9a4c88dfcf8c617f762",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.triggers.public-launch",
+    "role": "user",
+    "feature": "Open a public Trigger and start or resume an Agent",
+    "entry_point": "/t/{publicId}[/{placementId}]",
+    "steps": [
+      "Open a published local test link",
+      "Read review/trust information and sign in if needed",
+      "Choose the offered resume/new behavior",
+      "Satisfy required connections and start",
+      "Observe launch progress to its Agent"
+    ],
+    "expected_result": "A user-authorized launch creates/resumes exactly the intended resources; source placement, audience and connection requirements are honored.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/triggers/public/{public_id}",
+        "openapi_path": "/api/v1/triggers/public/{public_id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/{public_id}/entry-intent",
+        "openapi_path": "/api/v1/triggers/public/{public_id}/entry-intent",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/{public_id}/launches",
+        "openapi_path": "/api/v1/triggers/public/{public_id}/launches",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/launches/{id}/start",
+        "openapi_path": "/api/v1/launches/{id}/start",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/public/PublicJourney.tsx",
+        "line": 34,
+        "sha256": "a168483bc5b94dd5e8bc6f5e6cb3d2caba1949e02fc4c9a4c88dfcf8c617f762",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/public/ReviewCard.tsx",
+        "line": 30,
+        "sha256": "bcc4f0bbf22990e77fe0f3afe773ed1b79cd375bcaab8b9dedcb6110d38ee4ce",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/public/RepeatChoice.tsx",
+        "line": 6,
+        "sha256": "d35fe65165d6aca6876454100a624743d34f5cc7a966790bf49b03722b733871",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/public/ConnectAssistant.tsx",
+        "line": 31,
+        "sha256": "3958d2a8197efcade7b2bf9c126da6d41da9eac4080c195a716c1eb18f6b99dc",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.triggers.launch-recovery",
+    "role": "user",
+    "feature": "Observe/recover launch progress and explicitly start over after failure",
+    "entry_point": "/launches/{id}",
+    "steps": [
+      "Open an admitted local launch",
+      "Read requirements and progress/events",
+      "Recover observation after a reload",
+      "On a terminal failure, copy support information privately or explicitly select Start over"
+    ],
+    "expected_result": "Progress stays tied to the original launch; observation retry does not create a second operation. Start over is an explicit new intent and must be included in cleanup.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/launches/{id}",
+        "openapi_path": "/api/v1/launches/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/launches/{id}/requirements",
+        "openapi_path": "/api/v1/launches/{id}/requirements",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/launches/{id}/events",
+        "openapi_path": "/api/v1/launches/{id}/events",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/public/Progress.tsx",
+        "line": 22,
+        "sha256": "6196b5cd66f4f81212544038ef6f6129403139f4474b7efc653cc8d696cc0ce3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/public/LaunchProgress.tsx",
+        "line": 14,
+        "sha256": "a41a2122fdd1214311b39393f3f2000f4582cba24f1892fec5f7d8f90016b06f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/public/ReviewCard.tsx",
+        "line": 30,
+        "sha256": "bcc4f0bbf22990e77fe0f3afe773ed1b79cd375bcaab8b9dedcb6110d38ee4ce",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/public/client.ts",
+        "line": 20,
+        "sha256": "2b2bbddc4ad8bb3ca3536a98efad164ac2d4581e8c7ae05ec51246fabf4b3782",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

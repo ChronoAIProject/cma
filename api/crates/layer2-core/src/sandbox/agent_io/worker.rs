@@ -23,6 +23,7 @@ pub(super) const UNCLAIMED_RECHECK_DELAY: Duration = Duration::from_secs(15);
 pub enum CommandAttempt {
     Finished,
     Retry,
+    RetryAttachment,
     Reject(CommandFailureCode),
 }
 
@@ -31,6 +32,7 @@ pub enum CommandReadiness {
     Ready,
     Retry,
     WaitingForActiveTurn,
+    WaitingForAttachment,
     Reject(CommandFailureCode),
 }
 
@@ -201,7 +203,7 @@ impl AgentCommandWorker {
         }
         match readiness {
             CommandReadiness::Ready => {}
-            CommandReadiness::WaitingForActiveTurn => {
+            CommandReadiness::WaitingForActiveTurn | CommandReadiness::WaitingForAttachment => {
                 let delay = api_message_recheck_delay(
                     &candidate.receipt.envelope,
                     &candidate.receipt.admitted_at,
@@ -341,13 +343,10 @@ impl AgentCommandWorker {
                     &claim,
                     CommandAttempt::Reject(CommandFailureCode::QueueTimeout),
                 )
-                .await
-                .map(|()| Duration::ZERO);
+                .await;
         }
         let attempt = self.drive(&command, &claim).await;
-        self.settle(&command, &claim, attempt)
-            .await
-            .map(|()| Duration::ZERO)
+        self.settle(&command, &claim, attempt).await
     }
 
     async fn drive(&self, command: &AdmittedAgentCommand, claim: &CommandClaim) -> CommandAttempt {
@@ -380,7 +379,7 @@ impl AgentCommandWorker {
         original: &AdmittedAgentCommand,
         claim: &CommandClaim,
         attempt: CommandAttempt,
-    ) -> Result<(), CommandLedgerError> {
+    ) -> Result<Duration, CommandLedgerError> {
         // A timeout/failed response may follow a committed binding. Never infer
         // that execution did not occur, and never release/reject from a stale copy.
         let current = bounded(self.store.get_command(&claim.command_id))
@@ -394,23 +393,38 @@ impl AgentCommandWorker {
             return Err(CommandLedgerError::Corrupt);
         }
         if current.status.is_terminal() {
-            return Ok(());
+            return Ok(Duration::ZERO);
         }
         if current.work.dispatch.is_some() {
             return bounded(self.store.reconcile_command(&claim.command_id))
                 .await
-                .map(|_| ());
+                .map(|_| Duration::ZERO);
         }
         current.require_claim(claim, &now_rfc3339())?;
         match attempt {
             CommandAttempt::Finished => Err(CommandLedgerError::Corrupt),
-            CommandAttempt::Retry => {
-                bounded(self.store.release_command_claim(claim, now_rfc3339())).await
+            CommandAttempt::Retry | CommandAttempt::RetryAttachment => {
+                bounded(self.store.release_command_claim(claim, now_rfc3339())).await?;
+                // Only a confirmed release of an unbound ordinary append can
+                // yield this cooldown. A later attempt reacquires all authority.
+                let delay = if attempt == CommandAttempt::RetryAttachment
+                    && current.receipt.envelope.is_ordinary_append()
+                {
+                    api_message_recheck_delay(
+                        &current.receipt.envelope,
+                        &current.receipt.admitted_at,
+                        &current.queue_deadline,
+                        &now_rfc3339(),
+                    )
+                } else {
+                    Duration::ZERO
+                };
+                Ok(unclaimed_cooldown(&current, delay))
             }
             CommandAttempt::Reject(code) => {
                 bounded(self.store.reject_command(claim, code, now_rfc3339()))
                     .await
-                    .map(|_| ())
+                    .map(|_| Duration::ZERO)
             }
         }
     }

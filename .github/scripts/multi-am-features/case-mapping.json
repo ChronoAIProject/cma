@@ -1,0 +1,2596 @@
+{
+  "cma-user.account.sign-in": {
+    "cases": ["user.account_sign_in"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.account.sign-out": {
+    "cases": ["user.account_sign_out"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.navigation.tasks": {
+    "cases": ["user.navigation_tasks"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.navigation.filters": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.navigation.inventory": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.navigation.search": {
+    "cases": ["user.command_search_retirement"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 1,
+    "phases": ["after_restart"]
+  },
+  "cma-user.account.appearance": {
+    "cases": ["user.account_appearance"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.account.text-size": {
+    "cases": ["user.account_text_size"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.account.build-version": {
+    "cases": ["user.account_build_version"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.navigation.docs": {
+    "cases": ["user.account_documentation"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.navigation.legacy-routes": {
+    "cases": ["user.navigation_legacy_routes"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.task.draft": {
+    "cases": ["user.task_draft"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.task.create": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.task.existing-location": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.task.repository": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.task.machine-create": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.task.manual-agent": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.task.admission-recovery": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.task.limits": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.open": {
+    "cases": ["user.agent_open"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 1,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.send": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.interrupt": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.second-send": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.interrupt-with-message": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.queue": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.queue-edit": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.queue-remove": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.pending-recovery": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.approval-allow": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.approval-deny": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.approval-abort": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.commands": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.suggestions": {
+    "cases": ["user.agent_suggestions"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 1,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.quick-messages": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.copy-response": {
+    "cases": ["user.agent_copy_response"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 1,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.feedback": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.history": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.history-export": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.details-resources": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.turn-usage": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.rename": {
+    "cases": [
+      "user.agent_rename"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.system-prompt": {
+    "cases": [
+      "user.system_prompt_roundtrip"
+    ],
+    "blocked": "Changed-value API mutation, private state readback and restoration implemented; browser, unauthorized and full runtime-effect assertions remain incomplete",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "routing": "non_owner"
+  },
+  "cma-user.agent.session-settings": {
+    "cases": [
+      "user.session_settings_roundtrip"
+    ],
+    "blocked": "Changed-value API mutation, private state readback and restoration implemented; browser, unauthorized and full runtime-effect assertions remain incomplete",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "routing": "non_owner"
+  },
+  "cma-user.agent.skills": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.stop": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.agent.delete": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.files.message-attachments": {
+    "cases": [
+      "user.composer_attachments"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.files.browse": {
+    "cases": [
+      "user.browser_file_roundtrip"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.files.preview": {
+    "cases": [
+      "user.browser_changed_file_preview"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.files.download": {
+    "cases": [
+      "user.browser_file_roundtrip"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.files.create-file": {
+    "cases": [
+      "user.browser_file_roundtrip"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.files.create-directory": {
+    "cases": [
+      "user.browser_file_roundtrip"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.files.edit": {
+    "cases": [
+      "user.browser_file_roundtrip"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.files.upload": {
+    "cases": [
+      "user.browser_file_roundtrip"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.files.delete": {
+    "cases": [
+      "user.browser_file_roundtrip"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.files.answer-deliverables": {
+    "cases": [
+      "user.answer_deliverables"
+    ],
+    "browser": true,
+    "minimum_runs": 1,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.machine.view": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.machine.control": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.machine.reconnect-display": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.browser.enable": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.browser.observe": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.browser.control": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.machine.terminal-output": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sandbox.overview": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sandbox.pause": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sandbox.revive": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sandbox.always-on-off": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sandbox.runtime-update": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sandbox.retained-recovery": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sandbox.activity": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sandbox.delete": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.workspace.create-empty": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.workspace.create-git_repository": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.workspace.inspect": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.workspace.delete": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.connections.check": {
+    "cases": [],
+    "blocked": "connection revocation, repair and access-approval fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.connections.connect": {
+    "cases": [],
+    "blocked": "connection revocation, repair and access-approval fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.connections.cancel-reconnect": {
+    "cases": [],
+    "blocked": "connection revocation, repair and access-approval fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.connections.credential-recovery": {
+    "cases": [],
+    "blocked": "connection revocation, repair and access-approval fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.connections.scope": {
+    "cases": [],
+    "blocked": "connection revocation, repair and access-approval fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.connections.access-approve": {
+    "cases": [],
+    "blocked": "connection revocation, repair and access-approval fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.connections.access-deny": {
+    "cases": [],
+    "blocked": "connection revocation, repair and access-approval fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sharing.agent-link": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sharing.revoke-agent-link": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sharing.redeem": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sharing.sandbox-grant": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sharing.update-revoke": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sharing.read-only": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sharing.interact": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sharing.agent-artifacts": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sharing.publish-artifact": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.sharing.channel-history": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.documents.browse": {
+    "cases": [
+      "user.documents_browser_browse"
+    ],
+    "browser": true,
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "routing": "both"
+  },
+  "cma-user.documents.create": {
+    "cases": [
+      "user.documents_browser_create_after_lost_reply"
+    ],
+    "browser": true,
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "routing": "both"
+  },
+  "cma-user.documents.edit": {
+    "cases": [
+      "user.documents_browser_edit_and_conflict"
+    ],
+    "browser": true,
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "routing": "both"
+  },
+  "cma-user.documents.format": {
+    "cases": ["user.documents_browser_format"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 1,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.documents.preview-outline": {
+    "cases": ["user.documents_browser_browse"],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.documents.conflict-draft": {
+    "cases": [
+      "user.documents_browser_edit_and_conflict"
+    ],
+    "browser": true,
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "routing": "both"
+  },
+  "cma-user.documents.comments-read": {
+    "cases": [
+      "user.documents_grant_comment_revoke"
+    ],
+    "blocked": "API assertions prepared; required real-browser controls and draft/navigation behavior remain unimplemented",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "routing": "both"
+  },
+  "cma-user.documents.comment": {
+    "cases": ["user.documents_browser_comment"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 1,
+    "phases": ["before_restart", "after_restart"]
+  },
+  "cma-user.documents.people-sharing": {
+    "cases": [
+      "user.documents_browser_people_sharing"
+    ],
+    "browser": true,
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "routing": "both"
+  },
+  "cma-user.documents.link-sharing": {
+    "cases": ["user.documents_browser_link_sharing"],
+    "browser": true,
+    "minimum_runs": 1,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "routing": "both"
+  },
+  "cma-user.triggers.browse": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.triggers.draft": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.triggers.publish": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.triggers.placements": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.triggers.embed-stats": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.triggers.retire": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.triggers.public-launch": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.triggers.launch-recovery": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.usage.1h": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.usage.24h": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.usage.7d": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.usage.30d": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.usage.custom-filter": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.usage.refresh": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.usage.table-charts": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.usage.event-history": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.navigation.eg-transition": {
+    "cases": ["user.navigation_eg_transition"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "cma-user.navigation.admin-denied": {
+    "cases": ["user.navigation_admin_denied"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-001": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-002": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-003": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-010": {
+    "cases": [
+      "admin.admin_usage_24h"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-011": {
+    "cases": [
+      "admin.admin_usage_7d"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-012": {
+    "cases": [
+      "admin.admin_usage_30d"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-013": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-014": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-015": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-016": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-017": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-018": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-019": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-020": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-021": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-022": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-023": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-024": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-025": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-026": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-027": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-028": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-029": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-030": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-031": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-032": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-033": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-034": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-035": {
+    "cases": [
+      "admin.sandbox_always_on_cross_am"
+    ],
+    "blocked": "API non-owner toggle, stale rejection, public reads, immutable lifecycle replay and altered-payload refusal implemented; browser and trigger-origin fixture remain incomplete",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "routing": "non_owner"
+  },
+  "ADM-036": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-037": {
+    "cases": ["admin.runtime_inventory", "admin.runtime_inventory_nonadmin_denial"],
+    "blocked": "Runtime identity, generation, Ready and dependency unavailability are exercised on both Managers across restart. Starting-state observation and independently scoped runtime-inventory authority remain open.",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-038": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-039": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-040": {
+    "cases": [
+      "admin.settings_read"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-041": {
+    "cases": [
+      "admin.settings_retention_cross_am_cas"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-042": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-043": {
+    "cases": [
+      "admin.settings_usage_reporting_cross_am_cas"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-044": {
+    "cases": [
+      "admin.settings_retention_cross_am_cas"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-045": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-046": {
+    "cases": [
+      "admin.settings_limits_cross_am_cas"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-047": {
+    "cases": [
+      "admin.settings_triggers_cross_am_cas"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-048": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-049": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-050": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-051": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-052": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-053": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-054": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-055": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-056": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-057": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-060": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-061": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-062": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-063": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-070": {
+    "cases": [
+      "admin.activity_summary"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-071": {
+    "cases": [
+      "admin.activity_full"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-072": {
+    "cases": [
+      "admin.admission_read",
+      "admin.admission_read_nonadmin_denial"
+    ],
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-073": {
+    "cases": [
+      "admin.admission_stop_resume"
+    ],
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-074": {
+    "cases": [
+      "admin.admission_stop_resume"
+    ],
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-075": {
+    "cases": [
+      "admin.trigger_orchestration_pause_resume"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-076": {
+    "cases": [
+      "admin.trigger_orchestration_pause_resume"
+    ],
+    "blocked": "API assertions implemented; remaining inventory UI/negative/fixture steps are not yet complete",
+    "minimum_runs": 3,
+    "routing": "both",
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-077": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-078": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-080": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-081": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-082": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-083": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-084": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-085": {
+    "cases": [],
+    "blocked": "browser interaction and complete feature assertions not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-090": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-091": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-092": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-093": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-094": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "ADM-095": {
+    "cases": [],
+    "blocked": "organization and distinct-owner permission fixtures not yet ported",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "EG-001": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-002": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-003": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-004": {
+    "cases": ["eg.public_documentation"],
+    "browser": true,
+    "routing": "both",
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ]
+  },
+  "EG-005": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-006": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-007": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-008": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-009": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-010": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-011": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-012": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-013": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-014": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-015": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-016": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-017": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-018": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-019": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-020": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-021": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-022": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-023": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-024": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-025": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-026": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-027": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-028": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-029": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-030": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-031": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-032": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-033": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-034": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-035": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-036": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-037": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-038": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-039": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-040": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-041": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-042": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-043": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-044": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-045": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-046": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-047": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-048": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-049": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-050": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-051": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-052": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-053": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-054": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-055": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-056": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-057": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-058": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-059": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-060": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-061": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-062": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-063": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-064": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-065": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-066": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-067": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-068": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-069": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-070": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-071": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-072": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-073": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-074": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-075": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-076": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-077": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-078": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  },
+  "EG-079": {
+    "cases": [],
+    "minimum_runs": 3,
+    "phases": [
+      "before_restart",
+      "after_restart"
+    ],
+    "blocked": "Event Gateway platform/browser fixture and exact serving EG/AM/owner assertions are not implemented; direct-AM substitutes cannot establish this feature"
+  }
+}

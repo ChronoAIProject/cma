@@ -1,0 +1,202 @@
+[
+  {
+    "id": "cma-user.agent.approval-abort",
+    "role": "user",
+    "feature": "Answer an approval: Abort",
+    "entry_point": "Agent conversation → Approval card → Abort",
+    "steps": [
+      "Trigger a harmless guarded approval locally",
+      "Read the request and choose Abort",
+      "Observe the resulting turn state"
+    ],
+    "expected_result": "The request is cancelled without supplying an approval answer. A stale or already-answered approval cannot authorize different work.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/approvals/{request_id}",
+        "openapi_path": "/api/v1/agents/{id}/approvals/{request_id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/ApprovalCard.tsx",
+        "line": 26,
+        "sha256": "81bc795bcdecb3cb00e27a8b5a1a848e5666b59f5f0eaf0d5f358d2481d13d31",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/actions.ts",
+        "line": 18,
+        "sha256": "08a61ab2a728248c45fc4a5a41a6ab8ac6e95b9f228459dd7fd9a904c210670f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.commands",
+    "role": "user",
+    "feature": "Use runtime-advertised slash commands and skills",
+    "entry_point": "Composer → / command menu or advertised $skill invocation",
+    "steps": [
+      "Open the current runtime command menu",
+      "Choose an advertised harmless command or skill",
+      "Send it",
+      "Try an unavailable slash command locally"
+    ],
+    "expected_result": "Only runtime-advertised commands are accepted; unsupported commands preserve the draft and show a refusal; attachments are not combined with session commands.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/ComposerCommands.tsx",
+        "line": 70,
+        "sha256": "30eec2067ef00de49bdbdf567a3cc8d1a16799623d0e219d5c439aca6e3b5b44",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/slashCommands.ts",
+        "line": 7,
+        "sha256": "83b4f51d6348479908cf9185f891ff3380069877345c253f2a642124d6092d4a",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/Composer.tsx",
+        "line": 76,
+        "sha256": "9335049013555254da3818a3ceabc75de9cd74b3fa5763635863229067cbcbad",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.suggestions",
+    "role": "user",
+    "feature": "Use and edit suggested replies",
+    "entry_point": "Conversation suggestions → edit or send action",
+    "steps": [
+      "Open offered suggestions",
+      "Choose one with an existing draft",
+      "Use replace, append, cancel and undo where offered",
+      "Explicitly send the chosen message"
+    ],
+    "expected_result": "Suggestions do not silently destroy a draft; the user’s explicit selection is the only submitted text.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/suggestions",
+        "openapi_path": "/api/v1/agents/{id}/suggestions",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/SuggestedReplies.tsx",
+        "line": 12,
+        "sha256": "c3e74506406f680077844576accbd918f180828b95f815acd43fcfb26b9e18a0",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/QuickMessages.tsx",
+        "line": 7,
+        "sha256": "ed157cedb8e1aa74d1448424c28d49a9e07c97e8f5379dfbae84bd84f7f3b5cf",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/ComposerSuggestionEditor.tsx",
+        "line": 10,
+        "sha256": "3c3694880edb0e449a1c9c5e8745c78e79e53e9582591d21b61e577fe2c4cd0d",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.quick-messages",
+    "role": "user",
+    "feature": "Send a Trigger-defined quick message",
+    "entry_point": "Trigger-created Agent → Trigger quick messages",
+    "steps": [
+      "Open an Agent created by a local Trigger with quick messages",
+      "Read the offered message preview",
+      "Choose its send action",
+      "Observe the resulting turn"
+    ],
+    "expected_result": "The selected predefined message is sent once; quick-message sending is distinct from editing a suggested reply into an existing draft.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/QuickMessages.tsx",
+        "line": 7,
+        "sha256": "ed157cedb8e1aa74d1448424c28d49a9e07c97e8f5379dfbae84bd84f7f3b5cf",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/AgentSurface.tsx",
+        "line": 79,
+        "sha256": "449ee9f6b15290a5b14ef63575fa022c55c154bb4b1ff11d4385025aa553caba",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.copy-response",
+    "role": "user",
+    "feature": "Copy message or code content",
+    "entry_point": "Message footer → Copy content; code block copy control",
+    "steps": [
+      "Open a completed message with text/code",
+      "Copy its content",
+      "Compare the clipboard to the intended displayed content"
+    ],
+    "expected_result": "Only the chosen content is copied and copy success/failure is visible.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/MessageFooter.tsx",
+        "line": 43,
+        "sha256": "85ad0f8ae3511864f473995230576f93245e67c99b910d1965466ff9b7cd9054",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/CodeBlock.tsx",
+        "line": 36,
+        "sha256": "34908dcb23277ec80ee6b529dbfbb92701ab9673e7318e2e612bf8ddb969e53c",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

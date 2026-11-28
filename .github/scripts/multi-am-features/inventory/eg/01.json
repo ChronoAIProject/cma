@@ -1,0 +1,175 @@
+[
+  {
+    "id": "EG-001",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Open Event Gateway and switch Channels / Consumers / Agent Manager",
+    "entry_point": "CMA service selector -> Event Gateway; /event-gateway; /bots",
+    "steps": [
+      "Open Event Gateway from the service selector.",
+      "Switch Channels, Consumers and Agent Manager, then return to a draft."
+    ],
+    "expected_result": "Correct portal and permitted sections appear; channel and consumer drafts survive section switches without duplicate mutation.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/EventGatewayPortal.tsx",
+        "line": 23,
+        "anchor": "Keep channel editors",
+        "sha256": "d32ec00c017d239d3c0453312a3d6e4de3b2d6ddc0c2278a0f934c7861f0a5de"
+      },
+      {
+        "path": "web/src/services/ServiceMenu.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "d26e5f9b93bf2011136083b0a58f472c4d042af874b815cd4a3099d1a4c39ecc"
+      }
+    ]
+  },
+  {
+    "id": "EG-002",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "EG session, permissions and refusal states",
+    "entry_point": "/event-gateway -> service session check",
+    "steps": [
+      "Open with an authenticated owner.",
+      "In local fixtures repeat with absent session, denied permission and an expired session."
+    ],
+    "expected_result": "Owner sees only allowed actions; 401 requests sign-in, 403 remains a permission refusal; a late session response cannot undo logout or denial.",
+    "writes": false,
+    "api": [
+      "GET /v1/permissions",
+      "GET /api/event-gateway/auth/session"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_read_and_local_negative_cases",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/ServicePage.tsx",
+        "line": 28,
+        "anchor": "Signed out and not permitted",
+        "sha256": "25de4007e19fdcf58f2f102a4f7e77b4f5894f64f913c7240fc35d37ca9efc3e"
+      },
+      {
+        "path": "web/src/services/client.ts",
+        "line": 48,
+        "anchor": "export function can",
+        "sha256": "6d5b46c8598a323046088c0d2913ac604774b53bf85980d5254e9dfffbbb8c36"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13773,
+        "anchor": "\"operationId\": \"getPermissions\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-003",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Account identity, avatar and menu",
+    "entry_point": "EG sidebar -> Account",
+    "steps": [
+      "Open Account in expanded and collapsed sidebar.",
+      "Check displayed identity and keyboard dismissal."
+    ],
+    "expected_result": "The current user identity is shown, with initials if the avatar is unavailable; menu is usable without navigating away.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 187,
+        "anchor": "Account menu for",
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657"
+      }
+    ]
+  },
+  {
+    "id": "EG-004",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Documentation and EG integration / architecture / protocol reference",
+    "entry_point": "Account -> Docs; EG documentation view; gateway /docs and /openapi.json",
+    "steps": [
+      "Open Docs from the EG Account menu.",
+      "Open integration, architecture and protocol documents; follow an internal heading and download the reference where offered."
+    ],
+    "expected_result": "Documentation, diagrams, anchors and the API reference are readable; returning restores the EG context.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/EventGatewayDocs.tsx",
+        "line": 13,
+        "anchor": "GATEWAY_DOCUMENTS",
+        "sha256": "da9d8c5a929e5ae2390df65f5b6418332d6085e9174d67e43863d9e710c9e3e7"
+      },
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 73,
+        "anchor": "id: 'docs'",
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657"
+      },
+      {
+        "path": "api/crates/cmaeg/src/lib.rs",
+        "line": 91,
+        "anchor": "/openapi.json",
+        "sha256": "3878359e4ad21dba5b3184f61a4951f5d51ff8a274f9d8150503a40b18dfca56"
+      }
+    ]
+  },
+  {
+    "id": "EG-005",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Appearance preference",
+    "entry_point": "Account -> Appearance",
+    "steps": [
+      "Select each offered appearance option.",
+      "Close/reopen the menu and restore the initial preference."
+    ],
+    "expected_result": "Appearance updates and persists using the shared app preference.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 81,
+        "anchor": "id: 'appearance'",
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657"
+      }
+    ]
+  }
+]

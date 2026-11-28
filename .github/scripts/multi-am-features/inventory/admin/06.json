@@ -1,0 +1,211 @@
+[
+  {
+    "id": "ADM-032",
+    "role": "admin",
+    "feature": "Sandbox event timeline and pagination",
+    "entry_point": "Account menu → Operations; /operations → Runtime details → Event timeline",
+    "steps": [
+      "Read first events, Next events and refresh.",
+      "Verify sequence, timestamps, failed work details and state transitions across AMs."
+    ],
+    "expected_result": "Timeline pages contain only the selected Sandbox’s events, with no duplicate or cross-owner event mix.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/{id}/events",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_sandboxes_by_id_events"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/SandboxDetail.tsx",
+        "line": 1,
+        "sha256": "a2604de5793e52d4908e5db6a405cace29fc317a78588ad35ae5b5fda73b097f"
+      },
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/sandboxes.rs",
+        "line": 1,
+        "sha256": "deaac75ee2f9f8575def719f889a348dbf809797acf1a1d5c79cf3d599b65f3c"
+      }
+    ]
+  },
+  {
+    "id": "ADM-033",
+    "role": "admin",
+    "feature": "Cross-owner Sandbox retirement with completion checks",
+    "entry_point": "Account menu → Operations; /operations → disposable local Sandbox → Retire",
+    "steps": [
+      "Create a disposable local other-owner Sandbox and record native/home identities.",
+      "Acknowledge the RiskConfirmation and submit once.",
+      "Observe Retiring through Retired/absence and native/home cleanup; clean up the fixture through supported APIs."
+    ],
+    "expected_result": "Only control_any_sandbox authorizes retirement; duplicate click is suppressed, retired/retiring rows are disabled, and request acceptance is not called cleanup completion.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/{id}/retire",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_sandboxes_by_id_retire"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_sandboxes_by_id"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/{id}/events",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_sandboxes_by_id_events"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/Sandboxes.tsx",
+        "line": 1,
+        "sha256": "41cc00a2ef050833096603e16481389c4d3ab3eaffea1ec8efe39576fcd7e35f"
+      },
+      {
+        "path": "api/crates/layer2-core/src/sandbox/admin.rs",
+        "line": 1,
+        "sha256": "b892d0a79d82b92fd214ebaa3971b8e43e282f089cfb98d923811871806f478a"
+      }
+    ]
+  },
+  {
+    "id": "ADM-034",
+    "role": "admin",
+    "feature": "Retirement uncertain outcome reconciliation",
+    "entry_point": "Local Operations retirement with a dropped acknowledgement",
+    "steps": [
+      "Drop the response after a local retire was accepted.",
+      "Confirm the UI says outcome unknown.",
+      "Choose Check current state and inspect method/path."
+    ],
+    "expected_result": "The next request is a GET, not a second retire POST; Retiring/Retired closes the confirmation safely.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/{id}/retire",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_sandboxes_by_id_retire"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_sandboxes_by_id"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/Sandboxes.tsx",
+        "line": 1,
+        "sha256": "41cc00a2ef050833096603e16481389c4d3ab3eaffea1ec8efe39576fcd7e35f"
+      },
+      {
+        "path": "web/src/operator/failure.ts",
+        "line": 1,
+        "sha256": "758b817e5b9b09a8054fa83265f7d087425a30e5210fa7753a0251293ee9e6eb"
+      }
+    ]
+  },
+  {
+    "id": "ADM-035",
+    "role": "admin",
+    "feature": "Approve or revoke Always on for a Sandbox",
+    "entry_point": "Account menu → Operations; /operations → Runtime details → Keep this Sandbox running",
+    "steps": [
+      "Read a disposable local Sandbox revision.",
+      "Enable and disable Always on; reread on the other AM.",
+      "Submit an outdated expected_revision and test a read-only operator."
+    ],
+    "expected_result": "Current revision is required, the exception and audit advance once, and unauthorized/stale writes fail without replacing current state.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/{id}/always-on",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_sandboxes_by_id_always_on"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_sandboxes_by_id"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/SandboxDetail.tsx",
+        "line": 1,
+        "sha256": "a2604de5793e52d4908e5db6a405cace29fc317a78588ad35ae5b5fda73b097f"
+      },
+      {
+        "path": "api/crates/layer2-core/src/sandbox/admin/always_on.rs",
+        "line": 1,
+        "sha256": "21d673b53cb7d0366d8f056e597f73f6f9a69d3c5abd915f7fc2a75f9244eb68"
+      }
+    ]
+  },
+  {
+    "id": "ADM-036",
+    "role": "admin",
+    "feature": "Managed fleet runtime upgrade",
+    "entry_point": "SDK admin.updateSandboxRuntime; no upgrade button in current Operations UI",
+    "steps": [
+      "Use a disposable managed native Sandbox; read runtime_update.can_update and preserves_home.",
+      "POST the selected immutable target_version once; observe queued/updating/completed or explicit blocked/failure state.",
+      "Verify original home identity, current image and work continuity; repeat with active work and a stale/unsupported target."
+    ],
+    "expected_result": "Authorized update queues with 202, preserves the supported home, and does not interrupt active work or silently switch an unsupported runtime.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/{id}/runtime-update",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_sandboxes_by_id_runtime_update"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_sandboxes_by_id"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "sdk/typescript/src/instances/runtime-update.ts",
+        "line": 1,
+        "sha256": "f65490fa479f6a8b9c061309101ce06fca8583c8062f667e2783b6ceb65421f7"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/runtime_update.rs",
+        "line": 1,
+        "sha256": "ee23a14bcc74baac5bfae9739a016a0334ed04a72f4afaa4aaca430e379150e6"
+      }
+    ]
+  }
+]

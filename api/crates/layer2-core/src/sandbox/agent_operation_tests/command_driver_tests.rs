@@ -8,7 +8,7 @@ use tokio::sync::Notify;
 use super::command_work_tests::{admit, fixture, request};
 use super::fixtures::*;
 use crate::sandbox::agent_io::*;
-use crate::sandbox::store::{AgentLogStore, AgentStore, PageRequest};
+use crate::sandbox::store::{AgentLogStore, AgentStore, PageRequest, SandboxStore};
 use crate::sandbox::*;
 
 #[path = "command_driver_failures_tests.rs"]
@@ -25,6 +25,8 @@ mod preparation;
 enum Behavior {
     Execute,
     RejectAfterBinding,
+    AttachmentRetryAfterBinding,
+    AttachmentRetryAfterLeaseLoss,
     HangAfterBinding,
     HangBeforeBinding,
     LoseLease,
@@ -61,6 +63,21 @@ impl AgentCommandExecution for Execution {
                 .await
                 .unwrap();
         }
+        let agent = self
+            .store
+            .get_agent(&command.receipt.envelope.agent_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let sandbox = self
+            .store
+            .get_sandbox(&agent.sandbox_id)
+            .await
+            .unwrap()
+            .unwrap();
+        if command.awaits_connection_publication(&agent, &sandbox) {
+            return CommandReadiness::WaitingForAttachment;
+        }
         CommandReadiness::Ready
     }
 
@@ -74,7 +91,10 @@ impl AgentCommandExecution for Execution {
 
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt {
         self.attempts.fetch_add(1, Ordering::SeqCst);
-        if matches!(self.behavior, Behavior::LoseLease) {
+        if matches!(
+            self.behavior,
+            Behavior::LoseLease | Behavior::AttachmentRetryAfterLeaseLoss
+        ) {
             self.store
                 .release_command_claim(
                     &command.work.lease.as_ref().unwrap().claim,
@@ -82,6 +102,9 @@ impl AgentCommandExecution for Execution {
                 )
                 .await
                 .unwrap();
+        }
+        if matches!(self.behavior, Behavior::AttachmentRetryAfterLeaseLoss) {
+            return CommandAttempt::RetryAttachment;
         }
         if matches!(
             self.behavior,
@@ -100,8 +123,14 @@ impl AgentCommandExecution for Execution {
                 CommandAttempt::Reject(CommandFailureCode::AuthorityRevoked)
             }
             Behavior::HangAfterBinding => std::future::pending().await,
-            _ if result.is_ok() => CommandAttempt::Finished,
-            _ => CommandAttempt::Retry,
+            Behavior::AttachmentRetryAfterBinding => CommandAttempt::RetryAttachment,
+            _ => match result {
+                Ok(_) => CommandAttempt::Finished,
+                Err(AgentOperationError::RuntimeAttachmentUnavailable(_)) => {
+                    CommandAttempt::RetryAttachment
+                }
+                Err(_) => CommandAttempt::Retry,
+            },
         }
     }
 }
