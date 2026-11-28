@@ -62,8 +62,7 @@
           },
           "model_budget_writes_available": false,
           "model_request_budget_writes_available": false,
-          "platform_spend_writes_available": false,
-          "setting_changes": {}
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
@@ -138,21 +137,11 @@
           },
           "model_budget_writes_available": false,
           "model_request_budget_writes_available": false,
-          "platform_spend_writes_available": false,
-          "setting_changes": {
-            "marketplace": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 1
-            }
-          }
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
-      "captures": {
-        "admin_setting_marketplace_at": "/setting_changes/marketplace/at"
-      }
+      "captures": {}
     },
     {
       "id": "admin-settings-conflict",
@@ -288,28 +277,11 @@
           },
           "model_budget_writes_available": false,
           "model_request_budget_writes_available": false,
-          "platform_spend_writes_available": false,
-          "setting_changes": {
-            "marketplace": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 1
-            },
-            "sandboxes_per_user": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 2
-            }
-          }
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
-      "captures": {
-        "admin_setting_marketplace_at": "/setting_changes/marketplace/at",
-        "admin_setting_sandboxes_per_user_at": "/setting_changes/sandboxes_per_user/at"
-      }
+      "captures": {}
     },
     {
       "id": "admin-settings-reset",
@@ -377,28 +349,11 @@
           },
           "model_budget_writes_available": false,
           "model_request_budget_writes_available": false,
-          "platform_spend_writes_available": false,
-          "setting_changes": {
-            "marketplace": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 3
-            },
-            "sandboxes_per_user": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 3
-            }
-          }
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
-      "captures": {
-        "admin_setting_marketplace_at": "/setting_changes/marketplace/at",
-        "admin_setting_sandboxes_per_user_at": "/setting_changes/sandboxes_per_user/at"
-      }
+      "captures": {}
     },
     {
       "id": "admin-settings-unknown-field",
@@ -531,35 +486,11 @@
           },
           "model_budget_writes_available": false,
           "model_request_budget_writes_available": false,
-          "platform_spend_writes_available": false,
-          "setting_changes": {
-            "marketplace": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 3
-            },
-            "sandboxes_per_user": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 3
-            },
-            "trigger_orchestration": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 4
-            }
-          }
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
-      "captures": {
-        "admin_setting_marketplace_at": "/setting_changes/marketplace/at",
-        "admin_setting_sandboxes_per_user_at": "/setting_changes/sandboxes_per_user/at",
-        "admin_setting_trigger_orchestration_at": "/setting_changes/trigger_orchestration/at"
-      }
+      "captures": {}
     },
     {
       "id": "admin-trigger-resume",
@@ -622,35 +553,11 @@
           },
           "model_budget_writes_available": false,
           "model_request_budget_writes_available": false,
-          "platform_spend_writes_available": false,
-          "setting_changes": {
-            "marketplace": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 3
-            },
-            "sandboxes_per_user": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 3
-            },
-            "trigger_orchestration": {
-              "actor_reference": "actor-ab4a922790380f90",
-              "actor_name": "Morgan Park",
-              "at": "2026-09-05T00:00:00Z",
-              "revision": 5
-            }
-          }
+          "platform_spend_writes_available": false
         },
         "bodyKind": "json"
       },
-      "captures": {
-        "admin_setting_marketplace_at": "/setting_changes/marketplace/at",
-        "admin_setting_sandboxes_per_user_at": "/setting_changes/sandboxes_per_user/at",
-        "admin_setting_trigger_orchestration_at": "/setting_changes/trigger_orchestration/at"
-      }
+      "captures": {}
     },
     {
       "id": "admin-sandbox-list",
