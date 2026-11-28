@@ -168,14 +168,10 @@ impl AgentOperationService {
                 metadata,
             });
         }
-        let onboarding_setup = self.trigger_authority.as_ref().is_some_and(|authority| {
-            authority.fence().binding().is_onboarding()
-                && current
-                    .conversation
-                    .first_message
-                    .as_ref()
-                    .is_some_and(|first| first.purpose == Some(super::FirstMessagePurpose::Setup))
-        });
+        let onboarding_setup = self
+            .trigger_authority
+            .as_ref()
+            .is_some_and(|authority| authority.fence().binding().is_onboarding_setup());
         if !onboarding_setup {
             logs.extend(
                 next.conversation

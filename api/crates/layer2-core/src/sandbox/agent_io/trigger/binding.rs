@@ -283,6 +283,11 @@ impl TriggerFirstMessageBinding {
     pub fn is_onboarding(&self) -> bool {
         self.onboarding.is_some()
     }
+    pub(in crate::sandbox) fn is_onboarding_setup(&self) -> bool {
+        self.onboarding
+            .as_ref()
+            .is_some_and(|source| source.purpose == FirstMessagePurpose::Setup)
+    }
     pub fn document_key(&self) -> String {
         self.launch_id.as_ref().map_or_else(
             || format!("onboarding:{}", self.agent_id()),
