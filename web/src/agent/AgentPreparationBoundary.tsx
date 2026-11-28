@@ -187,7 +187,7 @@ function PreparationHost(
           incarnation: ready?.conversation.agentIncarnation,
         }}
         message={intent?.body.initial_message}
-        details={
+        recordedProgress={
           !matched ? (
             <ProvisioningProgress
               title="Recorded setup progress"

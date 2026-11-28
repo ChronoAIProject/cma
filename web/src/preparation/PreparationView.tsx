@@ -36,6 +36,7 @@ export function PreparationView({
   model,
   motion,
   message,
+  recordedProgress,
   details,
   actions,
   notices,
@@ -45,6 +46,7 @@ export function PreparationView({
   readonly model: PreparationPresentation;
   readonly motion?: PreparationMotion;
   readonly message?: string;
+  readonly recordedProgress?: ReactNode;
   readonly details?: ReactNode;
   readonly actions?: ReactNode;
   readonly notices?: ReactNode;
@@ -126,10 +128,16 @@ export function PreparationView({
           </strong>
         </li>
       </ol>
+      {recordedProgress}
       <AgentProvisioningProgress
         receipt={model.receipt}
         operation={model.operation}
-        task={{ now, stage: model.stage, label: model.label }}
+        task={{
+          now,
+          stage: model.stage,
+          label: model.label,
+          phaseHistoryUnavailable: Boolean(recordedProgress && !model.operation),
+        }}
       />
       {model.error ? (
         <p className="preparation__error" role="alert">
