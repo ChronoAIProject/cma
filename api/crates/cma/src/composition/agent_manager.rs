@@ -20,16 +20,6 @@ pub(super) async fn register(
     }
 }
 
-pub(super) fn register_retirement_capture(
-    manager: &Option<Arc<crate::agent_manager::AgentManager>>,
-    lifecycle: &mut SandboxLifecycleComposition,
-) -> Result<(), String> {
-    if let (Some(manager), Some(capture)) = (manager, lifecycle.capture_drain.take()) {
-        manager.register_retirement_capture(capture)?;
-    }
-    Ok(())
-}
-
 pub(super) fn owner_restart(
     config: &Config,
     stores: &MongoStores,
