@@ -10,6 +10,8 @@ import { eventStream } from './streaming.js';
 import { commandStreamInput } from './command-stream-input.js';
 import { conversationId, v2Request } from './responses-v2/requests.js';
 import { v2ResponseFrames } from './responses-v2/stream.js';
+import { submitResponseStream, type V2RecoveryNotice } from './responses-v2/recovery.js';
+export type { V2RecoveryNotice } from './responses-v2/recovery.js';
 import * as controls from './responses-v2/controls.js';
 import * as interruption from './responses-v2/interruption.js';
 import type { V2ResponseInterruptionRequest } from './responses-v2/interruption.js';
@@ -44,6 +46,8 @@ export interface V2ResponseStreamOptions extends OperationOptions {
   /** Persist this key before sending. Retry explicitly with the same body/key after a lost reply. */
   readonly idempotencyKey?: string;
   readonly onReceipt?: (receipt: V2ResponseReceipt) => void | Promise<void>;
+  /** Observe the correlation and cursor of a bounded read-only recovery attempt. */
+  readonly onRecovery?: (notice: V2RecoveryNotice) => void | Promise<void>;
   readonly onEvent: (event: V2ResponseEvent) => void | Promise<void>;
 }
 export interface V2ReplayOptions extends Omit<V2ResponseStreamOptions, 'idempotencyKey'> {
@@ -253,31 +257,14 @@ export class ResponsesV2 {
     const { body: snapshot, headers } = commandStreamInput(body, options.idempotencyKey);
     input((value) => v2Request(value, agent), snapshot);
     const conversation = agent ?? conversationId(snapshot.conversation);
-    const stream = eventStream(
+    return submitResponseStream(
       this.config,
       path,
-      options,
-      (response, signal) =>
-        v2ResponseFrames(response, signal, {
-          conversation: conversation?.startsWith('agt_') ? conversation : undefined,
-          onReceipt: options.onReceipt,
-        }),
-      'Responses v2',
       snapshot,
       headers,
+      options,
+      conversation?.startsWith('agt_') ? conversation : undefined,
     );
-    let outcome: V2ResponseObject | undefined;
-    for await (const event of stream) {
-      await acknowledge(options, event);
-      if (
-        'response' in event &&
-        ['completed', 'failed', 'incomplete'].includes(event.response.status)
-      )
-        outcome = event.response;
-    }
-    if (outcome === undefined)
-      throw new ProtocolError('Responses stream returned no terminal resource');
-    return outcome;
   }
 }
 
