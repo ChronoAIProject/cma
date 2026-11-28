@@ -281,6 +281,111 @@ async fn default_profiles_seed_idempotently_and_refuse_configuration_drift() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn default_profiles_quarantine_malformed_payloads_without_replacing_them() {
+    use layer2_core::{
+        AgentProfileId, WorkspaceProfileId, DEFAULT_AGENT_PROFILE_ID, DEFAULT_PROFILE_REVISION,
+        DEFAULT_WORKSPACE_PROFILE_ID,
+    };
+
+    let (client, name) = database("default_profile_quarantine").await;
+    let store = MongoProfileStore::open(&client, &name).await.unwrap();
+    let bounds = layer2_core::profiles::ProfileCapacityBounds {
+        min_cpu_millis: 100,
+        max_cpu_millis: 8_000,
+        min_memory_mib: 128,
+        max_memory_mib: 16_384,
+    };
+    let spec = DefaultProfileSpec {
+        cpu_millis: 1_000,
+        memory_mib: 1_024,
+        agent_model: "model-a".into(),
+        agent_effort: ThinkingEffort::High,
+    };
+    store
+        .seed_default_profiles(&spec, bounds, &[])
+        .await
+        .unwrap();
+
+    let agent = AgentProfileId::new(DEFAULT_AGENT_PROFILE_ID);
+    let workspace = WorkspaceProfileId::new(DEFAULT_WORKSPACE_PROFILE_ID);
+    let draft_key = doc! {"_id": agent.as_str()};
+    let revision_key =
+        doc! {"profile_id": agent.as_str(), "revision": i64::from(DEFAULT_PROFILE_REVISION)};
+    for (collection, key) in [
+        (&store.agent_profiles, draft_key.clone()),
+        (&store.agent_revisions, revision_key.clone()),
+    ] {
+        collection
+            .update_one(key, doc! {"$set": {"record": {"unexpected": true}}})
+            .await
+            .unwrap();
+    }
+    let draft = store
+        .agent_profiles
+        .find_one(draft_key.clone())
+        .await
+        .unwrap();
+    let revision = store
+        .agent_revisions
+        .find_one(revision_key.clone())
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        store
+            .seed_default_profiles(&spec, bounds, &[])
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .agent_profiles
+                .find_one(draft_key.clone())
+                .await
+                .unwrap(),
+            draft
+        );
+        assert_eq!(
+            store
+                .agent_revisions
+                .find_one(revision_key.clone())
+                .await
+                .unwrap(),
+            revision
+        );
+    }
+    assert!(matches!(
+        store.agent_profile(&agent).await,
+        Err(ProfileStoreError::Corrupt(_))
+    ));
+    assert!(matches!(
+        store
+            .agent_profile_revision(&agent, DEFAULT_PROFILE_REVISION)
+            .await,
+        Err(ProfileStoreError::Corrupt(_))
+    ));
+    assert!(store.workspace_profile(&workspace).await.unwrap().is_some());
+    assert!(store
+        .workspace_profile_revision(&workspace, DEFAULT_PROFILE_REVISION)
+        .await
+        .unwrap()
+        .is_some());
+
+    store
+        .agent_revisions
+        .update_one(
+            revision_key,
+            doc! {"$set": {"document_schema_version": 999_i64}},
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        store.seed_default_profiles(&spec, bounds, &[]).await,
+        Err(layer2_core::StoreError::Malformed(_))
+    ));
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn startup_refuses_an_unknown_document_schema_version() {
     let (client, name) = database("unknown_version").await;
     client
