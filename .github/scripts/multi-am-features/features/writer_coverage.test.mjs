@@ -156,6 +156,21 @@ test('owner epoch and commit acknowledgement witnesses belong only to prepared S
   assert.deepEqual(mapping(features), []);
 });
 
+test('prepared coverage retains a failed attempt and rejects public cleanup failure after successful steps', async () => {
+  const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
+  const assigned = registry.cases.filter(row => ['SW05', 'SW06', 'SW13'].includes(row.id));
+  const names = new Set(assigned.flatMap(row => row.required_assertions.map(assertion => assertion.case)));
+  const journey = {verdict: 'LOCAL_PREPARED_TWO_AM_PASS',
+    steps: [...names].map(name => ({name, verdict: 'PASS'}))};
+  const evaluate = () => writerCoverage(registry, [], journey, 'prepared');
+  assert.equal(evaluate().verdict, 'PASS');
+  journey.steps.unshift({name: 'prepared_create_on_b', verdict: 'FAIL'});
+  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['FAIL', 'PASS', 'FAIL']);
+  journey.steps.shift();
+  journey.verdict = 'FAIL_CLEANUP';
+  assert.deepEqual(evaluate().groups.map(row => row.verdict), ['FAIL', 'FAIL', 'FAIL']);
+});
+
 test('features SW08 requires both provenance progress journeys', async () => {
   const registry = JSON.parse(await readFile(new URL('../writer-regressions.json', import.meta.url)));
   const group = registry.cases.find(row => row.id === 'SW08');

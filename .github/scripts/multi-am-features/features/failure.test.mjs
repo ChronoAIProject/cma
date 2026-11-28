@@ -107,6 +107,25 @@ test('lifecycle polling fails on repeated transport errors or an HTTP refusal', 
   assert.deepEqual(transient, [{manager: 'b', kind: 'request_timeout'}]);
 });
 
+test('a recovered lifecycle socket cannot extend the original readiness deadline', async t => {
+  let elapsed = 0, reads = 0;
+  const transient = [];
+  t.mock.method(performance, 'now', () => elapsed);
+  await assert.rejects(pollLifecycleOperation(async () => {
+    reads += 1;
+    if (reads === 1) throw new TypeError('fetch failed', {cause: {code: 'UND_ERR_SOCKET'}});
+    assert.equal(reads, 2, 'readiness must not poll again after its original deadline');
+    elapsed += 60;
+    return {status: 'running', phase: 'agent_startup'};
+  }, body => body.status === 'succeeded', {manager: 'b', interval: 0, timeout: 100,
+    code: 'fixture_ready_deadline', onTransient: failure => {
+      transient.push(failure);
+      elapsed += 60;
+    }}), /fixture_ready_deadline/);
+  assert.equal(reads, 2);
+  assert.deepEqual(transient, [{manager: 'b', kind: 'transport_error', cause: 'UND_ERR_SOCKET'}]);
+});
+
 test('the failure snapshot binds parent progress to the exact admitted Agent and owner', async () => {
   const source = await readFile(new URL('../owner/creation_failure_snapshot.js', import.meta.url), 'utf8');
   const owner = 'fixture-owner';

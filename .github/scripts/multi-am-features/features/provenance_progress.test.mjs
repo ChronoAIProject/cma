@@ -121,6 +121,66 @@ test('provenance adapter failures identify the control and still restore the ori
   assert.deepEqual(state.read(), {active: false, prompt: null});
 });
 
+test('provenance peer refusal is not replayed and restores its held transaction', async t => {
+  const state = fixture();
+  const request = state.api.rawRequest;
+  const failures = [];
+  const refusal = Object.assign(Error('api_status_503'), {response: {status: 503,
+    body: {code: 'agent_owner_unavailable'}, timing: {am: 'b', method: 'PATCH',
+      route: '/api/v1/agents/{id}/preferences', request_id: 'fixture-refusal'}}});
+  const writes = [];
+  t.mock.method(state.api, 'rawRequest', async (am, method, route, options) => {
+    if (method !== 'PATCH') return request(am, method, route, options);
+    writes.push({am, route, options});
+    throw refusal;
+  });
+  await assert.rejects(provenanceKnownAbort({...state,
+    recordFailure: (stage, error) => failures.push({stage, error})}), error => error === refusal);
+  assert.equal(writes.length, 1);
+  assert.equal(writes[0].am, 'b');
+  assert.equal(writes[0].options.body.expected_revision, 11);
+  assert.deepEqual(state.actions, ['arm', 'sample', 'restore']);
+  assert.deepEqual(state.read(), {active: false, prompt: null});
+  assert.deepEqual(state.writes, []);
+  assert.deepEqual(failures, [{stage: 'primary', error: refusal}]);
+  assert.equal(state.proofs.length, 1);
+  assert.equal(state.proofs[0].verdict, 'FAIL');
+  assert.equal(state.proofs[0].owner, 'a');
+  assert.equal(state.proofs[0].ingress, 'b');
+  assert.equal(state.proofs[0].owner_epoch, 4);
+  assert.equal(state.proofs[0].request_id, 'fixture-refusal');
+});
+
+test('provenance preserves the peer refusal when disarming its transaction also fails', async t => {
+  const state = fixture();
+  const request = state.api.rawRequest, control = state.adapter.provenanceBackfill;
+  const refusal = Object.assign(Error('api_status_503'), {response: {status: 503}});
+  const restoration = Error('fixture_restore_failed');
+  const failures = [];
+  let writes = 0, restores = 0;
+  t.mock.method(state.api, 'rawRequest', async (am, method, route, options) => {
+    if (method !== 'PATCH') return request(am, method, route, options);
+    writes += 1;
+    throw refusal;
+  });
+  t.mock.method(state.adapter, 'provenanceBackfill', async options => {
+    if (options.action !== 'restore') return control(options);
+    restores += 1;
+    throw restoration;
+  });
+  await assert.rejects(provenanceKnownAbort({...state,
+    recordFailure: (stage, error) => failures.push({stage, error})}), error => error === refusal);
+  assert.equal(writes, 1);
+  assert.equal(restores, 1);
+  assert.equal(failures[0].stage, 'primary');
+  assert.equal(failures[0].error, refusal);
+  const retained = failures.find(row => row.stage === 'restoration');
+  assert.equal(retained.error.message, 'provenance_progress_control_restore_failed');
+  assert.equal(retained.error.cause, restoration);
+  assert.deepEqual(state.writes, []);
+  assert.deepEqual(state.read(), {active: true, prompt: null});
+});
+
 function uncertainFixture({reusedSweep = false, lost = 5, confirmed = false} = {}) {
   const record = {agentId: 'agent', sandboxId: 'sandbox', operationId: 'operation'};
   const transaction = 'a'.repeat(64), previousSweep = 'b'.repeat(64);
