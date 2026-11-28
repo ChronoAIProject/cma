@@ -72,11 +72,13 @@ fn mixed_chrono_catalogue_excludes_image_and_unrecognized_model_families() {
         "gpt-5.6",
         "gpt-5.6-terra",
         "gpt-5.6-luna",
+        "gpt-6.2-sol",
+        "gpt-6.2-astra",
+        "gpt-6.1-terra",
         "gpt-6.1-sol",
         "gpt-6-sol",
         "gpt-6-luna",
         "gpt-6-astra",
-        "gpt-5.5",
         "gpt-5.4",
         "gpt-5.4-mini",
         "gpt-5.3-codex-spark",
@@ -87,12 +89,19 @@ fn mixed_chrono_catalogue_excludes_image_and_unrecognized_model_families() {
         "gpt-image-2",
         "gpt-image-2.5-flare",
         "gpt-image-2.5-sunburst",
+        "gpt-image-2.6-flare",
+        "gpt-image-2.6-sunburst",
     ];
     // The observed provider contract has type=model for every row, including
     // the image models. It provides no modality or endpoint capability fields.
     let body = json!({"data": data.map(|id| json!({"id":id,"type":"model","object":"model","display_name":id}))});
     let models = parse(&serde_json::to_vec(&body).unwrap()).unwrap();
-    assert_eq!(models.len(), 15);
+    assert_eq!(models.len(), 17);
+    for id in ["gpt-6.2-sol", "gpt-6.2-astra"] {
+        assert!(models
+            .iter()
+            .any(|model| model.id == id && model.label == id));
+    }
     assert!(models.iter().any(|model| model.id == "gpt-6.1-sol"));
     assert!(models.iter().any(|model| model.id == "codex-auto-review"));
     assert!(models
