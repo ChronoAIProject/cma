@@ -33,6 +33,7 @@ impl Default for MemoryStore {
     fn default() -> Self {
         Self {
             stored: Mutex::new(StoredPlatformSettings {
+                changes: Default::default(),
                 revision: 0,
                 settings: PlatformSettings::default(),
             }),
@@ -54,6 +55,16 @@ impl PlatformSettingsStore for MemoryStore {
         expected_revision: u64,
         settings: &PlatformSettings,
     ) -> Result<StoredPlatformSettings, StoreError> {
+        self.replace_with_changes(expected_revision, settings, &Default::default())
+            .await
+    }
+
+    async fn replace_with_changes(
+        &self,
+        expected_revision: u64,
+        settings: &PlatformSettings,
+        changes: &PlatformSettingChanges,
+    ) -> Result<StoredPlatformSettings, StoreError> {
         let mut conflicts = self.conflicts_remaining.lock().unwrap();
         if *conflicts > 0 {
             *conflicts -= 1;
@@ -74,6 +85,7 @@ impl PlatformSettingsStore for MemoryStore {
             });
         }
         *stored = StoredPlatformSettings {
+            changes: changes.clone(),
             revision: expected_revision + 1,
             settings: settings.clone(),
         };
@@ -264,4 +276,50 @@ async fn trigger_controls_merge_over_conflicts_and_are_idempotent() {
     }));
     assert_eq!(records[0].detail.get(DetailKey::Status), Some("paused"));
     assert_eq!(records[2].detail.get(DetailKey::Status), Some("running"));
+}
+
+#[tokio::test]
+async fn only_the_winning_effective_change_updates_attribution() {
+    let alice = caller([Capability::ConfigurePlatform]);
+    let bob = Caller::new(
+        SubjectId::new("operator-b"),
+        Authorization::new([Capability::ConfigurePlatform]),
+    );
+    let (service, _, _) = service();
+    let mut settings = service.current().await.unwrap().settings;
+    settings.retention.agent_log_days += 1;
+    let first = service
+        .configure_platform(&alice, 0, &settings)
+        .await
+        .unwrap();
+    let retention = first.changes["agent_log_retention"].clone();
+    assert_eq!(retention.actor, alice.subject);
+    assert_eq!(retention.revision, 1);
+    assert!(crate::seconds_from_rfc3339(&retention.at).is_some());
+
+    settings.limits.visitor_max_sandboxes += 1;
+    assert!(matches!(
+        service.configure_platform(&bob, 0, &settings).await,
+        Err(CoreError::InvalidState(_))
+    ));
+    assert_eq!(service.current().await.unwrap().changes, first.changes);
+    let second = service
+        .configure_platform(&bob, 1, &settings)
+        .await
+        .unwrap();
+    assert_eq!(second.changes.len(), 2);
+    assert_eq!(second.changes["agent_log_retention"], retention);
+    assert_eq!(second.changes["visitor_sandboxes"].actor, bob.subject);
+    assert_eq!(second.changes["visitor_sandboxes"].revision, 2);
+    let third = service
+        .configure_platform(&alice, 2, &settings)
+        .await
+        .unwrap();
+    assert_eq!(third.changes, second.changes);
+
+    let paused = service.pause_triggers(&bob).await.unwrap();
+    assert_eq!(paused.changes["trigger_orchestration"].actor, bob.subject);
+    assert_eq!(paused.changes["trigger_orchestration"].revision, 4);
+    let unchanged = service.pause_triggers(&alice).await.unwrap();
+    assert_eq!(unchanged.changes, paused.changes);
 }

@@ -9,7 +9,10 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use layer2_core::{Capability, CoreError, PlatformSettings, PlatformSettingsService};
+use layer2_core::{
+    Caller, Capability, CoreError, PlatformSettings, PlatformSettingsService,
+    StoredPlatformSettings, UserDirectory,
+};
 
 mod budget;
 
@@ -19,13 +22,15 @@ use super::NotAnOperator;
 use crate::rest::{problem_document, problem_response};
 
 mod body;
+mod projection;
 
 use body::SettingsJson;
 pub(crate) use body::{
     InactivitySettingsBody, MarketplaceSettingsBody, PatchRequest, PlatformDefaultsBody,
     PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
-    RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
+    RetentionSettingsBody, TriggerSettingsBody, UsageReportingSettingsBody,
 };
+pub(crate) use projection::{SettingChangeView, SettingsView};
 
 pub(crate) enum Failure {
     Body(StatusCode, &'static str, &'static str, &'static str),
@@ -124,8 +129,15 @@ impl IntoResponse for Failure {
     }
 }
 
+#[derive(Clone)]
+pub(crate) struct SettingsState {
+    service: Arc<PlatformSettingsService>,
+    users: Option<Arc<UserDirectory>>,
+}
+
 pub(super) fn routes<S: Clone + Send + Sync + 'static>(
-    settings: Arc<PlatformSettingsService>,
+    service: Arc<PlatformSettingsService>,
+    users: Option<Arc<UserDirectory>>,
 ) -> Router<S> {
     Router::new()
         .route(
@@ -133,23 +145,44 @@ pub(super) fn routes<S: Clone + Send + Sync + 'static>(
             get(read).put(replace).patch(patch),
         )
         .route("/api/v1/admin/settings/reset", post(reset))
-        .with_state(settings)
+        .with_state(SettingsState { service, users })
+}
+
+pub(super) async fn view(
+    stored: StoredPlatformSettings,
+    service: &PlatformSettingsService,
+    users: &Option<Arc<UserDirectory>>,
+    caller: &Caller,
+) -> SettingsView {
+    let allowed = caller.require(Capability::ReadActivityLog).is_ok();
+    let names = if allowed && !stored.changes.is_empty() {
+        let mut subjects: Vec<_> = stored
+            .changes
+            .values()
+            .map(|change| change.actor.clone())
+            .collect();
+        subjects.sort_by(|a, b| a.0.cmp(&b.0));
+        subjects.dedup();
+        crate::rest::public_names::resolve(users, &subjects).await
+    } else {
+        Default::default()
+    };
+    SettingsView::new(stored, service, allowed, &names)
 }
 
 #[utoipa::path(get, path = "/api/v1/admin/settings", tag = "administration", responses((status = 200, body = SettingsView), (status = 403, body = crate::rest::ProblemDocument)))]
 pub(crate) async fn read(
-    State(service): State<Arc<PlatformSettingsService>>,
+    State(SettingsState { service, users }): State<SettingsState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
 ) -> Result<Json<SettingsView>, Failure> {
-    Ok(Json(SettingsView::new(
-        service.read(&caller).await?,
-        &service,
-    )))
+    Ok(Json(
+        view(service.read(&caller).await?, &service, &users, &caller).await,
+    ))
 }
 
 #[utoipa::path(put, path = "/api/v1/admin/settings", tag = "administration", request_body = ReplaceRequest, responses((status = 200, body = SettingsView), (status = 409, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument)))]
 pub(crate) async fn replace(
-    State(service): State<Arc<PlatformSettingsService>>,
+    State(SettingsState { service, users }): State<SettingsState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     SettingsJson(body): SettingsJson<ReplaceRequest>,
 ) -> Result<Json<SettingsView>, Failure> {
@@ -164,17 +197,22 @@ pub(crate) async fn replace(
         }
         settings.model_budget = current.settings.model_budget;
     }
-    Ok(Json(SettingsView::new(
-        service
-            .configure_platform(&caller, body.expected_revision, &settings)
-            .await?,
-        &service,
-    )))
+    Ok(Json(
+        view(
+            service
+                .configure_platform(&caller, body.expected_revision, &settings)
+                .await?,
+            &service,
+            &users,
+            &caller,
+        )
+        .await,
+    ))
 }
 
 #[utoipa::path(patch, path = "/api/v1/admin/settings", tag = "administration", request_body = PatchRequest, responses((status = 200, body = SettingsView), (status = 409, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument)))]
 pub(crate) async fn patch(
-    State(service): State<Arc<PlatformSettingsService>>,
+    State(SettingsState { service, users }): State<SettingsState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     SettingsJson(body): SettingsJson<PatchRequest>,
 ) -> Result<Json<SettingsView>, Failure> {
@@ -184,28 +222,38 @@ pub(crate) async fn patch(
         return Err(Failure::Conflict);
     }
     let (expected_revision, settings) = body.apply(current.settings)?;
-    Ok(Json(SettingsView::new(
-        service
-            .configure_platform(&caller, expected_revision, &settings)
-            .await?,
-        &service,
-    )))
+    Ok(Json(
+        view(
+            service
+                .configure_platform(&caller, expected_revision, &settings)
+                .await?,
+            &service,
+            &users,
+            &caller,
+        )
+        .await,
+    ))
 }
 
 #[utoipa::path(post, path = "/api/v1/admin/settings/reset", tag = "administration", request_body = ResetRequest, responses((status = 200, body = SettingsView), (status = 409, body = crate::rest::ProblemDocument), (status = 503, body = crate::rest::ProblemDocument)))]
 pub(crate) async fn reset(
-    State(service): State<Arc<PlatformSettingsService>>,
+    State(SettingsState { service, users }): State<SettingsState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     SettingsJson(body): SettingsJson<ResetRequest>,
 ) -> Result<Json<SettingsView>, Failure> {
-    Ok(Json(SettingsView::new(
-        service
-            .configure_platform(
-                &caller,
-                body.expected_revision,
-                &PlatformSettings::default(),
-            )
-            .await?,
-        &service,
-    )))
+    Ok(Json(
+        view(
+            service
+                .configure_platform(
+                    &caller,
+                    body.expected_revision,
+                    &PlatformSettings::default(),
+                )
+                .await?,
+            &service,
+            &users,
+            &caller,
+        )
+        .await,
+    ))
 }

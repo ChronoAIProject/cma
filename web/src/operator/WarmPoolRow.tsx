@@ -10,6 +10,7 @@ import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';
 import { FailureNotice } from './records';
 import { validPoolNumber } from './WarmPoolFields';
+import { WarmPoolImage } from './WarmPoolImage';
 
 const STATUS = {
   pending: { label: 'Pending', tone: 'active' },
@@ -27,6 +28,7 @@ export function warmPoolColumns(previousRuntime: boolean) {
     { header: 'Status' },
     { header: 'Desired', align: 'end' as const },
     { header: 'Ready', align: 'end' as const },
+    { header: 'Provider target', align: 'end' as const },
     { header: 'Pending', align: 'end' as const },
     // A previous runtime is never prewarmed again, so it has no target to edit.
     ...(previousRuntime ? [] : [{ header: 'Target' }]),
@@ -45,12 +47,18 @@ export function WarmPoolRow({
   pool,
   previousRuntime = false,
   currentDefault = false,
+  defaultConfiguration = false,
+  matchingSize = false,
+  runtimeVersion,
   onChanged,
 }: {
   readonly client: OperatorClient;
   readonly pool: WarmPoolView;
   readonly previousRuntime?: boolean;
   readonly currentDefault?: boolean;
+  readonly defaultConfiguration?: boolean;
+  readonly matchingSize?: boolean;
+  readonly runtimeVersion?: string | undefined;
   readonly onChanged: (pool: WarmPoolView) => void;
 }) {
   const [target, setTarget] = useState(String(pool.target_replicas));
@@ -122,10 +130,14 @@ export function WarmPoolRow({
       <tr aria-label={`Warm pool ${label}`}>
         <TableCell>
           <span className="warm-pool-size">{label}</span>
-          {previousRuntime ? <code className="warm-pool-reference">{pool.image}</code> : null}
+          {previousRuntime ? <WarmPoolImage image={pool.image} version={runtimeVersion} /> : null}
           {currentDefault ? (
-            <span className="warm-pool-tag">Current default configuration</span>
+            <span className="warm-pool-tag">Used for new default-size Agents</span>
           ) : null}
+          {!currentDefault && defaultConfiguration ? (
+            <span className="warm-pool-tag">Default configuration</span>
+          ) : null}
+          {matchingSize ? <span className="warm-pool-tag">For matching size</span> : null}
           {pool.config_sha256 ? (
             <details className="warm-pool-config">
               <summary>Pool configuration</summary>
@@ -138,6 +150,7 @@ export function WarmPoolRow({
         </TableCell>
         <TableCell align="end">{pool.target_replicas}</TableCell>
         <TableCell align="end">{ready ?? 'Unknown'}</TableCell>
+        <TableCell align="end">{pool.provider_target_replicas ?? 'Unknown'}</TableCell>
         <TableCell align="end">{pending ?? 'Unknown'}</TableCell>
         {previousRuntime ? null : (
           <TableCell>

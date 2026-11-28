@@ -166,6 +166,7 @@ struct MutableSettings(Mutex<StoredPlatformSettings>);
 impl MutableSettings {
     fn new() -> Self {
         Self(Mutex::new(StoredPlatformSettings {
+            changes: Default::default(),
             revision: 0,
             settings: PlatformSettings::default(),
         }))
@@ -191,6 +192,7 @@ impl PlatformSettingsStore for MutableSettings {
             });
         }
         *stored = StoredPlatformSettings {
+            changes: Default::default(),
             revision: expected_revision + 1,
             settings: settings.clone(),
         };

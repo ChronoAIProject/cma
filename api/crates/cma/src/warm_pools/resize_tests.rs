@@ -39,7 +39,7 @@ impl<P: NativePoolControl + 'static> HostedBackend for PoolBackend<P> {
     }
 }
 
-fn service(
+pub(super) fn service(
     original: PoolTarget,
     current: NativePoolConfiguration,
 ) -> (Arc<NativeWarmPools>, Arc<Memory>) {

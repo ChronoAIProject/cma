@@ -146,6 +146,46 @@ async fn settings_support_read_replace_presence_aware_patch_and_reset() {
 }
 
 #[tokio::test]
+async fn platform_settings_attribution_requires_activity_permission_and_covers_only_changed_settings(
+) {
+    let fixture = fixture(false);
+    let changed = send(
+        &fixture.app,
+        Method::PATCH,
+        "/api/v1/admin/settings",
+        Some(json!({"expected_revision": 0, "marketplace": {"enabled": false}})),
+        [Capability::ConfigurePlatform],
+    )
+    .await;
+    assert_eq!(changed.status(), StatusCode::OK);
+    assert!(response_json(changed)
+        .await
+        .get("setting_changes")
+        .is_none());
+
+    let read = send(
+        &fixture.app,
+        Method::GET,
+        "/api/v1/admin/settings",
+        None,
+        [Capability::ConfigurePlatform, Capability::ReadActivityLog],
+    )
+    .await;
+    assert_eq!(read.status(), StatusCode::OK);
+    let read = response_json(read).await;
+    let changes = read["setting_changes"].as_object().unwrap();
+    assert_eq!(changes.len(), 1);
+    let stamp = &changes["marketplace"];
+    assert_eq!(stamp["revision"], 1);
+    assert!(stamp["actor_reference"]
+        .as_str()
+        .unwrap()
+        .starts_with("actor-"));
+    assert!(stamp.get("actor").is_none());
+    assert!(layer2_core::seconds_from_rfc3339(stamp["at"].as_str().unwrap()).is_some());
+}
+
+#[tokio::test]
 async fn settings_refusals_are_confidential_specific_and_revision_safe() {
     let fixture = fixture(false);
     let capability = [Capability::ConfigurePlatform];

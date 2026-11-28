@@ -30,7 +30,8 @@
               "resource_name": null,
               "error": null,
               "config_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-              "machine": false
+              "machine": false,
+              "current_runtime": true
             },
             {
               "id": "wp_contract_desktop",
@@ -45,7 +46,8 @@
               "resource_name": null,
               "error": null,
               "config_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-              "machine": true
+              "machine": true,
+              "current_runtime": true
             },
             {
               "id": "wp_contract_retiring_desktop",
@@ -62,7 +64,8 @@
               "resource_name": "pool-contract-retiring-desktop",
               "error": null,
               "config_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
-              "machine": true
+              "machine": true,
+              "current_runtime": false
             }
           ],
           "default_image": "registry/runtime@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -70,7 +73,18 @@
           "default_memory_mib": 1024,
           "available": true,
           "default_config_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-          "machine_image": "registry/desktop@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          "machine_image": "registry/desktop@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "machine_config_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "default_claim_pool_id": null,
+          "machine_claim_pool_id": "wp_contract_desktop",
+          "default_capacity_pool_id": null,
+          "machine_capacity_pool_id": "wp_contract_desktop",
+          "runtime_versions": [
+            {
+              "image": "registry/desktop@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              "version": "1.2.3"
+            }
+          ]
         },
         "bodyKind": "json"
       },

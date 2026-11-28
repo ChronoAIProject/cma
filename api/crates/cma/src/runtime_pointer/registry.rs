@@ -105,7 +105,7 @@ impl RuntimePointerConfig {
 }
 
 pub(crate) struct RegistryRuntimePointers {
-    http: reqwest::Client,
+    registry: RuntimeRegistry,
     config: RuntimePointerConfig,
 }
 
@@ -161,25 +161,60 @@ struct ConfigInner {
 
 impl RegistryRuntimePointers {
     pub(crate) fn new(config: RuntimePointerConfig) -> Result<Self, PointerUnavailable> {
+        let registry = RuntimeRegistry::new(config.token.clone())?;
+        Ok(Self { registry, config })
+    }
+}
+
+pub(crate) struct RuntimeRegistry {
+    http: reqwest::Client,
+    token: Option<String>,
+}
+
+impl RuntimeRegistry {
+    pub(crate) fn new(token: Option<String>) -> Result<Self, PointerUnavailable> {
         let http = reqwest::Client::builder()
             .https_only(true)
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(8))
             .build()
             .map_err(|_| PointerUnavailable)?;
-        Ok(Self { http, config })
+        Ok(Self { http, token })
+    }
+
+    /// Read display metadata for one exact, built-in Runtime image.
+    pub(crate) async fn version(&self, image: &str) -> Option<String> {
+        let (host, reference) = image.split_once('/')?;
+        let (repository, digest) = reference.split_once('@')?;
+        if host != HOST || !matches!(repository, AGENT | MACHINE) || !valid_digest(digest) {
+            return None;
+        }
+        let token = self.registry_token(repository).await.ok()?;
+        let (_, root, _) = self.manifest(repository, digest, &token).await.ok()?;
+        let config = self
+            .platform_config(repository, root, &token)
+            .await
+            .ok()?
+            .ok()?;
+        let version = config
+            .config
+            .labels
+            .get("org.opencontainers.image.version")?;
+        semver::Version::parse(version).ok()?;
+        Some(version.clone())
     }
 
     async fn registry_token(&self, repository: &str) -> Result<String, PointerUnavailable> {
         let scope = format!("repository:{repository}:pull");
-        let reply = self
+        let request = self
             .http
             .get(format!("https://{HOST}/token"))
-            .query(&[("service", HOST), ("scope", scope.as_str())])
-            .basic_auth("x-access-token", self.config.token.as_ref())
-            .send()
-            .await
-            .map_err(|_| PointerUnavailable)?;
+            .query(&[("service", HOST), ("scope", scope.as_str())]);
+        let request = match &self.token {
+            Some(token) => request.basic_auth("x-access-token", Some(token)),
+            None => request,
+        };
+        let reply = request.send().await.map_err(|_| PointerUnavailable)?;
         let token: RegistryToken = decode(&body(reply).await?)?;
         if token.token.is_empty() || !token.token.bytes().all(|byte| byte.is_ascii_graphic()) {
             return Err(PointerUnavailable);
@@ -278,6 +313,43 @@ impl RegistryRuntimePointers {
         }
         decode(&bytes)
     }
+    async fn platform_config(
+        &self,
+        repo: &str,
+        root: Manifest,
+        token: &str,
+    ) -> Result<Result<ConfigBlob, &'static str>, PointerUnavailable> {
+        let manifest = match root.media_type.as_str() {
+            OCI_INDEX | DOCKER_INDEX => {
+                let mut platforms = root
+                    .manifests
+                    .iter()
+                    .filter(|entry| entry.platform.as_ref().is_some_and(Platform::supported));
+                let Some(platform) = platforms.next() else {
+                    return Ok(Err("platform_unavailable"));
+                };
+                if platforms.next().is_some()
+                    || !platform.valid()
+                    || !matches!(platform.media_type.as_str(), OCI_MANIFEST | DOCKER_MANIFEST)
+                {
+                    return Ok(Err("platform_ambiguous"));
+                }
+                let (_, manifest, size) = self.manifest(repo, &platform.digest, token).await?;
+                if size != platform.size || manifest.media_type != platform.media_type {
+                    return Err(PointerUnavailable);
+                }
+                manifest
+            }
+            OCI_MANIFEST | DOCKER_MANIFEST => root,
+            _ => return Ok(Err("unsupported_manifest")),
+        };
+        let config = manifest.config.as_ref().ok_or(PointerUnavailable)?;
+        let config = self.configuration(repo, config, token).await?;
+        if !config.platform.supported() {
+            return Ok(Err("platform_unavailable"));
+        }
+        Ok(Ok(config))
+    }
 }
 
 impl Descriptor {
@@ -297,8 +369,11 @@ impl RuntimePointerSource for RegistryRuntimePointers {
             ReleasedLane::Machine if self.config.machine => MACHINE,
             ReleasedLane::Machine => return Ok(None),
         };
-        let token = self.registry_token(repo).await?;
-        let (digest, root, _) = self.manifest(repo, &self.config.tag, &token).await?;
+        let token = self.registry.registry_token(repo).await?;
+        let (digest, root, _) = self
+            .registry
+            .manifest(repo, &self.config.tag, &token)
+            .await?;
         let image = format!("{HOST}/{repo}@{digest}");
         let refuse = |reason| {
             Ok(Some(PointerObservation::Refused {
@@ -306,35 +381,10 @@ impl RuntimePointerSource for RegistryRuntimePointers {
                 reason,
             }))
         };
-        let manifest = match root.media_type.as_str() {
-            OCI_INDEX | DOCKER_INDEX => {
-                let mut platforms = root
-                    .manifests
-                    .iter()
-                    .filter(|entry| entry.platform.as_ref().is_some_and(Platform::supported));
-                let Some(platform) = platforms.next() else {
-                    return refuse("platform_unavailable");
-                };
-                if platforms.next().is_some()
-                    || !platform.valid()
-                    || !matches!(platform.media_type.as_str(), OCI_MANIFEST | DOCKER_MANIFEST)
-                {
-                    return refuse("platform_ambiguous");
-                }
-                let (_, manifest, size) = self.manifest(repo, &platform.digest, &token).await?;
-                if size != platform.size || manifest.media_type != platform.media_type {
-                    return Err(PointerUnavailable);
-                }
-                manifest
-            }
-            OCI_MANIFEST | DOCKER_MANIFEST => root,
-            _ => return refuse("unsupported_manifest"),
+        let config = match self.registry.platform_config(repo, root, &token).await? {
+            Ok(config) => config,
+            Err(reason) => return refuse(reason),
         };
-        let config = manifest.config.as_ref().ok_or(PointerUnavailable)?;
-        let config = self.configuration(repo, config, &token).await?;
-        if !config.platform.supported() {
-            return refuse("platform_unavailable");
-        }
         if config
             .config
             .labels

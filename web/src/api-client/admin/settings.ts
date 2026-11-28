@@ -2,6 +2,7 @@ import { ProtocolError } from '../errors.js';
 import { profileReference } from '../profiles/types.js';
 import {
   boolean,
+  dictionary,
   integer,
   nullable,
   object,
@@ -79,6 +80,16 @@ export function platformSettings(value: unknown): PlatformSettings {
   };
 }
 export const storedPlatformSettings = object({
+  setting_changes: optional(
+    dictionary(
+      object({
+        actor_reference: text,
+        actor_name: optional(text),
+        at: text,
+        revision: integer,
+      }),
+    ),
+  ),
   revision: integer,
   settings: platformSettings,
   model_budget_writes_available: optional(boolean),

@@ -76,6 +76,7 @@ struct Fixture {
 impl Fixture {
     async fn new() -> Self {
         let settings = Arc::new(Settings(Mutex::new(StoredPlatformSettings {
+            changes: Default::default(),
             revision: 1,
             settings: PlatformSettings::default(),
         })));

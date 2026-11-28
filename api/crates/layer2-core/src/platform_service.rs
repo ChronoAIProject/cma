@@ -7,6 +7,9 @@ use crate::{
     Capability, CoreError, DetailKey, PlatformSettings, StoreError,
 };
 
+mod changes;
+pub use changes::{PlatformSettingChange, PlatformSettingChanges};
+
 const TRIGGER_CAS_ATTEMPTS: usize = 4;
 const SETTINGS_TARGET: &str = "platform_settings";
 const TRIGGERS_TARGET: &str = "triggers";
@@ -15,6 +18,7 @@ const TRIGGERS_TARGET: &str = "triggers";
 pub struct StoredPlatformSettings {
     pub revision: u64,
     pub settings: PlatformSettings,
+    pub changes: PlatformSettingChanges,
 }
 
 #[async_trait::async_trait]
@@ -25,6 +29,15 @@ pub trait PlatformSettingsStore: Send + Sync {
         expected_revision: u64,
         settings: &PlatformSettings,
     ) -> Result<StoredPlatformSettings, StoreError>;
+
+    async fn replace_with_changes(
+        &self,
+        expected_revision: u64,
+        settings: &PlatformSettings,
+        _changes: &PlatformSettingChanges,
+    ) -> Result<StoredPlatformSettings, StoreError> {
+        self.replace(expected_revision, settings).await
+    }
 }
 
 pub struct PlatformSettingsService {
@@ -137,9 +150,16 @@ impl PlatformSettingsService {
             effective.inactivity.grace_started_at = None;
         }
         effective.validate()?;
+        if current.revision != expected_revision {
+            return Err(store_failed(StoreError::RevisionConflict {
+                expected: expected_revision,
+                actual: current.revision,
+            }));
+        }
+        let changes = changes::changes(&current, &effective, caller);
         let stored = self
             .store
-            .replace(expected_revision, &effective)
+            .replace_with_changes(expected_revision, &effective, &changes)
             .await
             .map_err(mutation_failed)?;
         self.audit(
@@ -180,9 +200,14 @@ impl PlatformSettingsService {
                 self.audit_trigger_control(caller, &current, paused).await?;
                 return Ok(current);
             }
-            let mut settings = current.settings;
+            let mut settings = current.settings.clone();
             settings.triggers.orchestration_paused = paused;
-            match self.store.replace(current.revision, &settings).await {
+            let changes = changes::changes(&current, &settings, caller);
+            match self
+                .store
+                .replace_with_changes(current.revision, &settings, &changes)
+                .await
+            {
                 Ok(stored) => {
                     self.audit_trigger_control(caller, &stored, paused).await?;
                     return Ok(stored);

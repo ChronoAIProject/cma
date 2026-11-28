@@ -59,6 +59,7 @@ impl PoolTarget {
                 }
             }),
             machine: self.machine,
+            current_runtime: None,
         }
     }
 }

@@ -35,6 +35,7 @@ impl PlatformSettingsStore for Settings {
         let mut settings = PlatformSettings::default();
         settings.usage_reporting.measured_visible = self.visible.load(Ordering::SeqCst);
         Ok(StoredPlatformSettings {
+            changes: Default::default(),
             revision: 1,
             settings,
         })

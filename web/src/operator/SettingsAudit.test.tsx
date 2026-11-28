@@ -1,69 +1,54 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
-import { ApiError } from '@cma/client';
-import { SettingsAudit } from './SettingsAudit';
-import { operatorClient, now } from './testFixtures';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { expect, it } from 'vitest';
+import { PlatformSettings } from './PlatformSettings';
+import { operatorClient, stored } from './testFixtures';
 
-const record = {
-  id: 'activity-fixture',
-  at: now,
-  actor: 'fixture-operator',
+const change = {
+  actor_reference: 'actor-example',
   actor_name: 'Test administrator',
-  action: 'configure' as const,
-  target: { kind: 'resource' as const, id: 'platform_settings' },
-  outcome: { status: 'succeeded' as const },
-  detail: { revision: '4', private: 'not shown' },
+  at: '2026-02-03T00:00:00Z',
+  revision: 3,
 };
-describe('settings revision audit', () => {
-  it('shows the current revision author/time from a bounded lookup', async () => {
-    const client = operatorClient();
-    client.admin.listActivity.mockResolvedValue({ items: [record], next: 'older' });
-    const { container } = render(<SettingsAudit client={client} revision={4} allowed />);
-    await screen.findByText(/Last platform settings change: Test administrator/);
-    expect(container.querySelector('time')).toHaveAttribute('datetime', now);
-    expect(client.admin.listActivity).toHaveBeenCalledWith({
-      action: 'configure',
-      limit: 50,
-      signal: expect.any(AbortSignal),
-    });
-    expect(client.admin.listActivity).toHaveBeenCalledTimes(1);
-    expect(screen.queryByText('not shown')).not.toBeInTheDocument();
+
+it('lists all committed settings before editing and shows attribution on the changed card only', async () => {
+  const client = operatorClient();
+  client.admin.readSettings.mockResolvedValue({
+    ...stored,
+    setting_changes: { agent_log_retention: change },
   });
-  it('does not request activity without its separate permission', () => {
-    const client = operatorClient();
-    render(<SettingsAudit client={client} revision={4} allowed={false} />);
-    expect(screen.getByText(/require activity-log permission/)).toBeInTheDocument();
-    expect(client.admin.listActivity).not.toHaveBeenCalled();
+  render(<PlatformSettings client={client} canReadAudit />);
+  const overview = await screen.findByRole('navigation', { name: 'Settings overview' });
+  expect(within(overview).getAllByRole('link')).toHaveLength(19);
+  const card = screen.getByRole('region', { name: 'Agent log retention' });
+  expect(within(card).getByText(/Last changed by Test administrator/)).toBeVisible();
+  expect(card.querySelector('time')).toHaveAttribute('datetime', change.at);
+  expect(
+    within(screen.getByRole('region', { name: 'Visitor Sandboxes' })).getByText(
+      'Last change not recorded',
+    ),
+  ).toBeVisible();
+  expect(within(card).queryByRole('spinbutton')).toBeNull();
+  await userEvent.click(within(card).getByRole('button', { name: 'Edit Agent log retention' }));
+  const input = within(card).getByRole('spinbutton');
+  await userEvent.clear(input);
+  await userEvent.type(input, '42');
+  expect(within(overview).getByText('30 days')).toBeVisible();
+  expect(within(card).getByText('30 days')).toBeVisible();
+  expect(client.admin.replaceSettings).not.toHaveBeenCalled();
+  expect(client.admin.listActivity).not.toHaveBeenCalled();
+});
+
+it('withholds attribution without the activity capability and shows read-only pins', async () => {
+  const client = operatorClient();
+  client.admin.readSettings.mockResolvedValue({
+    ...stored,
+    setting_changes: { sandbox_profile: change },
   });
-  it('does not attribute stale, failed or unrelated operations to the current revision', async () => {
-    const client = operatorClient();
-    client.admin.listActivity.mockResolvedValue({
-      items: [
-        { ...record, detail: { revision: '3' } },
-        { ...record, outcome: { status: 'refused', code: 'forbidden' } },
-        { ...record, target: { kind: 'resource', id: 'unrelated' } },
-      ],
-      next: 'older',
-    });
-    render(<SettingsAudit client={client} revision={4} allowed />);
-    await screen.findByText(/not in the recent activity page/);
-    expect(screen.queryByText(/Test administrator/)).not.toBeInTheDocument();
-    expect(client.admin.listActivity).toHaveBeenCalledTimes(1);
-  });
-  it.each([403, 503])('shows activity lookup failure %s explicitly', async (status) => {
-    const client = operatorClient();
-    client.admin.listActivity.mockRejectedValue(new ApiError(status, 'Activity unavailable'));
-    render(<SettingsAudit client={client} revision={4} allowed />);
-    await screen.findByText(/Last change details could not be read/);
-  });
-  it('does not substitute a raw account identifier for a missing name', async () => {
-    const client = operatorClient();
-    client.admin.listActivity.mockResolvedValue({
-      items: [{ ...record, actor_name: null }],
-      next: null,
-    });
-    render(<SettingsAudit client={client} revision={4} allowed />);
-    await screen.findByText(/Name unavailable/);
-    expect(screen.queryByText(/fixture-operator/)).not.toBeInTheDocument();
-  });
+  render(<PlatformSettings client={client} />);
+  const card = await screen.findByRole('region', { name: 'Default Sandbox Profile' });
+  expect(within(card).getByText('sbp_default · revision 1')).toBeVisible();
+  expect(within(card).getByText('Last change requires activity-log permission.')).toBeVisible();
+  expect(within(card).queryByRole('button')).toBeNull();
+  expect(screen.queryByText(/Test administrator/)).toBeNull();
 });

@@ -89,6 +89,7 @@ impl Default for MemorySettings {
     fn default() -> Self {
         Self {
             stored: Mutex::new(StoredPlatformSettings {
+                changes: Default::default(),
                 revision: 0,
                 settings: PlatformSettings::default(),
             }),
@@ -107,6 +108,16 @@ impl PlatformSettingsStore for MemorySettings {
         expected_revision: u64,
         settings: &PlatformSettings,
     ) -> Result<StoredPlatformSettings, StoreError> {
+        self.replace_with_changes(expected_revision, settings, &Default::default())
+            .await
+    }
+
+    async fn replace_with_changes(
+        &self,
+        expected_revision: u64,
+        settings: &PlatformSettings,
+        changes: &layer2_core::PlatformSettingChanges,
+    ) -> Result<StoredPlatformSettings, StoreError> {
         let mut stored = self.stored.lock().unwrap();
         if stored.revision != expected_revision {
             return Err(StoreError::RevisionConflict {
@@ -115,6 +126,7 @@ impl PlatformSettingsStore for MemorySettings {
             });
         }
         *stored = StoredPlatformSettings {
+            changes: changes.clone(),
             revision: expected_revision + 1,
             settings: settings.clone(),
         };

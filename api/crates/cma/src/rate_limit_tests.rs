@@ -42,6 +42,7 @@ impl MutableSettings {
         let mut settings = PlatformSettings::default();
         settings.limits.visitor_max_launches_per_day = visitor_launch_limit;
         Self(Mutex::new(StoredPlatformSettings {
+            changes: Default::default(),
             revision: 1,
             settings,
         }))
@@ -73,6 +74,7 @@ impl PlatformSettingsStore for MutableSettings {
             });
         }
         *stored = StoredPlatformSettings {
+            changes: Default::default(),
             revision: expected_revision + 1,
             settings: settings.clone(),
         };
