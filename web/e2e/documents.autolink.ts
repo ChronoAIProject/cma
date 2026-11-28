@@ -5,8 +5,8 @@ import type { Editor } from '@tiptap/core';
 const url = 'https://example.test/en/about/previous-releases';
 const suffix = '；访问 UTC：2026';
 const imported = `Node URL：${url}${suffix}`;
-const secondUrl = 'https://example.test/cli/v12/commands/install/?sort=asc#options';
-const secondImport = `CLI URL：${secondUrl}${suffix}`;
+const cliUrl = 'https://example.test/cli/v12/commands/install/';
+const queryUrl = `${cliUrl}?sort=asc#options`;
 const typed = 'https://example.test/typed/?q=one#results';
 const typedSuffix = '」后文';
 const pasted = 'https://example.test/pasted%EF%BC%9B';
@@ -34,8 +34,15 @@ test('LOCAL CJK delimiters preserve link targets in Edit, Preview and after relo
   context,
 }) => {
   const fixture = new LocalDocuments();
-  const paragraphs = [`${url}：访问`, `「${typed}${typedSuffix}`, imported, secondImport];
-  const targets = [url, typed, url, secondUrl];
+  const cases = [
+    [`${url}：访问`, url],
+    [`「${typed}${typedSuffix}`, typed],
+    [imported, url],
+    [`CLI URL：${cliUrl}${suffix}`, cliUrl],
+    [`CLI options：${queryUrl}${suffix}`, queryUrl],
+  ] as const;
+  const paragraphs = cases.map(([text]) => text);
+  const targets = cases.map(([, href]) => href);
   fixture.markdown = paragraphs.join('\n\n');
   await fixture.route(page, baseURL!);
   await context.route('https://example.test/**', (route) =>
@@ -48,11 +55,7 @@ test('LOCAL CJK delimiters preserve link targets in Edit, Preview and after relo
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
   await expectLinks(content, targets);
   await expect(content.locator('p')).toHaveText(paragraphs);
-  for (const [source, href] of [
-    [`「${typed}${typedSuffix}`, typed],
-    [imported, url],
-    [secondImport, secondUrl],
-  ] as const) {
+  for (const [source, href] of cases) {
     const opened = page.waitForEvent('popup');
     await content
       .locator('p')
@@ -65,6 +68,7 @@ test('LOCAL CJK delimiters preserve link targets in Edit, Preview and after relo
   }
   await page.reload();
   await expectLinks(content, targets);
+  await expect(content.locator('p')).toHaveText(paragraphs);
   expect(fixture.writes).toHaveLength(0);
 });
 
