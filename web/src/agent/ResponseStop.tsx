@@ -5,6 +5,11 @@ import type { ResponseControlAvailability } from './controlReadiness';
 import { RESPONSE_STOP_COMMAND_NOTICE } from './stopAgentCopy';
 import type { StopRequestState } from './transport/controlStatus';
 
+export interface ResponseStopState {
+  readonly turn?: string;
+  readonly request?: StopRequestState;
+}
+
 const notices: Record<Exclude<ResponseControlAvailability, 'available'>, string> = {
   checking: 'Checking response controls…',
   'checking-access': 'Checking Agent access…',
@@ -20,24 +25,22 @@ export function useResponseStop({
   availability,
   busy,
   stopping,
-  responseTurn,
-  stopRequest,
+  state,
   onStop,
 }: {
   running: boolean;
   availability: ResponseControlAvailability;
   busy: boolean;
   stopping: boolean;
-  responseTurn?: string;
-  stopRequest?: StopRequestState;
+  state?: ResponseStopState;
   onStop: () => void | Promise<void>;
 }) {
   const pending = useRef(false);
   const [submitting, setSubmitting] = useState<{ turn?: string }>();
   const request =
-    stopping || (submitting !== undefined && submitting.turn === responseTurn)
+    stopping || (submitting !== undefined && submitting.turn === state?.turn)
       ? 'stopping'
-      : stopRequest;
+      : state?.request;
   const canShowRequest = availability !== 'checking-access' && availability !== 'denied';
   const inProgress = request === 'stopping' && canShowRequest;
   const enabled = running && availability === 'available' && !busy && !request;
@@ -53,7 +56,7 @@ export function useResponseStop({
   const stop = () => {
     if (!enabled || pending.current) return;
     pending.current = true;
-    setSubmitting({ turn: responseTurn });
+    setSubmitting({ turn: state?.turn });
     const finish = () => {
       pending.current = false;
       setSubmitting(undefined);

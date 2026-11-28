@@ -4,7 +4,6 @@ import type { AgentLiveEvent } from '../api/types';
 import type { AgentCommand, AgentResourceState } from './controllerTypes';
 import type { AgentV2Session } from './transport/client';
 import type { SetActionError } from './actionError';
-import type { ConversationState } from './model';
 
 export interface AgentActionOptions {
   readonly agentId?: string;
@@ -12,7 +11,6 @@ export interface AgentActionOptions {
   readonly historyIncomplete: boolean;
   readonly commandsBlocked: boolean;
   readonly activeTurn: boolean;
-  readonly responseTarget?: ConversationState['responseBinding'];
   readonly inputAvailability: { readonly allowed: boolean };
   readonly actionAbortRef: RefObject<AbortController | undefined>;
   readonly actionKindRef: RefObject<AgentCommand | undefined>;

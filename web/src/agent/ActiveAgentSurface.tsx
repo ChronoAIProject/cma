@@ -456,8 +456,7 @@ export function ActiveAgentSurface({
                     ? 'checking'
                     : controller.responseControls
             }
-            responseTurn={conversation.activeRunId}
-            stopRequest={controller.stopRequest}
+            responseStopState={{ turn: conversation.activeRunId, request: controller.stopRequest }}
             inputCoolingDown={controller.inputCoolingDown}
             requestPending={
               controller.pendingMessage !== undefined || controller.pendingControl === true

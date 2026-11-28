@@ -21,7 +21,6 @@ export function useAgentActions({
   historyIncomplete,
   commandsBlocked,
   activeTurn,
-  responseTarget,
   inputAvailability,
   actionAbortRef,
   actionKindRef,
@@ -371,32 +370,6 @@ export function useAgentActions({
         return;
       }
       if (name === 'interrupt' && !activeTurn) return;
-      const current = stateRef.current;
-      if (
-        name === 'interrupt' &&
-        (v2 !== undefined || (current.status === 'ready' && current.v2))
-      ) {
-        const conversation = current.status === 'ready' ? current.conversation : undefined;
-        const target = conversation?.responseBinding;
-        if (
-          current.status !== 'ready' ||
-          current.detail.id !== agentId ||
-          current.v2 !== v2 ||
-          conversation?.activeRunId === undefined ||
-          target?.responseId !== responseTarget?.responseId ||
-          target?.turnSequence !== responseTarget?.turnSequence ||
-          (responseTarget && conversation.activeRunId !== String(responseTarget.turnSequence))
-        ) {
-          if (requireStop) throw new Error('This response is no longer active.');
-          return;
-        }
-        if (responseTarget === undefined) {
-          const error = new Error('This turn does not support response controls.');
-          setActionError(errorMessage(error));
-          if (requireStop) throw error;
-          return;
-        }
-      }
       if (agentId === undefined || (actionAbortRef.current !== undefined && !mayPreemptSend)) {
         if (requireStop) throw new Error('Another Agent action is still being confirmed.');
         return;
@@ -409,10 +382,11 @@ export function useAgentActions({
       setPending(name);
       setActionError(undefined);
       try {
+        const current = stateRef.current;
         if (name === 'interrupt' && current.status === 'ready' && current.v2 !== undefined)
           await submitV2Control(
             current.v2,
-            responseTarget,
+            current.conversation.responseBinding,
             { type: 'cancel' },
             runId(),
             controller.signal,
@@ -444,7 +418,6 @@ export function useAgentActions({
     },
     [
       activeTurn,
-      responseTarget,
       context,
       agentId,
       commandsBlocked,

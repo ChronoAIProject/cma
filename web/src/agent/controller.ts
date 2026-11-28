@@ -29,7 +29,7 @@ import {
 } from './transport/approvalProjectionObserver';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
-import { lifecycleCommands } from './lifecycleCommands';
+import { lifecycleCommands, sameStopResponse } from './lifecycleCommands';
 import { useAgentActionError, useAgentIdentityChange } from './actionError';
 import { useControlStatus } from './transport/controlStatus';
 import { useFirstReplyStop } from './transport/firstReplyStop';
@@ -391,7 +391,6 @@ export function useAgentController(
     historyIncomplete: historyIncomplete || suspended,
     commandsBlocked: !controlReady,
     activeTurn,
-    responseTarget,
     inputAvailability,
     actionAbortRef,
     actionKindRef,
@@ -438,6 +437,7 @@ export function useAgentController(
       ? state.conversation.messages
       : undefined,
   );
+  const lifecycle = lifecycleCommands(client, command);
   return {
     retained,
     ...retainedInputs,
@@ -478,6 +478,14 @@ export function useAgentController(
         : (content, onAccepted, onReceiptObserved, onRefused, onOrdinaryInput) =>
             run(content, onAccepted, onReceiptObserved, onRefused, 'interrupt', onOrdinaryInput),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
-    ...lifecycleCommands(client, command),
+    ...lifecycle,
+    interrupt: async () => {
+      if (sameStopResponse(state, stateRef.current)) await lifecycle.interrupt();
+    },
+    interruptForControl: async () => {
+      if (!sameStopResponse(state, stateRef.current))
+        throw new Error('This response is no longer active.');
+      await lifecycle.interruptForControl();
+    },
   };
 }
