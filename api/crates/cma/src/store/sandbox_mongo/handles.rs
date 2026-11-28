@@ -31,6 +31,7 @@ impl MongoSandboxStore {
             renewable_work: false,
             workspace_authority_retry: false,
             segment_adoption_enabled: false,
+            onboarding_command_admission: false,
             bounded_approval_reads: false,
             runtime_loss_bounded_proof_enabled: false,
             bounded_close_retries: false,

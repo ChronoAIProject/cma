@@ -161,9 +161,10 @@ impl Fixture {
             .await
             .unwrap();
         let profiles = Arc::new(InMemoryProfileStore::default());
-        let runtime = Arc::new(Runtime(ConversationInputSender::spawn(4, |_| async {
-            Ok(())
-        })));
+        let runtime = Arc::new(Runtime(
+            ConversationInputSender::spawn(4, |_| async { Ok(()) }),
+            RuntimeCapabilities::new([RuntimeCapability::Conversation]),
+        ));
         let encryption = crate::store::AuthEncryptionKey::from_base64(
             &base64::engine::general_purpose::STANDARD.encode([17_u8; 32]),
         )

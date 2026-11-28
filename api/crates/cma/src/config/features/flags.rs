@@ -97,6 +97,7 @@ pub(crate) struct FeatureFlags {
     pub incremental_text: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
+    pub onboarding_command_admission: bool,
     pub github_repository_preflight: bool,
     pub github_connection_approval: bool,
     pub github_connection_recovery: bool,

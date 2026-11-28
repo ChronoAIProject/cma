@@ -11,10 +11,7 @@ pub(in crate::store) async fn project_terminal(
 ) -> Result<(), SandboxStoreError> {
     if !command.status.is_terminal()
         || command.work.dispatch.is_some()
-        || !matches!(
-            command.receipt.envelope.actor,
-            layer2_core::sandbox::agent_io::AgentActor::Trigger { .. }
-        )
+        || !command.receipt.envelope.is_first_message()
     {
         return Ok(());
     }
