@@ -308,7 +308,11 @@ export function DocumentRegistry({
               value={title}
               maxLength={240}
               disabled={busy || intent !== undefined}
+              data-initial-focus="true"
               aria-describedby={intent ? 'creation-title-help' : undefined}
+              onFocus={(event) => {
+                if (event.currentTarget.value === 'Untitled') event.currentTarget.select();
+              }}
               onChange={(event) => setTitle(event.target.value)}
             />
           </label>

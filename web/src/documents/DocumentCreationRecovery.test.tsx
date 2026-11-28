@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { DocumentError, type DocumentsClient, type DocumentView } from '../api/documents';
 import { BUILD_INFO } from '../shell/build';
@@ -58,6 +59,21 @@ function begin(api: DocumentsClient, onNavigate = vi.fn()) {
 const retry = () => fireEvent.click(screen.getByRole('button', { name: 'Retry creation' }));
 beforeEach(() => sessionStorage.clear());
 afterEach(() => vi.unstubAllGlobals());
+
+it('puts focus in the new document title so immediate typing replaces Untitled', async () => {
+  const user = userEvent.setup();
+  const api = client();
+  render(<DocumentRegistry client={api} viewer="owner" canCreate onNavigate={vi.fn()} />);
+  const opener = screen.getByRole('button', { name: 'New document' });
+  await user.click(opener);
+  const title = screen.getByRole('textbox', { name: 'Title' });
+  expect(title).toHaveFocus();
+  await user.keyboard('Project notes');
+  expect(title).toHaveValue('Project notes');
+  await user.keyboard('{Escape}');
+  expect(opener).toHaveFocus();
+  expect(api.create).not.toHaveBeenCalled();
+});
 
 it.each([
   new DocumentError('Storage unavailable', 503),
