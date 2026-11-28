@@ -436,7 +436,9 @@ impl SandboxReconciler {
             measure(
                 Stage::DurableRead,
                 async {
-                    if self.store.get_sandbox(&sandbox.id).await?.as_ref() != Some(sandbox) {
+                    if !matches!(self.store.reconciliation_sandbox(&sandbox.id).await?,
+                        ReconciliationSandbox::Present(current) if current.as_ref() == sandbox)
+                    {
                         return Err(SandboxStoreError::Conflict);
                     }
                     Ok(())
@@ -446,35 +448,6 @@ impl SandboxReconciler {
             .await?;
         }
         Ok(true)
-    }
-
-    async fn binding_result<T>(
-        &self,
-        sandbox: &Sandbox,
-        result: layer3_adapter::Result<T>,
-    ) -> Result<T, SandboxStoreError> {
-        let error = match result {
-            Ok(value) => return Ok(value),
-            Err(error) => error,
-        };
-        if error.is_native_home_identity_refusal() {
-            let current = measure(
-                Stage::DurableRead,
-                self.store.get_sandbox(&sandbox.id),
-                diagnostics::store_outcome,
-            )
-            .await?;
-            if current.is_some_and(|row| {
-                row.revision > sandbox.revision
-                    && (row.runtime != sandbox.runtime
-                        || row.lifecycle.suspended_runtime != sandbox.lifecycle.suspended_runtime
-                        || row.lifecycle.home != sandbox.lifecycle.home)
-            }) {
-                return Err(SandboxStoreError::Conflict);
-            }
-            return Err(transient::native_home_identity(error));
-        }
-        Err(provider_error(error))
     }
 }
 
