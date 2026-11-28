@@ -34,6 +34,52 @@ fn evidence(record: &ReleasedLaneRecord, digit: char, observation: &str) -> Prom
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn release_quarantine_preserves_unreadable_authority_and_refuses_pins() {
+    use layer3_adapter::{PinnedReleasedRuntime, ReleasedRuntimeSource};
+    use mongodb::bson::{doc, Document};
+
+    let (client, name, lanes) = lanes().await;
+    let database = client.database(&name);
+    let rows = database.collection::<Document>(COLLECTION);
+    let broken = doc! {"_id": lanes.id(ReleasedLane::Machine), "record": "invalid"};
+    rows.insert_one(&broken).await.unwrap();
+    let pin = PinnedReleasedRuntime::new(image('a'), Some(image('b'))).snapshot();
+    let agent = ReleasedLaneRecord::bootstrap(ReleasedLane::Agent, image('c'), "t0").unwrap();
+    lanes.bootstrap(agent.clone()).await.unwrap();
+
+    for required in [false, true] {
+        let source = StoreReleasedRuntime::open(&database, "deployment-a", pin.clone(), required)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(source.is_quarantined());
+        assert!(source.require_current(&pin).is_err());
+        assert!(source.refresh().await.is_err());
+        assert_eq!(
+            source.lanes.load(ReleasedLane::Agent).await.unwrap(),
+            Some(agent.clone())
+        );
+        assert_eq!(
+            rows.find_one(doc! {"_id": lanes.id(ReleasedLane::Machine)})
+                .await
+                .unwrap(),
+            Some(broken.clone())
+        );
+    }
+    rows.delete_one(doc! {"_id": lanes.id(ReleasedLane::Machine)})
+        .await
+        .unwrap();
+    let repaired = StoreReleasedRuntime::open(&database, "deployment-a", pin, true)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!repaired.is_quarantined());
+    assert_eq!(repaired.snapshot().agent, agent.active.image);
+    database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn bootstrap_is_once_and_writes_are_compare_and_swap() {
     let (client, name, lanes) = lanes().await;
     let first = ReleasedLaneRecord::bootstrap(ReleasedLane::Agent, image('a'), "t0").unwrap();

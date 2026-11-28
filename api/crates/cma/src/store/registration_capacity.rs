@@ -56,6 +56,7 @@ pub struct MongoRegistrationCapacityStore {
     admissions: Collection<Document>,
     settings: Collection<Document>,
     activated: std::sync::Arc<AtomicBool>,
+    activation_required: bool,
 }
 
 impl MongoRegistrationCapacityStore {
@@ -83,29 +84,38 @@ impl MongoRegistrationCapacityStore {
         require_transaction_topology(&database).await?;
         schema::initialize_collections(&database, &[ADMISSIONS, SETTINGS]).await?;
         let admissions: Collection<Document> = majority_collection(&database, ADMISSIONS);
+        let settings = majority_collection(&database, SETTINGS);
+        let mut activation_unreadable = false;
         if writes_enabled {
-            activation::activate(
-                client,
-                &admissions,
-                &majority_collection(&database, SETTINGS),
-                initial_settings,
-            )
-            .await?;
+            match activation::activate(client, &admissions, &settings, initial_settings).await {
+                Ok(()) => {}
+                Err(StoreError::Malformed(_)) => activation_unreadable = true,
+                Err(error) => return Err(error),
+            }
         }
         let marker = admissions
             .find_one(capacity_key())
             .await
             .map_err(|error| unavailable(&format!("read registration activation: {error}")))?;
-        if let Some(marker) = &marker {
-            registration_count(marker)?;
+        if activation_unreadable
+            || marker
+                .as_ref()
+                .is_some_and(|row| registration_count(row).is_err())
+        {
+            tracing::error!(
+                collection = ADMISSIONS,
+                record = "registration_capacity",
+                "Registration authority quarantined"
+            );
         }
         Ok(Self {
             initial_settings,
             client: client.clone(),
-            settings: majority_collection(&database, SETTINGS),
+            settings,
             database,
             admissions,
             activated: std::sync::Arc::new(AtomicBool::new(marker.is_some())),
+            activation_required: writes_enabled,
         })
     }
 
@@ -153,6 +163,10 @@ impl MongoRegistrationCapacityStore {
             None => query.await,
         }
         .map_err(AttemptError::Driver)?;
+        if let Some(document) = &document {
+            super::settings::read_settings(document.clone())
+                .map_err(|_| AttemptError::Unreadable)?;
+        }
         document
             .as_ref()
             .map(super::admission_ceilings::from_document)
@@ -191,7 +205,9 @@ impl MongoRegistrationCapacityStore {
                 activation::Error::Unreadable(_) => AttemptError::Unreadable,
             })?;
         if !active {
-            return Ok(limit.is_none());
+            return Ok(limit.is_none()
+                && !self.activation_required
+                && !self.activated.load(Ordering::Relaxed));
         }
         self.activated.store(true, Ordering::Relaxed);
         // The counter is O(1) and lives in the fence itself. Every successful
@@ -302,8 +318,10 @@ impl RegistrationCapacity for MongoRegistrationCapacityStore {
         limit: Result<Option<u32>, ()>,
     ) -> Result<bool, StoreError> {
         let limit = match limit {
-            Ok(None) => return Ok(true),
-            Ok(Some(limit)) => limit,
+            Ok(None) if !self.activation_required && !self.activated.load(Ordering::Relaxed) => {
+                return Ok(true)
+            }
+            Ok(limit) => limit,
             Err(()) => return Ok(false),
         };
         let row = self
@@ -311,11 +329,10 @@ impl RegistrationCapacity for MongoRegistrationCapacityStore {
             .find_one(capacity_key())
             .await
             .map_err(|error| unavailable(&format!("read registration count: {error}")))?;
-        let count = row.as_ref().map(registration_count).transpose()?;
-        if count.is_some() {
-            self.activated.store(true, Ordering::Relaxed);
-        }
-        Ok(count.is_some_and(|count| count < u64::from(limit)))
+        let Some(row) = row else { return Ok(false) };
+        self.activated.store(true, Ordering::Relaxed);
+        Ok(registration_count(&row)
+            .is_ok_and(|count| count < limit.map_or(i64::MAX as u64, u64::from)))
     }
 
     async fn admit_with_limit(
@@ -350,8 +367,9 @@ pub(crate) fn registration_count(document: &Document) -> Result<u64, StoreError>
         Some(Bson::Int64(value)) => u64::try_from(*value).ok(),
         _ => None,
     };
-    unsigned("activated_at").ok_or_else(|| unavailable("registration activation is invalid"))?;
-    unsigned("count").ok_or_else(|| unavailable("registration count is invalid"))
+    unsigned("activated_at")
+        .ok_or_else(|| StoreError::Malformed("registration activation is invalid".into()))?;
+    unsigned("count").ok_or_else(|| StoreError::Malformed("registration count is invalid".into()))
 }
 
 #[cfg(test)]

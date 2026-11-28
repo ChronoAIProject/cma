@@ -84,10 +84,17 @@ impl fmt::Display for RecordError {
 impl std::error::Error for RecordError {}
 
 #[derive(Debug, Clone)]
+enum ChannelCreateAuthority {
+    Legacy,
+    Fenced(Arc<str>),
+    Quarantined,
+}
+
+#[derive(Debug, Clone)]
 pub struct RecordClient {
     database: Option<super::mongo::MongoRecords>,
     channel_mutation_custody: bool,
-    channel_create_issuer: Option<Arc<str>>,
+    channel_create_authority: ChannelCreateAuthority,
     channel_cancel_enabled: bool,
     client: Client,
     base_url: Url,
@@ -136,7 +143,7 @@ impl RecordClient {
         Ok(Self {
             database: None,
             channel_mutation_custody: false,
-            channel_create_issuer: None,
+            channel_create_authority: ChannelCreateAuthority::Legacy,
             channel_cancel_enabled: false,
             client,
             base_url,
@@ -163,7 +170,29 @@ impl RecordClient {
     }
 
     pub(crate) fn channel_creates_fenced(&self) -> bool {
-        self.channel_create_issuer.is_some()
+        matches!(
+            self.channel_create_authority,
+            ChannelCreateAuthority::Fenced(_)
+        )
+    }
+
+    pub(crate) fn require_channel_create_authority(&self) -> Result<(), RecordError> {
+        if matches!(
+            self.channel_create_authority,
+            ChannelCreateAuthority::Quarantined
+        ) {
+            return Err(RecordError::Unavailable(
+                "Channel create writer authority unavailable".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn quarantine_channel_creates(mut self) -> Self {
+        self.channel_create_authority = ChannelCreateAuthority::Quarantined;
+        // Keep the guarded path for mutations of already-created Channels.
+        self.channel_mutation_custody = true;
+        self
     }
 
     pub(crate) fn channel_cancellation_enabled(&self) -> bool {
@@ -171,7 +200,7 @@ impl RecordClient {
     }
 
     pub(crate) fn with_channel_create_fences(mut self, issuer: &str, receipts: bool) -> Self {
-        self.channel_create_issuer = Some(Arc::from(issuer));
+        self.channel_create_authority = ChannelCreateAuthority::Fenced(Arc::from(issuer));
         self.channel_cancel_enabled = receipts;
         self.channel_mutation_custody = true;
         self

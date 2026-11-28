@@ -68,6 +68,23 @@ pub struct MongoPlatformSettingsStore {
 }
 
 impl MongoPlatformSettingsStore {
+    pub(crate) async fn read_for_startup(
+        &self,
+    ) -> Result<Option<StoredPlatformSettings>, StoreError> {
+        match self.read().await {
+            Ok(settings) => Ok(Some(settings)),
+            Err(StoreError::Malformed(_)) => {
+                tracing::error!(
+                    collection = SETTINGS,
+                    record = SETTINGS_ID,
+                    "Platform settings quarantined"
+                );
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
     #[cfg(test)]
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
         Self::open_with_defaults(client, database, Default::default()).await
@@ -105,10 +122,11 @@ impl MongoPlatformSettingsStore {
 impl PlatformSettingsStore for MongoPlatformSettingsStore {
     async fn read(&self) -> Result<StoredPlatformSettings, StoreError> {
         self.settings
+            .clone_with_type::<Document>()
             .find_one(doc! { "_id": SETTINGS_ID })
             .await
             .map_err(|error| StoreError::Unavailable(format!("read platform settings: {error}")))?
-            .map(from_doc)
+            .map(read_settings)
             .transpose()
             .map(|stored| {
                 stored.unwrap_or(StoredPlatformSettings {
@@ -186,6 +204,44 @@ fn is_duplicate_key(error: &Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+    async fn settings_quarantine_preserves_the_record_and_refuses_policy_reads() {
+        use crate::auth::registration::RegistrationCapacity;
+
+        let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+        let client = Client::with_uri_str(uri).await.unwrap();
+        let name = format!("settings_quarantine_{}", uuid::Uuid::new_v4().simple());
+        let database = client.database(&name);
+        let store = MongoPlatformSettingsStore::open(&client, &name)
+            .await
+            .unwrap();
+        let rows = database.collection::<Document>(SETTINGS);
+        let broken = doc! {
+            "_id": SETTINGS_ID, "revision": 1_i64,
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION, "settings": "invalid",
+        };
+        rows.insert_one(&broken).await.unwrap();
+        let registrations =
+            crate::store::MongoRegistrationCapacityStore::open(&client, &name, true)
+                .await
+                .unwrap();
+        assert!(!registrations.available().await.unwrap());
+        assert!(!registrations
+            .admit(&layer2_core::SubjectId::new("new-subject"))
+            .await
+            .unwrap());
+        for _ in 0..2 {
+            assert_eq!(store.read_for_startup().await.unwrap(), None);
+            assert!(matches!(store.read().await, Err(StoreError::Malformed(_))));
+            assert_eq!(
+                rows.find_one(doc! {"_id": SETTINGS_ID}).await.unwrap(),
+                Some(broken.clone())
+            );
+        }
+        database.drop().await.unwrap();
+    }
 
     #[test]
     fn stored_settings_validate_revision_and_quote_the_value() {

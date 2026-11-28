@@ -123,7 +123,7 @@ async fn exercise(uri: &str, db: &Database) -> Result<(), Box<dyn std::error::Er
     db.collection_with_options::<Document>(MIGRATIONS, options())
         .insert_one(doc! {"_id":CUTOVER_BARRIER,"version":1})
         .await?;
-    assert_eq!(reader.cutover().await?, Some(cutoff));
+    assert_eq!(reader.cutover().await?, Some(cutoff.clone()));
     assert!(refuse_untracked_after_cutover(&reader_db).await.is_err());
     // Additive reruns preserve every independently installed migration marker.
     crate::records::mongo::migrate_thread_fences(db).await?;
@@ -149,6 +149,30 @@ async fn exercise(uri: &str, db: &Database) -> Result<(), Box<dyn std::error::Er
         );
     }
     assert!(restarted.was_worker(&digest).await?);
+    let cutovers = db.collection::<Document>(CUTOVERS);
+    cutovers
+        .update_one(
+            doc! {"_id":"owner-lane"},
+            doc! {"$set":{"revision":"invalid"}},
+        )
+        .bypass_document_validation(true)
+        .await?;
+    let retained = cutovers.find_one(doc! {"_id":"owner-lane"}).await?;
+    assert!(matches!(
+        restarted.cutover().await,
+        Err(RecordError::Malformed(_))
+    ));
+    assert!(
+        !crate::serve_storage::owner_key_cutover_valid(&restarted, &cutoff.attestation_id).await?
+    );
+    assert!(restarted.was_worker(&digest).await?);
+    let next_digest = "b".repeat(64);
+    restarted.record(&next_digest).await?;
+    assert!(reader.was_worker(&next_digest).await?);
+    assert_eq!(
+        cutovers.find_one(doc! {"_id":"owner-lane"}).await?,
+        retained
+    );
     db.collection::<Document>(USES)
         .create_index(
             IndexModel::builder()

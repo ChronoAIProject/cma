@@ -40,6 +40,51 @@ async fn count(store: &MongoRegistrationCapacityStore) -> u64 {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn registration_quarantine_keeps_existing_subject_and_preserves_bad_marker() {
+    let (client, name, store) = fixture(true).await;
+    let existing = SubjectId::new("already-registered");
+    assert!(store.admit(&existing).await.unwrap());
+    store
+        .admissions
+        .update_one(capacity_key(), doc! {"$set": {"count": "invalid"}})
+        .await
+        .unwrap();
+    let before = store
+        .admissions
+        .find_one(capacity_key())
+        .await
+        .unwrap()
+        .unwrap();
+
+    for writes_enabled in [false, true] {
+        let restarted = MongoRegistrationCapacityStore::open(&client, &name, writes_enabled)
+            .await
+            .unwrap();
+        assert!(restarted.activation_observation().load(Ordering::Relaxed));
+        assert!(restarted.admit(&existing).await.unwrap());
+        assert!(!restarted.available().await.unwrap());
+        assert!(!restarted
+            .admit(&SubjectId::new("new-subject"))
+            .await
+            .unwrap());
+        assert_eq!(
+            store.admissions.find_one(capacity_key()).await.unwrap(),
+            Some(before.clone())
+        );
+    }
+    assert_eq!(
+        store
+            .admissions
+            .count_documents(doc! {"_id.scope": "registration"})
+            .await
+            .unwrap(),
+        1
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn concurrent_registration_boundary_admits_exactly_the_available_capacity() {
     let (client, name, first) = fixture(true).await;
     set_limit(&first, Some(7)).await;
