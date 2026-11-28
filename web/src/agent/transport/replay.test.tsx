@@ -409,6 +409,7 @@ it('keeps the latest transcript and input available while incomplete rich histor
       cursor: 3,
     },
   });
+  await waitFor(() => expect(result.current.inputAvailability.allowed).toBe(true));
   await act(async () => {
     await result.current.send('Continue while activity recovers');
     await result.current.interrupt();
