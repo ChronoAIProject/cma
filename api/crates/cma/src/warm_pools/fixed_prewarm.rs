@@ -57,7 +57,9 @@ impl NativeWarmPools {
             .adapter
             .native_pools()
             .ok_or(WarmPoolError::Unavailable)?;
-        observe_fixed_spare(provider, &target, self.target_fencing).await?;
+        if target.activated_at.is_none() {
+            observe_fixed_spare(provider, &target, self.target_fencing).await?;
+        }
         Ok(Some(target))
     }
 

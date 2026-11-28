@@ -95,6 +95,38 @@ async fn fixed_rollout_keeps_both_incumbents_until_each_exact_candidate_is_ready
         .unwrap()
         .machine_plan_activated_at
         .is_some());
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let peer_client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let peer = Arc::new(
+        MongoNativeWarmPools::open(&peer_client.database(db.name()), "test")
+            .await
+            .unwrap(),
+    );
+    let restart = resize::deployment(
+        peer.clone(),
+        planner.clone(),
+        &next,
+        Some((&next_machine, 1)),
+    )
+    .with_fixed_pool_prewarm([Some(next.clone()), Some(next_machine.clone())], Some(1));
+    let selected = peer.find(&candidates[0]).await.unwrap().unwrap();
+    peer.resize(
+        &selected.id,
+        &ResizeWarmPoolBody {
+            expected_revision: selected.revision as u64,
+            target_replicas: 0,
+        },
+        false,
+    )
+    .await
+    .unwrap();
+    planner.inventory.lock().unwrap()[1].ready_replicas = 0;
+    restart.ensure_fixed_defaults().await.unwrap();
+    assert!(matches!(
+        restart.await_default_ready().await.unwrap(),
+        crate::warm_pools::startup::WarmPoolStartup::ZeroTarget
+    ));
+
     db.drop().await.unwrap();
 }
 

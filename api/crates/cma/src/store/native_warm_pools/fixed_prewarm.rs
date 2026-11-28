@@ -97,7 +97,7 @@ impl MongoNativeWarmPools {
         {
             let current_marker = current.get_document("preparation").map_err(unavailable)?;
             if current_marker.get_str("fixed_incumbent").ok() != Some(active.id.as_str())
-                || current_marker.get_bool("withdrawn") == Ok(true)
+                || current_marker.get_bool("withdrawn").ok() == Some(true)
             {
                 return Err(WarmPoolError::Conflict);
             }
@@ -156,7 +156,7 @@ impl MongoNativeWarmPools {
             .map_err(unavailable)?
             .map(|row| {
                 row.get_document("preparation")
-                    .is_ok_and(|marker| marker.get_bool("withdrawn") == Ok(true))
+                    .is_ok_and(|marker| marker.get_bool("withdrawn").ok() == Some(true))
             }))
     }
 
@@ -281,6 +281,15 @@ impl MongoNativeWarmPools {
         generation: i64,
         session: &mut ClientSession,
     ) -> Result<(), WarmPoolError> {
+        self.verify_activation_floor(target.machine, &target.plan.spec.image.uri, session)
+            .await?;
+        if target.activated_at.is_some() {
+            // Restarts use normal readiness only after confirming that this
+            // exact plan remains selected under the release fence.
+            return self
+                .verify_fixed_incumbent(target.machine, &target.id, target.revision, session)
+                .await;
+        }
         let settings =
             majority_collection::<Document>(&self.database, crate::store::settings::SETTINGS);
         let mut intent = self.fixed_intent_key(target.machine);
@@ -294,11 +303,9 @@ impl MongoNativeWarmPools {
         {
             return Err(WarmPoolError::Conflict);
         }
-        self.verify_activation_floor(target.machine, &target.plan.spec.image.uri, session)
-            .await?;
         let mut filter = retirement::release_scope(self, target.machine);
         filter.extend(doc! {
-            "_id": &target.id, "revision": target.revision,
+            "_id": &target.id, "revision": target.revision, "activated_at": Bson::Null,
             "applied_revision": target.revision, "target_replicas": i64::from(target.target_replicas),
             "binding": mongodb::bson::serialize_to_bson(&target.binding).map_err(unavailable)?,
             "error": Bson::Null, "lease": Bson::Null,
@@ -311,13 +318,9 @@ impl MongoNativeWarmPools {
             .await
             .map_err(unavailable)?
             .ok_or(WarmPoolError::Conflict)?;
-        if row.get_datetime("activated_at").is_ok() {
-            self.verify_fixed_incumbent(target.machine, &target.id, target.revision, session).await?;
-            return observe_fixed_spare(provider, target, target_fencing).await;
-        }
         let marker = row.get_document("preparation").map_err(unavailable)?;
         if marker.get_i64("generation").ok() != Some(generation)
-            || marker.get_bool("withdrawn") == Ok(true)
+            || marker.get_bool("withdrawn").ok() == Some(true)
             || marker.contains_key("pending_revision")
         {
             return Err(WarmPoolError::Conflict);
@@ -335,9 +338,16 @@ impl MongoNativeWarmPools {
             "_id": incumbent, "revision": revision, "target_replicas": {"$gt": 0_i64},
             "retiring": {"$ne": true}, "retired": {"$ne": true},
         });
-        self.check_fenced_write(self.targets.update_one(
-            incumbent_fence, doc! {"$inc": {"fixed_prewarm_selection_fence": 1_i64}},
-        ).session(&mut *session).await).await?;
+        self.check_fenced_write(
+            self.targets
+                .update_one(
+                    incumbent_fence,
+                    doc! {"$inc": {"fixed_prewarm_selection_fence": 1_i64}},
+                )
+                .session(&mut *session)
+                .await,
+        )
+        .await?;
         observe_fixed_spare(provider, target, target_fencing).await?;
         filter.extend(doc! {"preparation": marker, "activated_at": Bson::Null});
         let mut dates = doc! {"activated_at": true};
@@ -372,7 +382,13 @@ impl MongoNativeWarmPools {
             .await
             .map_err(unavailable)?;
         let last = last
-            .filter(|row| row.id == id && row.revision == revision && !row.retiring && !row.retired)
+            .filter(|row| {
+                row.id == id
+                    && row.revision == revision
+                    && !row.retiring
+                    && !row.retired
+                    && (!machine || row.machine_plan_activated_at.is_some())
+            })
             .ok_or(WarmPoolError::Conflict)?;
         let mut tied = retirement::release_scope(self, machine);
         tied.extend(doc! {"activated_at": last.activated_at, "_id": {"$ne": id}});
