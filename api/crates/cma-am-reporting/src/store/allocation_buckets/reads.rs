@@ -3,6 +3,12 @@ use super::*;
 use mongodb::{ClientSession, Collection};
 use std::{collections::BTreeMap, time::Duration};
 
+const SANDBOXES_PER_CURSOR: usize = 32;
+const DAYS_PER_SANDBOX: usize = 31;
+
+#[cfg(test)]
+mod tests;
+
 pub async fn read_bucket_page(
     collection: Collection<Document>,
     session: &mut ClientSession,
@@ -16,10 +22,12 @@ pub async fn read_bucket_page(
     if states.is_empty() || range.from == range.to {
         return Ok(BTreeMap::new());
     }
-    let ids: Vec<_> = states
+    let mut ids: Vec<_> = states
         .iter()
         .map(|state| state.sandbox_id.as_str())
         .collect();
+    ids.sort_unstable();
+    ids.dedup();
     let mut edges = Vec::with_capacity(2);
     if !range.from.is_multiple_of(DAY) {
         edges.push((range.from / DAY * DAY) as i64);
@@ -47,40 +55,44 @@ pub async fn read_bucket_page(
         if !boundary {
             projection.extend(doc! {"boundary_record":0,"boundary_sha256":0});
         }
-        let mut cursor = collection
-            .find(doc! {"sandbox_id":{"$in":&ids},"day":dates})
-            .projection(projection)
-            .batch_size(2000)
-            .max_time(deadline)
-            .session(&mut *session)
-            .await
-            .map_err(unavailable)?;
-        while let Some(document) = cursor
-            .next(&mut *session)
-            .await
-            .transpose()
-            .map_err(unavailable)?
-        {
-            bytes += mongodb::bson::serialize_to_vec(&document)
+        // A dense month can consume one cursor's server budget over several
+        // batches. Bound each cursor while using the caller's same snapshot.
+        for group in ids.chunks(SANDBOXES_PER_CURSOR) {
+            let mut cursor = collection
+                .find(doc! {"sandbox_id":{"$in":group},"day":dates.clone()})
+                .projection(projection.clone())
+                .batch_size((group.len() * DAYS_PER_SANDBOX) as u32)
+                .max_time(deadline)
+                .session(&mut *session)
+                .await
+                .map_err(unavailable)?;
+            while let Some(document) = cursor
+                .next(&mut *session)
+                .await
+                .transpose()
                 .map_err(unavailable)?
-                .len();
-            if bytes > 64 * 1024 * 1024 {
-                return Err(MetricsError::Busy);
-            }
-            let bucket = if boundary {
-                DayBucket::read_boundary(&document)?
-            } else {
-                DayBucket::read_summary(&document)?
-            };
-            if !ids.contains(&bucket.sandbox_id.as_str())
-                || bucket.day < range.from / DAY * DAY
-                || bucket.day >= range.to
-                || out.len() >= states.len() * 31
-                || out
-                    .insert((bucket.sandbox_id.clone(), bucket.day), bucket)
-                    .is_some()
             {
-                return Err(MetricsError::Unavailable);
+                bytes += mongodb::bson::serialize_to_vec(&document)
+                    .map_err(unavailable)?
+                    .len();
+                if bytes > 64 * 1024 * 1024 {
+                    return Err(MetricsError::Busy);
+                }
+                let bucket = if boundary {
+                    DayBucket::read_boundary(&document)?
+                } else {
+                    DayBucket::read_summary(&document)?
+                };
+                if !group.contains(&bucket.sandbox_id.as_str())
+                    || bucket.day < range.from / DAY * DAY
+                    || bucket.day >= range.to
+                    || out.len() >= ids.len() * DAYS_PER_SANDBOX
+                    || out
+                        .insert((bucket.sandbox_id.clone(), bucket.day), bucket)
+                        .is_some()
+                {
+                    return Err(MetricsError::Unavailable);
+                }
             }
         }
     }
