@@ -306,8 +306,8 @@ async fn default_profiles_quarantine_malformed_payloads_without_replacing_them()
         .await
         .unwrap();
 
-    let agent = AgentProfileId::new(DEFAULT_AGENT_PROFILE_ID);
-    let workspace = WorkspaceProfileId::new(DEFAULT_WORKSPACE_PROFILE_ID);
+    let agent = AgentProfileId(DEFAULT_AGENT_PROFILE_ID.into());
+    let workspace = WorkspaceProfileId(DEFAULT_WORKSPACE_PROFILE_ID.into());
     let draft_key = doc! {"_id": agent.as_str()};
     let revision_key =
         doc! {"profile_id": agent.as_str(), "revision": i64::from(DEFAULT_PROFILE_REVISION)};
