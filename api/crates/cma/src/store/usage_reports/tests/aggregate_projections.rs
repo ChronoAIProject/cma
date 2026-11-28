@@ -102,8 +102,8 @@ async fn projected_reports_preserve_series_owner_pages_and_fail_closed() {
             let legacy = old.series(&report, query.clone()).await.unwrap();
             let cached = store.series(&report, query).await.unwrap();
             assert_eq!(
-                serde_json::to_value(cached).unwrap(),
-                serde_json::to_value(legacy).unwrap()
+                serde_json::to_vec(&cached).unwrap(),
+                serde_json::to_vec(&legacy).unwrap()
             );
         }
         let mut cursor = None;
