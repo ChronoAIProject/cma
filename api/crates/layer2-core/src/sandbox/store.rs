@@ -60,9 +60,9 @@ pub use agent_reads::AgentReadQueryStore;
 mod reconciliation;
 pub use reconciliation::{
     apply_sandbox_runtime_loss, precheck_runtime_loss_agents, precheck_sandbox_runtime_loss,
-    retirement_debt_is_local, validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
-    SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
-    SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
+    retirement_debt_is_local, validate_sandbox_runtime_loss_request, ReconciliationSandbox,
+    SandboxReconciliationStore, SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication,
+    SandboxRuntimeLossMutation, SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
 mod channel_usage;
 pub use channel_usage::{

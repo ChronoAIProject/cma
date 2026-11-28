@@ -3,8 +3,9 @@
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::{
-    validate_sandbox_runtime_loss_request, Page, PageRequest, SandboxReconciliationStore,
-    SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest, SandboxStoreError, MAX_PAGE_SIZE,
+    validate_sandbox_runtime_loss_request, Page, PageRequest, ReconciliationSandbox,
+    SandboxReconciliationStore, SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
+    SandboxStoreError, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::Sandbox;
 use mongodb::bson::doc;
@@ -33,6 +34,26 @@ mod transaction;
 
 #[async_trait::async_trait]
 impl SandboxReconciliationStore for MongoSandboxStore {
+    async fn reconciliation_sandbox(
+        &self,
+        id: &layer2_core::SandboxId,
+    ) -> Result<ReconciliationSandbox, SandboxStoreError> {
+        let row = self
+            .sandboxes
+            .find_one(doc! { "_id": id.as_str() })
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        match row.as_ref() {
+            None => Ok(ReconciliationSandbox::Missing),
+            Some(row) if super::sandbox_quarantine::contains(row) => {
+                Ok(ReconciliationSandbox::Quarantined)
+            }
+            Some(row) => {
+                read_sandbox(row).map(|sandbox| ReconciliationSandbox::Present(Box::new(sandbox)))
+            }
+        }
+    }
+
     async fn unowned_home_reservation(
         &self,
         id: &layer2_core::SandboxId,

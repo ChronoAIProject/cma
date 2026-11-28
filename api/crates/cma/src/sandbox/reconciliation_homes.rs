@@ -1,5 +1,6 @@
 //! Reclaim late allocations using fresh warm authority before owned authority.
 
+use layer2_core::sandbox::store::ReconciliationSandbox;
 use layer2_core::sandbox::SandboxStoreError;
 use layer2_core::SandboxId;
 
@@ -45,7 +46,11 @@ impl SandboxReconciler {
             return Ok(());
         }
         let id = SandboxId(observed.request.sandbox_id.clone());
-        if let Some(current) = self.store.get_sandbox(&id).await? {
+        let current = self.store.reconciliation_sandbox(&id).await?;
+        if matches!(current, ReconciliationSandbox::Quarantined) {
+            return Ok(());
+        }
+        if let ReconciliationSandbox::Present(current) = current {
             current
                 .validate()
                 .map_err(|error| corrupt(&error.to_string()))?;
@@ -124,12 +129,16 @@ impl SandboxReconciler {
         {
             return Ok(());
         }
+        let current = self.store.reconciliation_sandbox(&id).await?;
+        if matches!(current, ReconciliationSandbox::Quarantined) {
+            return Ok(());
+        }
         let owner = self
             .adapter
             .native_pools_for_home(&claim.request.home)
             .map_err(provider_error)?
             .ok_or_else(|| corrupt("native claim belongs to another home authority"))?;
-        if let Some(current) = self.store.get_sandbox(&id).await? {
+        if let ReconciliationSandbox::Present(current) = current {
             current
                 .validate()
                 .map_err(|error| corrupt(&error.to_string()))?;
