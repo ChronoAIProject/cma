@@ -75,6 +75,10 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub async fn new() -> Self {
+        Self::with_erasure_keys(false).await
+    }
+
+    pub(super) async fn with_erasure_keys(write_erasure_keys: bool) -> Self {
         let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("Mongo replica-set URI required");
         let name = format!("cma_execution_{}", uuid::Uuid::new_v4().simple());
         let app_name = name.clone();
@@ -124,6 +128,7 @@ impl Fixture {
         let store = Arc::new(MongoResourceExecutionStore {
             sandbox: sandbox.clone(),
             collections: Collections::new(&sandbox),
+            write_erasure_keys,
         });
         let policy = ResourceExecutionPolicy::enforce(store.clone(), true)
             .await
@@ -265,11 +270,19 @@ impl Fixture {
     }
 
     pub async fn started_ticket(&self, suffix: &str) -> wire::ExecutionTicketV1 {
-        let authority = self.authority("recipient").await;
+        self.started_ticket_for(&self.authority("recipient").await, suffix)
+            .await
+    }
+
+    pub async fn started_ticket_for(
+        &self,
+        authority: &ExecutionAuthority,
+        suffix: &str,
+    ) -> wire::ExecutionTicketV1 {
         let execution = self.execution(suffix);
         let record = self
             .coordinator
-            .register_execution(&authority, &execution)
+            .register_execution(authority, &execution)
             .await
             .unwrap();
         let ticket = wire::ExecutionTicketV1 {
@@ -294,7 +307,7 @@ impl Fixture {
             registration: record.registration,
         };
         self.coordinator
-            .issue_ticket(&authority, &ticket)
+            .issue_ticket(authority, &ticket)
             .await
             .unwrap();
         self.coordinator

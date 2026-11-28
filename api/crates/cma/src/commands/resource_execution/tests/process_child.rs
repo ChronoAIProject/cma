@@ -32,7 +32,7 @@ async fn revocation_worker_child() {
     let store = MongoSandboxStore::open(&client, &name)
         .await
         .unwrap()
-        .open_resource_execution()
+        .open_resource_execution(false)
         .await
         .unwrap();
     let mut sweep = RevocationSweep::new(Arc::new(RevocationWorker::new(store, directory)));

@@ -346,6 +346,8 @@ pub trait ResourceExecutionStore: Send + Sync {
         after: Option<&wire::Digest>,
         limit: u32,
     ) -> ExecutionResult<Vec<RevocationOperationV1>>;
+    /// Pending revocations page the original contiguous cohort. An effective
+    /// revocation can have gaps after account erasure removes settled evidence.
     async fn frozen_members(
         &self,
         operation: &wire::Digest,

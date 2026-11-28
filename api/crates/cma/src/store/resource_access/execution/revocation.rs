@@ -71,12 +71,37 @@ impl MongoResourceExecutionStore {
             phase: RevocationPhaseV1::Pending,
         };
         super::super::mutation::fence_lineage(&self.sandbox, &snapshot, session).await?;
-        self.write_grant(&control, session).await?;
+        let write_keys = self
+            .writes_erasure_keys(Some(&control.key), session)
+            .await?;
+        let grant_keys = write_keys
+            .then(|| {
+                erasure::keys(
+                    intent.sandbox_id.as_str(),
+                    &intent.owner,
+                    None,
+                    Some(&control.key.share_id),
+                )
+            })
+            .transpose()?;
+        self.write_grant(&control, grant_keys, session).await?;
         // The immutable generation plus member ordinals is the durable outbox.
         // No notification, expired lease or lost commit reply can omit a member.
+        let mut document = records::operation_document(&operation)?;
+        if write_keys {
+            document.insert(
+                records::ERASURE_KEYS,
+                erasure::keys(
+                    intent.sandbox_id.as_str(),
+                    &intent.owner,
+                    intent.actor.ordinary_subject(),
+                    Some(&operation.key.family.share_id),
+                )?,
+            );
+        }
         self.collections
             .operations
-            .insert_one(records::operation_document(&operation)?)
+            .insert_one(document)
             .session(session)
             .await?;
         tracing::debug!(
@@ -190,13 +215,13 @@ impl MongoResourceExecutionStore {
             }
             _ => return Err(ExecutionError::Corrupt.into()),
         }
-        self.write_grant(&control, session).await?;
+        self.write_grant(&control, None, session).await?;
         let result = self
             .collections
             .operations
-            .replace_one(
+            .update_one(
                 doc! {"_id":id.as_str(),"phase":"pending"},
-                records::operation_document(&operation)?,
+                records::update_record(records::operation_document(&operation)?),
             )
             .session(session)
             .await?;
@@ -268,13 +293,17 @@ impl MongoResourceExecutionStore {
             .iter()
             .map(records::read_member)
             .collect::<ExecutionResult<Vec<_>>>()?;
+        // An effective operation keeps its settlement receipt after authorized
+        // account erasure removes a former member. Pending work needs every
+        // original ordinal before it can become effective.
+        let pending = matches!(operation.phase, RevocationPhaseV1::Pending);
         for (offset, member) in members.iter().enumerate() {
-            if member.ordinal != after + offset as u32 + 1 {
+            if pending && member.ordinal != after + offset as u32 + 1 {
                 return Err(ExecutionError::Corrupt);
             }
             member.barrier_request(&operation)?;
         }
-        if members.is_empty() && after < operation.frozen_members {
+        if pending && members.is_empty() && after < operation.frozen_members {
             return Err(ExecutionError::Corrupt);
         }
         Ok(members)

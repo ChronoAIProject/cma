@@ -10,16 +10,21 @@ use mongodb::{
     Database,
 };
 
+use std::collections::BTreeSet;
+
 pub(super) struct Receipt {
     pub allocation_absent: bool,
     pub observer_absent: bool,
     pub creation_proofs_absent: bool,
     pub usage_projections_absent: bool,
     pub active_log_proofs_absent: bool,
+    pub execution_namespaces: BTreeSet<String>,
 }
 impl Receipt {
     pub fn skips(&self, collection: &str) -> bool {
-        (self.allocation_absent && collection == allocation_buckets::COLLECTION)
+        (super::resource_execution::managed(collection)
+            && !self.execution_namespaces.contains(collection))
+            || (self.allocation_absent && collection == allocation_buckets::COLLECTION)
             || (self.observer_absent && collection == agent_observation::COLLECTION)
             || (self.creation_proofs_absent && collection == creation_outcomes::COLLECTION)
             || (self.usage_projections_absent && collection == usage_projections::COLLECTION)
@@ -48,6 +53,7 @@ pub(super) async fn inspect(
     agent_shared_observation: Option<bool>,
 ) -> Result<Receipt, Error> {
     Ok(Receipt {
+        execution_namespaces: super::resource_execution::namespaces(db).await?,
         allocation_absent: absent(
             db,
             allocation_buckets::COLLECTION,

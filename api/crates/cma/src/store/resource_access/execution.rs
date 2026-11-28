@@ -6,6 +6,7 @@ mod collections;
 #[cfg(test)]
 mod compat_tests;
 mod effects;
+pub(in crate::store) mod erasure;
 mod leases;
 #[cfg(test)]
 mod mongo_tests;
@@ -33,6 +34,7 @@ use collections::Collections;
 pub struct MongoResourceExecutionStore {
     sandbox: MongoSandboxStore,
     collections: Collections,
+    write_erasure_keys: bool,
 }
 
 enum TxnError {

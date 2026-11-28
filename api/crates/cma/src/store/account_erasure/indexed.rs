@@ -114,6 +114,11 @@ pub(super) async fn page(
     selector: Option<&Key>,
     after: Option<&Bson>,
 ) -> Result<Page, Error> {
+    let page_size = if super::resource_execution::managed(entry.collection) {
+        8
+    } else {
+        PAGE
+    };
     let order = logs::available(db, entry.collection).await?;
     let keys = keys(entry, contexts);
     let mut index = selector.map_or(0, |selector| keys.partition_point(|key| key < selector));
@@ -138,12 +143,12 @@ pub(super) async fn page(
             .find(filter)
             .sort(order.map_or_else(|| doc! {"_id":1}, logs::Order::sort))
             .hint(order.map_or_else(|| key.hint(), logs::Order::hint))
-            .limit(PAGE)
+            .limit(page_size)
             .await?
             .try_collect()
             .await?;
         let length = rows.len();
-        let (next, after) = if length < PAGE as usize {
+        let (next, after) = if length < page_size as usize {
             index += 1;
             (keys.get(index).cloned(), None)
         } else {

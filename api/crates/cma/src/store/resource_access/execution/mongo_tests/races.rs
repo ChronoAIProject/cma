@@ -465,7 +465,11 @@ async fn full_effect_ledger_preserves_revoke_capacity_and_evidence_only_reconcil
         .observe_effect(receiver, &confirmed)
         .await
         .unwrap();
-    let reopened = fixture.sandbox.open_resource_execution().await.unwrap();
+    let reopened = fixture
+        .sandbox
+        .open_resource_execution(false)
+        .await
+        .unwrap();
     reopened.observe_effect(&unknown).await.unwrap();
     let effects = reopened
         .effects_for(&ticket.registration, 0, 32)

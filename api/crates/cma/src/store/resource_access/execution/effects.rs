@@ -7,7 +7,8 @@ impl MongoResourceExecutionStore {
         intent: &wire::EffectIntentV1,
         session: &mut ClientSession,
     ) -> TxnResult<wire::EffectPermissionV1> {
-        let mut member = self.member_in(&intent.registration, session).await?;
+        let member_row = self.member_row_in(&intent.registration, session).await?;
+        let mut member = records::read_member(&member_row)?;
         let Some(MemberPermitV1::Execution { ticket }) = &member.permit else {
             return Err(ExecutionError::AuthorityChanged.into());
         };
@@ -29,7 +30,7 @@ impl MongoResourceExecutionStore {
                 return Err(ExecutionError::Corrupt.into());
             }
             control.revision = control.revision.successor()?;
-            self.write_grant(&control, session).await?;
+            self.write_grant(&control, None, session).await?;
         }
         super::super::mutation::fence_lineage(&self.sandbox, &snapshot, session).await?;
         let id = records::effect_id(intent)?;
@@ -57,9 +58,13 @@ impl MongoResourceExecutionStore {
             permission: permission.clone(),
             observations: Vec::new(),
         };
+        let mut document = records::effect_document(&effect)?;
+        if let Some(keys) = member_row.get(records::ERASURE_KEYS) {
+            document.insert(records::ERASURE_KEYS, keys.clone());
+        }
         self.collections
             .effects
-            .insert_one(records::effect_document(&effect)?)
+            .insert_one(document)
             .session(&mut *session)
             .await?;
         self.save_member(&member, session).await?;
@@ -91,7 +96,10 @@ impl MongoResourceExecutionStore {
         let result = self
             .collections
             .effects
-            .replace_one(doc! {"_id":id.as_str()}, records::effect_document(&effect)?)
+            .update_one(
+                doc! {"_id":id.as_str()},
+                records::update_record(records::effect_document(&effect)?),
+            )
             .session(session)
             .await?;
         if result.matched_count != 1 {

@@ -2,10 +2,10 @@ use super::*;
 use futures_util::TryStreamExt;
 use mongodb::{options::IndexOptions, Collection, IndexModel};
 
-pub(super) const GRANTS: &str = "resource_execution_grants_v1";
-pub(super) const MEMBERS: &str = "resource_execution_records_v1";
-pub(super) const OPERATIONS: &str = "resource_revocation_operations_v1";
-pub(super) const EFFECTS: &str = "resource_execution_effects_v1";
+pub(in crate::store) const GRANTS: &str = "resource_execution_grants_v1";
+pub(in crate::store) const MEMBERS: &str = "resource_execution_records_v1";
+pub(in crate::store) const OPERATIONS: &str = "resource_revocation_operations_v1";
+pub(in crate::store) const EFFECTS: &str = "resource_execution_effects_v1";
 const ACTIVATION: &str = "activation";
 const ACTIVATION_RECEIPT: &str = "activation_receipt";
 
@@ -22,12 +22,16 @@ impl Collections {
         let database = sandbox
             .client
             .database(&sandbox.resource_shares.namespace().db);
+        Self::from_database(&database)
+    }
+
+    pub(super) fn from_database(database: &mongodb::Database) -> Self {
         use crate::store::durability::majority_collection;
         Self {
-            grants: majority_collection(&database, GRANTS),
-            members: majority_collection(&database, MEMBERS),
-            operations: majority_collection(&database, OPERATIONS),
-            effects: majority_collection(&database, EFFECTS),
+            grants: majority_collection(database, GRANTS),
+            members: majority_collection(database, MEMBERS),
+            operations: majority_collection(database, OPERATIONS),
+            effects: majority_collection(database, EFFECTS),
         }
     }
 
@@ -322,6 +326,7 @@ impl MongoSandboxStore {
         let store = MongoResourceExecutionStore {
             sandbox: self.clone(),
             collections,
+            write_erasure_keys: false,
         };
         match store.transact(Command::Bootstrap).await? {
             Output::Observed => Ok(()),
@@ -347,6 +352,7 @@ impl MongoSandboxStore {
         let store = MongoResourceExecutionStore {
             sandbox: self.clone(),
             collections,
+            write_erasure_keys: false,
         };
         match store
             .transact(Command::Activate(epoch, drain_evidence))
@@ -364,8 +370,11 @@ impl MongoSandboxStore {
             reason = "R3 owns activation composition; R1 exposes the inactive store port"
         )
     )]
+    /// The erasure-key writer may be selected only after all readers are
+    /// compatible and older replacement writers have drained.
     pub async fn open_resource_execution(
         &self,
+        write_erasure_keys: bool,
     ) -> ExecutionResult<Arc<dyn ResourceExecutionStore>> {
         let collections = Collections::new(self);
         if !matches!(
@@ -378,6 +387,7 @@ impl MongoSandboxStore {
         Ok(Arc::new(MongoResourceExecutionStore {
             sandbox: self.clone(),
             collections,
+            write_erasure_keys,
         }))
     }
 

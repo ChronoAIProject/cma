@@ -28,15 +28,22 @@ pub(super) fn decode<T: DeserializeOwned>(document: &Document) -> ExecutionResul
     serde_json::from_str(text).map_err(|_| ExecutionError::Corrupt)
 }
 
-const ERASURE_KEYS: &str = "erasure_keys_v1";
+pub(in crate::store) const ERASURE_KEYS: &str = "erasure_keys_v1";
+
+pub(super) fn update_record(mut next: Document) -> Document {
+    // The protocol writer owns the payload fields. Erasure attribution belongs
+    // to the original admission and must survive subsequent state transitions.
+    next.remove("_id");
+    doc! {"$set":next}
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ErasureKeys {
-    sandbox_id: wire::OpaqueId,
-    actor_subject: Option<wire::OpaqueId>,
-    owner_subject: Option<wire::OpaqueId>,
-    share_id: Option<wire::OpaqueId>,
+pub(super) struct ErasureKeys {
+    pub(super) sandbox_id: wire::OpaqueId,
+    pub(super) actor_subject: Option<wire::OpaqueId>,
+    pub(super) owner_subject: Option<wire::OpaqueId>,
+    pub(super) share_id: Option<wire::OpaqueId>,
 }
 
 impl ErasureKeys {
@@ -231,14 +238,21 @@ impl MongoResourceExecutionStore {
         registration: &wire::Digest,
         session: &mut ClientSession,
     ) -> TxnResult<ExecutionRecordV1> {
-        let document = self
+        let document = self.member_row_in(registration, session).await?;
+        Ok(read_member(&document)?)
+    }
+    pub(super) async fn member_row_in(
+        &self,
+        registration: &wire::Digest,
+        session: &mut ClientSession,
+    ) -> TxnResult<Document> {
+        Ok(self
             .collections
             .members
             .find_one(doc! {"_id":registration.as_str()})
             .session(session)
             .await?
-            .ok_or(ExecutionError::AuthorityChanged)?;
-        Ok(read_member(&document)?)
+            .ok_or(ExecutionError::AuthorityChanged)?)
     }
     pub(super) async fn save_member(
         &self,
@@ -248,9 +262,9 @@ impl MongoResourceExecutionStore {
         let result = self
             .collections
             .members
-            .replace_one(
+            .update_one(
                 doc! {"_id":member.registration.as_str()},
-                member_document(member)?,
+                update_record(member_document(member)?),
             )
             .session(session)
             .await?;
@@ -298,8 +312,10 @@ impl MongoResourceExecutionStore {
     pub(super) async fn write_grant(
         &self,
         control: &GrantControlV1,
+        new_keys: Option<Document>,
         session: &mut ClientSession,
     ) -> TxnResult<()> {
+        let mut next = grant_document(control)?;
         if self
             .collections
             .grant_in(&control.key.origin, session)
@@ -308,17 +324,22 @@ impl MongoResourceExecutionStore {
         {
             // The immutable origin receipt distinguishes a new family from a
             // lost Closing/tombstone row, including a family with no members.
+            let mut receipt = grant_receipt(control);
+            if let Some(keys) = new_keys {
+                next.insert(ERASURE_KEYS, keys.clone());
+                receipt.insert(ERASURE_KEYS, keys);
+            }
             self.collections
                 .grants
-                .insert_one(grant_receipt(control))
+                .insert_one(receipt)
                 .session(&mut *session)
                 .await?;
         }
         self.collections
             .grants
-            .replace_one(
+            .update_one(
                 doc! {"_id":control.key.origin.as_str()},
-                grant_document(control)?,
+                update_record(next),
             )
             .upsert(true)
             .session(session)
