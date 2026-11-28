@@ -223,24 +223,19 @@ for (const restored of [false, true]) {
       submit.press('Enter'),
     ]);
     expect(acceptance.status()).toBe(202);
-    const summary = page.getByRole('region', { name: 'Deletion request', exact: true });
-    if (restored) {
-      await expect(page.getByRole('dialog', { name: 'Deleting Agent', exact: true })).toBeHidden();
-      await expect(summary).toHaveCount(0);
-      await moreActions.press('Enter');
-      await page
-        .getByRole('menuitem', { name: 'View deletion status', exact: true })
-        .press('Enter');
-    } else {
-      await expect(summary.getByRole('button', { name: 'View status', exact: true })).toBeEnabled();
-      await summary.getByRole('button', { name: 'View status', exact: true }).press('Enter');
-    }
-    const reopen = page.getByRole('button', { name: 'View Agent deletion status (2)' });
+    const reopen = page
+      .getByRole('region', { name: 'Agent deletion', exact: true })
+      .getByRole('button', { name: 'View status', exact: true });
     await expect(reopen).toBeEnabled();
     const original = (await receipts()).find(
       (request) => request.action.agentId === boundary.agent.id,
     );
-    expect(original).toEqual({ ...uncertain, key: expect.any(String), accepted: true });
+    expect(original).toEqual({
+      ...uncertain,
+      key: expect.any(String),
+      accepted: true,
+      acceptedAt: new Date(anchor).toISOString(),
+    });
     expect(original.key).toBeTruthy();
     if (restored) expect(original.key).toBe(uncertain.key);
     await page.clock.runFor(100);
