@@ -39,11 +39,18 @@ where
             .await
             .map_err(service_error)?;
         principal.require("cma-eg:admin").map_err(service_error)?;
+        let creator = auth
+            .service_creator(principal.subject.clone(), &parts.headers)
+            .await?;
+        crate::request_audit::bind(
+            &principal.subject,
+            creator.organization.then_some(creator.subject.as_str()),
+            cmaeg_core::request_audit::Credential::Bearer,
+        )
+        .await?;
         Ok(Self {
-            actor: principal.subject.clone(),
-            creator: auth
-                .service_creator(principal.subject, &parts.headers)
-                .await?,
+            actor: principal.subject,
+            creator,
         })
     }
 }

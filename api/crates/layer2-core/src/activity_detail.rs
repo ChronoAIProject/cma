@@ -24,6 +24,15 @@ pub enum DetailKey {
     Revision,
     ProfileKind,
     Visibility,
+    ActivityChannel,
+    RequestId,
+    RequestMethod,
+    RequestRoute,
+    CredentialKind,
+    ActorScope,
+    ScopeOwner,
+    HttpStatus,
+    GatewayAuditWriter,
 }
 
 impl DetailKey {
@@ -44,6 +53,15 @@ impl DetailKey {
             Self::Revision => "revision",
             Self::ProfileKind => "profile_kind",
             Self::Visibility => "visibility",
+            Self::ActivityChannel => "activity_channel",
+            Self::RequestId => "request_id",
+            Self::RequestMethod => "request_method",
+            Self::RequestRoute => "request_route",
+            Self::CredentialKind => "credential_kind",
+            Self::ActorScope => "actor_scope",
+            Self::ScopeOwner => "scope_owner",
+            Self::HttpStatus => "http_status",
+            Self::GatewayAuditWriter => "gateway_audit_writer",
         }
     }
 
@@ -64,6 +82,15 @@ impl DetailKey {
             "revision" => Self::Revision,
             "profile_kind" => Self::ProfileKind,
             "visibility" => Self::Visibility,
+            "activity_channel" => Self::ActivityChannel,
+            "request_id" => Self::RequestId,
+            "request_method" => Self::RequestMethod,
+            "request_route" => Self::RequestRoute,
+            "credential_kind" => Self::CredentialKind,
+            "actor_scope" => Self::ActorScope,
+            "scope_owner" => Self::ScopeOwner,
+            "http_status" => Self::HttpStatus,
+            "gateway_audit_writer" => Self::GatewayAuditWriter,
             _ => return None,
         })
     }
@@ -92,6 +119,24 @@ impl ActivityDetail {
 
     pub fn get(&self, key: DetailKey) -> Option<&str> {
         self.0.get(&key).map(String::as_str)
+    }
+
+    pub(crate) fn request_summary(&self) -> Self {
+        let mut summary = Self::new();
+        for key in [
+            DetailKey::ActivityChannel,
+            DetailKey::RequestId,
+            DetailKey::RequestMethod,
+            DetailKey::RequestRoute,
+            DetailKey::CredentialKind,
+            DetailKey::ActorScope,
+            DetailKey::HttpStatus,
+        ] {
+            if let Some(value) = self.get(key) {
+                summary.record(key, value);
+            }
+        }
+        summary
     }
 
     pub fn from_stored(entries: impl IntoIterator<Item = (String, String)>) -> Self {

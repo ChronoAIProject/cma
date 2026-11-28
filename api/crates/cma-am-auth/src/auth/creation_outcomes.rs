@@ -188,6 +188,14 @@ pub(super) async fn attach(auth: &Arc<AuthState>, mut request: Request, next: Ne
         }
         let authority = auth.creation_reader(request.headers()).await?;
         auth.check_creation_standing(&authority).await?;
+        crate::request_audit::bind(crate::request_audit::VerifiedActor {
+            subject: authority.owner.subject.clone(),
+            channel: layer2_core::ActivityChannel::Web,
+            credential: crate::request_audit::Credential::WebSession,
+            scope: "personal",
+        })
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?;
         request
             .extensions_mut()
             .insert(AuthenticatedSubject(authority.owner.subject.clone()));

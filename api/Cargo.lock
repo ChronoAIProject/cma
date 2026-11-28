@@ -488,6 +488,7 @@ dependencies = [
  "base64 0.22.1",
  "bson",
  "cma-service-auth",
+ "cmaeg-core",
  "futures-util",
  "http-body",
  "http-body-util",

@@ -2,10 +2,19 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{now_rfc3339, ActivityDetail, ServiceId, SkillId, SubjectId};
+use crate::{now_rfc3339, ActivityDetail, DetailKey, ServiceId, SkillId, SubjectId};
 
 pub const DEFAULT_ACTIVITY_LIMIT: u32 = 50;
 pub const MAX_ACTIVITY_LIMIT: u32 = 200;
+pub const ACTIVITY_OUTCOME_UNCONFIRMED: &str = "outcome_unconfirmed";
+
+tokio::task_local! {
+    static REQUEST_ID: String;
+}
+
+pub async fn with_request_id<F: std::future::Future>(id: String, future: F) -> F::Output {
+    REQUEST_ID.scope(id, future).await
+}
 
 /// Opaque activity-record identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -53,6 +62,48 @@ pub enum ActivityOutcome {
     Failed(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityResult {
+    Succeeded,
+    Refused,
+    Failed,
+}
+
+impl ActivityResult {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Succeeded => "succeeded",
+            Self::Refused => "refused",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ActivityChannel {
+    Web,
+    Api,
+    Cli,
+    Sdk,
+    Service,
+    Unknown,
+}
+
+impl ActivityChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Web => "web",
+            Self::Api => "api",
+            Self::Cli => "cli",
+            Self::Sdk => "sdk",
+            Self::Service => "service",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
 /// One bounded activity record. Request bodies and credentials never appear here.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -68,6 +119,10 @@ pub struct ActivityRecord {
 
 impl ActivityRecord {
     pub fn new(action: ActivityAction, outcome: ActivityOutcome) -> Self {
+        let mut detail = ActivityDetail::new();
+        if let Ok(id) = REQUEST_ID.try_with(Clone::clone) {
+            detail.record(DetailKey::RequestId, id);
+        }
         Self {
             id: ActivityId::generate(),
             at: now_rfc3339(),
@@ -75,7 +130,7 @@ impl ActivityRecord {
             action,
             target: None,
             outcome,
-            detail: ActivityDetail::new(),
+            detail,
         }
     }
 
@@ -100,6 +155,8 @@ pub struct ActivitySummary {
     pub action: ActivityAction,
     pub target: Option<ActivityTarget>,
     pub outcome: ActivityOutcome,
+    #[serde(default)]
+    pub detail: ActivityDetail,
 }
 
 impl From<ActivityRecord> for ActivitySummary {
@@ -111,6 +168,7 @@ impl From<ActivityRecord> for ActivitySummary {
             action: record.action,
             target: record.target,
             outcome: record.outcome,
+            detail: record.detail.request_summary(),
         }
     }
 }
@@ -121,6 +179,10 @@ impl From<ActivityRecord> for ActivitySummary {
 pub struct ActivityQuery {
     pub actor: Option<SubjectId>,
     pub action: Option<ActivityAction>,
+    pub result: Option<ActivityResult>,
+    pub channel: Option<ActivityChannel>,
+    pub recorded_from: Option<String>,
+    pub recorded_before: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude_successful_reads: bool,
     pub limit: u32,
@@ -132,6 +194,10 @@ impl Default for ActivityQuery {
         Self {
             actor: None,
             action: None,
+            result: None,
+            channel: None,
+            recorded_from: None,
+            recorded_before: None,
             exclude_successful_reads: false,
             limit: DEFAULT_ACTIVITY_LIMIT,
             cursor: None,
@@ -157,7 +223,34 @@ impl ActivityQuery {
                 ));
             }
         }
+        self.recorded_bounds_ms()?;
         Ok(())
+    }
+
+    /// The inclusive lower and exclusive upper bounds on persistence time.
+    pub fn recorded_bounds_ms(&self) -> Result<(Option<i64>, Option<i64>), crate::CoreError> {
+        use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+
+        let parse = |value: &str| {
+            OffsetDateTime::parse(value, &Rfc3339)
+                .map(|at| at.unix_timestamp_nanos().div_euclid(1_000_000))
+                .ok()
+                .and_then(|milliseconds| i64::try_from(milliseconds).ok())
+                .ok_or_else(|| {
+                    crate::CoreError::InvalidRequest("activity time must be RFC 3339".into())
+                })
+        };
+        let from = self.recorded_from.as_deref().map(parse).transpose()?;
+        let before = self.recorded_before.as_deref().map(parse).transpose()?;
+        if from
+            .zip(before)
+            .is_some_and(|(from, before)| from >= before)
+        {
+            return Err(crate::CoreError::InvalidRequest(
+                "activity start must precede its end".into(),
+            ));
+        }
+        Ok((from, before))
     }
 }
 

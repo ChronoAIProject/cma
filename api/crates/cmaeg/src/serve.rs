@@ -41,6 +41,10 @@ pub(crate) async fn serve(
     let discord_media_replacements =
         config.native_discord_media_card_replacements_enabled && discord_media_edits;
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
+    let request_audit = crate::request_audit::Writer::configured(
+        &config.management.cma_base_url,
+        service_auth.clone(),
+    )?;
     // Prove the renewable credential before advertising gateway readiness.
     service_auth.bearer().await?;
     let (records, creator_auth, browser) =
@@ -445,6 +449,12 @@ pub(crate) async fn serve(
     // The retained console has its own OAuth session, CSRF and owner checks.
     // Portal cookie middleware must not change that independent authority.
     router = router.merge(console.unwrap_or_default());
+    if let Some(writer) = request_audit {
+        router = router.layer(axum::middleware::from_fn_with_state(
+            writer,
+            crate::request_audit::audit,
+        ));
+    }
     let server = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),

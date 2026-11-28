@@ -1,7 +1,8 @@
 //! Authorized Activity list response and name enrichment.
 use super::*;
 use layer2_core::{
-    ActivityAction, ActivityQuery, ActivityRecord, ActivityTarget, DEFAULT_ACTIVITY_LIMIT,
+    ActivityAction, ActivityChannel, ActivityDetail, ActivityQuery, ActivityRecord, ActivityResult,
+    ActivityTarget, DetailKey, DEFAULT_ACTIVITY_LIMIT,
 };
 use sha2::{Digest, Sha256};
 
@@ -10,6 +11,10 @@ use sha2::{Digest, Sha256};
 pub(crate) struct ActivityParams {
     actor: Option<String>,
     action: Option<ActivityAction>,
+    result: Option<ActivityResult>,
+    channel: Option<ActivityChannel>,
+    recorded_from: Option<String>,
+    recorded_before: Option<String>,
     exclude_successful_reads: Option<bool>,
     limit: Option<u32>,
     cursor: Option<String>,
@@ -37,9 +42,46 @@ pub(crate) struct ActivityView {
     target: Option<ActivityTarget>,
     #[schema(value_type = Object)]
     outcome: layer2_core::ActivityOutcome,
+    #[serde(flatten)]
+    request: ActivityRequestView,
     #[schema(value_type = Object)]
     #[serde(skip_serializing_if = "Option::is_none")]
     detail: Option<layer2_core::ActivityDetail>,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+struct ActivityRequestView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    channel: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    method: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    route: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    credential_kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    actor_scope: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    http_status: Option<u16>,
+}
+
+impl From<&ActivityDetail> for ActivityRequestView {
+    fn from(detail: &ActivityDetail) -> Self {
+        let read = |key| detail.get(key).map(str::to_owned);
+        Self {
+            channel: read(DetailKey::ActivityChannel),
+            request_id: read(DetailKey::RequestId),
+            method: read(DetailKey::RequestMethod),
+            route: read(DetailKey::RequestRoute),
+            credential_kind: read(DetailKey::CredentialKind),
+            actor_scope: read(DetailKey::ActorScope),
+            http_status: detail
+                .get(DetailKey::HttpStatus)
+                .and_then(|status| status.parse().ok()),
+        }
+    }
 }
 
 impl From<ActivityRecord> for ActivityView {
@@ -54,6 +96,7 @@ impl From<ActivityRecord> for ActivityView {
             action: record.action,
             target: record.target,
             outcome: record.outcome,
+            request: ActivityRequestView::from(&record.detail),
             detail: Some(record.detail),
         }
     }
@@ -71,6 +114,7 @@ impl From<layer2_core::ActivitySummary> for ActivityView {
             action: record.action,
             target: record.target,
             outcome: record.outcome,
+            request: ActivityRequestView::from(&record.detail),
             detail: None,
         }
     }
@@ -157,6 +201,10 @@ pub(crate) async fn activity_actors(
     params(
         ("actor" = Option<String>, Query),
         ("action" = Option<String>, Query),
+        ("result" = Option<String>, Query, description = "succeeded, refused or failed"),
+        ("channel" = Option<String>, Query),
+        ("recorded_from" = Option<String>, Query, description = "Inclusive RFC 3339 start on the recorded time"),
+        ("recorded_before" = Option<String>, Query, description = "Exclusive RFC 3339 end on the recorded time"),
         ("exclude_successful_reads" = Option<bool>, Query, description = "Omit successful read, list and gateway record read events before pagination"),
         ("limit" = Option<u32>, Query),
         ("cursor" = Option<String>, Query),
@@ -171,15 +219,31 @@ pub(crate) async fn activity(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     params: Result<Query<ActivityParams>, axum::extract::rejection::QueryRejection>,
-) -> Result<Json<ActivityPageView>, CollectionProblem> {
+) -> Result<
+    (
+        [(axum::http::HeaderName, &'static str); 1],
+        Json<ActivityPageView>,
+    ),
+    CollectionProblem,
+> {
+    caller.require(layer2_core::Capability::ReadActivityLog)?;
     let params = params.map_err(|_| CollectionProblem::InvalidRequest)?.0;
-    let query = ActivityQuery {
+    let mut query = ActivityQuery {
         actor: params.actor.map(SubjectId),
         action: params.action,
+        result: params.result,
+        channel: params.channel,
+        recorded_from: params.recorded_from,
+        recorded_before: params.recorded_before,
         exclude_successful_reads: params.exclude_successful_reads.unwrap_or_default(),
         limit: params.limit.unwrap_or(DEFAULT_ACTIVITY_LIMIT),
-        cursor: params.cursor,
+        cursor: None,
     };
+    let filter = activity_filter_id(&query)?;
+    query.cursor = params
+        .cursor
+        .map(|cursor| activity_cursor(&query, &filter, cursor))
+        .transpose()?;
     let page = match params.view {
         Some(ListView::Summary) => {
             let page = state.activity.list_summaries(&caller, &query).await?;
@@ -217,24 +281,94 @@ pub(crate) async fn activity(
     for batch in subjects.chunks(200) {
         names.extend(crate::rest::public_names::resolve(&state.users, batch).await);
     }
-    Ok(Json(ActivityPageView {
-        items: page
-            .items
-            .into_iter()
-            .map(|mut view| {
-                view.actor_reference = view.actor.as_deref().map(actor_reference);
-                view.actor_name = view
-                    .actor
-                    .as_ref()
-                    .and_then(|actor| names.get(actor))
-                    .cloned();
-                view.target_name = match &view.target {
-                    Some(ActivityTarget::Subject(subject)) => names.get(&subject.0).cloned(),
-                    _ => None,
-                };
-                view
-            })
-            .collect(),
-        next: page.next_cursor,
-    }))
+    Ok((
+        [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+        Json(ActivityPageView {
+            items: page
+                .items
+                .into_iter()
+                .map(|mut view| {
+                    view.actor_reference = view.actor.as_deref().map(actor_reference);
+                    view.actor_name = view
+                        .actor
+                        .as_ref()
+                        .and_then(|actor| names.get(actor))
+                        .cloned();
+                    view.target_name = match &view.target {
+                        Some(ActivityTarget::Subject(subject)) => names.get(&subject.0).cloned(),
+                        _ => None,
+                    };
+                    view
+                })
+                .collect(),
+            next: page
+                .next_cursor
+                .map(|cursor| format!("v2:{filter}:{cursor}")),
+        }),
+    ))
+}
+
+fn activity_filter_id(query: &ActivityQuery) -> Result<String, CollectionProblem> {
+    let key = ActivityQuery {
+        limit: DEFAULT_ACTIVITY_LIMIT,
+        cursor: None,
+        ..query.clone()
+    };
+    let filter = serde_json::to_vec(&key).map_err(|_| CollectionProblem::Unavailable)?;
+    Ok(format!("{:x}", Sha256::digest(filter)))
+}
+
+fn activity_cursor(
+    query: &ActivityQuery,
+    filter: &str,
+    cursor: String,
+) -> Result<String, CollectionProblem> {
+    if let Some(cursor) = cursor.strip_prefix("v2:") {
+        return cursor
+            .split_once(':')
+            .filter(|(previous, _)| *previous == filter)
+            .map(|(_, position)| position.to_owned())
+            .ok_or(CollectionProblem::InvalidRequest);
+    }
+    if query.channel.is_none()
+        && query.result.is_none()
+        && query.recorded_from.is_none()
+        && query.recorded_before.is_none()
+    {
+        return Ok(cursor);
+    }
+    Err(CollectionProblem::InvalidRequest)
+}
+
+#[cfg(test)]
+mod cursor_tests {
+    use super::*;
+
+    #[test]
+    fn activity_page_cursor_binds_actor_channel_result_and_time_without_binding_limit() {
+        let query = ActivityQuery {
+            actor: Some(SubjectId::new("fixture")),
+            channel: Some(ActivityChannel::Web),
+            result: Some(ActivityResult::Refused),
+            recorded_from: Some("2026-01-01T00:00:00Z".into()),
+            ..Default::default()
+        };
+        let filter = activity_filter_id(&query).ok().unwrap();
+        let cursor = format!("v2:{filter}:123:act_fixture");
+        assert_eq!(
+            activity_cursor(&query, &filter, cursor.clone())
+                .ok()
+                .unwrap(),
+            "123:act_fixture"
+        );
+        assert!(activity_cursor(&query, &filter, "123:act_fixture".into()).is_err());
+        let another_channel = ActivityQuery {
+            channel: Some(ActivityChannel::Api),
+            ..query.clone()
+        };
+        let another_filter = activity_filter_id(&another_channel).ok().unwrap();
+        assert!(activity_cursor(&another_channel, &another_filter, cursor).is_err());
+        let different_limit = ActivityQuery { limit: 2, ..query };
+        assert_eq!(activity_filter_id(&different_limit).ok().unwrap(), filter);
+    }
 }

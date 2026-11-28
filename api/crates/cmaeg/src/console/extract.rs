@@ -40,14 +40,24 @@ impl FromRequestParts<Console> for Authorized {
                 sign_in(parts)
             });
         };
-        match console.authority().authorize(&cell).await {
-            Ok(authorized) => Ok(authorized),
+        let authorized = match console.authority().authorize(&cell).await {
+            Ok(authorized) => authorized,
             // The flash explains the change, and an organization record now
             // reads as 404 under this Personal authority.
-            Err(Denied::Downgraded(personal)) if !post => Ok(personal),
-            Err(Denied::SignedOut) if !post => Err(ended(sign_in(parts))),
-            Err(denied) => Err(denied_response(denied)),
-        }
+            Err(Denied::Downgraded(personal)) if !post => personal,
+            Err(Denied::SignedOut) if !post => return Err(ended(sign_in(parts))),
+            Err(denied) => return Err(denied_response(denied)),
+        };
+        let subject = cell.meta().subject.clone();
+        crate::request_audit::bind(
+            &subject,
+            (authorized.scope() == super::authority::OwnerScope::Organization)
+                .then_some(authorized.owner()),
+            cmaeg_core::request_audit::Credential::WebSession,
+        )
+        .await
+        .map_err(|_| pages::unavailable())?;
+        Ok(authorized)
     }
 }
 

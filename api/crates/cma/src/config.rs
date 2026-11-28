@@ -212,6 +212,8 @@ pub struct Config {
     pub lifecycle_failure_metadata_enabled: bool,
     pub activity_async_enabled: bool,
     pub activity_operational_read_sampling_enabled: bool,
+    pub activity_ingress_audit_enabled: bool,
+    pub activity_gateway_audit_subject: Option<layer2_core::SubjectId>,
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
@@ -429,6 +431,8 @@ impl Config {
             lifecycle_failure_metadata_enabled: lifecycle_failure::enabled(&mut lookup)?,
             activity_async_enabled: activity::enabled(&mut lookup)?,
             activity_operational_read_sampling_enabled: activity::sampling_enabled(&mut lookup)?,
+            activity_ingress_audit_enabled: activity::ingress_audit_enabled(&mut lookup)?,
+            activity_gateway_audit_subject: activity::gateway_audit_subject(&mut lookup)?,
             default_profiles,
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?

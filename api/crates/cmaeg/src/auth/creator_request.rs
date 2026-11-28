@@ -1,6 +1,7 @@
 //! Method permissions and current organization scope for creator requests.
 use super::{bearer, service_error, Creator, CreatorAuthError, CreatorAuthState};
 use axum::{extract::FromRequestParts, http::request::Parts};
+use cmaeg_core::request_audit::Credential;
 
 impl<S> FromRequestParts<S> for Creator
 where
@@ -30,9 +31,11 @@ where
             _ => "cma-eg:channels:update",
         };
         if bearer(&parts.headers).is_some_and(cma_service_auth::is_service_key) {
-            return auth
+            let creator = auth
                 .authenticate_owner_key(&parts.headers, permission)
-                .await;
+                .await?;
+            crate::request_audit::bind(&creator.subject, None, Credential::OwnerKey).await?;
+            return Ok(creator);
         }
         if let Some(service) = &auth.service {
             let principal = service
@@ -40,9 +43,16 @@ where
                 .await
                 .map_err(service_error)?;
             principal.require(permission).map_err(service_error)?;
-            return auth
-                .service_creator(principal.subject, &parts.headers)
-                .await;
+            let creator = auth
+                .service_creator(principal.subject.clone(), &parts.headers)
+                .await?;
+            crate::request_audit::bind(
+                &principal.subject,
+                creator.organization.then_some(creator.subject.as_str()),
+                Credential::Bearer,
+            )
+            .await?;
+            return Ok(creator);
         }
         auth.authenticate(&parts.headers).await
     }

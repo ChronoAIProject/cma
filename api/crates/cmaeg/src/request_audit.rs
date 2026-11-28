@@ -1,0 +1,221 @@
+//! Durable Gateway request admissions through the configured machine writer.
+use axum::{
+    extract::{MatchedPath, Request, State},
+    http::{HeaderValue, Method, StatusCode},
+    middleware::Next,
+    response::{IntoResponse, Response},
+};
+use cmaeg_core::request_audit::{Client, Credential, Event, Identity, Scope, PATH};
+use std::{sync::Arc, time::Duration};
+use tokio::sync::{Mutex, Semaphore};
+
+const DEADLINE: Duration = Duration::from_secs(2);
+
+tokio::task_local! {
+    static ATTEMPT: Attempt;
+}
+
+pub(crate) struct Writer {
+    endpoint: String,
+    client: reqwest::Client,
+    auth: crate::service_auth::ServiceAuth,
+    slots: Semaphore,
+}
+
+struct Attempt {
+    writer: Arc<Writer>,
+    request_id: String,
+    client: Client,
+    identity: Arc<Mutex<Option<Identity>>>,
+}
+
+impl Writer {
+    pub(crate) fn configured(
+        origin: &str,
+        auth: crate::service_auth::ServiceAuth,
+    ) -> Result<Option<Arc<Self>>, Box<dyn std::error::Error + Send + Sync>> {
+        let enabled = match std::env::var("CMAEG_REQUEST_AUDIT_ENABLED").as_deref() {
+            Err(std::env::VarError::NotPresent) | Ok("false") => false,
+            Ok("true") => true,
+            _ => return Err("CMAEG_REQUEST_AUDIT_ENABLED must be true or false".into()),
+        };
+        if !enabled {
+            return Ok(None);
+        }
+        if !matches!(&auth, crate::service_auth::ServiceAuth::Account(_)) {
+            return Err("Gateway request audit requires the configured service account".into());
+        }
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .retry(reqwest::retry::never())
+            .timeout(DEADLINE)
+            .build()?;
+        Ok(Some(Arc::new(Self {
+            endpoint: format!("{}{PATH}", origin.trim_end_matches('/')),
+            client,
+            auth,
+            slots: Semaphore::new(64),
+        })))
+    }
+
+    async fn write(&self, event: Event) -> bool {
+        tokio::time::timeout(DEADLINE, async {
+            let Ok(bearer) = self.auth.bearer().await else {
+                return false;
+            };
+            for _ in 0..2 {
+                match self
+                    .client
+                    .post(&self.endpoint)
+                    .bearer_auth(bearer.as_str())
+                    .json(&event)
+                    .send()
+                    .await
+                {
+                    Ok(response) if response.status() == StatusCode::NO_CONTENT => return true,
+                    Ok(response) if !response.status().is_server_error() => return false,
+                    _ => {}
+                }
+            }
+            false
+        })
+        .await
+        .unwrap_or(false)
+    }
+}
+
+pub(crate) fn active() -> bool {
+    ATTEMPT.try_with(|_| ()).is_ok()
+}
+
+pub(crate) async fn bind(
+    actor: &str,
+    organization: Option<&str>,
+    credential: Credential,
+) -> Result<(), crate::auth::CreatorAuthError> {
+    let Ok((writer, request_id, client, bound)) = ATTEMPT.try_with(|attempt| {
+        (
+            attempt.writer.clone(),
+            attempt.request_id.clone(),
+            attempt.client,
+            attempt.identity.clone(),
+        )
+    }) else {
+        return Ok(());
+    };
+    // Persist independently verified identity before the business handler runs.
+    let identity = Identity {
+        subject: actor.to_owned(),
+        scope: if organization.is_some() {
+            Scope::Organization
+        } else {
+            Scope::Personal
+        },
+        organization: organization.map(str::to_owned),
+        credential,
+        client: if credential == Credential::WebSession {
+            Client::Web
+        } else {
+            client
+        },
+    };
+    let mut bound = bound.lock().await;
+    if let Some(saved) = bound.as_ref() {
+        return if saved == &identity {
+            Ok(())
+        } else {
+            Err(crate::auth::CreatorAuthError::Forbidden)
+        };
+    }
+    if !writer
+        .write(Event::Bind {
+            request_id,
+            identity: identity.clone(),
+        })
+        .await
+    {
+        return Err(crate::auth::CreatorAuthError::ProviderUnavailable);
+    }
+    *bound = Some(identity);
+    Ok(())
+}
+
+pub(crate) async fn audit(
+    State(writer): State<Arc<Writer>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    if !eligible(request.method(), request.uri().path()) {
+        return next.run(request).await;
+    }
+    let Ok(_slot) = writer.slots.try_acquire() else {
+        return unavailable();
+    };
+    let id = uuid::Uuid::new_v4().hyphenated().to_string();
+    let header = HeaderValue::from_str(&id).expect("UUID is a header value");
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map_or("unknown", MatchedPath::as_str);
+    let client = match request
+        .headers()
+        .get("x-cma-client")
+        .and_then(|v| v.to_str().ok())
+    {
+        Some("cli") => Client::Cli,
+        Some("sdk") => Client::Sdk,
+        _ => Client::Api,
+    };
+    if !writer
+        .write(Event::Reserve {
+            request_id: id.clone(),
+            method: request.method().to_string(),
+            route: route.to_owned(),
+        })
+        .await
+    {
+        let mut response = unavailable();
+        response.headers_mut().insert("x-request-id", header);
+        return response;
+    }
+    request.headers_mut().insert("x-request-id", header.clone());
+    let attempt = Attempt {
+        writer: writer.clone(),
+        request_id: id.clone(),
+        client,
+        identity: Arc::new(Mutex::new(None)),
+    };
+    let mut response = ATTEMPT.scope(attempt, next.run(request)).await;
+    if !writer
+        .write(Event::Finish {
+            request_id: id,
+            status: response.status().as_u16(),
+        })
+        .await
+    {
+        metrics::counter!("cmaeg_request_audit_unconfirmed_total").increment(1);
+    }
+    response.headers_mut().insert("x-request-id", header);
+    response
+}
+
+fn eligible(method: &Method, path: &str) -> bool {
+    matches!(
+        *method,
+        Method::GET | Method::HEAD | Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+    ) && !matches!(path, "/v1/healthz" | "/v1/readyz")
+        && !path.starts_with("/v1/internal/")
+        && (path.starts_with("/v1/")
+            || path.starts_with("/auth/")
+            || path == "/console"
+            || (path.starts_with("/console/") && !path.starts_with("/console/assets/")))
+}
+
+fn unavailable() -> Response {
+    crate::http::problems::problem_document(cmaeg_core::problem::Problem::new(
+        cmaeg_core::problem::ProblemCode::ProviderUnavailable,
+        503,
+        "The request could not be admitted to the Activity log.",
+    ))
+    .into_response()
+}

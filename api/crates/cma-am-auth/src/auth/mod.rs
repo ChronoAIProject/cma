@@ -73,6 +73,7 @@ mod usage_reporting;
 pub mod verification_diagnostics;
 pub use crate::provider::verification_error;
 mod worker_credentials;
+pub use worker_credentials::VerifiedAuditWriter;
 
 pub use flow::account_router;
 pub use flow::router;

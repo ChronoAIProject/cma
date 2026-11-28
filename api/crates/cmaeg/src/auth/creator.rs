@@ -11,6 +11,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use cmaeg_core::problem::{Problem, ProblemCode};
+use cmaeg_core::request_audit::Credential as AuditCredential;
 use dashmap::DashMap;
 use reqwest::Client;
 use ring::digest::{digest, SHA256};
@@ -163,20 +164,45 @@ impl CreatorAuthenticator {
     }
     pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Creator, CreatorAuthError> {
         if bearer(headers).is_some_and(cma_service_auth::is_service_key) {
-            return self
+            let creator = self
                 .authenticate_owner_key(headers, "cma-eg:channels:read")
-                .await;
+                .await?;
+            crate::request_audit::bind(&creator.subject, None, AuditCredential::OwnerKey).await?;
+            return Ok(creator);
         }
         if let Some(service) = &self.service {
             let principal = service.authenticate(headers).await.map_err(service_error)?;
             principal
                 .require("cma-eg:channels:read")
                 .map_err(service_error)?;
-            return self.service_creator(principal.subject, headers).await;
+            let creator = self
+                .service_creator(principal.subject.clone(), headers)
+                .await?;
+            crate::request_audit::bind(
+                &principal.subject,
+                creator.organization.then_some(creator.subject.as_str()),
+                AuditCredential::Bearer,
+            )
+            .await?;
+            return Ok(creator);
         }
         let token = bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?;
         let owner = selected_owner(headers)?;
-        self.authenticate_token(token, owner).await
+        let creator = self.authenticate_token(token, owner).await?;
+        if crate::request_audit::active() {
+            let actor = if owner.is_some() {
+                self.authenticate_token(token, None).await?.subject
+            } else {
+                creator.subject.clone()
+            };
+            crate::request_audit::bind(
+                &actor,
+                creator.organization.then_some(creator.subject.as_str()),
+                AuditCredential::Bearer,
+            )
+            .await?;
+        }
+        Ok(creator)
     }
 
     /// Identify a NyxID bearer and, when `owner` is given, verify the bearer may act

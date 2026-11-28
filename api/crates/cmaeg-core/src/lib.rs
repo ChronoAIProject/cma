@@ -10,6 +10,7 @@ pub mod channel;
 
 /// Neutral inbound activity produced by an event source.
 pub mod activity;
+pub mod request_audit;
 
 /// Paginated reference-only native conversation history.
 pub mod conversation_history;
