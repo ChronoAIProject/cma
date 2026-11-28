@@ -21,6 +21,10 @@ pub(super) struct Observation {
     client: reqwest::Client,
 }
 impl Relay {
+    pub(crate) fn enable_observation_open_trace(&self) {
+        self.observation_open_trace.get_or_init(|| ());
+    }
+
     pub(crate) fn install_observation(
         &self,
         store: Arc<MongoAgentObservation>,
@@ -75,6 +79,9 @@ pub(super) fn eligible(request: &Request) -> bool {
 mod admission;
 #[path = "observation_control.rs"]
 mod control;
+#[path = "observation_trace.rs"]
+mod trace;
+use trace::{Decision, OpenTrace};
 
 fn public_response_snapshot(request: &Request) -> bool {
     request.method() == Method::GET
@@ -169,11 +176,12 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
     if responses_v2 && request.extensions().get::<CallerContext>().is_none() {
         return layer1_public::responses::v2::authentication_required();
     }
+    let mut trace = OpenTrace::from_request(relay, &request);
     let Some(observation) = relay.observation.get() else {
-        return http::unavailable();
+        return trace::refuse(trace.as_ref(), Decision::ServiceMissing, None, None);
     };
     if !relay.coordinator.is_ready() {
-        return http::unavailable();
+        return trace::refuse(trace.as_ref(), Decision::CoordinatorNotReady, None, None);
     }
     let limit = if request.method() == Method::GET {
         0
@@ -185,7 +193,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         .clone()
         .try_acquire_many_owned(limit as u32)
     else {
-        return http::unavailable();
+        return trace::refuse(trace.as_ref(), Decision::BodyBudget, None, None);
     };
     let (parts, body) = request.into_parts();
     let bytes = match tokio::time::timeout(Duration::from_secs(5), to_bytes(body, limit)).await {
@@ -212,7 +220,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         .map(layer1_public::DelegatedCredential::value);
     let id = if let Some(tail) = request.uri().path().strip_prefix("/api/v2/responses/") {
         let Some(commands) = &observation.commands else {
-            return http::unavailable();
+            return trace::refuse(trace.as_ref(), Decision::CommandServiceMissing, None, None);
         };
         let id = layer2_core::ids::AgentResponseId(
             tail.split('/').next().unwrap_or_default().to_owned(),
@@ -241,7 +249,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         Err(_) => return public_access::refusal(StatusCode::NOT_FOUND.into()),
     };
     let Some(created) = authorized.incarnation() else {
-        return http::unavailable();
+        return trace::refuse(trace.as_ref(), Decision::IncarnationMissing, None, None);
     };
     let destination = match tokio::time::timeout(
         Duration::from_secs(5),
@@ -253,7 +261,12 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         _ if snapshot_fallback => {
             return http::retain(control::durable(next, request).await, permit);
         }
-        _ => return http::unavailable(),
+        Ok(Err(_)) => {
+            return trace::refuse(trace.as_ref(), Decision::DestinationUnavailable, None, None);
+        }
+        Err(_) => {
+            return trace::refuse(trace.as_ref(), Decision::DestinationDeadline, None, None);
+        }
     };
     let token = wire_token(&destination);
     let peer = request.headers().get(PROOF).cloned();
@@ -276,12 +289,27 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         let Some(verified) = verified else {
             return StatusCode::FORBIDDEN.into_response();
         };
+        if let Some(trace) = &mut trace {
+            trace.peer_verified = true;
+        }
         if verified.owner != token || token.instance_id != relay.coordinator.instance_id {
-            return http::unavailable();
+            return trace::refuse(
+                trace.as_ref(),
+                Decision::PeerOwnerMismatch,
+                Some(&token),
+                Some(verified.owner.epoch),
+            );
         }
         let membership = match bounded(relay.coordinator.store.membership()).await {
             Ok(value) => value,
-            Err(_) => return http::unavailable(),
+            Err(_) => {
+                return trace::refuse(
+                    trace.as_ref(),
+                    Decision::MembershipUnavailable,
+                    Some(&token),
+                    None,
+                );
+            }
         };
         if membership.require_compatible().is_err()
             || !membership.members.iter().any(|member| {
@@ -300,11 +328,15 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         request.headers_mut().remove(admission::HEADER);
         let response = async move {
             let _budget = _budget;
-            live::admitted_observation(
+            let response = live::admitted_observation(
                 id,
                 observation_scope(destination.authority, next.run(request)),
             )
-            .await
+            .await;
+            if let Some(trace) = trace {
+                trace.opened(&response, &token);
+            }
+            response
         };
         let response = if envelope {
             admission::acknowledge(response)
@@ -314,7 +346,12 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         return http::retain(response, permit);
     }
     if peer.is_some() {
-        return http::unavailable();
+        return trace::refuse(
+            trace.as_ref(),
+            Decision::PeerReachedNonowner,
+            Some(&token),
+            None,
+        );
     }
     if snapshot_fallback || control_fallback {
         let (parts, body) = request.into_parts();
@@ -325,6 +362,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
             destination,
             Request::from_parts(parts, body),
             &bytes,
+            trace.as_ref(),
         )
         .await;
         if snapshot_fallback {
@@ -337,7 +375,15 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         return control::remote_fallback(response, next, fallback).await;
     }
     http::retain(
-        forward(relay, observation, destination, request, &bytes).await,
+        forward(
+            relay,
+            observation,
+            destination,
+            request,
+            &bytes,
+            trace.as_ref(),
+        )
+        .await,
         permit,
     )
 }
@@ -360,6 +406,7 @@ async fn forward(
     destination: ObservationDestination,
     request: Request,
     body: &[u8],
+    trace: Option<&OpenTrace>,
 ) -> Response {
     let mut headers = HeaderMap::new();
     for (name, value) in ingress::headers(&request) {
@@ -369,16 +416,17 @@ async fn forward(
     }
     // Negotiation is covered by the same proof as the exact caller and URI.
     headers.insert(admission::HEADER, admission::VERSION.parse().unwrap());
+    let token = wire_token(&destination);
     let headers = match relay.authentication.signed_headers(
         &relay.coordinator.instance_id,
-        &wire_token(&destination),
+        &token,
         request.method(),
         request.uri(),
         headers,
         body,
     ) {
         Ok(value) => value,
-        Err(_) => return http::unavailable(),
+        Err(_) => return trace::refuse(trace, Decision::SigningFailed, Some(&token), None),
     };
     let url = format!(
         "{}{}",
@@ -400,95 +448,24 @@ async fn forward(
     .await
     {
         Ok(Ok(value)) => value,
-        _ => return http::unavailable(),
+        Ok(Err(_)) => {
+            return trace::refuse(trace, Decision::PeerTransportFailed, Some(&token), None)
+        }
+        Err(_) => return trace::refuse(trace, Decision::PeerAdmissionDeadline, Some(&token), None),
     };
     // The peer has admitted capacity and custody. Cold replay now runs under
     // the existing read/transport bounds, outside the admission deadline.
     match admission::response(response).await {
-        Ok(response) => response,
-        Err(()) => http::unavailable(),
+        Ok(response) => {
+            if let Some(trace) = trace {
+                trace.forwarded(&response, &token);
+            }
+            response
+        }
+        Err(()) => trace::refuse(trace, Decision::AdmissionDecodeFailed, Some(&token), None),
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn response_reads_and_concrete_submissions_use_only_the_documented_paths() {
-        for path in [
-            "/api/v2/responses/resp_one",
-            "/api/v2/responses/resp_one/events",
-            "/api/v2/responses/resp_one/output",
-        ] {
-            assert!(eligible(&Request::get(path).body(Body::empty()).unwrap()));
-        }
-        for path in [
-            "/api/v2/responses/resp_one/events/extra",
-            "/api/v2/responses/resp_one/cancel",
-        ] {
-            assert!(!eligible(&Request::get(path).body(Body::empty()).unwrap()));
-        }
-        let direct = Request::post("/api/v2/responses")
-            .body(Body::empty())
-            .unwrap();
-        assert!(eligible(&direct));
-        for body in [
-            br#"{"conversation":"agt_one"}"#.as_slice(),
-            br#"{"conversation":{"id":"agt_one"}}"#,
-        ] {
-            assert_eq!(agent(&direct, body).unwrap(), AgentId("agt_one".into()));
-        }
-        for body in [
-            b"{}".as_slice(),
-            b"malformed",
-            br#"{"conversation":"invalid/id"}"#,
-        ] {
-            assert!(agent(&direct, body).is_err());
-        }
-        let alias = Request::post("/api/v2/agents/agt_one/responses")
-            .body(Body::empty())
-            .unwrap();
-        assert!(eligible(&alias));
-        assert_eq!(agent(&alias, b"{}").unwrap(), AgentId("agt_one".into()));
-    }
-    #[test]
-    fn observation_routes_bind_exact_agent_and_refuse_ambiguous_or_malformed_input() {
-        for path in [
-            "/api/v1/agui/events?thread_id=agt_one",
-            "/api/v2/agents/agt_one/events",
-        ] {
-            let request = Request::get(path).body(Body::empty()).unwrap();
-            assert!(eligible(&request));
-            assert_eq!(agent(&request, &[]).unwrap(), AgentId("agt_one".into()));
-        }
-        for path in [
-            "/api/v1/agui/events?thread_id=agt_one&thread_id=agt_two",
-            "/api/v1/agui/events",
-            "/api/v2/agents/invalid%2Fid/events",
-        ] {
-            let request = Request::get(path).body(Body::empty()).unwrap();
-            assert!(agent(&request, &[]).is_err());
-        }
-        let post = Request::post("/api/v1/agui/run")
-            .body(Body::empty())
-            .unwrap();
-        assert!(eligible(&post));
-        assert_eq!(
-            agent(&post, br#"{"threadId":"agt_one"}"#).unwrap(),
-            AgentId("agt_one".into())
-        );
-        for body in [br#"{}"#.as_slice(), br#"{"threadId":9}"#, b"malformed"] {
-            assert!(agent(&post, body).is_err());
-        }
-        assert!(!eligible(
-            &Request::get("/api/v2/agents/agt_one/events/snapshot")
-                .body(Body::empty())
-                .unwrap()
-        ));
-        assert!(!eligible(
-            &Request::post("/api/v2/agents/agt_one/events")
-                .body(Body::empty())
-                .unwrap()
-        ));
-    }
-}
+#[path = "observation_tests.rs"]
+mod tests;

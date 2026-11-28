@@ -7,10 +7,14 @@ mod auth_errors;
 mod generation;
 #[path = "response_shared_limits.rs"]
 mod limits;
+#[path = "response_open_attempt.rs"]
+mod open_attempt;
 #[path = "response_shared_readiness.rs"]
 mod readiness;
 #[path = "response_shared_release.rs"]
 mod release;
+#[path = "response_shared_trace.rs"]
+mod trace;
 
 async fn retained(rows: u64) -> (Fixture, layer2_core::ids::AgentResponseId) {
     let mut f = Fixture::semantic(rows).await;
@@ -169,14 +173,21 @@ async fn measure(
     observers: usize,
 ) -> (meter::Stats, Vec<Vec<Value>>) {
     let (start_idle, idle_start) = tokio::sync::watch::channel(false);
-    let replicas = response_budget_servers(f, enabled, idle_start).await;
+    let trace_open =
+        std::env::var(crate::config::OBSERVATION_OPEN_TRACE_ENABLED).as_deref() == Ok("true");
+    let replicas = response_budget_servers(f, enabled, idle_start, trace_open).await;
     let client = client();
     f.meter.clear();
     let path = format!("/api/v2/responses/{id}/events");
     let open = |index: usize| {
         let (client, replica, path) = (&client, &replicas[index % 2], &path);
         async move {
-            let response = request(client, f, replica, path).send().await.unwrap();
+            let request = request(client, f, replica, path);
+            let response = if trace_open {
+                open_attempt::send(request, replica, enabled, index).await
+            } else {
+                request.send().await.unwrap()
+            };
             assert_eq!(
                 response.status(),
                 reqwest::StatusCode::OK,

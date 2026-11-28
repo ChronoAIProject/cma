@@ -20,7 +20,8 @@ pub(super) async fn namespaces(db: &Database) -> Result<BTreeSet<String>, Error>
         .list_collection_names()
         .authorized_collections(false)
         .filter(doc! {"name":{"$in":erasure::COLLECTIONS}})
-        .await?
+        .await
+        .map_err(|error| super::optional::failure(error, erasure::GRANTS, "listCollections"))?
         .into_iter()
         .collect())
 }

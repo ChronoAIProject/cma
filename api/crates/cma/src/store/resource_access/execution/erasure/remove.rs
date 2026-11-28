@@ -121,9 +121,11 @@ impl Removal<'_> {
     }
 
     fn actor(&self, keys: &records::ErasureKeys) -> bool {
-        keys.actor_subject
-            .as_ref()
-            .is_some_and(|actor| actor.as_str() == self.scope.subject)
+        keys.owner_subject.is_some()
+            && keys
+                .actor_subject
+                .as_ref()
+                .is_some_and(|actor| actor.as_str() == self.scope.subject)
             && !self
                 .scope
                 .organization_sandboxes
@@ -137,17 +139,18 @@ impl Removal<'_> {
         session: &mut ClientSession,
     ) -> Result<Deleted, EraseError> {
         let member = records::read_member(row).map_err(invalid)?;
-        if let Some(family) = member.basis.family() {
-            if self.owns(keys) {
-                return self.remove_family(&family.origin, keys, session).await;
+        let owned = self.owns(keys);
+        match member.basis.family() {
+            Some(family) if owned => {
+                return self.remove_family(&family.origin, keys, session).await
             }
-            self.require_effective_revocation(&member, session).await?;
-        } else if !self.owns(keys) && member.permit.is_some() {
             // Foreign independent executions lack a revocation generation.
-            return Err(EraseError::Retained);
+            None if !owned && member.permit.is_some() => return Err(EraseError::Retained),
+            _ => {}
         }
-        if !self.owns(keys) {
-            self.require_settled_effects(&member, session).await?;
+        self.require_settled_effects(&member, row, session).await?;
+        if member.basis.family().is_some() {
+            self.record_erased_member(&member, session).await?;
         }
         let mut deleted = Deleted::new();
         self.remove_members(
@@ -163,6 +166,7 @@ impl Removal<'_> {
     async fn require_settled_effects(
         &self,
         member: &ExecutionRecordV1,
+        member_row: &Document,
         session: &mut ClientSession,
     ) -> Result<(), EraseError> {
         let mut effects = self
@@ -177,9 +181,15 @@ impl Removal<'_> {
         while let Some(row) = effects.next(&mut *session).await.transpose()? {
             ordinal += 1;
             let effect = records::read_effect(&row).map_err(invalid)?;
+            let intent = &effect.permission.intent;
             if ordinal > member.effect_count
                 || effect.permission.ledger_sequence.get() != u64::from(ordinal)
-                || effect.permission.intent.grant != member.basis
+                || intent.registration != member.registration
+                || intent.grant != member.basis
+                || (wire::MemberKey::Execution {
+                    execution: intent.execution.clone(),
+                }) != member.member
+                || row.get(ERASURE_KEYS) != member_row.get(ERASURE_KEYS)
             {
                 return Err(EraseError::Corrupt);
             }
@@ -198,7 +208,7 @@ impl Removal<'_> {
         Ok(())
     }
 
-    async fn require_effective_revocation(
+    async fn record_erased_member(
         &self,
         member: &ExecutionRecordV1,
         session: &mut ClientSession,
@@ -213,14 +223,28 @@ impl Removal<'_> {
         let raw = find_row(&self.collections.operations, id.as_str(), session)
             .await?
             .ok_or(EraseError::Corrupt)?;
-        let operation = records::read_operation(&raw).map_err(invalid)?;
+        let mut operation = records::read_operation(&raw).map_err(invalid)?;
         if !matches!(operation.phase, RevocationPhaseV1::Effective { .. }) {
             return Err(EraseError::Retained);
         }
         let request = member.barrier_request(&operation).map_err(invalid)?;
         if member.completion.is_none()
+            || member.epoch != operation.epoch
             || member.barrier.as_ref().map(|barrier| &barrier.request) != Some(&request)
+            || !operation.erased_ordinals.insert(member.ordinal)
         {
+            return Err(EraseError::Corrupt);
+        }
+        let updated = self
+            .collections
+            .operations
+            .update_one(
+                doc! {"_id":id.as_str(),"phase":"effective"},
+                records::update_record(records::operation_document(&operation).map_err(invalid)?),
+            )
+            .session(&mut *session)
+            .await?;
+        if updated.matched_count != 1 {
             return Err(EraseError::Corrupt);
         }
         Ok(())
@@ -300,6 +324,7 @@ impl Removal<'_> {
             {
                 return Err(EraseError::Corrupt);
             }
+            self.require_settled_effects(&member, &row, session).await?;
             effect_count += u64::from(member.effect_count);
             if family.generation == control.key.generation {
                 current_members += 1;

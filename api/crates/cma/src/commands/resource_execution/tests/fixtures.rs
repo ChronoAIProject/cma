@@ -127,6 +127,7 @@ pub(super) fn operation(count: u32) -> RevocationOperationV1 {
         epoch: generation(1),
         intent,
         frozen_members: count,
+        erased_ordinals: Default::default(),
         frozen_at_unix_ms: 1_000,
         deadline_unix_ms: 11_000,
         phase: RevocationPhaseV1::Pending,

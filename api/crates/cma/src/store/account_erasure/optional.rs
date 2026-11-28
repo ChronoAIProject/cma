@@ -53,7 +53,6 @@ pub(super) async fn inspect(
     agent_shared_observation: Option<bool>,
 ) -> Result<Receipt, Error> {
     Ok(Receipt {
-        execution_namespaces: super::resource_execution::namespaces(db).await?,
         allocation_absent: absent(
             db,
             allocation_buckets::COLLECTION,
@@ -71,6 +70,7 @@ pub(super) async fn inspect(
             Some(false),
         )
         .await?,
+        execution_namespaces: super::resource_execution::namespaces(db).await?,
     })
 }
 
