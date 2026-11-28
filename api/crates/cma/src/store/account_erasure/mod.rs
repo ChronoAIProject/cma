@@ -270,4 +270,4 @@ mod scan_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-pub(in crate::store) use tests::drain as test_drain;
+pub(in crate::store) use tests::{drain as test_drain, try_drain as test_try_drain};

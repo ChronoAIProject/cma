@@ -401,6 +401,13 @@ async fn missing_metadata() {
         .await
         .unwrap();
     assert!(!visible.iter().any(|name| name == OPTIONAL));
+    assert!(matches!(
+        super::resource_execution::namespaces(&fixture.runtime).await,
+        Err(Error::CohortBlocked(CohortBlock::CollectionAuthority {
+            collection: "resource_execution_grants_v1",
+            operation: "listCollections",
+        }))
+    ));
     authority_block(
         once_with(&fixture, Some(false), &mut Cursor::default())
             .await

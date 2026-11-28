@@ -385,7 +385,7 @@ async fn owning_organization_uses_current_membership_without_becoming_personal_o
     use layer2_core::resource_access::{
         OrganizationOwnershipEvidence, ResourceAccessStore, ResourceOwner,
     };
-    let fixture = Fixture::new().await;
+    let fixture = Fixture::with_erasure_keys(true).await;
     let snapshot = fixture
         .sandbox
         .resource_access_snapshot(&fixture.target)
@@ -399,7 +399,7 @@ async fn owning_organization_uses_current_membership_without_becoming_personal_o
     policy.organization_evidence = Some(OrganizationOwnershipEvidence {
         issuer: "synthetic".into(),
         organization,
-        admitted_by: context("org-admin").actor,
+        admitted_by: context("org-admitter").actor,
         verified_at: "2026-01-01T00:00:00Z".into(),
     });
     policy.revision += 1;
@@ -461,5 +461,36 @@ async fn owning_organization_uses_current_membership_without_becoming_personal_o
         )
         .await
         .unwrap();
+    let row = fixture
+        .coordinator
+        .register_execution(&authority, &fixture.execution("org-owned"))
+        .await
+        .unwrap();
+    let stored = fixture
+        .store
+        .collections
+        .members
+        .find_one(doc! {"_id":row.registration.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    let keys = stored.get_document(records::ERASURE_KEYS).unwrap();
+    assert_eq!(keys.get_str("actor_subject").unwrap(), "org-admin");
+    assert!(!keys.contains_key("owner_subject"));
+    let db = fixture.client.database(&fixture.name);
+    let mut inventory = layer2_core::account_deletion::ErasureInventory::default();
+    let result =
+        crate::store::account_erasure::test_try_drain(&db, "org-admin", &mut inventory).await;
+    super::direct_erasure::assert_retained(result.unwrap_err());
+    assert_eq!(
+        fixture
+            .store
+            .collections
+            .members
+            .find_one(doc! {"_id":row.registration.as_str()})
+            .await
+            .unwrap(),
+        Some(stored)
+    );
     fixture.cleanup().await;
 }

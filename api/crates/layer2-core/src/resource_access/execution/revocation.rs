@@ -143,6 +143,9 @@ pub struct RevocationOperationV1 {
     pub epoch: wire::Generation,
     pub intent: RevocationIntentV1,
     pub frozen_members: u32,
+    /// Original ordinals whose settled records were erased in a storage transaction.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeSet::is_empty")]
+    pub erased_ordinals: std::collections::BTreeSet<u32>,
     pub frozen_at_unix_ms: u64,
     pub deadline_unix_ms: u64,
     pub phase: RevocationPhaseV1,
@@ -165,6 +168,12 @@ impl RevocationOperationV1 {
                 .mutation(self.intent.original_policy_revision)
                 .operation_id()
             || self.frozen_members > MAX_FAMILY_MEMBERS
+            || (!self.erased_ordinals.is_empty()
+                && matches!(self.phase, RevocationPhaseV1::Pending))
+            || self
+                .erased_ordinals
+                .iter()
+                .any(|ordinal| *ordinal == 0 || *ordinal > self.frozen_members)
             || self.frozen_at_unix_ms > i64::MAX as u64
             || self.frozen_at_unix_ms.checked_add(wire::STOP_BOUND_MS)
                 != Some(self.deadline_unix_ms)
@@ -177,6 +186,12 @@ impl RevocationOperationV1 {
                 .replay(*receipt.clone())?;
         }
         Ok(())
+    }
+
+    /// Returns the next retained ordinal in a validated operation.
+    pub fn next_retained_ordinal(&self, after: u32) -> Option<u32> {
+        (after.checked_add(1)?..=self.frozen_members)
+            .find(|ordinal| !self.erased_ordinals.contains(ordinal))
     }
 
     pub fn deadline_exceeded_at(&self, unix_ms: u64) -> ExecutionResult<bool> {

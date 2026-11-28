@@ -64,6 +64,7 @@ impl MongoResourceExecutionStore {
             epoch,
             intent: intent.clone(),
             frozen_members: control.members,
+            erased_ordinals: Default::default(),
             frozen_at_unix_ms: at,
             deadline_unix_ms: at
                 .checked_add(wire::STOP_BOUND_MS)
@@ -293,17 +294,15 @@ impl MongoResourceExecutionStore {
             .iter()
             .map(records::read_member)
             .collect::<ExecutionResult<Vec<_>>>()?;
-        // An effective operation keeps its settlement receipt after authorized
-        // account erasure removes a former member. Pending work needs every
-        // original ordinal before it can become effective.
-        let pending = matches!(operation.phase, RevocationPhaseV1::Pending);
-        for (offset, member) in members.iter().enumerate() {
-            if pending && member.ordinal != after + offset as u32 + 1 {
+        let mut previous = after;
+        for member in &members {
+            if operation.next_retained_ordinal(previous) != Some(member.ordinal) {
                 return Err(ExecutionError::Corrupt);
             }
             member.barrier_request(&operation)?;
+            previous = member.ordinal;
         }
-        if pending && members.is_empty() && after < operation.frozen_members {
+        if members.len() < limit as usize && operation.next_retained_ordinal(previous).is_some() {
             return Err(ExecutionError::Corrupt);
         }
         Ok(members)
