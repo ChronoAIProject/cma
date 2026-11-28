@@ -2,6 +2,7 @@
 from collections import Counter
 import hashlib
 import json
+import re
 
 from diagnostics import command_outcome
 from setup_evidence import EVENTS, REASONS, known, summarize_pods
@@ -10,6 +11,26 @@ from stage_evidence import WORK_STEPS
 ROLES = {'am_a': 'am-a-0', 'am_b': 'am-b-0', 'mongo': 'mongo',
          'identity': 'identity', 'provider': 'provider', 'api_proxy': 'api-proxy',
          'storage': 'storage', 'runtime_role': 'am-role'}
+
+STARTUP_PHASES = {'composition', 'socket_bind', 'sandbox_initialization', 'worker_start',
+                  'default_warm_pool_configuration', 'default_warm_pool_readiness'}
+STARTUP_OUTCOMES = {'ok', 'error', 'cancelled', 'zero_target', 'configuration_drift',
+                    'capacity_deferred', 'stopped'}
+
+
+def startup_outcomes(raw):
+    observed = {}
+    for line in raw.decode(errors='replace').splitlines():
+        line = re.sub(r'\x1b\[[0-9;]*m', '', line)
+        event = re.search(r'\bcma_startup: API startup phase completed(?:\s|$)', line)
+        if event is None:
+            continue
+        fields = dict(re.findall(r'\b(phase|outcome)="([a-z_]+)"(?=\s|$)', line[event.end():]))
+        phase, outcome = fields.get('phase'), fields.get('outcome')
+        if phase in STARTUP_PHASES and outcome in STARTUP_OUTCOMES:
+            observed[phase] = outcome
+    return observed
+
 
 CREATION_STATES = {
     'agent': {'starting', 'ready', 'working', 'waiting_approval', 'paused', 'stopped', 'deleted', 'failed'},
@@ -160,9 +181,13 @@ def summarize(directory):
         if raw is not None:
             value['log_signals'] = command_outcome('fixture', 'other', None, 0, raw)['signals']
         if role.startswith('am_'):
+            if raw is not None and (startup := startup_outcomes(raw)):
+                value['startup_outcomes'] = startup
             previous_log = read(name + '.previous.private.log')
             if previous_log is not None:
                 value['previous_log_signals'] = command_outcome('fixture', 'other', None, 0, previous_log)['signals']
+                if startup := startup_outcomes(previous_log):
+                    value['previous_startup_outcomes'] = startup
         result['roles'][role] = value
     try:
         raw = read('events.final.json')

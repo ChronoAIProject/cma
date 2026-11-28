@@ -356,7 +356,13 @@ class OwnershipTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, '^prepared_publication_conflict_transaction_changed$'):
                 fixture.preparedSchemaRace(*scope)
             log.write_text('Error: prepared_synthetic_private_message\n')
-            with self.assertRaises(CommandFailure):
+            with self.assertRaisesRegex(RuntimeError, '^prepared_schema_race_command_failed$'):
+                fixture.preparedSchemaRace(*scope)
+            fixture.mongo.side_effect = subprocess.TimeoutExpired(['mongosh', 'private-arguments'], 20)
+            with self.assertRaisesRegex(RuntimeError, '^prepared_schema_race_command_timeout$'):
+                fixture.preparedSchemaRace(*scope)
+            fixture.mongo.side_effect = json.JSONDecodeError('private response', 'private body', 0)
+            with self.assertRaisesRegex(RuntimeError, '^prepared_schema_race_response_invalid$'):
                 fixture.preparedSchemaRace(*scope)
 
     def test_prepared_parent_envelope_selector_validates_the_pair_and_holds_sandbox_reads(self):

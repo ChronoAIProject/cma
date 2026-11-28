@@ -19,7 +19,12 @@ class FixtureEvidenceTests(unittest.TestCase):
                             'message': 'private-crash-message'}}}]}},
                 {'metadata': {'name': 'private-dynamic-runtime'}, 'status': {'phase': 'Failed'}}]}))
             (root / 'am-a-0.full.private.log').write_text('private-provider-url exec format error')
-            (root / 'am-a-0.previous.private.log').write_text('private-crash-message fatal runtime error: stack overflow')
+            (root / 'am-a-0.previous.private.log').write_text(
+                ' INFO cma_startup: API startup phase completed phase="composition" elapsed_ms=71 '
+                'outcome="error" item_count=0 private-field=private-diagnostic\n'
+                ' INFO cma_startup: API startup phase completed phase="private_phase" outcome="ok"\n'
+                ' INFO unrelated: API startup phase completed phase="socket_bind" outcome="ok"\n'
+                'private-crash-message fatal runtime error: stack overflow')
             (root / 'events.final.json').write_text(json.dumps({'items': [
                 {'reason': 'Failed', 'message': 'private-ip'}, {'reason': 'private-user'}]}))
             result = summarize(root)
@@ -29,10 +34,11 @@ class FixtureEvidenceTests(unittest.TestCase):
             self.assertEqual(result['roles']['am_a']['log_signals'], ['executable_format'])
             self.assertEqual(result['roles']['am_a']['previous_termination'], {'reason': 'Error', 'exit_code': 139})
             self.assertEqual(result['roles']['am_a']['previous_log_signals'], ['stack_overflow'])
+            self.assertEqual(result['roles']['am_a']['previous_startup_outcomes'], {'composition': 'error'})
             self.assertFalse(result['roles']['am_b']['observed'])
             self.assertEqual(result['event_reasons'], {'Failed': 1, 'Other': 1})
             for token in ['private-owner', 'private-token', 'private-provider-url', 'private-user', 'private-ip',
-                          'private-crash-message']:
+                          'private-crash-message', 'private_phase', 'private-diagnostic']:
                 self.assertNotIn(token, json.dumps(result))
             self.assertFalse(result['root_cause_inferred'])
 

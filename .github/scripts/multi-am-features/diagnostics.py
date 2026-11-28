@@ -73,6 +73,8 @@ def command_outcome(stage, program, returncode, elapsed, output, timed_out=False
         'database_authentication_failed': (b'authentication failed', b'code 18 (authenticationfailed)'),
         'warm_pool_startup_failed': (b'native warm pool startup readiness failed:',),
         'warm_pool_configuration_failed': (b'native warm pool default is not usable:',),
+        'durable_store_startup_failed': (b'durable stores are not usable:',),
+        'document_storage_startup_failed': (b'document storage binding:',),
     }
     lower = output.lower()
     return {'stage': stage,

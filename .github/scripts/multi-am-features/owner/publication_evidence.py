@@ -4,6 +4,7 @@ import ipaddress
 import json
 from pathlib import Path
 import re
+from subprocess import TimeoutExpired
 
 from common import CommandFailure, require_feature_fixture
 
@@ -334,6 +335,10 @@ def prepared_schema_race(fixture, action=None, operationId=None, reservations=No
     script = SCHEMA_RACE.read_text()
     try:
         return fixture.mongo(f'const scope = {scope};\n' + script)
+    except (TimeoutError, TimeoutExpired) as error:
+        raise RuntimeError('prepared_schema_race_command_timeout') from error
+    except json.JSONDecodeError as error:
+        raise RuntimeError('prepared_schema_race_response_invalid') from error
     except CommandFailure as error:
         # Expose only errors declared by this script. Keep driver output private.
         allowed = set(re.findall(r"throw Error\('(prepared_[a-z0-9_]+)'\)", script))
@@ -342,4 +347,4 @@ def prepared_schema_race(fixture, action=None, operationId=None, reservations=No
             match = re.fullmatch(r'Error: (prepared_[a-z0-9_]+)', line.strip())
             if match and match[1] in allowed:
                 raise RuntimeError(match[1]) from error
-        raise
+        raise RuntimeError('prepared_schema_race_command_failed') from error
