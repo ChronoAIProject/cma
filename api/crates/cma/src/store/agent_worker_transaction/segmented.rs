@@ -34,7 +34,11 @@ async fn publish_with(
     adoption: Option<&pending_adoption::Prepared>,
     scope: &mut TransactionScope<'_>,
 ) -> Result<Recorded, ApplyError> {
-    let (next, logs) = final_agent_and_logs(current, mutation)?;
+    let (mut next, mut logs) = final_agent_and_logs(current, mutation)?;
+    super::super::agent_conversation_store::checkpoint::finish_published_text(
+        row, current, &mut next, &mut logs,
+    )
+    .map_err(ApplyError::Domain)?;
     let operation = if let Some(prepared) = adoption {
         prepared.operation()
     } else {

@@ -21,6 +21,9 @@ pub(in crate::responses) fn event_count(t: &AgentOutputTotals) -> Result<u64, Ag
     t.messages
         .checked_mul(5)
         .and_then(|n| n.checked_add(t.nonempty_messages))
+        .and_then(|n| n.checked_add(t.text.deltas))
+        .and_then(|n| n.checked_add(2 * u64::from(t.text.is_open())))
+        .and_then(|n| n.checked_sub(t.text.finished))
         .and_then(|n| n.checked_add(t.tool_starts.checked_mul(2)?))
         .and_then(|n| n.checked_add(t.tool_finishes.checked_mul(2)?))
         .filter(|n| *n <= 9_007_199_254_740_991)
@@ -40,16 +43,27 @@ pub(in crate::responses) async fn output_page(
     source: &mut AgentOutputObservation<'_>,
     from: u64,
 ) -> Result<OutputPage, AgentReadError> {
-    let total = source
-        .metadata()
-        .index
-        .as_ref()
-        .ok_or_else(corrupt)?
-        .changes;
+    let index = source.metadata().index.as_ref().ok_or_else(corrupt)?;
+    let total = index.changes;
+    let incremental = index.totals.text.deltas > 0;
     // One item group shares one bounded original-point request. An index has
     // no payload byte-size summary; combining unrelated groups could multiply
     // the source-byte budget before the public item budget is checked.
-    let changes = source.changes(from, 1).await?;
+    let mut changes = source.changes(from, 1).await?;
+    if let Some(change) = changes
+        .first()
+        .filter(|row| incremental && row.after.items == row.before.items)
+    {
+        let from = seek_change(source, change.after.items, |row| Ok(row.after.items)).await?;
+        changes = source.changes(from, 1).await?;
+        if changes.is_empty() {
+            return Ok(OutputPage {
+                items: Vec::new(),
+                next: total,
+                more: false,
+            });
+        }
+    }
     let mut items = Vec::new();
     let mut bytes = 2048;
     let mut next = from;
@@ -118,16 +132,43 @@ pub(in crate::responses) async fn seek(
     offset: u64,
 ) -> Result<u64, AgentReadError> {
     let index = source.metadata().index.as_ref().ok_or_else(corrupt)?;
-    let mut low = 0;
-    let mut high = index.changes;
     if offset > event_count(&index.totals)? {
         return Err(AgentReadError::InvalidPage);
     }
+    seek_change(source, offset, |row| event_count(&row.after)).await
+}
+
+pub(in crate::responses) async fn seek_message(
+    source: &mut AgentOutputObservation<'_>,
+    message: u64,
+) -> Result<AgentOutputChange, AgentReadError> {
+    let position = seek_change(source, message, |row| Ok(row.after.messages)).await?;
+    source
+        .changes(position, 1)
+        .await?
+        .into_iter()
+        .next()
+        .filter(|change| change.message_ordinal == Some(message) && change.after.messages > message)
+        .ok_or_else(corrupt)
+}
+
+async fn seek_change(
+    source: &mut AgentOutputObservation<'_>,
+    offset: u64,
+    count: impl Fn(&AgentOutputChange) -> Result<u64, AgentReadError>,
+) -> Result<u64, AgentReadError> {
+    let mut low = 0;
+    let mut high = source
+        .metadata()
+        .index
+        .as_ref()
+        .ok_or_else(corrupt)?
+        .changes;
     while low < high {
         let mid = low + (high - low) / 2;
         let rows = source.changes(mid, 1).await?;
         let row = rows.first().ok_or_else(corrupt)?;
-        if event_count(&row.after)? <= offset {
+        if count(row)? <= offset {
             low = mid + 1;
         } else {
             high = mid;

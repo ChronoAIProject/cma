@@ -29,12 +29,13 @@ fn event_projection_keeps_exact_cursor_without_internal_execution_authority() {
         },
     ];
     for kind in cases {
-        let event = AgentEvent::from(AgentLogEntry {
+        let event = AgentEvent::try_from(AgentLogEntry {
             agent_id: AgentId("agt_existing".into()),
             seq: 42,
             appended_at: "2026-09-14T00:00:00Z".into(),
             kind,
-        });
+        })
+        .unwrap();
         assert_eq!(event.cursor, 42);
         assert_eq!(event.agent_id.as_str(), "agt_existing");
         let encoded = serde_json::to_string(&event).unwrap();
@@ -56,7 +57,7 @@ fn event_projection_keeps_exact_cursor_without_internal_execution_authority() {
 
 #[test]
 fn ambiguous_delivery_is_neither_failed_execution_nor_completion() {
-    let event = AgentEvent::from(AgentLogEntry {
+    let event = AgentEvent::try_from(AgentLogEntry {
         agent_id: AgentId("agt_existing".into()),
         seq: 6,
         appended_at: "2026-09-14T00:00:00Z".into(),
@@ -65,7 +66,8 @@ fn ambiguous_delivery_is_neither_failed_execution_nor_completion() {
             operation: AgentOperationKind::SendMessage,
             state: AgentOperationDelivery::RecoveryRequired,
         },
-    });
+    })
+    .unwrap();
     assert!(matches!(
         event.kind,
         AgentEventKind::DeliveryChanged {

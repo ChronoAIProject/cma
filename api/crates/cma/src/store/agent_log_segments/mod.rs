@@ -66,7 +66,9 @@ pub(in crate::store) const READER: &str = "agent_log_segments_v1";
 pub(in crate::store) const MIGRATION: &str = "2026-11-05-am-log-segment-readers-v1";
 pub(in crate::store) const MAX_SEQUENCE: i64 = 9_007_199_254_740_991;
 pub(in crate::store) const MAX_ENTRIES: i64 = 10_128;
-pub(in crate::store) const MAX_BYTES: i64 = 65 * 1024 * 1024;
+pub(in crate::store) const MAX_BYTES: i64 = 64 * 1024 * 1024
+    + crate::store::agent_log_integrity::STOP_RESERVE_BYTES as i64
+    + crate::store::agent_log_integrity::DELETE_RESERVE_BYTES as i64;
 const MAX_SEAL_BYTES: usize = 1024 * 1024;
 
 fn corrupt() -> SandboxStoreError {

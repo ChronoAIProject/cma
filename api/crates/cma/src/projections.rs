@@ -22,6 +22,7 @@ mod agent_v2;
 #[path = "projections/response_readers_tests.rs"]
 mod response_readers_tests;
 mod rest;
+pub(crate) use rest::{rest_links, rest_router, REST_LINKS};
 
 pub(crate) struct AgentProjectionServices {
     external_review_origin: String,

@@ -9,7 +9,11 @@ use layer2_core::sandbox::{
     },
     AgentLogEntry,
 };
-use mongodb::{bson::doc, options::ReadConcern, ClientSession};
+use mongodb::{
+    bson::{doc, Bson},
+    options::ReadConcern,
+    ClientSession,
+};
 
 mod facts;
 mod output;
@@ -21,6 +25,7 @@ struct Reader<'a> {
     session: ClientSession,
     captured: capture::CapturedLog,
     metadata: AgentOutputMetadata,
+    message_checkpoint: Option<Bson>,
 }
 
 pub(super) async fn open<'a>(
@@ -34,7 +39,7 @@ pub(super) async fn open<'a>(
         .snapshot(true)
         .await
         .map_err(driver)?;
-    let row = store
+    let mut row = store
         .agents
         .find_one(doc! {"_id":agent.id.as_str()})
         .read_concern(ReadConcern::snapshot())
@@ -59,6 +64,7 @@ pub(super) async fn open<'a>(
         store,
         session,
         captured,
+        message_checkpoint: row.remove(crate::store::agent_conversation_store::checkpoint::FIELD),
         metadata: AgentOutputMetadata {
             agent_id: agent.id.clone(),
             through: agent.conversation.last_seq,
@@ -116,6 +122,30 @@ impl AgentOutputReader for Reader<'_> {
     }
     async fn points(&mut self, sequences: &[u64]) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
         self.source_points(sequences).await
+    }
+    async fn open_message(&mut self) -> Result<String, SandboxStoreError> {
+        let checkpoint: layer2_core::sandbox::store::AgentMessageCheckpoint =
+            mongodb::bson::deserialize_from_bson(
+                self.message_checkpoint.clone().ok_or_else(corrupt)?,
+            )
+            .map_err(|_| corrupt())?;
+        checkpoint.validate()?;
+        if checkpoint.after_seq != self.metadata.through
+            || checkpoint.active_turn != self.metadata.active_turn
+            || Some(checkpoint.runtime_generation) != self.metadata.runtime_generation
+            || self
+                .metadata
+                .turn
+                .as_ref()
+                .is_none_or(|turn| turn.facts.conversation_id != checkpoint.native_conversation_id)
+        {
+            return Err(corrupt());
+        }
+        checkpoint
+            .assembly
+            .published_text()
+            .map(str::to_owned)
+            .ok_or_else(corrupt)
     }
     async fn source_page(
         &mut self,

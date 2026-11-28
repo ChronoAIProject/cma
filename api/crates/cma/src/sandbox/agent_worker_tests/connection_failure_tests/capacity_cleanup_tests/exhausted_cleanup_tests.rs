@@ -40,7 +40,7 @@ async fn cleanup(bytes: bool, settled: bool) {
         h.store.as_ref(),
         working,
         (!bytes).then_some(if settled { 10_060 } else { 10_064 }),
-        bytes.then_some(64 * 1024 * 1024 + 512 * 1024 - if settled { 4096 } else { 0 }),
+        bytes.then_some(crate::store::AGENT_STOP_CAPACITY_BYTES - if settled { 4096 } else { 0 }),
     )
     .await;
     let (acks, mut acknowledged) = tokio::sync::mpsc::channel(1);

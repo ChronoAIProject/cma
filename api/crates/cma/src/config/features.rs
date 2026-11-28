@@ -1,4 +1,3 @@
-//! Independent rollout policy for the current CMA interfaces.
 #[cfg(test)]
 mod agent_event_page_tests;
 #[cfg(test)]
@@ -71,7 +70,6 @@ pub(crate) struct FeatureFlags {
     pub ownership_cleanup_pacing: bool,
     pub batch_ownership_renewal: bool,
     pub am_failure_containment_enabled: bool,
-    /// Contain transient receiver housekeeping failures (#3069). Default off pending staging.
     pub receiver_housekeeping_containment: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
@@ -124,6 +122,7 @@ pub(crate) struct FeatureFlags {
     pub capacity_recovery_enabled: bool,
     pub segment_adoption_enabled: bool,
     pub paged_response_events: bool,
+    pub incremental_text: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub github_repository_preflight: bool,
@@ -391,6 +390,7 @@ impl FeatureFlags {
             capacity_recovery_enabled: flag(lookup, "CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED")?,
             segment_adoption_enabled: tail.segment_adoption_enabled,
             paged_response_events: tail.paged_response_events,
+            incremental_text: tail.incremental_text,
             v2_ui_transport: tail.v2_ui_transport,
             trigger_command_admission: tail.trigger_command_admission,
             github_repository_preflight: tail.github_repository_preflight,

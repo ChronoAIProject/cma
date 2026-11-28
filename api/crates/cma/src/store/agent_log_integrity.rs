@@ -13,13 +13,15 @@ use super::sandbox_mongo::{signed, unsigned, MongoSandboxStore};
 pub(super) use layer2_core::sandbox::store::NORMAL_AGENT_LOG_ENTRIES;
 pub(super) const NORMAL_AGENT_LOG_BYTES: usize = 64 * 1024 * 1024;
 const STOP_RESERVE_ENTRIES: u64 = 64;
-const STOP_RESERVE_BYTES: usize = 512 * 1024;
+// A forced terminal publication may also finalize one published assistant message.
+pub(super) const STOP_RESERVE_BYTES: usize =
+    512 * 1024 + layer2_core::sandbox::MAX_DURABLE_AGENT_MESSAGE_BYTES;
 const DELETE_RESERVE_ENTRIES: u64 = 64;
-const DELETE_RESERVE_BYTES: usize = 512 * 1024;
+pub(super) const DELETE_RESERVE_BYTES: usize = 512 * 1024;
 const STOP_AGENT_LOG_ENTRIES: u64 = NORMAL_AGENT_LOG_ENTRIES + STOP_RESERVE_ENTRIES;
-const STOP_AGENT_LOG_BYTES: usize = NORMAL_AGENT_LOG_BYTES + STOP_RESERVE_BYTES;
+pub(super) const STOP_AGENT_LOG_BYTES: usize = NORMAL_AGENT_LOG_BYTES + STOP_RESERVE_BYTES;
 const PHYSICAL_AGENT_LOG_ENTRIES: u64 = STOP_AGENT_LOG_ENTRIES + DELETE_RESERVE_ENTRIES;
-const PHYSICAL_AGENT_LOG_BYTES: usize = STOP_AGENT_LOG_BYTES + DELETE_RESERVE_BYTES;
+pub(super) const PHYSICAL_AGENT_LOG_BYTES: usize = STOP_AGENT_LOG_BYTES + DELETE_RESERVE_BYTES;
 const MAX_AGENT_LOG_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 pub(super) const INTEGRITY_FIELD: &str = "agent_log_integrity_v1";
 pub(super) const QUARANTINE_FIELD: &str = "agent_log_integrity_quarantine_v1";

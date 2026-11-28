@@ -169,8 +169,10 @@ pub enum AgentEventKind {
     Deleted,
 }
 
-impl From<AgentLogEntry> for AgentEvent {
-    fn from(entry: AgentLogEntry) -> Self {
+impl TryFrom<AgentLogEntry> for AgentEvent {
+    type Error = ();
+
+    fn try_from(entry: AgentLogEntry) -> Result<Self, Self::Error> {
         let kind = match entry.kind {
             AgentLogKind::Created {
                 workspace_id,
@@ -206,6 +208,7 @@ impl From<AgentLogEntry> for AgentEvent {
                 role: AgentMessageRole::Assistant,
                 content,
             },
+            AgentLogKind::AgentMessageDelta { .. } => return Err(()),
             AgentLogKind::TurnCompleted { turn_sequence } => {
                 AgentEventKind::TurnCompleted { turn_sequence }
             }
@@ -348,13 +351,13 @@ impl From<AgentLogEntry> for AgentEvent {
             AgentLogKind::Stopped { reason } => AgentEventKind::Stopped { reason },
             AgentLogKind::Deleted => AgentEventKind::Deleted,
         };
-        Self {
+        Ok(Self {
             schema_version: AGENT_IO_SCHEMA_VERSION,
             agent_id: entry.agent_id,
             cursor: entry.seq,
             appended_at: entry.appended_at,
             kind,
-        }
+        })
     }
 }
 

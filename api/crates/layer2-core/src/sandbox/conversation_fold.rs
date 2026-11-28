@@ -1,14 +1,18 @@
 use layer3_adapter::{ConversationUpdate, SessionUpdate};
 
 use super::conversation_fold_support::{
-    active_turn, append_bounded, approval_detail, bounded_ref as bounded, complete_first_message,
+    active_turn, approval_detail, bounded_ref as bounded, complete_first_message,
     fail_first_message, flush_message, observe_first_message, observe_operation, prompt_evidence,
     recorded_initial_tool_output, recorded_tool_output, validate_prompt_identity, wire_name,
 };
 use super::{
     Agent, AgentAvailableCommand, AgentConfigOption, AgentConversationError, AgentLogKind,
-    AgentMessageAssembly, AgentPlanStep, AgentStatus, MAX_DURABLE_AGENT_MESSAGE_BYTES,
+    AgentMessageAssembly, AgentPlanStep, AgentStatus,
 };
+
+#[path = "conversation_fold_text.rs"]
+mod text;
+use text::fold_message_chunk;
 
 pub(super) struct ConversationChange {
     pub(super) agent: Agent,
@@ -28,6 +32,24 @@ pub(super) fn fold_update(
     update: impl std::borrow::Borrow<ConversationUpdate>,
     appended_at: &str,
     durable_tool_output: bool,
+) -> Result<FoldedConversationUpdate, AgentConversationError> {
+    fold_with_output_policy(
+        current,
+        assembly,
+        update,
+        appended_at,
+        durable_tool_output,
+        false,
+    )
+}
+
+pub(super) fn fold_with_output_policy(
+    current: &Agent,
+    assembly: &AgentMessageAssembly,
+    update: impl std::borrow::Borrow<ConversationUpdate>,
+    appended_at: &str,
+    durable_tool_output: bool,
+    incremental_text: bool,
 ) -> Result<FoldedConversationUpdate, AgentConversationError> {
     if !current.status.is_live() {
         return Err(AgentConversationError::InvalidState(
@@ -80,9 +102,14 @@ pub(super) fn fold_update(
                 appended_at,
             )
         }
-        ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(chunk)) => {
-            fold_message_chunk(current, assembly, chunk, prompt_evidence, appended_at)
-        }
+        ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(chunk)) => fold_message_chunk(
+            current,
+            assembly,
+            chunk,
+            prompt_evidence,
+            appended_at,
+            incremental_text,
+        ),
         ConversationUpdate::Said(SessionUpdate::AgentThoughtChunk(_))
         | ConversationUpdate::Said(SessionUpdate::UserMessageChunk(_)) => {
             Ok(FoldedConversationUpdate::Quiet(assembly.clone()))
@@ -262,49 +289,6 @@ pub(super) fn fold_update(
             "runtime output receipt must be recorded before folding",
         )),
     }
-}
-
-fn fold_message_chunk(
-    current: &Agent,
-    assembly: &AgentMessageAssembly,
-    chunk: &layer3_adapter::ContentChunk,
-    prompt_evidence: bool,
-    appended_at: &str,
-) -> Result<FoldedConversationUpdate, AgentConversationError> {
-    active_turn(current)?;
-    let layer3_adapter::ContentBlock::Text(text) = &chunk.content else {
-        return Ok(FoldedConversationUpdate::Quiet(assembly.clone()));
-    };
-    let message_id = chunk.message_id.as_ref().map(|id| id.0.to_string());
-    let mut agent = current.clone();
-    let mut next_assembly = assembly.clone();
-    let mut logs = Vec::new();
-    if !next_assembly.content.is_empty() && next_assembly.message_id != message_id {
-        logs.extend(flush_message(&next_assembly));
-        next_assembly = AgentMessageAssembly::default();
-    }
-    next_assembly.message_id = message_id;
-    next_assembly.prompt_evidence =
-        (next_assembly.content.is_empty() || next_assembly.prompt_evidence) && prompt_evidence;
-    append_bounded(
-        &mut next_assembly.content,
-        &text.text,
-        MAX_DURABLE_AGENT_MESSAGE_BYTES,
-    );
-    observe_first_message(&mut agent, prompt_evidence, appended_at, &mut logs)?;
-    observe_operation(&mut agent, prompt_evidence, false, appended_at, &mut logs)?;
-    if logs.is_empty() {
-        return Ok(FoldedConversationUpdate::Quiet(next_assembly));
-    }
-    changed(
-        agent,
-        logs,
-        next_assembly,
-        None,
-        current.conversation.active_turn,
-        false,
-        appended_at,
-    )
 }
 
 fn fold_semantic_update(

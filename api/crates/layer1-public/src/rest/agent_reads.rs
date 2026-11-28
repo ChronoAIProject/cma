@@ -302,7 +302,10 @@ pub(crate) async fn resources(
 }
 
 fn public_event(entry: AgentVisibleLogEntry) -> Result<AgentEventView, InstanceProblem> {
-    let Some(kind) = entry.kind else {
+    let Some(kind) = entry
+        .kind
+        .filter(|kind| !matches!(kind, AgentLogKind::AgentMessageDelta { .. }))
+    else {
         return Ok(AgentEventView {
             retained_output: entry.retained_output.map(Into::into),
             seq: entry.seq,

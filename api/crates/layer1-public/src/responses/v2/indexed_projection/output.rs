@@ -55,22 +55,44 @@ async fn message_projection(
         .first()
         .and_then(|r| r.kind.as_ref())
         .ok_or_else(corrupt)?;
-    let AgentLogKind::AgentMessage { content } = kind else {
-        return Err(corrupt());
-    };
-    if change
-        .after
-        .nonempty_messages
-        .checked_sub(change.before.nonempty_messages)
-        != Some(u64::from(!content.is_empty()))
-    {
-        return Err(corrupt());
-    }
+    let ordinal = usize::try_from(change.item_ordinal).map_err(|_| corrupt())?;
     let mut projection = OutputProjection::at(
-        usize::try_from(change.item_ordinal).map_err(|_| corrupt())?,
+        ordinal,
         usize::try_from(change.message_ordinal.ok_or_else(corrupt)?).map_err(|_| corrupt())?,
     );
-    projection.observe(kind, &source.metadata().agent_id, change.turn_sequence);
+    let agent = &source.metadata().agent_id;
+    let turn = change.turn_sequence;
+    match kind {
+        AgentLogKind::AgentMessageDelta { offset, content }
+            if change.after.text.deltas > change.before.text.deltas
+                && *offset == change.before.text.open_bytes
+                && (*offset as usize).checked_add(content.len())
+                    == Some(change.after.text.open_bytes as usize) =>
+        {
+            let item = projection.message_item(agent, turn, "in_progress", "");
+            if *offset == 0 {
+                projection.open_message(ordinal, &item);
+            }
+            projection.text_delta(ordinal, &item.id, content);
+        }
+        AgentLogKind::AgentMessage { content }
+            if change.after.messages > change.before.messages
+                && change.after.nonempty_messages - change.before.nonempty_messages
+                    == u64::from(!content.is_empty()) =>
+        {
+            if change.before.text.is_open() {
+                if content.len() != change.before.text.open_bytes as usize {
+                    return Err(corrupt());
+                }
+                let item = projection.message_item(agent, turn, "completed", content);
+                projection.finish_message(ordinal, &item);
+                projection.items.push(V2OutputItem::Message(item));
+            } else {
+                projection.observe(kind, agent, turn);
+            }
+        }
+        _ => return Err(corrupt()),
+    }
     Ok(projection)
 }
 
@@ -86,6 +108,33 @@ pub(in crate::responses) async fn current_item(
             return Err(corrupt());
         }
         tool_projection(source, &tool).await?
+    } else if change.after.text.deltas > change.before.text.deltas {
+        let ordinal = change.message_ordinal.ok_or_else(corrupt)?;
+        let totals = source.metadata().index.as_ref().ok_or_else(corrupt)?.totals;
+        if ordinal < totals.messages {
+            let final_change = seek_message(source, ordinal).await?;
+            if final_change.item_ordinal != change.item_ordinal
+                || !final_change.before.text.is_open()
+            {
+                return Err(corrupt());
+            }
+            message_projection(source, &final_change).await?
+        } else {
+            if ordinal != totals.messages || !totals.text.is_open() {
+                return Err(corrupt());
+            }
+            let text = source.open_message().await?;
+            let projection = OutputProjection::at(
+                usize::try_from(change.item_ordinal).map_err(|_| corrupt())?,
+                usize::try_from(ordinal).map_err(|_| corrupt())?,
+            );
+            return Ok(V2OutputItem::Message(projection.message_item(
+                &source.metadata().agent_id,
+                change.turn_sequence,
+                "in_progress",
+                &text,
+            )));
+        }
     } else {
         message_projection(source, change).await?
     };

@@ -14,19 +14,45 @@ pub struct AgentOutputTotals {
     pub nonempty_messages: u64,
     pub tool_starts: u64,
     pub tool_finishes: u64,
+    #[serde(default, skip_serializing_if = "AgentTextOutputTotals::is_empty")]
+    pub text: AgentTextOutputTotals,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentTextOutputTotals {
+    pub deltas: u64,
+    pub finished: u64,
+    pub open_bytes: u32,
+}
+
+impl AgentTextOutputTotals {
+    fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub fn is_open(self) -> bool {
+        self.open_bytes != 0
+    }
 }
 
 impl AgentOutputTotals {
     pub fn validate(&self, through: u64) -> Result<(), String> {
+        let open = u64::from(self.text.is_open());
         if through > MAX
             || self.items > through
             || self.items
                 != self
                     .messages
                     .checked_add(self.tool_starts)
+                    .and_then(|n| n.checked_add(open))
                     .ok_or("output count overflow")?
             || self.nonempty_messages > self.messages
             || self.tool_finishes > self.tool_starts
+            || self.text.deltas > through
+            || self.text.finished > self.nonempty_messages
+            || self.text.finished + open > self.text.deltas
+            || self.text.open_bytes as usize > super::MAX_DURABLE_AGENT_MESSAGE_BYTES
         {
             return Err("output counters do not describe a valid source interval".into());
         }
@@ -70,6 +96,39 @@ pub struct AgentOutputChange {
     /// tool change. Later output updates must not rewrite this immutable row.
     #[serde(deserialize_with = "required_nullable")]
     pub tool: Option<AgentToolOutputState>,
+}
+
+impl AgentOutputChange {
+    pub fn valid_message_change(&self) -> bool {
+        let before = self.before;
+        let after = self.after;
+        if self.message_ordinal != Some(before.messages)
+            || self.item_ordinal
+                != before
+                    .items
+                    .saturating_sub(u64::from(before.text.is_open()))
+            || self.tool.is_some()
+            || after.tool_starts != before.tool_starts
+            || after.tool_finishes != before.tool_finishes
+        {
+            return false;
+        }
+        if before.text.deltas.checked_add(1) == Some(after.text.deltas) {
+            return after.items == before.items + u64::from(!before.text.is_open())
+                && after.messages == before.messages
+                && after.nonempty_messages == before.nonempty_messages
+                && after.text.finished == before.text.finished
+                && after.text.open_bytes > before.text.open_bytes;
+        }
+        after.messages == before.messages + 1
+            && after.items == before.items + u64::from(!before.text.is_open())
+            && after.text.deltas == before.text.deltas
+            && after.text.finished == before.text.finished + u64::from(before.text.is_open())
+            && !after.text.is_open()
+            && (before.nonempty_messages + u64::from(before.text.is_open())
+                ..=before.nonempty_messages + 1)
+                .contains(&after.nonempty_messages)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -116,6 +175,7 @@ impl AgentTurnOutputIndex {
                     .totals
                     .items
                     .checked_add(self.totals.tool_finishes)
+                    .and_then(|n| n.checked_add(self.totals.text.deltas))
                     .ok_or("output count overflow")?
         {
             return Err("output index does not cover its turn interval".into());
@@ -171,9 +231,34 @@ impl AgentTurnOutputIndex {
             _ => return Err("output tool lookup has no certified presence or absence".into()),
         };
         match &entry.kind {
+            AgentLogKind::AgentMessageDelta { offset, content } => {
+                if content.is_empty() || *offset != before.text.open_bytes {
+                    return Err("output text suffix is not contiguous".into());
+                }
+                message_ordinal = Some(before.messages);
+                next.totals.text.deltas += 1;
+                next.totals.text.open_bytes += u32::try_from(content.len())
+                    .ok()
+                    .filter(|n| *n as usize <= super::MAX_DURABLE_AGENT_MESSAGE_BYTES)
+                    .ok_or("output text suffix exceeds the message bound")?;
+                if before.text.is_open() {
+                    item_ordinal -= 1;
+                } else {
+                    next.totals.items += 1;
+                }
+            }
             AgentLogKind::AgentMessage { content } => {
                 message_ordinal = Some(before.messages);
-                next.totals.items += 1;
+                if before.text.is_open() {
+                    if content.len() != before.text.open_bytes as usize {
+                        return Err("final message differs from its published extent".into());
+                    }
+                    item_ordinal -= 1;
+                    next.totals.text.open_bytes = 0;
+                    next.totals.text.finished += 1;
+                } else {
+                    next.totals.items += 1;
+                }
                 next.totals.messages += 1;
                 if !content.is_empty() {
                     next.totals.nonempty_messages += 1;
@@ -182,6 +267,9 @@ impl AgentTurnOutputIndex {
             AgentLogKind::ToolCallStarted {
                 call_id, status, ..
             } if previous.is_none() => {
+                if before.text.is_open() {
+                    return Err("tool item begins before the assistant message closes".into());
+                }
                 let terminal = terminal(status).then_some(entry.seq);
                 next.totals.items += 1;
                 next.totals.tool_starts += 1;

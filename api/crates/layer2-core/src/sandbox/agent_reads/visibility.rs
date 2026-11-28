@@ -88,6 +88,7 @@ fn shared_kind(kind: AgentLogKind) -> Option<AgentLogKind> {
         }),
         kind @ (OwnerMessage { .. }
         | AgentMessage { .. }
+        | AgentMessageDelta { .. }
         | TurnCompleted { .. }
         | TurnFailed { .. }
         | TurnInterrupted { .. }
