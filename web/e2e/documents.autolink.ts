@@ -5,6 +5,8 @@ import type { Editor } from '@tiptap/core';
 const url = 'https://example.test/en/about/previous-releases';
 const suffix = '；访问 UTC：2026';
 const imported = `Node URL：${url}${suffix}`;
+const cliUrl = 'https://example.test/cli/v12/commands/install/';
+const queryUrl = `${cliUrl}?sort=asc#options`;
 const typed = 'https://example.test/typed/?q=one#results';
 const typedSuffix = '」后文';
 const pasted = 'https://example.test/pasted%EF%BC%9B';
@@ -26,13 +28,21 @@ async function expectLinks(content: Locator, hrefs: string[]) {
   }
 }
 
-test('LOCAL CJK delimiters preserve link targets in Edit and Preview', async ({
+test('LOCAL CJK delimiters preserve link targets in Edit, Preview and after reload', async ({
   page,
   baseURL,
   context,
 }) => {
   const fixture = new LocalDocuments();
-  const paragraphs = [`${url}：访问`, `「${typed}${typedSuffix}`];
+  const cases = [
+    [`${url}：访问`, url],
+    [`「${typed}${typedSuffix}`, typed],
+    [imported, url],
+    [`CLI URL：${cliUrl}${suffix}`, cliUrl],
+    [`CLI options：${queryUrl}${suffix}`, queryUrl],
+  ] as const;
+  const paragraphs = cases.map(([text]) => text);
+  const targets = cases.map(([, href]) => href);
   fixture.markdown = paragraphs.join('\n\n');
   await fixture.route(page, baseURL!);
   await context.route('https://example.test/**', (route) =>
@@ -40,18 +50,25 @@ test('LOCAL CJK delimiters preserve link targets in Edit and Preview', async ({
   );
   await page.goto(`/artifacts/${documentId}`);
   const content = page.getByRole('textbox', { name: 'Document content', exact: true });
-  await expectLinks(content, [url, typed]);
+  await expectLinks(content, targets);
   await expect(content.locator('p')).toHaveText(paragraphs);
   await page.getByRole('button', { name: 'Preview', exact: true }).click();
-  await expectLinks(content, [url, typed]);
+  await expectLinks(content, targets);
   await expect(content.locator('p')).toHaveText(paragraphs);
-  const opened = page.waitForEvent('popup');
-  await content.getByRole('link', { name: typed, exact: true }).click();
-  const popup = await opened;
-  await expect(popup).toHaveURL(typed);
-  await popup.close();
+  for (const [source, href] of cases) {
+    const opened = page.waitForEvent('popup');
+    await content
+      .locator('p')
+      .filter({ hasText: source })
+      .getByRole('link', { name: href, exact: true })
+      .click();
+    const popup = await opened;
+    await expect(popup).toHaveURL(href);
+    await popup.close();
+  }
   await page.reload();
-  await expectLinks(content, [url, typed]);
+  await expectLinks(content, targets);
+  await expect(content.locator('p')).toHaveText(paragraphs);
   expect(fixture.writes).toHaveLength(0);
 });
 
