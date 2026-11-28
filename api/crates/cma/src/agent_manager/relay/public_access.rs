@@ -1,5 +1,10 @@
 //! Public owner routing reuses the serving operation's domain authorization.
-use axum::http::{HeaderMap, Method, StatusCode, Uri};
+use super::{ingress, relay_diagnostics::RelayDiagnostic, Refusal, Relay};
+use axum::{
+    extract::Request,
+    http::{HeaderMap, Method, StatusCode, Uri},
+    response::{IntoResponse, Response},
+};
 use layer2_core::{
     resource_access::{
         AccessPurpose, CallerContext, ResourceAccessService, ResourceCapability, ResourceTarget,
@@ -13,6 +18,46 @@ use layer2_core::{
 };
 use std::{sync::Arc, time::SystemTime};
 
+pub(super) fn authorize_public<'a>(
+    relay: &'a Relay,
+    id: &'a AgentId,
+    request: &'a Request,
+    diagnostic: Option<&'a RelayDiagnostic>,
+    browser_proof: Option<&'a crate::auth::relay::BrowserRelayProof>,
+    capture_write_target: bool,
+) -> impl std::future::Future<
+    Output = Result<Option<layer2_core::sandbox::agent_filesystem::FileWriteTarget>, Response>,
+> + use<'a> {
+    let access = relay.public_access.get();
+    let context = request
+        .extensions()
+        .get::<layer2_core::resource_access::CallerContext>();
+    let credential = request
+        .extensions()
+        .get::<layer1_public::DelegatedCredential>()
+        .map(layer1_public::DelegatedCredential::value);
+    let input = context.map(|context| PublicRequest {
+        id,
+        method: request.method(),
+        uri: request.uri(),
+        headers: ingress::headers(request),
+        context,
+        credential,
+        browser_proof,
+        peer_browser: request
+            .extensions()
+            .get::<crate::auth::relay::PeerBrowserReceipt>(),
+        capture_write_target,
+    });
+    async move {
+        let access = access.ok_or_else(|| {
+            super::http::unavailable_with(diagnostic, Refusal::AuthorizationUnavailable)
+        })?;
+        let input = input.ok_or_else(|| StatusCode::UNAUTHORIZED.into_response())?;
+        access.authorize(input).await.map_err(refusal)
+    }
+}
+
 pub(super) struct PublicRequest<'a> {
     pub id: &'a AgentId,
     pub method: &'a Method,
@@ -20,6 +65,8 @@ pub(super) struct PublicRequest<'a> {
     pub headers: &'a HeaderMap,
     pub context: &'a CallerContext,
     pub credential: Option<&'a str>,
+    pub browser_proof: Option<&'a crate::auth::relay::BrowserRelayProof>,
+    pub peer_browser: Option<&'a crate::auth::relay::PeerBrowserReceipt>,
     pub capture_write_target: bool,
 }
 
@@ -29,6 +76,15 @@ pub(super) trait PublicAuthorization: Send + Sync {
         &self,
         request: PublicRequest<'_>,
     ) -> Result<Option<FileWriteTarget>, PublicRefusal>;
+
+    async fn project_browser(
+        &self,
+        _proof: &crate::auth::relay::BrowserRelayProof,
+        _method: &Method,
+        _uri: &Uri,
+    ) -> Result<crate::auth::relay::PeerBrowserClaim, StatusCode> {
+        Err(StatusCode::SERVICE_UNAVAILABLE)
+    }
 }
 
 #[derive(Debug)]
@@ -79,14 +135,23 @@ impl PublicAuthorization for PublicAccess {
             headers,
             context,
             credential,
+            browser_proof,
+            peer_browser,
             capture_write_target,
         } = request;
         let operation = operation(method, uri)?;
+        if browser_proof.is_some_and(|proof| !proof.matches(method, uri))
+            || peer_browser.is_some_and(|proof| !proof.matches(method, uri))
+        {
+            return Err(StatusCode::UNAUTHORIZED.into());
+        }
         let caller = crate::auth::relay::RelayCaller::verify(
             self.auth.clone(),
             headers,
             context,
             credential,
+            browser_proof,
+            peer_browser,
         )
         .await?;
         let mut write_target = None;
@@ -184,6 +249,15 @@ impl PublicAuthorization for PublicAccess {
         }
         caller.current().await.map_err(PublicRefusal::from)?;
         Ok(write_target)
+    }
+
+    async fn project_browser(
+        &self,
+        proof: &crate::auth::relay::BrowserRelayProof,
+        method: &Method,
+        uri: &Uri,
+    ) -> Result<crate::auth::relay::PeerBrowserClaim, StatusCode> {
+        proof.peer_claim(&self.auth, method, uri).await
     }
 }
 
@@ -314,6 +388,8 @@ fn read_error(error: layer2_core::sandbox::AgentReadError) -> PublicRefusal {
     status.into()
 }
 
+#[cfg(test)]
+mod browser_tests;
 #[cfg(test)]
 mod custody_tests;
 #[cfg(test)]

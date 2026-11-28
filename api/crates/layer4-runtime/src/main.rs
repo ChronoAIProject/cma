@@ -101,6 +101,15 @@ async fn run() -> Result<(), String> {
 thread_local! { static TRAP_SERVING_STARTUP: std::cell::Cell<bool> = const { std::cell::Cell::new(false) }; }
 
 async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String> {
+    if arguments.len() == 1 && arguments[0] == "--print-build-info" {
+        let version = option_env!("CHRONO_BUILD").ok_or("Runtime build version is missing")?;
+        let source_sha = option_env!("CHRONO_BUILD_SHA").ok_or("Runtime source SHA is missing")?;
+        println!(
+            "{}",
+            serde_json::json!({"version": version, "source_sha": source_sha})
+        );
+        return Ok(());
+    }
     if arguments
         .first()
         .is_some_and(|arg| arg == "--inspect-restored-home")
@@ -243,13 +252,17 @@ async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String>
     if qualification {
         publication_qualification::arm();
     }
-    let (config, control_auth, _assignment_server) = if waiting {
+    let (mut config, control_auth, _assignment_server) = if waiting {
         let (assigned, server) = pool_bootstrap::wait_for_assignment().await?;
+        if let Some((fault, confirmed)) = assigned.startup_failure {
+            pool_bootstrap::apply_staging_startup_failure(&server, fault, confirmed).await?;
+        }
         (assigned.config, Some(assigned.auth), Some(server))
     } else {
         let auth = control_auth::ControlAuth::from_environment()?;
         (config::RuntimeConfig::from_environment()?, auth, None)
     };
+    config.configure_stale_turn_seal(control_auth.is_some());
     let bind = config.bind;
     let writer_boundary = writer_fence::SupervisorBoundary::install()?;
     let supervisor = supervisor::Supervisor::start(config, writer_boundary)
@@ -263,7 +276,11 @@ async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String>
     let listener = tokio::net::TcpListener::bind(bind)
         .await
         .map_err(|error| format!("bind runtime supervisor at {bind}: {error}"))?;
-    tracing::info!(%bind, "runtime supervisor listening");
+    tracing::info!(
+        %bind,
+        stale_turn_seal_enabled = supervisor.stale_turn_seal_enabled(),
+        "runtime supervisor listening"
+    );
     let mut router = link::router(supervisor.clone());
     if let Some(auth) = control_auth {
         router = router.layer(axum::middleware::from_fn_with_state(

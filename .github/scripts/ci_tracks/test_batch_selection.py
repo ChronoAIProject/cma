@@ -1,6 +1,7 @@
 """Batch selection equals independent comparisons and cannot omit history."""
 
 from contextlib import redirect_stderr, redirect_stdout
+from hashlib import sha256
 import io
 import json
 from pathlib import Path
@@ -10,6 +11,7 @@ import unittest
 from unittest.mock import patch
 
 import batch_selection
+import image_inputs
 from image_inputs import MANIFEST
 from uncertainty import SelectionIntegrityError
 from policy import Workspace
@@ -100,6 +102,48 @@ class BatchTests(unittest.TestCase):
         self.write('.github/scripts/deployables.json', '{}')
         with self.assertRaises(ValueError):
             batch_selection.determine_many(self.root, [self.first])
+
+    def test_reviewed_historical_runtime_recipe_replays_after_restoring_the_pin(self):
+        path = image_inputs.RECIPE
+        original = (self.root / path).read_text()
+        previous = sha256(original.encode()).hexdigest()
+        edited = original + 'ENV SYNTHETIC_FEATURE=1\n'
+        current = sha256(edited.encode()).hexdigest()
+        self.write(path, edited)
+        stale = self.commit()
+        with patch.object(image_inputs, 'PRE_SEAL_RECIPE', previous), \
+                patch.object(image_inputs, 'SEAL_RECIPE', current):
+            with self.assertRaises(SelectionIntegrityError):
+                batch_selection.determine_many(self.root, [stale])
+            self.write(path, original)
+            repair = self.commit()
+            plans = batch_selection.determine_many(self.root, [stale, repair])
+            self.assertEqual(plans[1], selection.determine(self.root, {'after': repair}, 'push'))
+            self.assertEqual(plans[1]['deployables'], [
+                'cma-agent-manager', 'cma-runtime', 'cma-runtime-omarchy',
+            ])
+            self.assertIn('cma-runtime', plans[0]['deployables'])
+            with patch.object(image_inputs, 'SEAL_RECIPE', '0' * 64), \
+                    self.assertRaises(SelectionIntegrityError):
+                batch_selection.determine_many(self.root, [stale, repair])
+
+    def test_web_recipe_manifest_repair_replays_the_stale_historical_revision(self):
+        path = 'web/Dockerfile'
+        previous = sha256((self.root / path).read_bytes()).hexdigest()
+        self.write(path, (self.root / path).read_text() + 'ENV WEB_DRAIN_FIXTURE=1\n')
+        current = sha256((self.root / path).read_bytes()).hexdigest()
+        stale = self.commit()
+        with self.assertRaises(SelectionIntegrityError):
+            batch_selection.determine_many(self.root, [stale])
+        manifest = self.root / '.github/scripts/deployables.json'
+        self.write('.github/scripts/deployables.json', manifest.read_text().replace(previous, current))
+        repaired = self.commit()
+        with patch.object(image_inputs, 'PRE_WEB_DRAIN_RECIPE', previous), \
+                patch.object(image_inputs, 'WEB_DRAIN_RECIPE', current):
+            plans = batch_selection.determine_many(self.root, [stale, repaired])
+            self.assertEqual([row['deployables'] for row in plans], [['cma-web'], ['cma-web']])
+        with self.assertRaises(SelectionIntegrityError):
+            batch_selection.determine_many(self.root, [stale, repaired])
 
     def test_warm_cache_reuses_only_complete_comparisons_then_analyzes_new_source(self):
         cache = SelectionCache(self.root / 'cache', 'e' * 64)

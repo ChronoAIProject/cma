@@ -20,7 +20,12 @@ export type MessageAcceptance =
 export type AgentResourceState =
   | { readonly status: 'idle' }
   | { readonly status: 'loading' }
-  | { readonly status: 'error'; readonly message: string; readonly retryAt?: number }
+  | {
+      readonly status: 'error';
+      readonly message: string;
+      readonly retryAt?: number;
+      readonly workspaceUnavailable?: boolean;
+    }
   | ({ readonly status: 'ready' } & ReadyAgent);
 
 export type AgentCommand = 'send' | 'interrupt' | 'approval' | 'stop' | 'delete' | 'restart';
@@ -50,6 +55,7 @@ export interface AgentController {
   readonly pending?: AgentCommand;
   readonly initialSendPending?: boolean;
   readonly actionError?: string;
+  readonly streamError?: string;
   readonly reload: () => void;
   readonly refreshDetail: () => void;
   readonly clearActionError: () => void;

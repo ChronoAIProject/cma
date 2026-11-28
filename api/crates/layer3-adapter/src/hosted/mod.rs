@@ -8,6 +8,7 @@ mod acp_handshake;
 mod acp_inbound;
 mod acp_observations;
 mod acp_open_completion;
+mod acp_open_reply_loss;
 mod acp_permission;
 mod acp_provider_failure;
 mod acp_session_identity;
@@ -31,6 +32,7 @@ mod deployment_request;
 mod home;
 #[cfg(test)]
 mod home_tests;
+mod hosted_control_transport;
 #[cfg(test)]
 mod indexed_ledger_hold_tests;
 mod inspection_timing;
@@ -59,6 +61,7 @@ mod tool_confirmation;
 mod update_relay;
 
 pub use acp_open_completion::HostedOpenCompletionProtocol;
+pub use acp_open_reply_loss::HostedOpenReplyLoss;
 pub use adapter::HostedAdapter;
 pub use agent_sandbox_backend::{
     AgentSandboxBackend, NativeStatusInspection, RuntimeBackends, RuntimeRoutingStore,
@@ -77,12 +80,13 @@ pub use deployment::{
     HostedDeployment, MODEL_PROXY_BASE_URL, NYXID_PROXY_BASE_URL, PLACEHOLDER_CREDENTIAL,
 };
 pub(crate) use deployment_request::JOURNAL_RECOVERY;
+pub use hosted_control_transport::HostedControlTransport;
 pub use managed_context::HostedContextRefresh;
 pub use memory::{InMemoryHostedBackend, InMemoryRuntimeSnapshot};
 pub(crate) use nonexecuting::IdleBootstrapProof;
 #[doc(hidden)]
 pub use nonexecuting::NonexecutingRuntimeProof;
-pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
+pub use provider_backend::ProviderHostedBackend;
 pub use provider_tools::{
     HostedProviderToolBinding, HostedProviderToolSource, HostedToolOpenReceipt,
 };

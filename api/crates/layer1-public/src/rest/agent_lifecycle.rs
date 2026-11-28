@@ -199,7 +199,13 @@ pub enum RepositoryAccessRefusal {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(tag = "code", rename_all = "snake_case")]
 pub enum AgentLifecycleFailure {
-    SandboxLimitReached { limit: u16, live: u64 },
+    SandboxLimitReached {
+        limit: u16,
+        live: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schema(value_type = Option<Object>)]
+        quota_usage: Option<layer2_core::sandbox::SandboxQuotaUsage>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -287,9 +293,15 @@ pub enum AgentLifecycleProvisioningError {
     #[error("The selected task template has invalid inputs.")]
     Template(layer2_core::sandbox::task_template::TaskTemplateError),
     #[error("sandbox limit reached: {live} of {limit}")]
-    SandboxLimitReached { limit: u16, live: u64 },
+    SandboxLimitReached {
+        limit: u16,
+        live: u64,
+        quota_usage: Option<layer2_core::sandbox::SandboxQuotaUsage>,
+    },
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("retained home capacity is temporarily unavailable")]
+    HomeCapacity,
     #[error("desktop is unavailable: {0}")]
     DesktopUnsupported(String),
     #[error("the Agent Manager lifecycle implementation is unavailable")]
@@ -323,13 +335,18 @@ impl IntoResponse for AgentLifecycleProvisioningError {
     fn into_response(self) -> Response {
         let (status, slug, code, detail) = match &self {
             Self::AdmissionPaused => return super::admission_problem::paused(),
+            Self::HomeCapacity => return super::admission_problem::home_capacity(),
             Self::Template(error) => (
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "task-template-invalid",
                 error.code,
                 self.to_string(),
             ),
-            Self::SandboxLimitReached { limit, live } => {
+            Self::SandboxLimitReached {
+                limit,
+                live,
+                quota_usage,
+            } => {
                 let status = StatusCode::TOO_MANY_REQUESTS;
                 let mut body = super::problem_document(
                     status,
@@ -339,6 +356,9 @@ impl IntoResponse for AgentLifecycleProvisioningError {
                 );
                 body["limit"] = (*limit).into();
                 body["live"] = (*live).into();
+                if let Some(usage) = quota_usage {
+                    body["quota_usage"] = super::sandbox_capacity::quota_usage_json(*usage);
+                }
                 return super::problem_response(status, body);
             }
             Self::DesktopUnsupported(_) => (

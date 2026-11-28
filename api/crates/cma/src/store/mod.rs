@@ -52,6 +52,7 @@ mod agent_title_retry;
 mod agent_title_state;
 mod agent_title_writes;
 mod agent_titles;
+mod agent_tool_open;
 mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
@@ -87,6 +88,7 @@ mod checkpoint_storage;
 mod checkpoints;
 mod child_writer_claims;
 mod codex_subscriptions;
+mod connection_recovery_activity;
 mod contention;
 mod cooperative_budget;
 pub(crate) mod creation_outcomes;
@@ -98,6 +100,7 @@ mod encryption;
 mod execution_sections;
 pub(crate) mod legal_consents;
 mod media_uploads;
+mod online_backfill;
 pub(crate) mod provenance_progress;
 pub(crate) mod registration_capacity;
 mod retained_consents;
@@ -105,6 +108,19 @@ mod segment_response;
 mod transaction_scope;
 pub(crate) mod transaction_terminal;
 pub(crate) use segment_response::emit as emit_response_reads;
+
+pub(crate) async fn backfill_progress_command(
+    arguments: &[String],
+) -> Option<Result<serde_json::Value, &'static str>> {
+    if online_backfill::is_command(arguments) {
+        Some(online_backfill::command(arguments).await)
+    } else if provenance_progress::is_command(arguments) {
+        Some(provenance_progress::command(arguments).await)
+    } else {
+        None
+    }
+}
+
 // Retain legacy persistence contracts for migration verification; production
 // Gateway records belong to the independently deployed Event Gateway.
 #[cfg(test)]
@@ -183,9 +199,13 @@ mod sandbox_mongo;
 mod sandbox_mongo_integration_tests;
 mod snapshot_collection;
 #[cfg(test)]
+pub(crate) mod test_measurement;
+#[cfg(test)]
 mod worker_runtime_supervision_tests;
 #[cfg(test)]
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_capacity as fill_agent_capacity_fixture;
+#[cfg(test)]
+pub(crate) const AGENT_STOP_CAPACITY_BYTES: usize = agent_log_integrity::STOP_AGENT_LOG_BYTES;
 #[cfg(test)]
 pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_to as fill_agent_capacity_to_fixture;
 #[cfg(test)]
@@ -211,6 +231,7 @@ pub mod settings;
 mod settings_barrier;
 pub(crate) mod settings_defaults;
 mod shared_child_capacity;
+pub(crate) mod suggestion_control;
 mod suggestions;
 pub(crate) mod task_audit;
 mod trigger_definitions;

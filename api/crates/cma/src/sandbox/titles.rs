@@ -330,13 +330,16 @@ fn title_endpoint(base_url: &str) -> Option<Url> {
     {
         return None;
     }
-    let path = base.path().trim_end_matches('/');
-    let suffix = match path {
+    let suffix = responses_path_suffix(base.path().trim_end_matches('/'));
+    Url::parse(&format!("{}{suffix}", base.as_str().trim_end_matches('/'))).ok()
+}
+
+pub(super) fn responses_path_suffix(base_path: &str) -> &'static str {
+    match base_path {
         // NyxID's scoped model service uses the same relative path as managed Codex.
         "/api/v1/proxy/s/chrono-llm-public" | "/api/v1/proxy/s/chrono-llm" => "/responses",
         _ => RESPONSES_PATH,
-    };
-    Url::parse(&format!("{}{suffix}", base.as_str().trim_end_matches('/'))).ok()
+    }
 }
 
 fn nonempty(value: &str) -> Option<&str> {

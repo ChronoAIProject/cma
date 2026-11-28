@@ -49,8 +49,8 @@ pub(crate) fn admission_failure(error: CommandAdmissionError) -> Response {
         CommandAdmissionError::Ledger(CommandLedgerError::NotAdmissible) => InstanceProblem::AgentNotReady.into_response(),
         CommandAdmissionError::Ledger(CommandLedgerError::QueueFull) => InstanceProblem::MessageQueueFull { limit: 64 }.into_response(),
         CommandAdmissionError::Ledger(CommandLedgerError::Invalid) | CommandAdmissionError::ModelMismatch => InstanceProblem::InvalidRequest.into_response(),
-        CommandAdmissionError::Ledger(CommandLedgerError::Conflict | CommandLedgerError::StaleClaim) => InstanceProblem::OperationInFlight.into_response(),
-        CommandAdmissionError::Ledger(CommandLedgerError::Corrupt | CommandLedgerError::Unavailable)
+        CommandAdmissionError::Ledger(CommandLedgerError::Conflict | CommandLedgerError::KnownAborted | CommandLedgerError::StaleClaim) => InstanceProblem::OperationInFlight.into_response(),
+        CommandAdmissionError::Ledger(CommandLedgerError::Corrupt | CommandLedgerError::Unavailable | CommandLedgerError::ControlBusy)
         | CommandAdmissionError::Authority(CommandAuthorizationError::Unavailable) => failure(StatusCode::SERVICE_UNAVAILABLE,
             "agent_command_unavailable", "Command admission or observation is unavailable. The outcome may be unknown; retain the same input and Idempotency-Key for recovery."),
     }

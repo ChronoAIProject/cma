@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { jobRunning } from "./ci-web-jobs.mjs";
 
 const workflow = readFileSync(
   new URL("../workflows/ci-web.yml", import.meta.url),
@@ -13,7 +14,8 @@ const config = readFileSync(
 const invocation =
   "node node_modules/playwright/cli.js test --config e2e/new-agent-request.config.ts";
 
-function verify(job, suite) {
+function verify(workflow, suite) {
+  const job = jobRunning(workflow, "Local New agent request isolation");
   const step = job
     .split('name: "Local New agent request isolation"')[1]
     ?.split("\n      -")[0];
@@ -22,9 +24,8 @@ function verify(job, suite) {
     "Web must execute the New agent request browser contracts",
   );
   assert.doesNotMatch(step, /--grep|--project|--shard|continue-on-error|\|\|/);
-  assert.ok(
-    job.indexOf("Install pinned local browser") < job.indexOf(invocation),
-  );
+  const browser = job.indexOf("Install pinned local browser");
+  assert.ok(browser >= 0 && browser < job.indexOf(invocation));
   assert.match(
     job,
     /failure\(\) && steps\.new_agent_request\.outcome == 'failure'/,

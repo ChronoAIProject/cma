@@ -137,7 +137,11 @@ def validate_artifact(artifact, name, *, max_bytes=MAX_ARTIFACT_BYTES):
     return origin
 
 
-def validate_producer(run, jobs, artifact, component):
+def native_producer_job(component):
+    return f"Release {component} / Native release image / Build and test"
+
+
+def validate_producer(run, jobs, artifact, component, *, job_name=None):
     origin = artifact["workflow_run"]
     require(isinstance(run, dict) and run.get("repository", {}).get("full_name") == REPO
             and run.get("head_repository", {}).get("full_name") == REPO
@@ -152,8 +156,16 @@ def validate_producer(run, jobs, artifact, component):
             and type(attempt) is int and attempt > 0, "producer")
     require(isinstance(jobs, dict) and isinstance(jobs.get("jobs"), list)
             and jobs.get("total_count") == len(jobs["jobs"]), "producer")
-    matches = [job for job in jobs["jobs"] if isinstance(job, dict)
-               and job.get("name") == f"Release {component} / Publish"]
+    names = {f"Release {component} / Publish"}
+    if component == "am":
+        names.add(native_producer_job(component))
+    if job_name is not None:
+        names = {job_name}
+    created = datetime.fromisoformat(artifact["created_at"])
+    require(created.tzinfo is not None, "producer")
+    matches = [job for job in jobs["jobs"] if isinstance(job, dict) and job.get("name") in names
+               and job.get("status") == "completed" and job.get("conclusion") == "success"
+               and datetime.fromisoformat(job["started_at"]) <= created <= datetime.fromisoformat(job["completed_at"])]
     # Only a completed, successful publication sealed and uploaded the bundle.
     require(len(matches) == 1 and matches[0].get("status") == "completed"
             and matches[0].get("conclusion") == "success" and matches[0].get("head_sha") == source

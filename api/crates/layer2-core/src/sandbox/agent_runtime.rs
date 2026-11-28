@@ -36,6 +36,10 @@ pub trait AgentRuntimeRegistry: Send + Sync {
         target: &AgentRuntimeTarget,
     ) -> Result<AgentRuntimeConnection, AgentRuntimeError>;
 
+    /// Request recovery before a claimed command binds any runtime input.
+    /// Implementations that own runtime attachments can schedule durable work.
+    async fn recover_missing_attachment(&self, _target: &AgentRuntimeTarget) {}
+
     /// Retire a failed input attachment and schedule durable reattachment.
     async fn request_reconnect(
         &self,
@@ -52,4 +56,54 @@ pub trait AgentRuntimeRegistry: Send + Sync {
         agent_id: &AgentId,
         authority_fence: u64,
     ) -> Result<(), AgentRuntimeError>;
+}
+
+/// Retain the authority of the exact operation that requested recovery, even
+/// when cancellation drops the operation before its delivery result settles.
+pub(super) struct ReconnectOnDrop {
+    runtimes: std::sync::Arc<dyn AgentRuntimeRegistry>,
+    target: AgentRuntimeTarget,
+    owner: Option<std::sync::Arc<crate::agent_ownership::Authority>>,
+    pub(super) armed: bool,
+}
+
+impl ReconnectOnDrop {
+    pub(super) fn new(
+        runtimes: std::sync::Arc<dyn AgentRuntimeRegistry>,
+        target: AgentRuntimeTarget,
+    ) -> Self {
+        Self {
+            runtimes,
+            target,
+            owner: crate::agent_ownership::execution_authority(),
+            armed: true,
+        }
+    }
+}
+
+impl Drop for ReconnectOnDrop {
+    fn drop(&mut self) {
+        if self.armed {
+            let runtimes = self.runtimes.clone();
+            let target = self.target.clone();
+            let owner = self.owner.clone();
+            tokio::spawn(async move {
+                let recovery = runtimes.request_reconnect(&target);
+                if let Some(owner) = owner {
+                    let _ = owner.run(recovery).await;
+                } else {
+                    let _ = recovery.await;
+                }
+            });
+        }
+    }
+}
+
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub fn reconnect_guard_for_test(
+    runtimes: std::sync::Arc<dyn AgentRuntimeRegistry>,
+    target: AgentRuntimeTarget,
+) -> impl Send {
+    ReconnectOnDrop::new(runtimes, target)
 }

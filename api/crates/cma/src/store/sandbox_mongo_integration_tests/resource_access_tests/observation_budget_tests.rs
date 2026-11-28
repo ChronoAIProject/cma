@@ -1,6 +1,7 @@
 //! Complete public streams on two listening replicas; the driver meter includes
 //! membership, read custody, routing, release fences and all getMore commands.
 use super::*;
+use crate::store::test_measurement::{process_cpu, server_examined_documents};
 use crate::{
     agent_manager::relay::Relay,
     store::{agent_observation::MongoAgentObservation, agent_ownership::MongoAgentOwnership},
@@ -33,7 +34,8 @@ async fn measure_idle(
 ) -> (meter::Stats, Duration) {
     let mut f = Fixture::semantic(rows).await;
     let agents = agents(&mut f, many, distinct).await;
-    let replicas = budget_servers_with_observation(&f, shared_observation).await;
+    let (start_idle, idle_start) = tokio::sync::watch::channel(false);
+    let replicas = budget_servers_with_observation(&f, shared_observation, Some(idle_start)).await;
     let client = reqwest::Client::builder()
         .no_proxy()
         .connect_timeout(Duration::from_secs(2))
@@ -108,11 +110,14 @@ async fn measure_idle(
         agents.len(),
         cold.commands.values().sum::<u64>()
     );
+    start_idle.send(true).unwrap();
     if shared_observation {
         assert_shared_slots(&replicas, &agents).await;
     }
     tokio::time::sleep(Duration::from_secs(2)).await;
+    let examined_before = server_examined_documents(&f.client).await;
     f.meter.clear();
+    let cpu_before = process_cpu();
     let started = Instant::now();
     for _ in 0..seconds {
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -121,10 +126,12 @@ async fn measure_idle(
             "all 100 observers must remain connected"
         );
     }
-    let (elapsed, stats) = {
+    let (elapsed, stats, pool) = {
         let stats = f.meter.stats.lock().unwrap();
-        (started.elapsed(), stats.clone())
+        (started.elapsed(), stats.clone(), stats.pool.report())
     };
+    let cpu = process_cpu() - cpu_before;
+    let examined = server_examined_documents(&f.client).await - examined_before;
     for consumer in consumers {
         consumer.abort();
     }
@@ -137,6 +144,15 @@ async fn measure_idle(
     }
     let commands = stats.commands.values().sum::<u64>();
     eprintln!("observation_idle shared={shared_observation} agents={} observers=100 replicas=2 distinct={distinct} history={rows} seconds={:.3} commands={commands} checkouts={} head_cohort_refreshes={} bytes={} details={:?}", agents.len(), elapsed.as_secs_f64(), stats.checkouts, stats.snapshots, stats.bytes, stats.commands);
+    eprintln!(
+        "TC046_IDLE_RESOURCES {}",
+        serde_json::json!({
+            "shared":shared_observation,"agents":agents.len(),"observers":100,"replicas":2,
+            "distinct_owners":distinct,"history":rows,"wall_us":elapsed.as_micros(),
+            "commands":commands,"checkouts":stats.checkouts,"server_examined_documents":examined,
+            "fixture_process_cpu_us":cpu.as_micros(),"pool":pool,
+        })
+    );
     (stats, elapsed)
 }
 
@@ -224,6 +240,58 @@ fn assert_checkout_reduction(
         shared_rate <= baseline_rate * 0.30,
         "history {rows}: expected at least 70% fewer idle checkouts/s, baseline {baseline_rate:.2}, shared {shared_rate:.2}"
     );
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable Mongo replica-set runner"]
+async fn observation_remote_headers_arrive_before_idle_release() {
+    let mut f = Fixture::semantic(100).await;
+    let agents = agents(&mut f, false, false).await;
+    let agent = &agents[0];
+    let (start_idle, idle_start) = tokio::sync::watch::channel(false);
+    let replicas = budget_servers_with_observation(&f, true, Some(idle_start)).await;
+    let owner = replicas[0]
+        .observation
+        .destination(&agent.id, &agent.created_at)
+        .await
+        .unwrap();
+    let ingress = replicas
+        .iter()
+        .find(|replica| replica.address != owner.member.relay_address)
+        .unwrap();
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    let mut response = tokio::time::timeout(
+        Duration::from_secs(15),
+        client
+            .get(format!(
+                "{}/api/v1/agui/events?thread_id={}&starting_after=0&follow=true",
+                ingress.address, agent.id
+            ))
+            .bearer_auth(format!("observer:{}", agent.owner))
+            .send(),
+    )
+    .await
+    .expect("remote public headers should arrive before idle release")
+    .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    for replica in &replicas {
+        assert_eq!(replica.relay.available_test_slots(), 99);
+    }
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), response.chunk())
+            .await
+            .is_err()
+    );
+    start_idle.send(true).unwrap();
+    let chunk = tokio::time::timeout(Duration::from_secs(15), response.chunk())
+        .await
+        .expect("the remote event body should resume after idle release")
+        .unwrap()
+        .unwrap();
+    assert!(!chunk.is_empty());
+    drop(response);
+    drop(replicas);
+    f.client.database(&f.name).drop().await.unwrap();
 }
 
 #[tokio::test]

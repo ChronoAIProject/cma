@@ -64,12 +64,13 @@ it('keeps a true live environment 503 retryable despite stale paused detail', as
   render(f.draw({ resourceAvailability: live }));
   await act(async () => {});
   const tab = within(screen.getByRole('tabpanel'));
+  expect(f.files.list).not.toHaveBeenCalled();
   expect(tab.getByText('We couldn’t check file availability.')).toBeVisible();
   expect(tab.queryByText(/Sandbox paused/)).toBeNull();
-  fireEvent.click(tab.getByRole('button', { name: 'Try again' }));
+  fireEvent.focus(window);
   await act(async () => {});
   expect(f.files.environment).toHaveBeenCalledTimes(2);
-  expect(f.files.list).toHaveBeenCalledOnce();
+  expect(f.files.list).toHaveBeenCalledTimes(1);
 });
 
 it('requires separate shared history permission during a pause', async () => {

@@ -192,10 +192,15 @@ async fn apply_publication_observed(
                 prepared,
                 &mut scope,
             )
-            .await?,
+            .await
+            .map_err(|error| contention::phase(mutation, "segmented_adoption", error))?,
         )
     } else if format.is_some() {
-        Some(segmented::publish(store, &current_row, &current, mutation, &mut scope).await?)
+        Some(
+            segmented::publish(store, &current_row, &current, mutation, &mut scope)
+                .await
+                .map_err(|error| contention::phase(mutation, "segmented_publication", error))?,
+        )
     } else {
         None
     };
@@ -213,13 +218,23 @@ async fn apply_publication_observed(
     {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
+    #[cfg(test)]
+    if current.work.step == AgentWorkStep::FenceInteraction {
+        use pending_adoption::test_hooks::{self, Boundary};
+        test_hooks::stop(
+            &store.agents.namespace().db,
+            Boundary::BeforeInteractionFenceAuthority,
+        )
+        .await;
+    }
     store
         .fence_agent_effect_transaction(&mutation.agent.id, session)
         .await
         .map_err(|error| match error {
             crate::store::agent_ownership::FenceError::Domain(error) => ApplyError::Domain(error),
             crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
-        })?;
+        })
+        .map_err(|error| contention::phase(mutation, "manager_authority", error))?;
     // Decide eligibility in the publication's own snapshot. The same consumed
     // preparation revision is fenced below; no independent preflight can turn
     // a different snapshot into an unnecessary ordinary startup fallback.
@@ -249,7 +264,7 @@ async fn apply_publication_observed(
                 mutation,
                 publication_history::Selection {
                     ordinary: observed.is_none(),
-                    repeated: repeated_marker.is_some(),
+                    repeated_marker,
                 },
                 history_cache,
                 session,
@@ -342,43 +357,15 @@ async fn apply_publication_observed(
             ))
         && mutation.agent.work.receipts == current.work.receipts
     {
-        let sandbox = store
-            .sandboxes
-            .find_one(doc! { "_id": current.sandbox_id.as_str() })
-            .session(&mut *session)
-            .await
-            .map_err(ApplyError::Driver)?
-            .as_ref()
-            .map(super::sandboxes::read_sandbox)
-            .transpose()
-            .map_err(ApplyError::Domain)?
-            .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
-        validate_agent_work_mutation_with_sandbox(
+        persistence::fence_retired_sandbox(
+            store,
             &current,
             &current_worktree,
             entry_count,
             mutation,
-            &sandbox,
+            session,
         )
-        .map_err(ApplyError::Domain)?;
-        // Serialize the no-runtime proof with any concurrent parent publication.
-        let written = store
-            .sandboxes
-            .update_one(
-                crate::store::work_schema::query(doc! {
-                    "_id": sandbox.id.as_str(),
-                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                    "revision": signed(sandbox.revision, "retiring sandbox revision")
-                        .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
-                }),
-                doc! { "$inc": { "runtime_writer_claim_fence": 1_i64 } },
-            )
-            .session(&mut *session)
-            .await
-            .map_err(ApplyError::Driver)?;
-        if written.matched_count != 1 {
-            return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-        }
+        .await?;
     } else {
         validate_agent_work_mutation(&current, &current_worktree, entry_count, mutation)
             .map_err(ApplyError::Domain)?;
@@ -395,7 +382,14 @@ async fn apply_publication_observed(
     .await?;
     let sign_in_sandbox = sign_in::apply(store, &current, mutation, session).await?;
     prepared_replay::fence(store, &current, &current_worktree, mutation, session).await?;
-    let (final_agent, logs) = final_agent_and_logs(&current, mutation)?;
+    let (mut final_agent, mut logs) = final_agent_and_logs(&current, mutation)?;
+    super::agent_conversation_store::checkpoint::finish_published_text(
+        &current_row,
+        &current,
+        &mut final_agent,
+        &mut logs,
+    )
+    .map_err(ApplyError::Domain)?;
 
     if let Some(history) = &history {
         let complete_log = &history.summary;
@@ -453,6 +447,17 @@ async fn apply_publication_observed(
         .await?;
         insert_logs(store, &integrity.documents, session).await?;
     }
+    if let Some(update) = super::connection_recovery_activity::completed_update(
+        &current_row,
+        &current,
+        &final_agent,
+        last_log.or_else(|| history.as_ref()?.entries.last()),
+        &logs,
+    )
+    .map_err(ApplyError::Domain)?
+    {
+        publication_log::write_recovery_activity(store, &final_agent, update, session).await?;
+    }
     restart_ready::finish(
         store,
         (&current_row, &current, &final_agent),
@@ -461,7 +466,9 @@ async fn apply_publication_observed(
     )
     .await?;
     if let Some(versioned) = mutation.worktree.as_ref() {
-        advance_worktree(store, &current_worktree, &versioned.worktree, session).await?;
+        advance_worktree(store, &current_worktree, &versioned.worktree, session)
+            .await
+            .map_err(|error| contention::phase(mutation, "worktree_write", error))?;
     }
     let event = match mutation.sandbox_event.as_ref() {
         Some(kind) => Some(

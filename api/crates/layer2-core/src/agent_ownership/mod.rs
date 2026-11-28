@@ -12,6 +12,7 @@ pub use policy::{MaintenancePolicy, MaintenanceStep, RetirementIntent, Settlemen
 mod authority;
 pub use authority::{execution_authority, execution_owner, Authority};
 mod cleanup_pacing;
+pub use cleanup_pacing::BackgroundHandoffError;
 mod coordinator;
 mod observations;
 mod receiver_binding;
@@ -184,6 +185,35 @@ pub trait OwnershipStore: Send + Sync {
     /// Call only after revoking local and receiving-runtime authority.
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError>;
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError>;
+    /// Check the exact owner and its serving member and return the shorter
+    /// remaining lifetime using the store clock. This read never renews either.
+    async fn live_lease_remaining_ms(&self, token: &OwnershipToken) -> Result<u64, OwnershipError> {
+        let membership = self.membership().await?;
+        membership.require_compatible()?;
+        let member = membership
+            .members
+            .iter()
+            .find(|member| {
+                member.instance_id == token.instance_id
+                    && !member.draining
+                    && member.protocol == PROTOCOL_VERSION
+                    && member.is_live(membership.now_ms)
+            })
+            .ok_or(OwnershipError::Stale)?;
+        let lease = self
+            .owner(&token.agent_id)
+            .await?
+            .filter(|lease| lease.token == *token)
+            .ok_or(OwnershipError::Stale)?;
+        lease
+            .expires_at_ms
+            .min(member.expires_at_ms)
+            .checked_sub(membership.now_ms)
+            .and_then(|remaining| u64::try_from(remaining).ok())
+            .filter(|remaining| *remaining > 0)
+            .ok_or(OwnershipError::Stale)
+    }
+
     /// Atomically retain the first diagnostic for this exact, live owner token.
     /// This must not renew/release authority or change Agent work or retry state.
     async fn record_receiver_failure(

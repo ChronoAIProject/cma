@@ -148,12 +148,36 @@ impl DurableAgentUpdateRecorder {
     where
         S: AgentConversationUpdateStore + 'static,
     {
+        Self::with_incremental_output_policy(
+            store,
+            writer_policy,
+            spend_source,
+            bounded_live_fragments,
+            coordinated_ingress,
+            coalesce_policy,
+            false,
+        )
+    }
+
+    pub fn with_incremental_output_policy<S>(
+        store: Arc<S>,
+        writer_policy: Arc<super::super::task_experience::TaskExperiencePolicy>,
+        spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
+        bounded_live_fragments: bool,
+        coordinated_ingress: bool,
+        coalesce_policy: Option<super::AgentOutputCoalescePolicy>,
+        incremental_text: bool,
+    ) -> Arc<Self>
+    where
+        S: AgentConversationUpdateStore + 'static,
+    {
         Arc::new(Self {
             live_source: std::sync::OnceLock::new(),
             store,
             writer_policy,
             spend_source,
             coalesce_policy,
+            incremental_text,
             live: if bounded_live_fragments {
                 live::AgentLiveHub::with_budget(if coordinated_ingress {
                     super::live_budget::LiveBudget::process_coordinated()

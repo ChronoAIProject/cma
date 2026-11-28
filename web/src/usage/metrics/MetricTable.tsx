@@ -22,6 +22,8 @@ export function MetricTable({
   admin,
   active,
   measured,
+  allocationMetric,
+  onAllocationMetricChange,
   initialPage,
   onSort,
   onDetail,
@@ -36,6 +38,8 @@ export function MetricTable({
   readonly admin: boolean;
   readonly active: boolean;
   readonly measured: boolean;
+  readonly allocationMetric: Metric;
+  readonly onAllocationMetricChange: (metric: Metric) => void;
   readonly initialPage?: UsageMetricPage;
   readonly focusedMetric?: Metric;
   readonly onSort: (sort: UsageMetricSort) => void;
@@ -108,6 +112,8 @@ export function MetricTable({
         reportId={reportId}
         reportCoverage={reportCoverage}
         active={active}
+        metric={allocationMetric}
+        onMetricChange={onAllocationMetricChange}
         onFailure={onFailure}
       />
       <div className="usage-section-heading">

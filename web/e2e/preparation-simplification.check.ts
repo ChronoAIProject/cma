@@ -22,6 +22,8 @@ for (const theme of ['dark', 'light']) {
       ).toBeVisible();
       await expect(preparation.locator(`time[datetime="${acceptedAt}"]`)).toBeVisible();
       await expect(preparation.locator(`time[datetime="${progressAt}"]`)).toBeVisible();
+      await expect(preparation.locator('.agent-mascot__poster')).toHaveCount(1);
+      await expect(preparation.locator('.agent-mascot__sprite')).toHaveCount(0);
       const message = preparation.getByRole('region', { name: 'Original request' });
       await message.getByRole('button', { name: 'Show more' }).click();
       expect(await message.locator('p').textContent()).toBe(original);
@@ -99,7 +101,8 @@ for (const theme of ['dark', 'light']) {
       await expect(page.getByRole('textbox', { name: 'Follow-up draft', exact: true })).toHaveValue(
         followup,
       );
-      await expect(preparation.locator('.character-avatar[data-motion="live"]')).toHaveCount(0);
+      await expect(preparation.locator('.agent-mascot__poster')).toHaveCount(1);
+      await expect(preparation.locator('.agent-mascot__sprite')).toHaveCount(0);
       if (state === 'failed')
         await expect(
           preparation
@@ -118,3 +121,28 @@ for (const theme of ['dark', 'light']) {
     });
   }
 }
+
+test('LOCAL preparation plays one visible mascot and keeps its poster after it settles', async ({
+  page,
+  baseURL,
+}) => {
+  await page.emulateMedia({ reducedMotion: 'no-preference' });
+  const local = await preparationFixture(page, baseURL!);
+  await page.goto('/agent-manager');
+  await page.getByLabel('Your task', { exact: true }).fill(original);
+  await page.getByRole('button', { name: 'Start task', exact: true }).click();
+  const preparation = page.getByRole('region', { name: 'Task preparation', exact: true });
+  const sprite = preparation.locator('.agent-mascot__sprite > img:last-child');
+  await expect(sprite).toBeVisible();
+  await expect(page.locator('.agent-mascot__sprite')).toHaveCount(1);
+  const firstFrame = await sprite.getAttribute('style');
+  await page.clock.runFor(450);
+  await expect(sprite).not.toHaveAttribute('style', firstFrame!);
+  await page.clock.runFor(4000);
+  await expect(sprite).toHaveCount(0);
+  await expect(preparation.locator('.agent-mascot__poster')).toBeVisible();
+  await page.clock.runFor(1500);
+  await expect(sprite).toHaveCount(0);
+  expect(local.creates).toHaveLength(1);
+  expect(local.boundary.writes).toEqual([]);
+});

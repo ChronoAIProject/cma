@@ -1,5 +1,3 @@
-use tokio::sync::mpsc;
-
 use super::RuntimeRecoveryCommand;
 use crate::provider::ProviderSandboxRequest;
 use crate::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, RequestFrame, ResponseFrame};
@@ -7,7 +5,7 @@ use crate::{
     AgentHomePlan, AgentHomeRequest, AgentLaunch, AgentOpenRequest, ConversationChannel,
     ConversationUpdate, Result, RuntimeHandle, RuntimeObservation,
 };
-
+use tokio::sync::mpsc;
 /// Kernel-specific settings used while opening its ACP conversation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HostedAgentOpenSettings {
@@ -39,12 +37,10 @@ pub struct HostedAgentOpenSettings {
     /// operation until its tools and settings have been acknowledged.
     pub recovered_context_sequence: Option<u64>,
 }
-
 /// Provider-specific rendering needed by the otherwise shared hosted adapter.
 pub trait HostedAgentRuntime: Send + Sync {
     fn home_plan(&self, request: &AgentHomeRequest) -> Result<AgentHomePlan>;
     fn launch(&self, request: &AgentOpenRequest) -> Result<AgentLaunch>;
-
     fn open_settings(&self, request: &AgentOpenRequest) -> Result<HostedAgentOpenSettings> {
         Ok(HostedAgentOpenSettings {
             coordinated_ingress: false,
@@ -66,7 +62,6 @@ pub trait HostedAgentRuntime: Send + Sync {
         })
     }
 }
-
 /// Provider lifecycle and supervisor transport used by a hosted adapter.
 #[async_trait::async_trait]
 pub trait HostedBackend: Send + Sync {
@@ -93,6 +88,15 @@ pub trait HostedBackend: Send + Sync {
         _handle: &RuntimeHandle,
     ) -> Option<&dyn super::CapacityRecoveryNativeTransport> {
         None
+    }
+
+    async fn read_file_with_binding(
+        &self,
+        _handle: &RuntimeHandle,
+        _home: &crate::HomeVolumeAttachment,
+        _request: &crate::AgentFileReadRequest,
+    ) -> Result<Option<crate::AgentFileReadReceipt>> {
+        Ok(None)
     }
 
     async fn open_desktop(
@@ -203,12 +207,13 @@ pub trait HostedBackend: Send + Sync {
             "native retirement challenge is unavailable".into(),
         ))
     }
-    async fn retire_unreachable(
+    /// A receiver fences a running Sandbox. Its absence requires proved suspension.
+    async fn retire_verified(
         &self,
         _handle: &RuntimeHandle,
         _request: &ProviderSandboxRequest,
         _home: &crate::HomeVolumeAttachment,
-        _receiver: &crate::RetirementPod,
+        _receiver: Option<&crate::RetirementPod>,
     ) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "verified provider retirement is unavailable".into(),
@@ -236,6 +241,7 @@ pub trait HostedBackend: Send + Sync {
         &self,
         _handle: &RuntimeHandle,
         _request: &ProviderSandboxRequest,
+        _for_retirement: bool,
     ) -> Result<()> {
         Err(crate::AdapterError::Unsupported(
             "provider suspension observation is unavailable".into(),

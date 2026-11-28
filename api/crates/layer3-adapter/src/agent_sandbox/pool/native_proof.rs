@@ -3,14 +3,42 @@ use super::{
     api_error, claims, model, rejected, unavailable, AgentSandboxPools, NativePoolHomeOrigin,
     NATIVE_HOME_ANNOTATION,
 };
-use crate::{HomeVolumeAttachment, Result};
-use kube::{api::DynamicObject, ResourceExt};
+use crate::{AdapterError, HomeVolumeAttachment, Result};
+use kube::{api::DynamicObject, Resource, ResourceExt};
+
+/// A previously validated set of Kubernetes object incarnations and versions.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) struct NativeHomeRevision([(String, String); 3]);
+
+fn revision(object: &impl Resource) -> Option<(String, String)> {
+    let metadata = object.meta();
+    if metadata.deletion_timestamp.is_some() {
+        return None;
+    }
+    Some((
+        metadata.uid.clone().filter(|uid| !uid.is_empty())?,
+        metadata
+            .resource_version
+            .clone()
+            .filter(|version| !version.is_empty())?,
+    ))
+}
 
 impl AgentSandboxPools {
     pub(crate) async fn prove_native_home(
         &self,
         home: &HomeVolumeAttachment,
     ) -> Result<DynamicObject> {
+        self.prove_native_home_version(home, None)
+            .await
+            .map(|(member, _, _)| member)
+    }
+
+    pub(crate) async fn prove_native_home_version(
+        &self,
+        home: &HomeVolumeAttachment,
+        prior: Option<&NativeHomeRevision>,
+    ) -> Result<(DynamicObject, Option<NativeHomeRevision>, bool)> {
         home.validate_for(&home.request.sandbox_id)?;
         let origin = home
             .receipt
@@ -38,6 +66,23 @@ impl AgentSandboxPools {
         let claim = claim
             .map_err(api_error)?
             .ok_or_else(|| unavailable("native claim no longer exists"))?;
+        // Equality of UID and resourceVersion proves the live objects still
+        // carry the facts validated on the previous read. A missing revision,
+        // deletion, replacement or update always goes through full validation.
+        let current_revision = revision(&claim).and_then(|claim| {
+            let member = revision(member.as_ref().ok()?.as_ref()?)?;
+            let volume = revision(volume.as_ref().ok()?.as_ref()?)?;
+            Some(NativeHomeRevision([claim, member, volume]))
+        });
+        if current_revision
+            .as_ref()
+            .is_some_and(|current| prior == Some(current))
+        {
+            let member = member
+                .map_err(api_error)?
+                .ok_or_else(|| unavailable("native Sandbox no longer exists"))?;
+            return Ok((member, current_revision, true));
+        }
         let desired = model::claim(&self.config, &origin.claim.request)?;
         claims::verify_claim(&claim, &desired)?;
         if origin.claim.name != desired.name_any()
@@ -63,15 +108,21 @@ impl AgentSandboxPools {
             .map_err(api_error)?
             .ok_or_else(|| unavailable("native Sandbox no longer exists"))?;
         self.member_owned(&member, &origin.claim)?;
-        if !self.member_spec(&member, origin, false)? {
-            return Err(rejected("native Sandbox home authority changed"));
-        }
+        let drifted = match self.member_spec(&member, origin, false) {
+            Ok(true) => false,
+            Ok(false) => return Err(rejected("native Sandbox home authority changed")),
+            Err(AdapterError::AdmittedSandboxSpecDrift) => true,
+            Err(error) => return Err(error),
+        };
         let volume = volume
             .map_err(api_error)?
             .ok_or_else(|| unavailable("native PVC no longer exists"))?;
         if self.native_attachment(origin, &volume)? != *home {
             return Err(rejected("native home identity changed"));
         }
-        Ok(member)
+        if drifted {
+            return Err(AdapterError::AdmittedSandboxSpecDrift);
+        }
+        Ok((member, current_revision, false))
     }
 }

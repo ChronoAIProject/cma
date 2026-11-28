@@ -14,12 +14,144 @@ use layer3_adapter::{
     HomeVolumePolicy, HomeVolumeReceipt,
 };
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicU8, Ordering};
 
 pub(in crate::store::usage_reports::tests) const PRIMARY: &str =
     "sbx_00000000000000000000000000000001";
 pub(in crate::store::usage_reports::tests) const SECONDARY: &str =
     "sbx_00000000000000000000000000000002";
 pub(in crate::store::usage_reports::tests) const GIB: u64 = 1_073_741_824;
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn ambiguous_metric_name_preserves_prior_rollups_and_replay_advances() {
+    let store = fixture().await;
+    let from = (now() / 3600 - 2) * 3600;
+    let range = Range {
+        from,
+        to: from + 3600,
+    };
+    let ids: Vec<_> = (1..=101).map(|id| format!("sbx_{id:032x}")).collect();
+    let observer = "reuse-fixture-observer";
+    assert!(store.lease("observer", observer, 70).await.unwrap());
+    for id in &ids {
+        let mut compute = binding(id, BindingKind::Compute, from);
+        compute.pod_name = Some(format!("{id}-pod"));
+        compute.pod_uid = Some(format!("{id}-pod-uid"));
+        compute.native_sandbox_uid = format!("{id}-native");
+        compute.claim_uid = format!("{id}-claim");
+        store
+            .reconcile_bindings(observer, id, vec![compute.clone()], from)
+            .await
+            .unwrap();
+        store
+            .reconcile_bindings(observer, id, vec![compute], from + 90)
+            .await
+            .unwrap();
+    }
+    store.release("observer", observer).await.unwrap();
+
+    let mode = Arc::new(AtomicU8::new(0));
+    let source_mode = mode.clone();
+    let source_ids = ids.clone();
+    let router = Router::new().route(
+        "/select/0/prometheus/api/v1/export",
+        get(move |RawQuery(query): RawQuery| {
+            let ids = source_ids.clone();
+            let mode = source_mode.load(Ordering::Relaxed);
+            async move {
+                let query = query.unwrap();
+                let selection = url::form_urlencoded::parse(query.as_bytes())
+                    .find(|(key, _)| key == "match[]")
+                    .unwrap()
+                    .1
+                    .into_owned();
+                let metric = SourceMetric::ALL
+                    .into_iter()
+                    .find(|metric| selection.starts_with(metric.name()))
+                    .unwrap();
+                let rate = u64::from(mode) + 1;
+                let mut rows = Vec::new();
+                for id in ids
+                    .iter()
+                    .filter(|id| selection.contains(&format!("{id}-pod")))
+                {
+                    let mut row = export_line(from, id, metric, &[(0, 0), (60, 60 * rate)]);
+                    row["metric"]["node"] = json!("current-node");
+                    rows.push(row.to_string());
+                    if id == &ids[0] && metric == SourceMetric::CpuCounter {
+                        match mode {
+                            1 => {
+                                let mut older = export_line(from, id, metric, &[(90, 150)]);
+                                older["metric"]["node"] = json!("other-node");
+                                rows.push(older.to_string());
+                            }
+                            2 => {
+                                row["values"][1] = json!(60 * rate + 1);
+                                rows.push(row.to_string());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                rows.join("\n")
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let endpoint = format!(
+        "http://{}/select/0/prometheus/",
+        listener.local_addr().unwrap()
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let client = MetricsClient::internal(&endpoint).unwrap();
+    crate::sandbox_metrics::collect_fixture(store.clone(), client.clone(), &ids[..1], range)
+        .await
+        .unwrap();
+
+    let wanted = [ids[0].clone(), ids[1].clone(), ids[100].clone()];
+    let read = || async {
+        let mut snapshot = store.snapshot().await.unwrap();
+        let rollups = store
+            .metric_rollups(&mut snapshot, &wanted, range)
+            .await
+            .unwrap();
+        rollups
+            .into_iter()
+            .map(|rollup| {
+                let cpu = rollup
+                    .minutes
+                    .iter()
+                    .map(|minute| minute.metrics[0].integral)
+                    .sum::<f64>();
+                (rollup.sandbox_id, cpu)
+            })
+            .collect::<std::collections::BTreeMap<_, _>>()
+    };
+    for (case, sibling_cpu) in [(1, 120.), (2, 180.)] {
+        mode.store(case, Ordering::Relaxed);
+        crate::sandbox_metrics::replay_fixture(store.clone(), client.clone(), range)
+            .await
+            .unwrap();
+        let progress = store.progress("replay").await.unwrap();
+        assert_eq!(progress.from, range.to);
+        assert!(progress.after.is_none());
+        let mixed = read().await;
+        assert_eq!(mixed[&ids[0]], 60.);
+        assert_eq!(mixed[&ids[1]], sibling_cpu);
+        assert_eq!(mixed[&ids[100]], sibling_cpu);
+    }
+
+    mode.store(3, Ordering::Relaxed);
+    crate::sandbox_metrics::replay_fixture(store.clone(), client, range)
+        .await
+        .unwrap();
+    let repaired = read().await;
+    assert_eq!(repaired.len(), 3);
+    assert!(repaired.values().all(|value| *value == 240.));
+    server.abort();
+    store.db.drop().await.unwrap();
+}
 
 pub(in crate::store::usage_reports::tests) async fn collected() -> (Arc<ReportingStore>, Range) {
     let store = fixture().await;

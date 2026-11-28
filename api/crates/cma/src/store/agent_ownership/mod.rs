@@ -218,6 +218,17 @@ impl MongoAgentOwnership {
         token: &OwnershipToken,
         session: &mut ClientSession,
     ) -> Result<(), FenceError> {
+        let write_error = |phase, error: mongodb::error::Error| {
+            if matches!(error.kind.as_ref(),
+                mongodb::error::ErrorKind::Command(command) if command.code == 112)
+                || matches!(error.kind.as_ref(),
+                    mongodb::error::ErrorKind::Write(mongodb::error::WriteFailure::WriteError(write)) if write.code == 112)
+            {
+                tracing::warn!(agent_id = %token.agent_id, owner_epoch = token.epoch, phase,
+                    driver_code = 112, "Agent ownership fence write conflict");
+            }
+            FenceError::Driver(error)
+        };
         let member = self
             .members
             .update_one(
@@ -230,7 +241,7 @@ impl MongoAgentOwnership {
             )
             .session(&mut *session)
             .await
-            .map_err(FenceError::Driver)?;
+            .map_err(|error| write_error("manager_member", error))?;
         if member.matched_count != 1 {
             return Err(FenceError::Domain(SandboxStoreError::Conflict));
         }
@@ -242,7 +253,7 @@ impl MongoAgentOwnership {
             )
             .session(&mut *session)
             .await
-            .map_err(FenceError::Driver)?
+            .map_err(|error| write_error("agent_owner", error))?
             .matched_count;
         if matched == 1 {
             Ok(())
@@ -403,6 +414,20 @@ impl OwnershipStore for MongoAgentOwnership {
         Ok(())
     }
 
+    async fn live_lease_remaining_ms(&self, token: &OwnershipToken) -> Result<u64, OwnershipError> {
+        let member = live_remaining_ms(
+            &self.members,
+            doc! {
+                "_id": &token.instance_id, "draining": false,
+                "protocol": i64::from(PROTOCOL_VERSION),
+                "$expr": {"$gt": ["$expires_at", "$$NOW"]},
+            },
+        )
+        .await?;
+        let owner = live_remaining_ms(&self.owners, token_filter(token)?).await?;
+        Ok(member.min(owner))
+    }
+
     async fn record_receiver_failure(
         &self,
         token: &OwnershipToken,
@@ -410,6 +435,24 @@ impl OwnershipStore for MongoAgentOwnership {
     ) -> Result<(), OwnershipError> {
         self.record_failure(token, failure).await
     }
+}
+
+async fn live_remaining_ms(
+    collection: &Collection<Document>,
+    filter: Document,
+) -> Result<u64, OwnershipError> {
+    let row = collection
+        .find_one(filter)
+        .projection(doc! {
+            "_id": 0, "remaining_ms": {"$subtract": ["$expires_at", "$$NOW"]},
+        })
+        .await
+        .map_err(unavailable)?
+        .ok_or(OwnershipError::Stale)?;
+    u64::try_from(row.get_i64("remaining_ms").map_err(invalid)?)
+        .ok()
+        .filter(|remaining| *remaining > 0)
+        .ok_or(OwnershipError::Stale)
 }
 
 fn unavailable(error: impl std::fmt::Display) -> OwnershipError {

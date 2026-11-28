@@ -59,7 +59,10 @@ async fn boundary(bytes: bool) {
             &store,
             start.agent,
             (!bytes).then_some(10_062 + u64::from(over)),
-            bytes.then_some(64 * 1024 * 1024 + 512 * 1024 - pending_bytes + usize::from(over)),
+            bytes.then_some(
+                crate::store::agent_log_integrity::STOP_AGENT_LOG_BYTES - pending_bytes
+                    + usize::from(over),
+            ),
         )
         .await;
         let before = fingerprint(&store, &full.id, full.conversation.last_seq).await;
@@ -117,7 +120,10 @@ async fn boundary(bytes: bool) {
                 while let Some(row) = rows.try_next().await.unwrap() {
                     total += row.to_vec().unwrap().len();
                 }
-                assert_eq!(total, 64 * 1024 * 1024 + 512 * 1024);
+                assert_eq!(
+                    total,
+                    crate::store::agent_log_integrity::STOP_AGENT_LOG_BYTES
+                );
             } else {
                 assert_eq!(saved.conversation.last_seq, 10_064);
             }

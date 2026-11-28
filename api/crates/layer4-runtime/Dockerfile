@@ -93,6 +93,8 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
 FROM compiler-base AS build
 COPY api/ ./
 ARG TARGETARCH
+ARG CHRONO_BUILD=development
+ARG CHRONO_BUILD_SHA=local-unpinned
 # Rebuild every workspace crate from actual source, even when source timestamps
 # predate the cooked placeholder artifacts. The dependency objects remain reusable.
 # Statically linked against musl, so it runs on any base the runtime stage uses.
@@ -101,7 +103,8 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
     --mount=type=bind,from=dependencies,source=/build/target,target=/dependency-target \
     cp -a /dependency-target/. /build/target/ \
     && cargo clean --release --workspace --locked \
-    && cargo build --jobs 2 --release --locked --bin layer4-runtime \
+    && CHRONO_BUILD="${CHRONO_BUILD}" CHRONO_BUILD_SHA="${CHRONO_BUILD_SHA}" \
+       cargo build --jobs 2 --release --locked --bin layer4-runtime \
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
 # The base image carries only debian.sources; any other apt source is refused
@@ -365,12 +368,14 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/prepare-skill-docs.
         /home/cma/.codex/skills \
         /var/lib/cma-runtime /var/lib/cma-transfer; \
     mkdir /tmp/baseline-skills; \
-    curl -fsSL -o /tmp/nyxid-source.tar.gz \
+    curl -fsSL --connect-timeout 15 --max-time 120 --retry 3 --retry-max-time 180 \
+        -o /tmp/nyxid-source.tar.gz \
         "https://github.com/ChronoAIProject/NyxID/archive/${NYXID_SKILL_COMMIT}.tar.gz"; \
     echo "${NYXID_SKILL_ARCHIVE_SHA256}  /tmp/nyxid-source.tar.gz" | sha256sum -c -; \
     tar xzf /tmp/nyxid-source.tar.gz -C /tmp/baseline-skills --strip-components=2 \
         "NyxID-${NYXID_SKILL_COMMIT}/skills/nyxid"; \
-    curl -fsSL -o /tmp/ornn-source.tar.gz \
+    curl -fsSL --connect-timeout 15 --max-time 120 --retry 3 --retry-max-time 180 \
+        -o /tmp/ornn-source.tar.gz \
         "https://github.com/ChronoAIProject/Ornn/archive/${ORNN_SKILL_COMMIT}.tar.gz"; \
     echo "${ORNN_SKILL_ARCHIVE_SHA256}  /tmp/ornn-source.tar.gz" | sha256sum -c -; \
     tar xzf /tmp/ornn-source.tar.gz -C /tmp/baseline-skills --strip-components=2 \
@@ -624,6 +629,14 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       dev.chrono.cma.omarchy-revision="237f1b4071a0bff2296c6d740ba2b9fd695ebfa0"
 
 COPY --link --from=omarchy-application /payload/ /
+
+FROM runtime AS supervised-debian-desktop
+ARG RUNTIME_DESKTOP
+RUN test "${RUNTIME_DESKTOP}" = "1"
+ENV CHRONO_RUNTIME_DESKTOP_SUPERVISION_ENABLED=true
+
+FROM omarchy AS supervised-omarchy
+ENV CHRONO_RUNTIME_DESKTOP_SUPERVISION_ENABLED=true
 
 FROM runtime AS default-runtime
 ARG CHRONO_BUILD_SHA=local-unpinned

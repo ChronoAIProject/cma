@@ -1,5 +1,5 @@
 use super::{
-    super::{storage, ExecutionError, Journal},
+    super::{storage, AcceptedAnswerIdentity, ExecutionError, Journal},
     model::*,
 };
 use crate::{
@@ -46,7 +46,18 @@ impl Store {
         key: &str,
         payload: &Payload,
     ) -> Result<Root, ExecutionError> {
-        self.admit_inner(plan, target, key, payload, true).await
+        self.admit_inner(plan, target, key, payload, None, true)
+            .await
+    }
+    pub async fn admit_answer(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        payload: &Payload,
+        answer: AcceptedAnswerIdentity,
+    ) -> Result<Root, ExecutionError> {
+        self.admit_inner(plan, target, "", payload, Some(answer), true)
+            .await
     }
     #[cfg(test)]
     pub async fn admit_legacy(
@@ -56,7 +67,8 @@ impl Store {
         key: &str,
         payload: &Payload,
     ) -> Result<Root, ExecutionError> {
-        self.admit_inner(plan, target, key, payload, false).await
+        self.admit_inner(plan, target, key, payload, None, false)
+            .await
     }
     async fn admit_inner(
         &self,
@@ -64,11 +76,17 @@ impl Store {
         target: &StoredTarget,
         key: &str,
         payload: &Payload,
+        answer: Option<AcceptedAnswerIdentity>,
         select_lane: bool,
     ) -> Result<Root, ExecutionError> {
-        let operation = operation(target, payload, key)?;
+        let (operation, content_hash) = match &answer {
+            Some(answer) => answer.operation(target, &payload.message)?,
+            None => (
+                operation(target, payload, key)?,
+                storage::hash(&storage::bytes(&payload.message)?),
+            ),
+        };
         let id = work_id(&operation);
-        let content_hash = storage::hash(&storage::bytes(&payload.message)?);
         if let Some(root) = self.read(&id, plan, target).await? {
             return same(root, &operation, &content_hash);
         }
@@ -86,6 +104,7 @@ impl Store {
             payload_hash: storage::hash(&bytes),
             bytes: bytes.len(),
             expires_at: payload.capability.expires_at,
+            answer,
             state: State::Queued,
             version: 1,
         };
@@ -195,9 +214,11 @@ impl Store {
         }
         let payload: Payload =
             serde_json::from_slice(&bytes).map_err(|_| ExecutionError::Corrupt)?;
-        if storage::hash(&storage::bytes(&payload.message)?) != root.content_hash
-            || payload.capability.expires_at != root.expires_at
-        {
+        let content_hash = match &root.answer {
+            Some(answer) => answer.content_hash(&payload.message)?,
+            None => storage::hash(&storage::bytes(&payload.message)?),
+        };
+        if content_hash != root.content_hash || payload.capability.expires_at != root.expires_at {
             return Err(ExecutionError::Corrupt);
         }
         Ok(payload)

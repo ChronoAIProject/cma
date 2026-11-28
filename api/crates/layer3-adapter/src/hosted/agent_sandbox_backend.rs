@@ -17,7 +17,9 @@ pub struct AgentSandboxBackend {
     client: AgentSandboxClient,
     transport: Arc<dyn HostedControlTransport>,
     startup_breaker: startup_breaker::StartupBreaker,
-    assignments: std::sync::Mutex<std::collections::BTreeMap<RuntimeHandle, binding::Assignment>>,
+    assignments:
+        std::sync::Mutex<std::collections::BTreeMap<RuntimeHandle, Arc<binding::Assignment>>>,
+    single_exchange_file_reads: bool,
 }
 
 #[path = "agent_sandbox_startup_breaker.rs"]
@@ -27,6 +29,8 @@ mod startup_breaker;
 mod binding;
 #[path = "agent_sandbox_context.rs"]
 mod context;
+#[path = "agent_sandbox_file_read.rs"]
+mod file_read;
 #[path = "agent_sandbox_status.rs"]
 mod status;
 use context::observation;
@@ -38,6 +42,7 @@ impl AgentSandboxBackend {
             client,
             transport,
             assignments: Default::default(),
+            single_exchange_file_reads: false,
             startup_breaker: Default::default(),
         }
     }
@@ -66,6 +71,15 @@ impl HostedBackend for AgentSandboxBackend {
         _handle: &RuntimeHandle,
     ) -> Option<&dyn super::CapacityRecoveryNativeTransport> {
         Some(self)
+    }
+
+    async fn read_file_with_binding(
+        &self,
+        handle: &RuntimeHandle,
+        home: &HomeVolumeAttachment,
+        request: &AgentFileReadRequest,
+    ) -> Result<Option<AgentFileReadReceipt>> {
+        self.read_bound_file(handle, home, request).await
     }
 
     async fn open_desktop(&self, handle: &RuntimeHandle) -> Result<crate::DesktopConnectionHandle> {
@@ -176,16 +190,20 @@ impl HostedBackend for AgentSandboxBackend {
         }
         Ok(unavailable)
     }
-    async fn retire_unreachable(
+    async fn retire_verified(
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &HomeVolumeAttachment,
-        receiver: &RetirementPod,
+        receiver: Option<&RetirementPod>,
     ) -> Result<()> {
-        self.client
-            .retire_verified(handle, request, home, Some(receiver))
-            .await?;
+        if let Some(receiver) = receiver {
+            self.client
+                .retire_verified(handle, request, home, Some(receiver))
+                .await?;
+        } else {
+            self.client.retire_suspended(handle, request, home).await?;
+        }
         self.forget_assignment(handle);
         self.transport.retire(handle).await
     }
@@ -212,7 +230,14 @@ impl HostedBackend for AgentSandboxBackend {
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
+        for_retirement: bool,
     ) -> Result<()> {
+        if for_retirement {
+            return self
+                .client
+                .verify_retirement_suspension(handle, request)
+                .await;
+        }
         self.client.verify_suspended(handle, request).await
     }
     fn retained_startup_policy(&self) -> Option<&dyn super::HostedRetainedStartupPolicy> {
@@ -405,34 +430,16 @@ impl HostedBackend for AgentSandboxBackend {
         handle: &RuntimeHandle,
         request: RequestFrame,
     ) -> Result<ResponseFrame> {
-        if let RequestFrame::RuntimeStatus(status) = request {
-            return self.exchange_bound_status(handle, status).await;
-        }
-        self.transport.exchange(handle, request).await
+        self.exchange_frame(handle, request).await
     }
-
     fn exchange_admitted<'a>(
         &'a self,
         handle: &'a RuntimeHandle,
         request: OwnedWork<RequestFrame>,
         policy: &IngressOwnershipPolicy,
     ) -> std::result::Result<AdmittedOperation<'a, ResponseFrame>, AdmittedError> {
-        if !request.belongs_to(policy) {
-            return Err(AdmissionRefusal::InvalidPlan {
-                phase: "native exchange request ownership",
-            }
-            .into());
-        }
-        if matches!(&*request, RequestFrame::RuntimeStatus(_)) {
-            // Status must retain exchange_bound_status's assignment and Pod
-            // checks. Its native reads do not yet have admitted ports.
-            return Err(AdmittedError::Unsupported(
-                "native status validation requires admitted reads",
-            ));
-        }
-        self.transport.exchange_admitted(handle, request, policy)
+        self.exchange_admitted_frame(handle, request, policy)
     }
-
     async fn export_agent_history(
         &self,
         handle: &RuntimeHandle,

@@ -42,6 +42,7 @@ async fn visitor_policy_limits_two_services_and_replays_without_new_profile_use(
                 Err(SandboxServiceError::SandboxLimitReached {
                     limit: actual,
                     live,
+                    ..
                 }) => {
                     assert_eq!((actual, live), (limit, limit));
                     refused += 1;

@@ -34,7 +34,7 @@ async fn live_fragments_before_broadcast_lag_precede_the_gap_and_later_fragments
     let mut first = fragment(&open);
     first.delta = "before lag".into();
     open.held = Some(first.into());
-    open.queue_live();
+    open.queue_live(false);
     open.ended = true;
     let bytes = axum::body::to_bytes(response(open).into_body(), usize::MAX)
         .await

@@ -15,7 +15,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-it('reads immediately on turn changes, uses durable hints, and leaves same-cursor renders alone', async () => {
+it('refreshes on turn start and keeps conversation updates within the polling cadence', async () => {
   vi.useFakeTimers();
   const list = vi.spyOn(accessRequests, 'list').mockResolvedValue([]);
   const { rerender } = renderHook(
@@ -27,19 +27,29 @@ it('reads immediately on turn changes, uses durable hints, and leaves same-curso
   await act(async () => {});
   expect(list).toHaveBeenCalledOnce();
   rerender({ running: true, cursor: 0 });
-  await act(async () => {});
+  await act(() => vi.advanceTimersByTimeAsync(100));
   expect(list).toHaveBeenCalledTimes(2);
-  await act(() => vi.advanceTimersByTimeAsync(14000));
+  await act(() => vi.advanceTimersByTimeAsync(14_000));
+  expect(list).toHaveBeenCalledTimes(5);
+
+  rerender({ running: true, cursor: 1 });
+  await act(() => vi.advanceTimersByTimeAsync(2_000));
   expect(list).toHaveBeenCalledTimes(5);
   rerender({ running: true, cursor: 1 });
-  await act(() => vi.advanceTimersByTimeAsync(2000));
+  await act(() => vi.advanceTimersByTimeAsync(12_999));
+  expect(list).toHaveBeenCalledTimes(5);
+  await act(() => vi.advanceTimersByTimeAsync(1));
   expect(list).toHaveBeenCalledTimes(6);
-  rerender({ running: true, cursor: 1 });
-  await act(() => vi.advanceTimersByTimeAsync(2000));
-  expect(list).toHaveBeenCalledTimes(6);
+
   rerender({ running: false, cursor: 2 });
-  await act(async () => {});
+  await act(() => vi.advanceTimersByTimeAsync(14_999));
+  expect(list).toHaveBeenCalledTimes(6);
+  await act(() => vi.advanceTimersByTimeAsync(1));
   expect(list).toHaveBeenCalledTimes(7);
+  await act(() => vi.advanceTimersByTimeAsync(29_999));
+  expect(list).toHaveBeenCalledTimes(7);
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(list).toHaveBeenCalledTimes(8);
 });
 
 it('retains requests on read failure but clears them across owners and ignores stale replies', async () => {

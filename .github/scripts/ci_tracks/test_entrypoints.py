@@ -29,7 +29,11 @@ class EntrypointTests(unittest.TestCase):
             'base': {'ref': 'develop', 'sha': 'a' * 40, 'repo': {'full_name': 'example/repository'}},
             'head': {'ref': 'feature', 'sha': 'b' * 40, 'repo': {'full_name': 'example/repository'}}}}
         self.event.write_text(json.dumps(self.payload))
-        self.environment = {'GITHUB_REPOSITORY': 'example/repository', 'GITHUB_EVENT_PATH': str(self.event), 'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_OUTPUT': str(self.output)}
+        self.environment = {'GITHUB_REPOSITORY': 'example/repository', 'GITHUB_EVENT_PATH': str(self.event), 'GITHUB_EVENT_NAME': 'pull_request', 'GITHUB_OUTPUT': str(self.output),
+                            'GITHUB_SHA': 'b' * 40}
+        checkout = patch.object(selection, 'git', return_value=b'b' * 40)
+        checkout.start()
+        self.addCleanup(checkout.stop)
 
     def test_selector_writes_one_complete_schema_only_after_success(self):
         result = {'repo': True, 'am': False, 'eg': False, 'web': True, 'am_packages': [], 'eg_packages': [], 'test_tracks': {'repo': True, 'am': False, 'eg': False, 'web': True}, 'deployables': ['cma-web'], 'base': 'a' * 40, 'head': 'b' * 40, 'reasons': ['web-source']}
@@ -44,6 +48,26 @@ class EntrypointTests(unittest.TestCase):
         with patch.dict(os.environ, self.environment), patch('sys.argv', ['selection', '--ci']), redirect_stdout(io.StringIO()), patch.object(selection, 'determine', side_effect=ValueError('unsafe input')):
             self.assertEqual(selection.main(), 1)
         self.assertFalse(self.output.exists())
+
+    def test_selector_refuses_bad_checkout_or_workspace_before_writing_outputs(self):
+        for sha in ('invalid', '0' * 40, 'a' * 40, None):
+            with self.subTest(sha=sha), patch.dict(os.environ, self.environment), \
+                    patch('sys.argv', ['selection', '--ci']), redirect_stdout(io.StringIO()), \
+                    patch.object(selection, 'determine') as determine:
+                if sha is None:
+                    del os.environ['GITHUB_SHA']
+                else:
+                    os.environ['GITHUB_SHA'] = sha
+                self.assertEqual(selection.main(), 1)
+                determine.assert_not_called()
+                self.assertFalse(self.output.exists())
+        result = {'base': 'a' * 40, 'head': 'b' * 40, 'am': True, 'eg': False, 'web': False}
+        with patch.dict(os.environ, self.environment), patch('sys.argv', ['selection', '--ci']), \
+                redirect_stdout(io.StringIO()), patch.object(selection, 'determine', return_value=result), \
+                patch.object(selection, 'changed_paths', return_value=['api/crates/cma/src/lib.rs']), \
+                patch.object(selection, 'workspace', side_effect=ValueError('invalid Cargo metadata')):
+            self.assertEqual(selection.main(), 1)
+            self.assertFalse(self.output.exists())
 
     def test_label_entrypoint_requires_selector_success(self):
         self.addCleanup(patch.stopall)
@@ -213,14 +237,20 @@ class EntrypointTests(unittest.TestCase):
 
     def test_analyze_combines_old_ownership_with_current_suite(self):
         current = Workspace(metadata(self.root), self.root)
-        older = Workspace(metadata(self.root), self.root)
-        # Simulate an old dependency edge selecting AM for a now-removed input.
-        older.reverse['cma-image-manager'].add('cma')
+        data = metadata(self.root)
+        name = 'cma-image-manager'
+        data['workspace_members'].append(name)
+        data['packages'].append({
+            'id': name, 'name': name, 'dependencies': [],
+            'manifest_path': str(self.root / 'api/crates' / name / 'Cargo.toml'),
+        })
+        older = Workspace(data, self.root)
         snapshots = [(self.root, older, {}), (self.root, current, {})]
         with patch.object(selection, 'image_inputs', return_value={}), patch.object(selection, 'recipes', return_value={}), \
                 patch.object(selection, 'changed_input_maps', return_value=[]):
             result = selection.analyze(['api/crates/cma-image-manager/src/lib.rs'], snapshots)
         self.assertTrue(result['am'])
+        self.assertNotIn(name, result['am_packages'])
         self.assertEqual(result['test_tracks']['repo'], True)
         self.assertEqual(result['deployables'], [])
 

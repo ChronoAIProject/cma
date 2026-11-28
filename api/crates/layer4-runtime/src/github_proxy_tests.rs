@@ -347,7 +347,9 @@ async fn proxy_preserves_requests_rotates_custody_and_refuses_foreign_hosts() {
 
 #[tokio::test]
 async fn github_writes_expose_the_upstream_decision_and_do_not_retry_a_lost_response() {
+    use axum::body::Bytes;
     use axum::http::Method;
+    use futures_util::StreamExt as _;
     use std::time::Duration;
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -363,9 +365,20 @@ async fn github_writes_expose_the_upstream_decision_and_do_not_retry_a_lost_resp
                     "user" => StatusCode::OK,
                     "blobs" => StatusCode::CREATED,
                     "1" => StatusCode::FORBIDDEN,
+                    "3" => StatusCode::CREATED,
                     _ => StatusCode::GATEWAY_TIMEOUT,
                 };
+                let partial = parts.uri.path().ends_with("/3");
                 events.send((parts, body)).unwrap();
+                if partial {
+                    let body = futures_util::stream::iter([Ok(Bytes::from_static(b"{"))]).chain(
+                        futures_util::stream::once(async {
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                            Err(std::io::Error::other("fixture lost response body"))
+                        }),
+                    );
+                    return (outcome, Body::from_stream(body)).into_response();
+                }
                 if outcome == StatusCode::GATEWAY_TIMEOUT {
                     // Leave the request unresolved after observing its payload.
                     std::future::pending::<()>().await;
@@ -375,6 +388,7 @@ async fn github_writes_expose_the_upstream_decision_and_do_not_retry_a_lost_resp
                     [("x-oauth-scopes", "public_repo, read:user")],
                     axum::Json(serde_json::json!({"message": "fixture decision"})),
                 )
+                    .into_response()
             }
         }));
         axum::serve(listener, app).await.unwrap();
@@ -450,6 +464,22 @@ async fn github_writes_expose_the_upstream_decision_and_do_not_retry_a_lost_resp
             );
         }
     }
+
+    let partial = client
+        .patch("http://api.github.com/repos/example/project/pulls/3")
+        .json(&payload)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(partial.status(), StatusCode::BAD_GATEWAY);
+    let problem: serde_json::Value = partial.json().await.unwrap();
+    assert_eq!(problem["code"], "github_proxy_response_body_lost");
+    assert_eq!(problem["upstream_http_status"], 201);
+    assert_eq!(problem["retryable"], false);
+    assert_eq!(problem["connection_id"], "repository-connection");
+    let (parts, _) = received.recv().await.unwrap();
+    assert_eq!(parts.method, Method::PATCH);
+    assert!(received.try_recv().is_err());
 
     let delayed = tokio::spawn(async move {
         client

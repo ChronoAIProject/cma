@@ -152,10 +152,11 @@ export function useQueuedInputs(
     const previous = observed.current;
     observed.current = { session, eventRevision, activeTurn, requestRevision };
     if (previous.session !== session) return;
-    if (previous.requestRevision !== requestRevision || previous.activeTurn !== activeTurn)
+    if (previous.requestRevision !== requestRevision || previous.activeTurn !== activeTurn) {
+      tracker?.refresh(false);
       schedule.current?.refresh();
-    else if (previous.eventRevision !== eventRevision) schedule.current?.hint();
-  }, [session, eventRevision, activeTurn, requestRevision]);
+    } else if (previous.eventRevision !== eventRevision) schedule.current?.hint();
+  }, [session, eventRevision, activeTurn, requestRevision, tracker]);
 
   let intents: readonly QueuedInputIntent[] = [];
   let unappliedEdits: readonly QueuedInputIntent[] = [];

@@ -7,10 +7,10 @@ use layer2_core::sandbox::{
 };
 use mongodb::{bson::doc, ClientSession};
 
-pub(super) mod activity;
+mod activity;
 mod batch;
 pub(super) use batch::read_many;
-pub(super) use batch::read_many_with_turns;
+pub(super) use batch::read_workspace;
 
 type Observation = (AgentTaskStatus, Option<u64>);
 

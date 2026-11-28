@@ -1,4 +1,3 @@
-//! Independent rollout policy for the current CMA interfaces.
 #[cfg(test)]
 mod agent_event_page_tests;
 #[cfg(test)]
@@ -32,10 +31,11 @@ mod stale_turn_tests;
 mod strict_inactivity_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
-    pub image_manager_retirement: bool,
     pub session_guidance_v4: bool,
     pub session_guidance_v5: bool,
     pub session_guidance_v6: bool,
+    pub session_guidance_v7: bool,
+    pub session_guidance_v8: bool,
     pub am_startup_health_serving: bool,
     pub am_empty_warm_pool_startup: bool,
     pub visitor_launch_admission: bool,
@@ -60,14 +60,16 @@ pub(crate) struct FeatureFlags {
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub native_retirement_finality_enabled: bool,
+    pub native_retirement_capture_enabled: bool,
+    pub credential_retirement_receipts: bool,
+    pub retirement_reauthorization: bool,
+    pub workspace_prepare_observations: bool,
     pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
     pub ownership_cleanup_pacing: bool,
     pub batch_ownership_renewal: bool,
     pub am_failure_containment_enabled: bool,
-    /// Contain one receiver's transient housekeeping failure instead of
-    /// stopping the process (#3069). Default off until staging verifies it.
     pub receiver_housekeeping_containment: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
@@ -110,6 +112,8 @@ pub(crate) struct FeatureFlags {
     pub sandbox_batched_reads: bool,
     pub sandbox_detail_timings: bool,
     pub agent_file_read_timings: bool,
+    pub agent_file_single_exchange: bool,
+    pub agent_file_preview_peer_identity: bool,
     pub bounded_response_reads: bool,
     pub active_log_proofs: bool,
     pub bounded_transcript_reads: bool,
@@ -118,6 +122,7 @@ pub(crate) struct FeatureFlags {
     pub capacity_recovery_enabled: bool,
     pub segment_adoption_enabled: bool,
     pub paged_response_events: bool,
+    pub incremental_text: bool,
     pub v2_ui_transport: bool,
     pub trigger_command_admission: bool,
     pub github_repository_preflight: bool,
@@ -167,7 +172,8 @@ impl FeatureFlags {
             session_guidance_v4: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V4_ENABLED")?,
             session_guidance_v5: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V5_ENABLED")?,
             session_guidance_v6: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V6_ENABLED")?,
-            image_manager_retirement: flag(lookup, "CHRONO_IMAGE_MANAGER_RETIREMENT_ENABLED")?,
+            session_guidance_v7: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V7_ENABLED")?,
+            session_guidance_v8: flag(lookup, "CHRONO_AGENT_SESSION_GUIDANCE_V8_ENABLED")?,
             am_startup_health_serving: flag(lookup, "CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED")?,
             am_empty_warm_pool_startup: flag(lookup, "CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED")?,
             pending_home_reconciliation: flag(
@@ -210,6 +216,10 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
+            native_retirement_capture_enabled: flag(lookup, gates::RETIREMENT_CAPTURE)?,
+            credential_retirement_receipts: flag(lookup, gates::CREDENTIAL_RETIREMENT_RECEIPTS)?,
+            retirement_reauthorization: flag(lookup, gates::RETIREMENT_REAUTHORIZATION)?,
+            workspace_prepare_observations: flag(lookup, gates::WORKSPACE_PREPARE_OBSERVATIONS)?,
             reviewed_sandbox_retirement_enabled: flag(
                 lookup,
                 "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",
@@ -261,6 +271,11 @@ impl FeatureFlags {
                 "CHRONO_SANDBOX_DETAIL_ENRICHMENT_CONCURRENT_ENABLED",
             )?,
             agent_file_read_timings: flag(lookup, "CHRONO_AGENT_FILE_READ_TIMINGS_ENABLED")?,
+            agent_file_single_exchange: flag(lookup, "CHRONO_AGENT_FILE_SINGLE_EXCHANGE_ENABLED")?,
+            agent_file_preview_peer_identity: flag(
+                lookup,
+                "CHRONO_AGENT_FILE_PREVIEW_PEER_IDENTITY_ENABLED",
+            )?,
             sandbox_agent_projection: flag(lookup, "CHRONO_SANDBOX_AGENT_PROJECTION_ENABLED")?,
             sandbox_profile_readability: flag(
                 lookup,
@@ -375,6 +390,7 @@ impl FeatureFlags {
             capacity_recovery_enabled: flag(lookup, "CHRONO_AGENT_CAPACITY_RECOVERY_ENABLED")?,
             segment_adoption_enabled: tail.segment_adoption_enabled,
             paged_response_events: tail.paged_response_events,
+            incremental_text: tail.incremental_text,
             v2_ui_transport: tail.v2_ui_transport,
             trigger_command_admission: tail.trigger_command_admission,
             github_repository_preflight: tail.github_repository_preflight,
@@ -402,21 +418,17 @@ impl FeatureFlags {
         {
             return Err("CHRONO_INGRESS_COORDINATOR_ENABLED requires JSON retention, raw output, permission and live fragment bounds".into());
         }
-        if flags.am_startup_health_serving && flags.am_failure_containment_enabled {
-            return Err("CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED cannot be combined with CHRONO_AGENT_MANAGER_FAILURE_CONTAINMENT_ENABLED".into());
-        }
-        if flags.am_empty_warm_pool_startup && !flags.am_startup_health_serving {
-            return Err("CHRONO_AM_EMPTY_WARM_POOL_STARTUP_ENABLED requires CHRONO_AM_STARTUP_HEALTH_SERVING_ENABLED".into());
-        }
+        gates::validate_startup(&flags)?;
         Ok(flags)
     }
 }
-
 #[cfg(test)]
 #[path = "admission_control_tests.rs"]
 mod admission_control_tests;
 #[cfg(test)]
 mod approval_tests;
+#[cfg(test)]
+mod bot_effect_tests;
 #[cfg(test)]
 mod capacity_tests;
 #[cfg(test)]
@@ -425,20 +437,21 @@ mod close_retry_tests;
 mod discovery_tests;
 #[cfg(test)]
 mod document_maintenance_tests;
+mod launch_admission;
 #[cfg(test)]
 mod live_buffer_tests;
 #[cfg(test)]
-#[path = "features/native_create_retry_tests.rs"]
 mod native_create_retry_tests;
 #[cfg(test)]
 mod observation_tests;
 #[cfg(test)]
-#[path = "features/ownership_retry_hint_tests.rs"]
 mod ownership_retry_hint_tests;
 #[cfg(test)]
 mod paged_event_tests;
 #[cfg(test)]
 mod parent_pacing_tests;
+#[cfg(test)]
+mod pending_homes_tests;
 #[cfg(test)]
 mod permission_bound_tests;
 #[cfg(test)]
@@ -481,16 +494,7 @@ mod transcript_tests;
 mod usage_cursor_tests;
 mod usage_cursors;
 #[cfg(test)]
-mod work_retry_tests;
-
-mod launch_admission;
-
-#[cfg(test)]
-mod pending_homes_tests;
-
-#[cfg(test)]
 #[path = "features/visitor_defaults_tests.rs"]
 mod visitor_defaults_tests;
-
 #[cfg(test)]
-mod bot_effect_tests;
+mod work_retry_tests;

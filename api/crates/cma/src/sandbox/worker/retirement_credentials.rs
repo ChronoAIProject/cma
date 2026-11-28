@@ -41,6 +41,24 @@ impl SandboxWorker {
         sandbox: &mut Sandbox,
         now: SystemTime,
     ) -> Result<(), WorkerFailure> {
+        let before = sandbox.credential.clone();
+        let result = self.reconcile_retirement_credentials(sandbox, now).await;
+        if result
+            .as_ref()
+            .is_err_and(|failure| failure.credential_issuance_pending)
+        {
+            // The final issuance check can fail after local revocations. Keep
+            // the claimed parent intact for the compute suspension fence.
+            sandbox.credential = before;
+        }
+        result
+    }
+
+    async fn reconcile_retirement_credentials(
+        &self,
+        sandbox: &mut Sandbox,
+        now: SystemTime,
+    ) -> Result<(), WorkerFailure> {
         let credentials = &self.dependencies.credentials;
         credentials
             .settle_revocations(sandbox)
@@ -70,6 +88,7 @@ impl SandboxWorker {
             sandbox.credential.queue_revoke(id.clone(), rfc3339_at(now));
         }
         let mut failure = None;
+        let can_recover = credentials.uses_retirement_reauthorization(sandbox);
         for id in ids {
             let result = async {
                 credentials.revoke(sandbox, &id).await?;
@@ -81,8 +100,11 @@ impl SandboxWorker {
                     .credential
                     .revoke_debt
                     .retain(|debt| debt.provider_key_id != id),
+                Err(error) if can_recover => {
+                    crate::sandbox::credential::retain_strongest_refusal(&mut failure, error)
+                }
                 Err(error) => {
-                    failure.get_or_insert_with(|| credential_failure(error));
+                    failure.get_or_insert(error);
                 }
             }
         }
@@ -90,7 +112,7 @@ impl SandboxWorker {
         sandbox.credential.pending = None;
         sandbox.credential.delivered = false;
         if let Some(failure) = failure {
-            return Err(failure);
+            return Err(credential_failure(failure));
         }
         credentials
             .settle_revocations(sandbox)
@@ -131,4 +153,114 @@ pub(super) fn custody_provider_ids(
         .iter()
         .map(|material| material.authority.provider_key_id.clone())
         .collect())
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(super) struct OwnerReauthorization {
+    pub previous: layer2_core::sandbox::RetirementAuthorityVersion,
+    pub missing: bool,
+}
+
+pub(super) fn park_reauthorization(
+    sandbox: &mut Sandbox,
+    authority: Option<OwnerReauthorization>,
+    exhausted: bool,
+    now: SystemTime,
+) -> Option<String> {
+    let OwnerReauthorization { previous, missing } = authority?;
+    if !(exhausted || sandbox.work.retirement_credential_recovery.is_some())
+        || !sandbox.allows_retirement_credential_recovery()
+    {
+        return None;
+    }
+    let newer_than_ms = if missing {
+        let stopped_ms = now
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()
+            .and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok())
+            .unwrap_or(i64::MAX as u64);
+        previous.granted_at_ms.max(stopped_ms)
+    } else {
+        previous.granted_at_ms
+    };
+    sandbox.work.retirement_credential_recovery =
+        Some(layer2_core::sandbox::RetirementCredentialRecovery {
+            newer_than_ms,
+            expected_scope: previous.scope,
+            admitted: None,
+        });
+    Some(rfc3339_at(
+        now + layer2_core::sandbox::work_retry::WORK_RETRY_PROBE_INTERVAL,
+    ))
+}
+
+impl SandboxWorker {
+    pub(super) fn retirement_reauthorization_disabled(&self, sandbox: &Sandbox) -> bool {
+        sandbox.work.retirement_credential_recovery.is_some()
+            && !self
+                .dependencies
+                .credentials
+                .uses_retirement_reauthorization(sandbox)
+    }
+
+    pub(super) async fn probe_retirement_reauthorization(
+        &self,
+        mut sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        use layer2_core::sandbox::{
+            SandboxEventKind, SandboxStatus, SandboxWorkStep, TypedFailure,
+        };
+
+        let Some(mut recovery) = sandbox.work.retirement_credential_recovery else {
+            return Err(SandboxStoreError::Conflict);
+        };
+        let observed = self
+            .dependencies
+            .credentials
+            .retirement_authority_version(&sandbox)
+            .await;
+        let (ready_at, event) = match observed {
+            Ok(Some(version)) if recovery.admits(version) => {
+                // Commit admission before any provider effect. A replacement worker can
+                // still dispatch the admitted generation and must verify it at that boundary.
+                recovery.admitted = Some(version);
+                tracing::info!(sandbox_id = %sandbox.id, "Retirement reauthorization verified");
+                (
+                    now,
+                    SandboxEventKind::StatusChanged {
+                        from: SandboxStatus::Retiring,
+                        to: SandboxStatus::Retiring,
+                    },
+                )
+            }
+            Err(
+                error @ (crate::sandbox::credential::CredentialError::Security(_)
+                | crate::sandbox::credential::CredentialError::ServiceNotGranted(_)),
+            ) => {
+                return self
+                    .retry_failure(sandbox, credential_failure(error), now)
+                    .await;
+            }
+            _ => (
+                now + layer2_core::sandbox::work_retry::WORK_RETRY_PROBE_INTERVAL,
+                SandboxEventKind::WorkStepFailed {
+                    step: SandboxWorkStep::RevokeRetirementCredentials,
+                    failure: TypedFailure {
+                        class: "owner_reauthorization_required".into(),
+                        detail: "waiting for verified owner reauthorization".into(),
+                    },
+                },
+            ),
+        };
+        sandbox.work.retirement_credential_recovery = Some(recovery);
+        self.advance_at(
+            sandbox,
+            SandboxWorkStep::RevokeRetirementCredentials,
+            now,
+            ready_at,
+            event,
+        )
+        .await
+    }
 }

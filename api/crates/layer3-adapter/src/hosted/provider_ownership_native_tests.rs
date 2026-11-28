@@ -1,8 +1,9 @@
 use super::super::*;
 use crate::hosted::HostedControlTransport;
 use crate::owner_protocol::{
-    scope, test_support::TestAuthority, OwnershipFailure, OwnershipFailureReason as Reason,
-    OwnershipPhase as Phase, TransportAuthority,
+    observe_inspection_failure, scope, test_support::TestAuthority, OwnershipFailure,
+    OwnershipFailureReason as Reason, OwnershipPhase as Phase, StagingInspectionRefusal,
+    TransportAuthority,
 };
 
 #[path = "provider_ownership_retry_native_tests.rs"]
@@ -171,6 +172,84 @@ async fn native_ownership_http_refusals_keep_status_and_block_confirmation_and_c
             refused(phase, status, OwnershipFailure::http(phase, status as u16)).await;
         }
     }
+}
+
+#[tokio::test]
+async fn staging_inspection_refusal_reaches_the_observer_and_expires_on_the_same_binding() {
+    use std::sync::OnceLock;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let fixture = fixture().await;
+    let endpoint = fixture.endpoint().await;
+    let authority = TestAuthority::new(7);
+    let observed = Arc::new(OnceLock::new());
+    let slot = observed.clone();
+    let runtime = handle();
+    let expiry = SystemTime::now() + Duration::from_secs(60);
+    let fail = scope(
+        authority.clone(),
+        observe_inspection_failure(
+            move |refusal| assert!(slot.set(refusal).is_ok()),
+            Some(StagingInspectionRefusal::new(
+                runtime.as_str().into(),
+                expiry,
+            )),
+            fixture.transport.receiver_lease(&endpoint),
+        ),
+    )
+    .await;
+    assert!(fail.is_err());
+    let refusal = observed
+        .get()
+        .expect("the parking observer receives the refusal");
+    assert_eq!(refusal.owner, authority.owner());
+    assert_eq!(refusal.receiver.runtime_id(), runtime.as_str());
+    assert_eq!(
+        refusal.failure,
+        OwnershipFailure::http(Phase::Challenge, 503)
+    );
+    assert!(!authority.is_current());
+    assert!(fixture
+        .state
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .all(|request| {
+            !request
+                .lines()
+                .next()
+                .unwrap()
+                .contains("/manager-ownership/challenge ")
+        }));
+    assert_eq!(
+        fixture.state.ownership_confirmations.load(Ordering::SeqCst),
+        0
+    );
+
+    for (id, time) in [
+        ("different-runtime", expiry),
+        (runtime.as_str(), UNIX_EPOCH),
+    ] {
+        let owner = TestAuthority::new(8);
+        let lease = scope(
+            owner,
+            observe_inspection_failure(
+                |_| panic!("a real receiver succeeds outside the active fixture scope"),
+                Some(StagingInspectionRefusal::new(id.into(), time)),
+                fixture.transport.receiver_lease(&endpoint),
+            ),
+        )
+        .await
+        .unwrap();
+        assert!(lease.is_some());
+    }
+    assert_eq!(
+        fixture.state.ownership_confirmations.load(Ordering::SeqCst),
+        2
+    );
+    fixture.transport.retire(&runtime).await.unwrap();
+    fixture.drained().await;
 }
 
 #[tokio::test]

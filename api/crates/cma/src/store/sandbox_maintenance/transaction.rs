@@ -3,7 +3,7 @@ use layer2_core::sandbox::store::{
     apply_retained_runtime_transition, SandboxMaintenanceApplication, SandboxMaintenanceOutcome,
     SandboxStoreError,
 };
-use layer2_core::sandbox::{Sandbox, SandboxEvent};
+use layer2_core::sandbox::{Agent, InactivityPauseRefusal as Refusal, Sandbox, SandboxEvent};
 use mongodb::bson::{doc, Bson};
 use mongodb::ClientSession;
 
@@ -19,9 +19,11 @@ use super::evidence::{
     LogValidation,
 };
 
+mod keep_alive;
 mod reconciliation;
 mod request;
 mod scoped;
+use keep_alive::keep_alive_and_fence_policy;
 pub(super) use reconciliation::reconcile;
 pub(super) use request::MaintenanceRequest;
 pub(super) use scoped::attempt;
@@ -30,6 +32,20 @@ pub(super) struct MaintenanceReceipt {
     pub(super) sandbox: Sandbox,
     pub(super) event: Option<SandboxEvent>,
     pub(super) outcome: SandboxMaintenanceOutcome,
+    pub(super) refusal: Option<Refusal>,
+    pub(super) next_legacy_proof: Option<Box<Agent>>,
+}
+
+impl MaintenanceReceipt {
+    fn refused(sandbox: Sandbox, refusal: Refusal) -> Self {
+        Self {
+            sandbox,
+            event: None,
+            outcome: SandboxMaintenanceOutcome::NotEligible,
+            refusal: Some(refusal),
+            next_legacy_proof: None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -112,11 +128,7 @@ pub(super) async fn apply_with_sources(
         )
         .await?
     {
-        return Ok(MaintenanceReceipt {
-            sandbox: current,
-            event: None,
-            outcome: SandboxMaintenanceOutcome::NotEligible,
-        });
+        return Ok(MaintenanceReceipt::refused(current, Refusal::AlwaysOn));
     }
     let last_seq = document
         .get_i64("last_seq")
@@ -143,6 +155,8 @@ pub(super) async fn apply_with_sources(
                 sandbox: current,
                 event: None,
                 outcome: SandboxMaintenanceOutcome::AlreadyScheduled,
+                refusal: None,
+                next_legacy_proof: None,
             });
         }
     }
@@ -153,40 +167,51 @@ pub(super) async fn apply_with_sources(
         )
         .await?;
     }
+    let mut inactivity_refusal = None;
     let application = match request {
         MaintenanceRequest::Inactivity(request) => {
             let bounded_legacy_log =
                 store.bounded_inactivity_legacy_log && request.auto_pause_enabled && !platform_stop;
-            if super::evidence::queued_control(store, &current.id, session).await?
-                || (bounded_legacy_log
-                    && !super::evidence::legacy_log_budget::within(
-                        store, &agents, sources, session,
+            if super::evidence::queued_control(store, &current.id, session).await? {
+                return Ok(MaintenanceReceipt::refused(
+                    current,
+                    Refusal::PendingControl,
+                ));
+            }
+            let mut certified = None;
+            if bounded_legacy_log {
+                if let Some(reason) =
+                    super::evidence::legacy_log_budget::refusal(store, &agents, sources, session)
+                        .await?
+                {
+                    match super::evidence::certified_legacy::capture(
+                        store, &agents, sources, reason, session,
                     )
-                    .await?)
-            {
-                return Ok(MaintenanceReceipt {
-                    sandbox: current,
-                    event: None,
-                    outcome: SandboxMaintenanceOutcome::NotEligible,
-                });
+                    .await?
+                    {
+                        Ok(heads) => certified = Some(heads),
+                        Err(unproven) => {
+                            let mut receipt = MaintenanceReceipt::refused(current, unproven.reason);
+                            receipt.next_legacy_proof = unproven.next_agent;
+                            return Ok(receipt);
+                        }
+                    }
+                }
             }
             let strict_sessions = store.strict_inactivity_session_evidence
                 && request.auto_pause_enabled
                 && !platform_stop;
-            if strict_sessions
-                && !super::evidence::sessions::clear(
+            if strict_sessions {
+                if let Some(refusal) = super::evidence::sessions::refusal(
                     store,
                     &current.id,
                     &request.requested_at,
                     session,
                 )
                 .await?
-            {
-                return Ok(MaintenanceReceipt {
-                    sandbox: current,
-                    event: None,
-                    outcome: SandboxMaintenanceOutcome::NotEligible,
-                });
+                {
+                    return Ok(MaintenanceReceipt::refused(current, refusal));
+                }
             }
             let activities = live_activities_with_sources(
                 store,
@@ -196,7 +221,9 @@ pub(super) async fn apply_with_sources(
                 sources,
                 LogValidation {
                     failure_policy,
+                    certified_legacy: certified.as_ref(),
                     legacy_formats_checked: bounded_legacy_log,
+                    use_recovery_activity: request.auto_pause_enabled && !platform_stop,
                 },
                 strict_sessions,
             )
@@ -205,31 +232,49 @@ pub(super) async fn apply_with_sources(
                 && activities.is_empty()
                 && open_session(store, &current, &request.requested_at, session).await?
             {
-                return Ok(MaintenanceReceipt {
-                    sandbox: current,
-                    event: None,
-                    outcome: SandboxMaintenanceOutcome::NotEligible,
-                });
+                return Ok(MaintenanceReceipt::refused(current, Refusal::OpenSession));
             }
             let Some(workspaces) =
                 super::evidence::idle_workspaces(store, &current, session).await?
             else {
-                return Ok(MaintenanceReceipt {
-                    sandbox: current,
-                    event: None,
-                    outcome: SandboxMaintenanceOutcome::NotEligible,
-                });
+                return Ok(MaintenanceReceipt::refused(
+                    current,
+                    Refusal::PendingWorkspaceWork,
+                ));
             };
-            let agentless_idle = activities.is_empty()
-                && layer2_core::sandbox::agentless_idle_with_children(
+            let mut agentless_refusal = None;
+            if activities.is_empty() {
+                agentless_refusal = layer2_core::sandbox::agentless_idle_refusal(
                     &current,
                     &agents,
                     &workspaces,
                     &request.requested_at,
                     request.pause_after_seconds,
+                );
+                if agentless_refusal.is_none()
+                    && !super::evidence::agent_commands_clear(store, &agents, session).await?
+                {
+                    agentless_refusal = Some(Refusal::PendingCommand);
+                }
+            }
+            let application = apply_proved_inactivity_pause(
+                &current,
+                &activities,
+                request,
+                activities.is_empty() && agentless_refusal.is_none(),
+            );
+            if !platform_stop
+                && matches!(
+                    application,
+                    Ok(SandboxMaintenanceApplication::Complete(
+                        SandboxMaintenanceOutcome::NotEligible
+                    ))
                 )
-                && super::evidence::agent_commands_clear(store, &agents, session).await?;
-            apply_proved_inactivity_pause(&current, &activities, request, agentless_idle)
+            {
+                inactivity_refusal =
+                    agentless_refusal.or_else(|| request.evidence_refusal(&current, &activities));
+            }
+            application
         }
         MaintenanceRequest::Rotation(request) => apply_image_rotation(&current, &agents, request),
         MaintenanceRequest::FleetRotation(request, basis) => {
@@ -250,11 +295,10 @@ pub(super) async fn apply_with_sources(
                 || !super::evidence::agent_commands_clear(store, &agents, session).await?
                 || open_session(store, &current, requested_at, session).await?
             {
-                return Ok(MaintenanceReceipt {
-                    sandbox: current,
-                    event: None,
-                    outcome: SandboxMaintenanceOutcome::NotEligible,
-                });
+                return Ok(MaintenanceReceipt::refused(
+                    current,
+                    Refusal::EvidenceUnavailable,
+                ));
             }
             apply_retained_runtime_transition(&current, &agents, request, requested_at)
         }
@@ -270,6 +314,8 @@ pub(super) async fn apply_with_sources(
                 sandbox: current,
                 event: None,
                 outcome,
+                refusal: inactivity_refusal,
+                next_legacy_proof: None,
             });
         }
         SandboxMaintenanceApplication::Persist {
@@ -283,11 +329,10 @@ pub(super) async fn apply_with_sources(
         .await
         .map_err(ApplyError::Driver)?
     {
-        return Ok(MaintenanceReceipt {
-            sandbox: current,
-            event: None,
-            outcome: SandboxMaintenanceOutcome::NotEligible,
-        });
+        return Ok(MaintenanceReceipt::refused(
+            current,
+            Refusal::PendingLegacyReuse,
+        ));
     }
     // The sweep's cached answer only proposes a pause. A lift or policy
     // change must conflict with the durable pause admission itself.
@@ -303,25 +348,19 @@ pub(super) async fn apply_with_sources(
                 }
             })?
     {
-        return Ok(MaintenanceReceipt {
-            sandbox: current,
-            event: None,
-            outcome: SandboxMaintenanceOutcome::NotEligible,
-        });
+        return Ok(MaintenanceReceipt::refused(
+            current,
+            Refusal::SpendStopLifted,
+        ));
     }
     // Acquire the global settings write only for an eligible candidate, after
     // evidence reads. Snapshot isolation still conflicts with a policy change;
     // the shorter write hold avoids serializing unrelated discovery work.
     if let MaintenanceRequest::Inactivity(pause) = request {
-        if pause.auto_pause_enabled
-            && !platform_stop
-            && !super::policy_fence::fence(store, pause, session).await?
-        {
-            return Ok(MaintenanceReceipt {
-                sandbox: current,
-                event: None,
-                outcome: SandboxMaintenanceOutcome::NotEligible,
-            });
+        if pause.auto_pause_enabled && !platform_stop {
+            if let Some(refusal) = super::policy_fence::fence(store, pause, session).await? {
+                return Ok(MaintenanceReceipt::refused(current, refusal));
+            }
         }
     }
     validate_in_transaction(store, &current.id, last_seq, session).await?;
@@ -335,11 +374,10 @@ pub(super) async fn apply_with_sources(
             | MaintenanceRequest::RetainedTransition { .. }
     ) {
         if !super::evidence::fence_idle_workspaces(store, &current, session).await? {
-            return Ok(MaintenanceReceipt {
-                sandbox: current,
-                event: None,
-                outcome: SandboxMaintenanceOutcome::NotEligible,
-            });
+            return Ok(MaintenanceReceipt::refused(
+                current,
+                Refusal::PendingWorkspaceWork,
+            ));
         }
         super::evidence::fence_agents(store, &agents, session).await?;
     } else {
@@ -418,68 +456,7 @@ pub(super) async fn apply_with_sources(
         sandbox,
         event: Some(event),
         outcome: SandboxMaintenanceOutcome::Scheduled,
+        refusal: None,
+        next_legacy_proof: None,
     })
-}
-
-async fn keep_alive_and_fence_policy(
-    store: &MongoSandboxStore,
-    sandbox: &Sandbox,
-    auto_pause_enabled: bool,
-    session: &mut ClientSession,
-) -> Result<bool, ApplyError> {
-    if sandbox.profile.always_on == Some(true) {
-        return Ok(true);
-    }
-    if auto_pause_enabled {
-        // Global policy ignores historical Profile availability. Its settings
-        // revision and the explicit preference on the Sandbox are fenced by this
-        // transaction, including when a retained Profile has been removed.
-        return Ok(false);
-    }
-    if store
-        .bindings
-        .keep_alive(sandbox, session)
-        .await
-        .map_err(ApplyError::Domain)?
-        == Some(true)
-    {
-        return Ok(true);
-    }
-    let Some(document) = store
-        .sandbox_profiles
-        .find_one(doc! { "_id": sandbox.profile.id.as_str() })
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?
-    else {
-        return super::retained_availability::keep_alive(store, sandbox, session).await;
-    };
-    let profile = super::super::sandbox_profiles::read_profile(&document)
-        .map_err(|error| ApplyError::Domain(SandboxStoreError::Corrupt(error.to_string())))?;
-    if profile.availability.always_keep_alive {
-        return Ok(true);
-    }
-    fence_policy(store, sandbox, session).await
-}
-
-async fn fence_policy(
-    store: &MongoSandboxStore,
-    sandbox: &Sandbox,
-    session: &mut ClientSession,
-) -> Result<bool, ApplyError> {
-    // An actual write conflicts with any concurrent policy edit. Merely reading
-    // the Profile under snapshot isolation permits an obsolete pause to commit.
-    let fenced = store
-        .sandbox_profiles
-        .update_one(
-            doc! { "_id": sandbox.profile.id.as_str() },
-            doc! { "$inc": { "inactivity_fence": 1_i64 } },
-        )
-        .session(&mut *session)
-        .await
-        .map_err(ApplyError::Driver)?;
-    if fenced.matched_count != 1 {
-        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
-    }
-    Ok(false)
 }

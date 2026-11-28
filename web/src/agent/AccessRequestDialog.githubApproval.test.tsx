@@ -79,6 +79,19 @@ it('requires the owner to choose a repo-capable connection and replays the exact
               manage_url: 'https://nyx.example/keys/profile-only',
             },
             {
+              id: 'unverified-repository-access',
+              label: 'Unverified repository access',
+              granted_scopes: ['repo'],
+              manage_url: 'https://nyx.example/keys/unverified-repository-access',
+            },
+            {
+              id: 'stale-repository-access',
+              label: 'Stale repository access',
+              granted_scopes: ['repo'],
+              account: { login: 'stale-owner', observed_scopes: ['read:user'] },
+              manage_url: 'https://nyx.example/keys/stale-repository-access',
+            },
+            {
               id: 'repository-access',
               label: 'Repository access',
               granted_scopes: ['repo'],
@@ -98,6 +111,16 @@ it('requires the owner to choose a repo-capable connection and replays the exact
   expect(screen.getByText('Live scopes — repo, read:user')).toBeVisible();
   expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
   expect(screen.queryByRole('button', { name: /Select Profile access/ })).not.toBeInTheDocument();
+  expect(screen.getByText('Live repository permissions could not be verified.')).toBeVisible();
+  expect(
+    screen.queryByRole('button', { name: /Select Unverified repository access/ }),
+  ).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh GitHub connections' }));
+  expect(await screen.findByText('GitHub account @repository-owner')).toBeVisible();
+  expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+  expect(
+    screen.queryByRole('button', { name: /Select Stale repository access/ }),
+  ).not.toBeInTheDocument();
   await userEvent.click(await screen.findByRole('button', { name: /Select Repository access/ }));
   await userEvent.click(screen.getByRole('button', { name: 'Approve' }));
   expect(await screen.findByText('Lost selected approval response')).toBeVisible();
@@ -116,6 +139,54 @@ it('requires the owner to choose a repo-capable connection and replays the exact
   expect(decide.mock.calls[1]?.[3]).toBe(decide.mock.calls[0]?.[3]);
   expect(decide.mock.calls[1]?.[6]).toEqual(decide.mock.calls[0]?.[6]);
 });
+
+it.each([{ scopes: [] }, { scopes: ['read:user'] }])(
+  'refreshes observed permissions after an owner grants repository access (%j)',
+  async ({ scopes: initialScopes }) => {
+    vi.mocked(accessRequests.list).mockResolvedValue([
+      {
+        ...request,
+        github_approval: {
+          sandbox_id: 'sandbox-one',
+          sandbox_name: 'Shared workspace',
+          other_agents: [],
+          current_user_service_id: 'repository-access',
+          scope_revision: 3,
+          credential_generation: 7,
+        },
+      },
+    ]);
+    let observedScopes = initialScopes;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          owner: 'owner',
+          github: {
+            manage_url: 'https://nyx.example/keys',
+            connections: [
+              {
+                id: 'repository-access',
+                label: 'Repository access',
+                granted_scopes: ['repo'],
+                manage_url: 'https://nyx.example/keys/repository-access',
+                account: { login: 'repository-owner', observed_scopes: observedScopes },
+              },
+            ],
+          },
+        }),
+      ),
+    );
+    show();
+    expect(await screen.findByText('GitHub account @repository-owner')).toBeVisible();
+    expect(screen.queryByRole('button', { name: /Select Repository access/ })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeDisabled();
+    observedScopes = ['repo'];
+    await userEvent.click(screen.getByRole('button', { name: 'Refresh GitHub connections' }));
+    await userEvent.click(await screen.findByRole('button', { name: /Select Repository access/ }));
+    expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled();
+  },
+);
 
 it('requires fresh consent after a definitely refused stale generation, including after reload', async () => {
   const context = {
@@ -160,6 +231,7 @@ it('requires fresh consent after a definitely refused stale generation, includin
               id: 'repository-access',
               label: 'Repository access',
               granted_scopes: ['repo'],
+              account: { login: 'repository-owner', observed_scopes: ['repo'] },
               manage_url: 'https://nyx.example/keys/repository-access',
             },
           ],
@@ -229,6 +301,7 @@ it('preserves an exact retry for generic conflict until durable request state is
               id: 'repository-access',
               label: 'Repository access',
               granted_scopes: ['repo'],
+              account: { login: 'repository-owner', observed_scopes: ['repo'] },
               manage_url: 'https://nyx.example/keys/repository-access',
             },
           ],

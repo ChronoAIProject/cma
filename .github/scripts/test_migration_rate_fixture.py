@@ -13,8 +13,17 @@ import migration_rate_fixture as rate
 
 OLD = {'source': 'a' * 40, 'image': 'registry/api@sha256:' + '1' * 64}
 NEW = {'source': 'b' * 40, 'image': 'registry/api@sha256:' + '2' * 64}
-PLAN = {'readers': [{'id': 'historical', 'artifact': OLD},
-                    {'id': 'candidate', 'artifact': NEW}]}
+CURRENT = {'source': 'c' * 40, 'image': 'registry/api@sha256:' + '3' * 64}
+RECOVERY = {'source': 'd' * 40, 'image': 'registry/api@sha256:' + '4' * 64}
+
+
+def plan(current, recovery):
+    return {'readers': [{'id': role, 'role': role, 'artifact': artifact}
+                        for role, artifact in [('historical', OLD), ('current', current),
+                                               ('candidate', NEW), ('recovery', recovery)]]}
+
+
+PLAN = plan(NEW, OLD)
 
 
 class BudgetAPI:
@@ -57,10 +66,11 @@ class RateFixtureTests(unittest.TestCase):
         self.addCleanup(self.directory.cleanup)
         self.output, self.clock, self.ledger = Path(self.directory.name), [1000], {}
 
-    def fixture(self, stage='old-write', uid=None, artifact=None):
+    def fixture(self, stage='old-write', uid=None, artifact=None, declared=PLAN):
         api = BudgetAPI(self.output, self.ledger, self.clock)
-        current = OLD if stage in ('old-write', 'old-read-new-write') else NEW
-        fixture = rate.RateFixture(api, stage, artifact or current, uid or stage, PLAN,
+        role = rate.STAGE_ROLES[stage]
+        current = next(row['artifact'] for row in declared['readers'] if row['id'] == role)
+        fixture = rate.RateFixture(api, stage, artifact or current, uid or stage, declared,
                                    clock=lambda: self.clock[0])
         return fixture
 
@@ -78,6 +88,15 @@ class RateFixtureTests(unittest.TestCase):
         self.assertEqual(request_counts, [2, 1, 2, 1])
         self.assertEqual(set(self.ledger), {'owner', 'admin'})
         self.assertNotIn('ephemeral-test', self.saved().read_text())
+
+    def test_distinct_current_and_recovery_read_the_correct_writer_records(self):
+        release = plan(CURRENT, RECOVERY)
+        for stage in rate.STAGES:
+            fixture = self.fixture(stage, declared=release)
+            self.assertTrue(all(fixture.exercise()['checks'].values()))
+        for stage, wrong in [('new-read-old-write', NEW), ('old-read-new-write', OLD)]:
+            with self.subTest(stage=stage), self.assertRaisesRegex(RuntimeError, 'reader artifact'):
+                self.fixture(stage, artifact=wrong, declared=release)
 
     def test_fresh_allowance_after_boot_is_failure(self):
         self.fixture().exercise()

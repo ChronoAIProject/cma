@@ -174,7 +174,7 @@ def fetch(expected, api, archive, token, downloader, deadline):
 
 
 def try_reuse(expected, directory, api, token, downloader=download, runner=command, *,
-              clock=time.monotonic, on_miss=None, source_root=None):
+              clock=time.monotonic, on_miss=None, source_root=None, require_reserved_label=False):
     def miss(reason):
         if on_miss is not None:
             on_miss(reason)
@@ -235,7 +235,8 @@ def try_reuse(expected, directory, api, token, downloader=download, runner=comma
             bounded_runner(["skopeo", "copy", "--format", "oci", "docker-archive:" + str(target), "oci-archive:" + str(output)],
                            timeout=600)
             compatibility = from_source(expected["component"], expected["source"], source_root)
-            inspect(output, expected, bounded_runner, allow_qualified=True, compatibility=compatibility)
+            inspect(output, expected, bounded_runner, allow_qualified=not require_reserved_label,
+                    compatibility=compatibility)
             published = directory / output.name
             os.link(output, published)
             return published

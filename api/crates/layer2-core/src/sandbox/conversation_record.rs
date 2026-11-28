@@ -5,7 +5,7 @@ use super::{
     budget, checkpoint, live, output, DurableAgentUpdateRecorder, MAX_CONVERSATION_COMMIT_RETRIES,
 };
 use crate::sandbox::conversation::PendingAgentUpdate;
-use crate::sandbox::conversation_fold::{fold_update, FoldedConversationUpdate};
+use crate::sandbox::conversation_fold::{fold_with_output_policy, FoldedConversationUpdate};
 use crate::sandbox::store::{
     AgentConversationMutation, AgentMessageCheckpoint, AgentStore, SandboxStoreError,
 };
@@ -237,15 +237,13 @@ impl DurableAgentUpdateRecorder {
                     "conversation updates require a live agent",
                 ));
             }
-            if guard.is_some_and(|guard| guard.owner_restart.is_some())
-                && update.is_some_and(|effect| {
-                    !matches!(effect, layer3_adapter::ConversationUpdate::Metadata(_))
-                })
-            {
-                return Err(AgentConversationError::ReopenOutputDiscontinuity);
-            }
+            let update = if guard.is_some_and(|guard| guard.owner_restart.is_some()) {
+                output::owner_restart_effect(update)?
+            } else {
+                update
+            };
             let folded = match &update {
-                Some(update) => fold_update(
+                Some(update) => fold_with_output_policy(
                     &current,
                     &recovered,
                     budget::terminal(
@@ -263,6 +261,7 @@ impl DurableAgentUpdateRecorder {
                         &current.owner,
                         crate::sandbox::task_experience::TaskExperienceWriter::ToolOutput,
                     ),
+                    self.incremental_text && guard.is_none(),
                 )?,
                 None => FoldedConversationUpdate::Quiet(recovered.clone()),
             };

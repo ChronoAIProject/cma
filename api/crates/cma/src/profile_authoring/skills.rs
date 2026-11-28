@@ -19,6 +19,12 @@ struct Envelope<T> {
 }
 
 #[derive(Deserialize)]
+struct ProxyRefusal {
+    error: String,
+    message: String,
+}
+
+#[derive(Deserialize)]
 struct SearchPage {
     items: Vec<SearchItem>,
     meta: SearchMeta,
@@ -180,11 +186,22 @@ async fn envelope<T: serde::de::DeserializeOwned>(
     response: reqwest::Response,
     stage: &str,
 ) -> Result<T, AuthoringSourceError> {
-    if response.status() != reqwest::StatusCode::OK {
+    let status = response.status();
+    if status != reqwest::StatusCode::OK {
+        // The proxy uses the same error key for node and service refusals.
+        if status == reqwest::StatusCode::FORBIDDEN
+            && json::<ProxyRefusal>(response).await.is_ok_and(|refusal| {
+                refusal.error == "api_key_scope_forbidden"
+                    && refusal.message
+                        == "API key scope forbidden: API key does not have access to this service"
+            })
+        {
+            return Err(AuthoringSourceError::SkillsAuthorizationRequired);
+        }
         // The status separates a proxy or scope refusal from an Ornn outage.
         return Err(unavailable(&format!(
             "{stage} answered HTTP {}",
-            response.status().as_u16()
+            status.as_u16()
         )));
     }
     let envelope: Envelope<T> = json(response).await?;

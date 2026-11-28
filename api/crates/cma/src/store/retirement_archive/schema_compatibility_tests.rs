@@ -5,6 +5,76 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
+async fn pre_capture_archive_preserves_owned_backups_and_refuses_new_billing_evidence() {
+    use super::super::schema::{PRE_CAPTURE_BACKUP_COLLECTIONS, PRE_CAPTURE_BACKUP_SHA256};
+
+    let (temp, store, request, bytes) = fixture().await;
+    store.admit(&request, &bytes).await.unwrap();
+    store
+        .database
+        .collection::<Document>(crate::store::home_backups::BACKUPS_COLLECTION)
+        .insert_many([
+            doc! {"_id":"retained-backup", "sandbox_id":&request.sandbox_id,
+            "document_schema_version":1_i64, "payload":"retained"},
+            doc! {"_id":"other-backup", "sandbox_id":"sbx_other",
+            "document_schema_version":1_i64, "payload":"excluded"},
+        ])
+        .await
+        .unwrap();
+    let custody = Custody::default();
+    let current = export::build(&store, &request, &bytes, &custody, None)
+        .await
+        .unwrap();
+    let mut previous = current.clone();
+    previous.schema_sha256 = PRE_CAPTURE_BACKUP_SHA256.into();
+    previous
+        .database
+        .retain(|row| PRE_CAPTURE_BACKUP_COLLECTIONS.contains(&row.collection.as_str()));
+    let receipt = custody
+        .retain(
+            &request.operation_id,
+            serde_json::to_vec(&previous).unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        verify::load(&custody, &receipt, &request, &bytes)
+            .await
+            .unwrap(),
+        previous
+    );
+    let restored = temp.0.join("pre-capture-restore");
+    verify::restore(&custody, &receipt, &request, &bytes, &restored)
+        .await
+        .unwrap();
+    let retained = std::fs::read(restored.join("database/home_backups.bson")).unwrap();
+    let retained: Document = mongodb::bson::deserialize_from_slice(&retained).unwrap();
+    assert_eq!(retained.get_str("_id").unwrap(), "retained-backup");
+    assert!(super::super::matches_current(&previous, current).unwrap());
+    let held = store.inspect(&request.sandbox_id).await.unwrap();
+    for name in crate::store::sandbox_usage_export::COLLECTIONS {
+        let collection = store.database.collection::<Document>(name);
+        collection
+            .insert_one(doc! {"_id":"retained-billing-evidence"})
+            .await
+            .unwrap();
+        assert!(export::build(&store, &request, &bytes, &custody, None)
+            .await
+            .is_err());
+        assert_eq!(store.inspect(&request.sandbox_id).await.unwrap(), held);
+        collection.delete_many(doc! {}).await.unwrap();
+    }
+    assert_eq!(
+        verify::load(&custody, &receipt, &request, &bytes)
+            .await
+            .unwrap(),
+        previous
+    );
+    store.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
 async fn legacy_archive_readback_survives_upgrade_without_omitting_new_owned_data() {
     let (temp, store, request, bytes) = fixture().await;
     store.admit(&request, &bytes).await.unwrap();
@@ -249,6 +319,7 @@ async fn pre_proof_manifest_reconciles_without_capturing_live_creation_evidence(
             first_day: day,
             legacy_custody: false,
             terminal_settlement: true,
+            validation_settlement: false,
         },
     )
     .await

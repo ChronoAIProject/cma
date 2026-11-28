@@ -4,14 +4,16 @@ import os
 import time
 
 from cd_target import (PRODUCTION, STAGING, TARGETS, branch as target_branch,
-                       workflows as target_workflows)
+                       name as target_name, workflows as target_workflows)
 from ci_outcome import error_site, report
 from staging_cd_common import matches, require
 
 ADMISSION_SECONDS = 120
+STAGING_DISPATCH_ADMISSION_SECONDS = 240
 BOOTSTRAP_ADMISSION_SECONDS = 45
 BOOTSTRAP_TOTAL_SECONDS = 600
 RELEASE_TOTAL_SECONDS = 990
+STAGING_AM_RELEASE_TOTAL_SECONDS = 2700
 # A production rollout takes far longer than staging's release budget. Only a
 # production release requests this total; every other request is unchanged.
 PRODUCTION_RELEASE_TOTAL_SECONDS = 3600
@@ -44,10 +46,16 @@ def elapsed(started, now=None):
     return age
 
 
-def remaining(started, limit=None, now=None, *, mode="release"):
+def remaining(started, limit=None, now=None, *, mode="release", env=None):
     if limit is None:
         require(mode in ("release", "bootstrap"), "Unknown deployment admission mode")
-        limit = BOOTSTRAP_ADMISSION_SECONDS if mode == "bootstrap" else ADMISSION_SECONDS
+        if mode == "bootstrap":
+            limit = BOOTSTRAP_ADMISSION_SECONDS
+        elif (env is not None and target_name(env) == STAGING
+              and env.get("GITHUB_EVENT_NAME") == "workflow_dispatch"):
+            limit = STAGING_DISPATCH_ADMISSION_SECONDS
+        else:
+            limit = ADMISSION_SECONDS
     left = limit - elapsed(started, now)
     require(left > 0, "Deployment admission budget expired before mutation")
     return left
@@ -74,13 +82,14 @@ def run_created(env, request):
 def dispatch_started(env, request, mode="release"):
     require(env.get("GITHUB_EVENT_NAME") == "workflow_dispatch", "Dispatch timestamp requires a dispatch event")
     started = run_created(env, request)
-    remaining(started, mode=mode)
+    remaining(started, mode=mode, env=env)
     return started
 
 
 def main():
     try:
-        remaining(os.environ.get("CD_STARTED_AT"), mode=os.environ.get("CD_DEPLOY_MODE", "release"))
+        remaining(os.environ.get("CD_STARTED_AT"), mode=os.environ.get("CD_DEPLOY_MODE", "release"),
+                  env=os.environ)
     except (ValueError, TypeError, OverflowError) as error:
         # The line is unchanged; the reported check says which bound refused.
         report("deploy-clock", ADMISSION_FAILURE, subject="deploy-admission", site=error_site(error))

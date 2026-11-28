@@ -83,19 +83,8 @@ impl NyxidServiceConnectionBroker {
         let live = self
             .github_user(credential, catalog_id, &detail.id, deadline)
             .await?;
-        let mut values = live.headers().get_all("x-oauth-scopes").iter();
-        let header = values
-            .next()
-            .filter(|_| values.next().is_none())
-            .and_then(|value| value.to_str().ok())
-            .ok_or_else(malformed)?;
-        let scopes = header.trim().split(',').map(str::trim);
-        if !header.trim().is_empty()
-            && (scopes.clone().count() > 100 || !scopes.clone().all(valid_git_scope))
-        {
-            return Err(malformed());
-        }
-        let satisfied = scope_satisfied(need, scopes);
+        let scopes = observed_oauth_scopes(live.headers())?;
+        let satisfied = scope_satisfied(need, scopes.into_iter());
         if satisfied != scope_satisfied(need, recorded.iter().map(String::as_str)) {
             return Err(malformed());
         }
@@ -249,15 +238,5 @@ fn repository_path(raw: &str) -> Option<[&str; 2]> {
 }
 
 fn response_has_scope(headers: &reqwest::header::HeaderMap, need: GitHubRepositoryNeed) -> bool {
-    let mut values = headers.get_all("x-oauth-scopes").iter();
-    values
-        .next()
-        .filter(|_| values.next().is_none())
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            let scopes = value.split(',').map(str::trim);
-            scopes.clone().count() <= 100
-                && scopes.clone().all(valid_git_scope)
-                && scope_satisfied(need, scopes)
-        })
+    observed_oauth_scopes(headers).is_ok_and(|scopes| scope_satisfied(need, scopes.into_iter()))
 }

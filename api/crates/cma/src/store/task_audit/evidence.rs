@@ -1,99 +1,163 @@
 use super::*;
 use crate::store::{
     agent_log_integrity::{IntegrityFailurePolicy, TransactionLogError},
+    agent_log_segments::command_evidence,
     agent_log_telemetry::ScanCaller,
 };
 use layer2_core::sandbox::{
-    agent_io::{AdmittedAgentCommand, AgentResponseStatus, CommandEvidence},
+    agent_io::{AgentResponseStatus, CommandEvidence},
     store::SandboxStoreError,
-    AgentLogKind,
+    Agent, AgentLogKind,
 };
 
-pub(super) async fn classify(
+pub(super) fn undispatched(command: &AdmittedAgentCommand) -> &'static str {
+    // Before dispatch, a failed/cancelled response is itself the durable
+    // public result. Report its distinct evidence strength explicitly.
+    match command.status {
+        AgentResponseStatus::Queued | AgentResponseStatus::WaitingAction => "unfinished",
+        AgentResponseStatus::Failed if command.work.failure.is_some() => "receipt_terminal",
+        AgentResponseStatus::Cancelled => "receipt_terminal",
+        _ => "status_mismatch",
+    }
+}
+
+pub(super) async fn classify_agent(
     store: &MongoSandboxStore,
-    command: &AdmittedAgentCommand,
+    agent_id: &AgentId,
+    commands: &[(usize, AdmittedAgentCommand)],
+    entries: &mut [Entry],
     session: &mut ClientSession,
-) -> Result<&'static str> {
-    let Some(dispatch) = &command.work.dispatch else {
-        // Before dispatch, a failed/cancelled response is itself the durable
-        // public result. Report its distinct evidence strength explicitly.
-        return Ok(match command.status {
-            AgentResponseStatus::Queued | AgentResponseStatus::WaitingAction => "unfinished",
-            AgentResponseStatus::Failed if command.work.failure.is_some() => "receipt_terminal",
-            AgentResponseStatus::Cancelled => "receipt_terminal",
-            _ => "status_mismatch",
-        });
-    };
-    let Some(row) = store
+) -> Result<()> {
+    let row = store
         .agents
-        .find_one(doc! {"_id":command.receipt.envelope.agent_id.as_str()})
+        .find_one(doc! {"_id":agent_id.as_str()})
         .max_time(Duration::from_secs(1))
         .session(&mut *session)
         .await
-        .map_err(|_| "database")?
-    else {
-        return Ok("evidence_missing");
+        .map_err(|_| "database")?;
+    let set_all = |entries: &mut [Entry], classification| {
+        for (index, _) in commands {
+            entries[*index].result = classification;
+        }
+    };
+    let Some(row) = row else {
+        set_all(entries, "evidence_missing");
+        return Ok(());
     };
     let Ok(agent) = crate::store::agents::read_agent(&row) else {
-        return Ok("evidence_invalid");
+        set_all(entries, "evidence_invalid");
+        return Ok(());
     };
-    let evidence = match crate::store::agent_log_segments::command_evidence::read_transaction(
-        store, &agent, &row, command, session,
-    )
-    .await
-    {
-        Ok(Some(evidence)) => evidence,
-        Ok(None) => {
-            let Ok(mut evidence) = CommandEvidence::new(command) else {
-                return Ok("evidence_invalid");
-            };
-            let mut terminals = 0;
-            let result = crate::store::agent_log_integrity::scan_complete_log_with_policy(
-                ScanCaller::Other,
-                store,
-                &agent.id,
-                agent.conversation.last_seq,
-                session,
-                IntegrityFailurePolicy::ReportOnly,
-                |entry| {
-                    if matches!(&entry.kind,
-                        AgentLogKind::TurnCompleted { turn_sequence } |
-                        AgentLogKind::TurnInterrupted { turn_sequence } |
-                        AgentLogKind::TurnFailed { turn_sequence, .. }
-                        if *turn_sequence == dispatch.turn_sequence)
-                    {
-                        terminals += 1;
-                    }
-                    evidence
-                        .observe(&entry)
-                        .map_err(|_| SandboxStoreError::Corrupt("task evidence is invalid".into()))
-                },
-            )
-            .await;
-            if let Err(error) = result {
-                return failure(error);
+    match command_evidence::read_source(store, &agent, &row, session).await {
+        Ok(Some(source)) => {
+            for (index, command) in commands {
+                entries[*index].result = match command_evidence::read_from_source(
+                    store, &source, command, session,
+                )
+                .await
+                {
+                    Ok(evidence) => classify(&evidence, command, &agent),
+                    Err(error) => failure(error)?,
+                };
             }
-            if terminals > 1 {
-                return Ok("duplicate_terminal");
-            }
-            evidence
         }
-        Err(error) => return failure(error),
-    };
-    if evidence.has_source_deferred() {
-        return Ok("evidence_deferred");
+        Ok(None) => classify_legacy(store, &agent, commands, entries, session).await?,
+        Err(error) => set_all(entries, failure(error)?),
     }
-    let Ok(status) = evidence.verified_status(command, &agent) else {
-        return Ok("evidence_invalid");
+    Ok(())
+}
+
+struct LegacyEvidence {
+    turn_sequence: u64,
+    terminals: usize,
+    evidence: Option<CommandEvidence>,
+}
+
+impl LegacyEvidence {
+    fn new(command: &AdmittedAgentCommand) -> Self {
+        Self {
+            turn_sequence: command
+                .work
+                .dispatch
+                .as_ref()
+                .map_or(0, |dispatch| dispatch.turn_sequence),
+            terminals: 0,
+            evidence: CommandEvidence::new(command).ok(),
+        }
+    }
+}
+
+async fn classify_legacy(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    commands: &[(usize, AdmittedAgentCommand)],
+    entries: &mut [Entry],
+    session: &mut ClientSession,
+) -> Result<()> {
+    let mut folds: Vec<_> = commands
+        .iter()
+        .map(|(_, command)| LegacyEvidence::new(command))
+        .collect();
+    let scan = crate::store::agent_log_integrity::scan_complete_log_with_policy(
+        ScanCaller::Other,
+        store,
+        &agent.id,
+        agent.conversation.last_seq,
+        session,
+        IntegrityFailurePolicy::ReportOnly,
+        |entry| {
+            let terminal = match &entry.kind {
+                AgentLogKind::TurnCompleted { turn_sequence }
+                | AgentLogKind::TurnInterrupted { turn_sequence }
+                | AgentLogKind::TurnFailed { turn_sequence, .. } => Some(*turn_sequence),
+                _ => None,
+            };
+            for fold in &mut folds {
+                if let Some(evidence) = &mut fold.evidence {
+                    if terminal == Some(fold.turn_sequence) {
+                        fold.terminals += 1;
+                    }
+                    if evidence.observe(&entry).is_err() {
+                        fold.evidence = None;
+                    }
+                }
+            }
+            Ok(())
+        },
+    )
+    .await;
+    let scan_failure = scan.err().map(failure).transpose()?;
+    for ((index, command), fold) in commands.iter().zip(folds) {
+        entries[*index].result = match (fold.evidence, scan_failure) {
+            (None, _) => "evidence_invalid",
+            (Some(_), Some(classification)) => classification,
+            (Some(_), None) if fold.terminals > 1 => "duplicate_terminal",
+            (Some(evidence), None) => classify(&evidence, command, agent),
+        };
+    }
+    Ok(())
+}
+
+fn classify(
+    evidence: &CommandEvidence,
+    command: &AdmittedAgentCommand,
+    agent: &Agent,
+) -> &'static str {
+    if evidence.has_source_deferred() {
+        return "evidence_deferred";
+    }
+    let Ok(status) = evidence.verified_status(command, agent) else {
+        return "evidence_invalid";
     };
-    Ok(if status != command.status {
+    if status != command.status {
         "status_mismatch"
     } else if status.is_terminal() {
         "verified_terminal"
     } else {
         "unfinished"
-    })
+    }
 }
+
 fn failure(error: TransactionLogError) -> Result<&'static str> {
     match error {
         TransactionLogError::Driver(_) => Err("database"),

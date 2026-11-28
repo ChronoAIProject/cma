@@ -39,6 +39,7 @@ impl AgentMessageCheckpoint {
             || self.active_turn == Some(0)
             || (self.active_turn.is_none() && !self.assembly.is_empty())
             || self.assembly.content.len() > MAX_DURABLE_AGENT_MESSAGE_BYTES
+            || (self.assembly.text_published && self.assembly.is_empty())
             || self
                 .assembly
                 .message_id

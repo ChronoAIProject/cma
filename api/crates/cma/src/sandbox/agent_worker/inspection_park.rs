@@ -4,7 +4,7 @@ use super::support::WorkerFailure;
 use super::*;
 use layer2_core::agent_ownership::OwnershipToken;
 use layer2_core::sandbox::{RuntimeBinding, Sandbox};
-use layer3_adapter::owner_protocol::InspectionRefusal;
+use layer3_adapter::owner_protocol::{InspectionRefusal, StagingInspectionRefusal};
 
 pub(super) struct Inspection {
     claimed: Agent,
@@ -16,10 +16,18 @@ tokio::task_local! {
     pub(super) static ATTEMPT: Option<Arc<OnceLock<Inspection>>>;
 }
 
-pub(super) async fn observe<F: Future>(agent: &Agent, sandbox: &Sandbox, read: F) -> F::Output {
+pub(super) async fn observe<F: Future>(
+    agent: &Agent,
+    sandbox: &Sandbox,
+    control: Option<&crate::config::InspectionRefusalControl>,
+    read: F,
+) -> F::Output {
     if let (Ok(Some(attempt)), Some(binding)) = (ATTEMPT.try_with(Clone::clone), &sandbox.runtime) {
         let claimed = agent.clone();
         let binding = binding.clone();
+        let staging_refusal = control
+            .and_then(|control| control.expiry_for(&sandbox.id, agent.work.step))
+            .map(|expiry| StagingInspectionRefusal::new(binding.runtime_id.clone(), expiry));
         return layer3_adapter::owner_protocol::observe_inspection_failure(
             move |refusal| {
                 let _ = attempt.set(Inspection {
@@ -28,6 +36,7 @@ pub(super) async fn observe<F: Future>(agent: &Agent, sandbox: &Sandbox, read: F
                     refusal,
                 });
             },
+            staging_refusal,
             read,
         )
         .await;

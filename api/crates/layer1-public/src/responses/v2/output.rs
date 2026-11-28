@@ -34,6 +34,7 @@ pub(super) struct OutputProjection {
     pub events: Vec<Value>,
     tools: BTreeMap<String, usize>,
     messages: usize,
+    open_text: Option<usize>,
     base_index: usize,
 }
 impl OutputProjection {
@@ -46,6 +47,23 @@ impl OutputProjection {
     }
     pub fn observe(&mut self, kind: &AgentLogKind, agent: &AgentId, turn: u64) {
         match kind {
+            AgentLogKind::AgentMessageDelta { offset, content } => {
+                if *offset == 0 {
+                    let index = self.base_index + self.items.len();
+                    let item = self.message_item(agent, turn, "in_progress", content);
+                    self.open_message(index, &item);
+                    self.text_delta(index, &item.id, content);
+                    self.open_text = Some(self.items.len());
+                    self.items.push(V2OutputItem::Message(item));
+                } else if let Some(position) = self.open_text {
+                    let V2OutputItem::Message(item) = &mut self.items[position] else {
+                        unreachable!("open assistant item is a message");
+                    };
+                    item.content[0].text.push_str(content);
+                    let item_id = item.id.clone();
+                    self.text_delta(self.base_index + position, &item_id, content);
+                }
+            }
             AgentLogKind::AgentMessage { content } => self.message(agent, turn, content),
             AgentLogKind::ToolCallStarted {
                 call_id,
@@ -136,13 +154,17 @@ impl OutputProjection {
             json!({"output_index":self.base_index+index,"item":item}),
         );
     }
-    fn message(&mut self, agent: &AgentId, turn: u64, text: &str) {
-        let index = self.base_index + self.items.len();
-        // Message IDs retain their existing identity in conversation item reads.
-        let item = OutputMessage {
+    pub(super) fn message_item(
+        &self,
+        agent: &AgentId,
+        turn: u64,
+        status: &'static str,
+        text: &str,
+    ) -> OutputMessage {
+        OutputMessage {
             id: super::super::retrieve::output_id(agent, turn, self.messages),
             kind: "message",
-            status: "completed",
+            status,
             role: "assistant",
             content: vec![OutputText {
                 kind: "output_text",
@@ -150,8 +172,9 @@ impl OutputProjection {
                 annotations: vec![],
                 logprobs: vec![],
             }],
-        };
-        self.messages += 1;
+        }
+    }
+    pub(super) fn open_message(&mut self, index: usize, item: &OutputMessage) {
         let mut empty = item.clone();
         empty.status = "in_progress";
         empty.content.clear();
@@ -159,17 +182,19 @@ impl OutputProjection {
             "response.output_item.added",
             json!({"output_index":index,"item":empty}),
         );
-        let part = &item.content[0];
-        let mut empty = part.clone();
-        empty.text.clear();
+        let mut part = item.content[0].clone();
+        part.text.clear();
         self.push(
             "response.content_part.added",
-            json!({"output_index":index,"item_id":item.id,"content_index":0,"part":empty}),
+            json!({"output_index":index,"item_id":item.id,"content_index":0,"part":part}),
         );
-        if !text.is_empty() {
-            self.push("response.output_text.delta", json!({"output_index":index,"item_id":item.id,"content_index":0,"delta":text,"logprobs":[]}));
-        }
-        self.push("response.output_text.done", json!({"output_index":index,"item_id":item.id,"content_index":0,"text":text,"logprobs":[]}));
+    }
+    pub(super) fn text_delta(&mut self, index: usize, item: &str, text: &str) {
+        self.push("response.output_text.delta", json!({"output_index":index,"item_id":item,"content_index":0,"delta":text,"logprobs":[]}));
+    }
+    pub(super) fn finish_message(&mut self, index: usize, item: &OutputMessage) {
+        let part = &item.content[0];
+        self.push("response.output_text.done", json!({"output_index":index,"item_id":item.id,"content_index":0,"text":part.text,"logprobs":[]}));
         self.push(
             "response.content_part.done",
             json!({"output_index":index,"item_id":item.id,"content_index":0,"part":part}),
@@ -178,7 +203,22 @@ impl OutputProjection {
             "response.output_item.done",
             json!({"output_index":index,"item":item}),
         );
-        self.items.push(V2OutputItem::Message(item));
+    }
+    fn message(&mut self, agent: &AgentId, turn: u64, text: &str) {
+        let item = self.message_item(agent, turn, "completed", text);
+        self.messages += 1;
+        if let Some(position) = self.open_text.take() {
+            self.finish_message(self.base_index + position, &item);
+            self.items[position] = V2OutputItem::Message(item);
+        } else {
+            let index = self.base_index + self.items.len();
+            self.open_message(index, &item);
+            if !text.is_empty() {
+                self.text_delta(index, &item.id, text);
+            }
+            self.finish_message(index, &item);
+            self.items.push(V2OutputItem::Message(item));
+        }
     }
     fn push(&mut self, kind: &str, mut body: Value) {
         body["type"] = kind.into();

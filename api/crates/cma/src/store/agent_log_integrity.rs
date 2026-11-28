@@ -12,19 +12,17 @@ use sha2::{Digest, Sha256};
 use super::agent_log::{log_document, log_id, read_entry};
 use super::sandbox_mongo::{signed, unsigned, MongoSandboxStore};
 
-#[cfg(test)]
-pub(super) use cma_am_agent_log::capacity::NORMAL_AGENT_LOG_BYTES;
 pub(super) use cma_am_agent_log::capacity::{
-    ensure_append_batch_size, AppendCapacity, NORMAL_AGENT_LOG_ENTRIES,
+    ensure_append_batch_size, AppendCapacity, NORMAL_AGENT_LOG_ENTRIES, PHYSICAL_AGENT_LOG_BYTES,
 };
 #[cfg(test)]
 use cma_am_agent_log::capacity::{
-    DELETE_RESERVE_BYTES, DELETE_RESERVE_ENTRIES, STOP_AGENT_LOG_BYTES, STOP_AGENT_LOG_ENTRIES,
-    STOP_RESERVE_BYTES, STOP_RESERVE_ENTRIES,
+    DELETE_RESERVE_BYTES, DELETE_RESERVE_ENTRIES, STOP_AGENT_LOG_ENTRIES, STOP_RESERVE_BYTES,
+    STOP_RESERVE_ENTRIES,
 };
-use cma_am_agent_log::capacity::{
-    MAX_AGENT_LOG_DOCUMENT_BYTES, PHYSICAL_AGENT_LOG_BYTES, PHYSICAL_AGENT_LOG_ENTRIES,
-};
+use cma_am_agent_log::capacity::{MAX_AGENT_LOG_DOCUMENT_BYTES, PHYSICAL_AGENT_LOG_ENTRIES};
+#[cfg(test)]
+pub(super) use cma_am_agent_log::capacity::{NORMAL_AGENT_LOG_BYTES, STOP_AGENT_LOG_BYTES};
 pub(super) const INTEGRITY_FIELD: &str = "agent_log_integrity_v1";
 pub(super) const QUARANTINE_FIELD: &str = "agent_log_integrity_quarantine_v1";
 const SEMANTIC_FIELD: &str = "semantic_checkpoint_v1";
@@ -58,6 +56,7 @@ impl LogSummary {
 }
 
 pub(crate) mod fleet;
+pub(super) mod inactivity;
 mod metadata;
 mod preparation;
 mod proof;

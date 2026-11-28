@@ -1,5 +1,141 @@
 use super::*;
 use crate::ids::{AgentCommandId, AgentResponseId};
+use std::collections::VecDeque;
+
+struct FailingSnapshots {
+    inner: Arc<InMemorySandboxStore>,
+    errors: Mutex<VecDeque<ResourceAccessStoreError>>,
+    reads: AtomicUsize,
+}
+
+#[async_trait]
+impl ResourceAccessStore for FailingSnapshots {
+    async fn organization_sandboxes(
+        &self,
+        _: &SubjectId,
+        _: &crate::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        unreachable!("response fence does not list Sandboxes")
+    }
+
+    async fn shared_sandboxes(
+        &self,
+        _: &SubjectId,
+        _: &[SubjectId],
+        _: &crate::sandbox::OwnerSandboxQuery,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        unreachable!("response fence does not list Sandbox shares")
+    }
+
+    async fn organization_agents(
+        &self,
+        _: &SubjectId,
+        _: &crate::sandbox::AgentListQuery,
+        _: &PageRequest,
+    ) -> Result<Vec<ResourceAccessSnapshot>, ResourceAccessStoreError> {
+        unreachable!("response fence does not list Agents")
+    }
+
+    async fn resource_access_snapshot(
+        &self,
+        target: &ResourceTarget,
+    ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {
+        self.reads.fetch_add(1, Ordering::SeqCst);
+        let error = self.errors.lock().unwrap().pop_front();
+        match error {
+            Some(error) => Err(error),
+            None => self.inner.resource_access_snapshot(target).await,
+        }
+    }
+}
+
+#[async_trait]
+impl ResourceShareStore for FailingSnapshots {
+    async fn share_mutation_receipt(
+        &self,
+        _: &str,
+    ) -> Result<Option<ShareMutationReceipt>, ResourceAccessStoreError> {
+        unreachable!("response fence does not replay share mutations")
+    }
+
+    async fn mutate_share(
+        &self,
+        _: ShareMutation,
+    ) -> Result<ShareMutationReceipt, ResourceAccessStoreError> {
+        unreachable!("response fence does not change shares")
+    }
+
+    async fn resource_share(
+        &self,
+        _: &str,
+    ) -> Result<Option<ResourceShare>, ResourceAccessStoreError> {
+        unreachable!("response fence reads shares in its snapshot")
+    }
+}
+
+#[tokio::test]
+async fn response_stream_retries_only_unavailable_authorization_snapshots() {
+    use ResourceAccessStoreError::{Conflict, Unavailable};
+
+    let (store, commands, authority, agent) = setup(Authority::new()).await;
+    let receipt = commands
+        .admit(
+            &context("owner"),
+            "selected-credential",
+            CommandSubmissionSource::Api,
+            submission("response-fence"),
+        )
+        .await
+        .unwrap()
+        .receipt;
+    let id = receipt.response_id.as_ref().unwrap();
+    let reads = service(store.clone()).with_resource_access(Arc::new(ResourceAccessService::new(
+        store.clone(),
+        authority.clone(),
+    )));
+    let share_record = share(&store, None).await;
+    let reader = reads
+        .authorize_event_stream(&context("reader"), Some("selected-credential"), &agent.id)
+        .await
+        .unwrap();
+    share(&store, Some(share_record)).await;
+    let owner = reads
+        .authorize_event_stream(&context("owner"), None, &agent.id)
+        .await
+        .unwrap();
+
+    let access = Arc::new(FailingSnapshots {
+        inner: store.clone(),
+        errors: Mutex::new(VecDeque::from([Unavailable])),
+        reads: AtomicUsize::new(0),
+    });
+    let commands = AgentCommandService::new(
+        store,
+        Arc::new(ResourceAccessService::new(
+            access.clone(),
+            authority.clone(),
+        )),
+        authority,
+    );
+    let result = commands.response_for_stream(&owner, id).await.unwrap();
+    assert_eq!(result.command.receipt, receipt);
+    assert_eq!(access.reads.swap(0, Ordering::SeqCst), 2);
+
+    for (held, errors, expected, reads) in [
+        (&reader, vec![Unavailable], Conflict, 2),
+        (&owner, vec![Unavailable, Unavailable], Unavailable, 2),
+        (&owner, vec![Conflict], Conflict, 1),
+    ] {
+        *access.errors.lock().unwrap() = VecDeque::from(errors);
+        let err = commands.response_for_stream(held, id).await.unwrap_err();
+        assert!(matches!(
+            err,
+            CommandAdmissionError::Access(ResourceAccessError::Store(actual))
+                if actual == expected
+        ));
+        assert_eq!(access.reads.swap(0, Ordering::SeqCst), reads);
+    }
+}
 
 struct BufferedStore {
     inner: Arc<InMemorySandboxStore>,

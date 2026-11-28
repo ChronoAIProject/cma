@@ -15,7 +15,7 @@ pub struct ExactQuantity {
 }
 
 impl ExactQuantity {
-    pub(in crate::sandbox_metrics::measured_evidence) fn checked_ratio(&self) -> Option<Exact> {
+    pub(crate) fn checked_ratio(&self) -> Option<Ratio<BigUint>> {
         fn decimal(value: &str) -> Option<BigUint> {
             if value.len() > 400
                 || value.is_empty()

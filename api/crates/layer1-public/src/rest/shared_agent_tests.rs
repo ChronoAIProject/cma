@@ -180,6 +180,57 @@ fn request(path: &str, subject: &str) -> Request<Body> {
 }
 
 #[tokio::test]
+async fn v1_event_page_keeps_the_cursor_and_final_message_for_incremental_text() {
+    let fixture = agents_tests::fixture().await;
+    let agent = agents_tests::seeded_agent("agt_incremental", AgentStatus::Ready, 7, None);
+    agents_tests::insert_agent(
+        &fixture.store,
+        agent,
+        vec![
+            AgentLogKind::TurnStarted {
+                turn_sequence: 3,
+                model: None,
+                origin_key: None,
+            },
+            AgentLogKind::OwnerMessage {
+                content: "Prompt".into(),
+            },
+            AgentLogKind::AgentMessageDelta {
+                offset: 0,
+                content: "Reply".into(),
+            },
+            AgentLogKind::AgentMessage {
+                content: "Reply".into(),
+            },
+            AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        ],
+    )
+    .await;
+    let (status, page) = json_response(
+        &fixture.router,
+        agents_tests::request(
+            axum::http::Method::GET,
+            "/api/v1/agents/agt_incremental/events?after=4&limit=2",
+            "owner-a",
+            None,
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["next"], 6);
+    let items = page["items"].as_array().unwrap();
+    assert_eq!(items.len(), 2);
+    assert_eq!(items[0]["seq"], 5);
+    assert_eq!(items[0]["kind"], json!({"type":"access_redacted"}));
+    assert_eq!(items[1]["seq"], 6);
+    assert_eq!(
+        items[1]["kind"],
+        json!({"type":"agent_message","content":"Reply"})
+    );
+}
+
+#[tokio::test]
 async fn owner_json_is_unchanged_and_shared_documents_contain_only_authorized_fields() {
     use layer2_core::sandbox::store::AgentLogStore;
     let (fixture, _, _, _) = fixture(Reply::Member).await;

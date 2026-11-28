@@ -10,7 +10,7 @@ module PublicTree
     web/Dockerfile
     api/crates/cma/Dockerfile
     api/crates/cmaeg/Dockerfile
-    api/crates/cma-image-manager/Dockerfile
+    api/crates/cma-journey-probe/Dockerfile
     api/crates/layer4-runtime/Dockerfile
   ].freeze
 

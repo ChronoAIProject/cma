@@ -7,6 +7,194 @@ use mongodb::{
 
 use super::*;
 
+#[path = "mongo_pre_validation_tests.rs"]
+mod mongo_pre_validation_tests;
+
+#[tokio::test]
+#[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
+async fn invalid_covered_lifecycle_submission_settles_before_the_sweeper() {
+    use axum::{body::Body, http::Request, Extension};
+    use contract::AuthorizedLookup;
+    use mongo_lifecycle_route_tests::{call, routes};
+
+    let (mut store, reader, today) = fixture().await;
+    let owner = SubjectId::new("owner");
+    const BODY: &str = r#"{"name":""}"#;
+    for terminal_settlement in [false, true] {
+        store.config.terminal_settlement = terminal_settlement;
+        let (app, _, _workers_held) = routes(&store).await;
+        let lookup = contract::router(Arc::new(reader.clone()))
+            .layer(Extension(AuthorizedLookup(owner.clone())));
+        let nonce = if terminal_settlement { "a" } else { "b" }.repeat(32);
+        let digest = contract::wire_digest(BODY.as_bytes());
+        let epoch = &store.config.epoch;
+        let path = Operation::AgentBootstrap.path();
+        let binding = contract::hash_fields(&[
+            "cma-creation-key-v1",
+            epoch,
+            &today.to_string(),
+            &nonce,
+            owner.as_str(),
+            store.deployment(),
+            "POST",
+            path,
+            &digest,
+        ]);
+        let key = format!("cma1.{epoch}.{today}.{nonce}.{binding}");
+        let submit = || {
+            Request::post(path)
+                .header("content-type", "application/json")
+                .header("Idempotency-Key", &key)
+                .body(Body::from(BODY))
+                .unwrap()
+        };
+        let lookup_request = || {
+            Request::post(contract::LOOKUP_PATH)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "version": 1,
+                        "deployment": store.deployment(),
+                        "method": "POST",
+                        "path": path,
+                        "idempotency_key": key,
+                        "fingerprint": {"algorithm": "nyxid-wire-v1", "digest": digest},
+                    })
+                    .to_string(),
+                ))
+                .unwrap()
+        };
+        call(&app, submit(), StatusCode::UNPROCESSABLE_ENTITY).await;
+        let first = call(&lookup, lookup_request(), StatusCode::OK).await;
+        assert_eq!(first["result"]["operation_id"], serde_json::Value::Null);
+        if terminal_settlement {
+            assert_eq!(first["result"]["kind"], "refused");
+            assert_eq!(first["result"]["code"], "creation_failed");
+            assert!(contract::lower_hex(
+                first["result"]["proof_id"].as_str().unwrap(),
+                64
+            ));
+        } else {
+            assert_eq!(first["result"]["kind"], "in_progress");
+        }
+        call(&app, submit(), StatusCode::CONFLICT).await;
+        assert_eq!(call(&lookup, lookup_request(), StatusCode::OK).await, first);
+    }
+    for collection in [
+        "sandboxes",
+        super::super::super::agent_lifecycle_operations::COLLECTION,
+    ] {
+        assert_eq!(
+            store
+                .database
+                .collection::<Document>(collection)
+                .count_documents(doc! {"owner":owner.as_str()})
+                .await
+                .unwrap(),
+            0,
+        );
+    }
+    store.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
+async fn rotated_reader_retains_terminal_and_closed_window_proofs() {
+    let (store, mut rotated, today) = fixture().await;
+    let owner = SubjectId::new("owner");
+    let request = query(
+        &store,
+        &owner,
+        Operation::AgentBootstrap,
+        today,
+        &"a".repeat(32),
+    );
+    let original = identity(&store, &owner, &request);
+    let Begin::Acquired(fence) = store.begin(&original).await.unwrap() else {
+        panic!("expected original submission fence");
+    };
+    rotated.config.epoch = "f".repeat(32);
+    let unknown = Outcome::Unknown {
+        reason: UnknownReason::CoverageUnavailable,
+    };
+    assert_eq!(rotated.lookup(&original, &request).await.unwrap(), unknown);
+    store
+        .records
+        .update_one(
+            doc! {"_id":&fence.record_id},
+            doc! {"$set":{"lease_until":DateTime::from_millis(0)}},
+        )
+        .await
+        .unwrap();
+    store.settle_expired_unlinked().await.unwrap();
+    let terminal = store.lookup(&original, &request).await.unwrap();
+    assert!(matches!(
+        terminal,
+        Outcome::Refused {
+            code: RefusalCode::CreationExpired,
+            ..
+        }
+    ));
+    assert_eq!(rotated.lookup(&original, &request).await.unwrap(), terminal);
+    assert!(matches!(
+        rotated.begin(&original).await.unwrap(),
+        Begin::Closed
+    ));
+
+    let mut missing = query(
+        &store,
+        &owner,
+        Operation::AgentBootstrap,
+        today - 2,
+        &"b".repeat(32),
+    );
+    let identity_for_miss = identity(&store, &owner, &missing);
+    assert_eq!(
+        rotated.lookup(&identity_for_miss, &missing).await.unwrap(),
+        unknown
+    );
+    store.close_elapsed_days().await.unwrap();
+    let closed_miss = store.lookup(&identity_for_miss, &missing).await.unwrap();
+    assert!(matches!(closed_miss, Outcome::NeverReceived { .. }));
+    assert_eq!(
+        rotated.lookup(&identity_for_miss, &missing).await.unwrap(),
+        closed_miss
+    );
+    assert!(matches!(
+        store.begin(&identity_for_miss).await.unwrap(),
+        Begin::Closed
+    ));
+
+    let before_coverage = query(
+        &store,
+        &owner,
+        Operation::AgentBootstrap,
+        today - 4,
+        &"b".repeat(32),
+    );
+    assert_eq!(
+        rotated
+            .lookup(
+                &identity(&store, &owner, &before_coverage),
+                &before_coverage
+            )
+            .await
+            .unwrap(),
+        unknown
+    );
+    missing.idempotency_key = "uncovered-opaque-fixture".into();
+    assert_eq!(
+        rotated
+            .lookup(&identity(&rotated, &owner, &missing), &missing)
+            .await
+            .unwrap(),
+        Outcome::Unknown {
+            reason: UnknownReason::NoDurableEvidence
+        }
+    );
+    store.database.drop().await.unwrap();
+}
+
 #[tokio::test]
 #[ignore = "requires disposable CHRONO_TEST_MONGODB_URI"]
 async fn closed_miss_uses_one_read_only_snapshot_with_point_reads() {

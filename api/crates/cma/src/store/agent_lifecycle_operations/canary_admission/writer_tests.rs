@@ -463,11 +463,48 @@ async fn desktop_canary_on_released_image_does_not_keep_the_ordinary_pool_active
     ordinary.resolved_image = Some(descriptor.image.uri.clone());
 
     store.redeem_canary(&database, request).await.unwrap();
-    assert!(!protects_pool(&database, false, &descriptor.image.uri)
+    assert!(
+        !protects_pool(&database, false, &descriptor.image.uri, None)
+            .await
+            .unwrap()
+    );
+    let mut machine = ordinary.clone();
+    machine.request.machine_included = true;
+    let pinned = layer3_adapter::SandboxCapacity {
+        cpu_millis: 1000,
+        memory_mib: 4096,
+    };
+    let obsolete = layer3_adapter::SandboxCapacity {
+        cpu_millis: 2000,
+        memory_mib: 8192,
+    };
+    machine.capacity = Some(pinned);
+    store
+        .create(&owner, "machine-pinned", machine.clone())
         .await
-        .unwrap());
+        .unwrap();
+    assert!(
+        protects_pool(&database, true, &descriptor.image.uri, Some(pinned))
+            .await
+            .unwrap()
+    );
+    assert!(
+        !protects_pool(&database, true, &descriptor.image.uri, Some(obsolete))
+            .await
+            .unwrap()
+    );
+    machine.capacity = None;
+    store
+        .create(&owner, "machine-legacy", machine)
+        .await
+        .unwrap();
+    assert!(
+        protects_pool(&database, true, &descriptor.image.uri, Some(obsolete))
+            .await
+            .unwrap()
+    );
     store.create(&owner, "ordinary", ordinary).await.unwrap();
-    assert!(protects_pool(&database, false, &descriptor.image.uri)
+    assert!(protects_pool(&database, false, &descriptor.image.uri, None)
         .await
         .unwrap());
     database.drop().await.unwrap();

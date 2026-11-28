@@ -376,4 +376,4 @@ mod write;
 
 #[cfg(test)]
 #[path = "acp_tests.rs"]
-mod tests;
+pub(super) mod tests;

@@ -122,6 +122,19 @@ async fn missing_drain_qualification() {
 
 async fn disabled_absent() {
     let fixture = Fixture::new(false, None).await;
+    for name in crate::store::sandbox_usage_export::COLLECTIONS {
+        let denied = fixture
+            .runtime
+            .collection::<Document>(name)
+            .find_one(doc! {})
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            denied.kind.as_ref(),
+            mongodb::error::ErrorKind::Command(error) if error.code == 13
+        ));
+    }
+    fixture.commands.lock().unwrap().clear();
     crate::store::isolation::replicas::verify(
         &fixture.runtime,
         cma_service_auth::mongodb_authority::MongoAuthorityMode::Isolated,
@@ -136,9 +149,19 @@ async fn disabled_absent() {
     assert_eq!(deleted.get("users"), Some(&1));
     assert_eq!(count(&fixture.admin, "users").await, 1);
     fixture.absent().await;
+    let names = fixture.admin.list_collection_names().await.unwrap();
+    for name in crate::store::sandbox_usage_export::COLLECTIONS {
+        assert!(!names.iter().any(|present| present == name));
+    }
     {
         let commands = fixture.commands.lock().unwrap();
         for command in commands.iter() {
+            for name in crate::store::sandbox_usage_export::COLLECTIONS {
+                assert!(
+                    !command.to_string().contains(name),
+                    "retained usage namespace received an erasure command: {command}"
+                );
+            }
             for operation in [
                 "createIndexes",
                 "create",

@@ -1,5 +1,6 @@
 //! Durable no-resend custody for a managed credential obligation.
 use super::*;
+use layer2_core::ServiceId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -29,6 +30,8 @@ pub(crate) struct CredentialIssuance {
     pub owner: SubjectId,
     pub generation: u64,
     pub identity: IssuanceIdentity,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_authority: Option<layer2_core::sandbox::RetirementAuthorityVersion>,
     pub original_holder: String,
     pub original_fence: u64,
     pub created_at: String,
@@ -152,12 +155,31 @@ impl ManagedSandboxCredentials {
             })?;
             let (prepared, mut route) = self
                 .issuer
-                .prepare_github_mint(
+                .prepare_mint_with_connection(
                     &operation_id,
                     &sandbox.owner,
                     token.expose(),
                     &services,
-                    &proof,
+                    (&ServiceId::new(crate::trigger::GITHUB_SERVICE), proof.id()),
+                    |other_services| {
+                        let route = layer3_adapter::GithubCredentialRoute {
+                            service_id: proof.id().into(),
+                            catalog_id: proof.catalog_id().into(),
+                            repository_scope: None,
+                            other_services: other_services
+                                .into_iter()
+                                .map(|service| layer3_adapter::PlatformServiceRoute {
+                                    service_id: service.id,
+                                    slug: service.slug,
+                                    catalog_id: service.catalog_id,
+                                })
+                                .collect(),
+                        };
+                        route
+                            .is_valid()
+                            .then_some(route)
+                            .ok_or(KeyIssuerError::UnexpectedAuthority)
+                    },
                 )
                 .await
                 .map_err(classify_issuer)?;
@@ -191,6 +213,7 @@ impl ManagedSandboxCredentials {
                 .map_err(classify_issuer)?;
             (prepared, None)
         };
+        let owner_authority = self.issuance_owner_authority(sandbox, &token).await;
         let intent = CredentialIssuance {
             operation_id,
             sandbox_id: sandbox.id.clone(),
@@ -200,6 +223,7 @@ impl ManagedSandboxCredentials {
                 provider_identity: prepared.provider_identity().into(),
                 request_digest: prepared.request_digest().into(),
             },
+            owner_authority,
             original_holder: original.holder.clone(),
             original_fence: original.fence,
             created_at: rfc3339_at(now),
@@ -216,8 +240,9 @@ impl ManagedSandboxCredentials {
         }
         // An uncertain intent acknowledgement intentionally never reaches this
         // consuming call. Losing availability here preserves no-resend custody.
-        let minted = prepared.dispatch().await.map_err(|_| {
+        let minted = prepared.dispatch().await.map_err(|failure| {
             tracing::warn!(sandbox_id = %sandbox.id, generation,
+                phase = failure.phase, http_status = failure.http_status,
                 "credential dispatch outcome is uncertain; automatic mint retry refused");
             CredentialError::Uncertain
         })?;

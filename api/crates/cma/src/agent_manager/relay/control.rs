@@ -75,16 +75,25 @@ async fn admission(State(state): State<Control>, request: Request, next: Next) -
         .extensions()
         .get::<crate::startup::Admission>()
         .cloned();
+    let started = std::time::Instant::now();
     let result = match admission {
         Some(admission) => admission.drain().await,
         None => state.manager.drain().await,
     };
     match result {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(()) => {
+            tracing::info!(
+                status = 204_u16,
+                elapsed_ms = started.elapsed().as_millis(),
+                "local Agent Manager drain completed"
+            );
+            StatusCode::NO_CONTENT.into_response()
+        }
         Err(_) => {
             tracing::warn!(
                 status = 503_u16,
                 reason = "incomplete_drain",
+                elapsed_ms = started.elapsed().as_millis(),
                 "local Agent Manager drain refused"
             );
             StatusCode::SERVICE_UNAVAILABLE.into_response()

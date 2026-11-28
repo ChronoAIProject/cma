@@ -5,9 +5,16 @@ pub(crate) struct MemoryCredentials {
     pub(super) revoke_failure_ids: Mutex<std::collections::BTreeSet<String>>,
     pub(super) census_failure: Mutex<Option<CredentialError>>,
     pub(super) settlement_failure: Mutex<Option<CredentialError>>,
+    pub(super) late_settlement_failure: Mutex<Option<CredentialError>>,
     pub(super) materials: Mutex<BTreeMap<(SandboxId, u64), CredentialMaterial>>,
     pub(super) issue_failures: Mutex<VecDeque<CredentialError>>,
     pub(super) revoke_failures: AtomicUsize,
+    pub(super) retirement_authority:
+        Mutex<Option<layer2_core::sandbox::RetirementAuthorityVersion>>,
+    pub(super) retirement_issued_authority:
+        Mutex<Option<layer2_core::sandbox::RetirementAuthorityVersion>>,
+    pub(super) require_retirement_authority: AtomicBool,
+    pub(super) lose_retirement_reply: AtomicBool,
     pub(super) forget_failures: AtomicUsize,
     pub(super) expiry_seconds: AtomicU64,
     pub(super) actions: ActionLog,
@@ -20,9 +27,14 @@ impl MemoryCredentials {
             revoke_failure_ids: Default::default(),
             census_failure: Default::default(),
             settlement_failure: Default::default(),
+            late_settlement_failure: Default::default(),
             materials: Mutex::new(BTreeMap::new()),
             issue_failures: Mutex::new(VecDeque::new()),
             revoke_failures: AtomicUsize::new(0),
+            retirement_authority: Default::default(),
+            retirement_issued_authority: Default::default(),
+            require_retirement_authority: AtomicBool::new(false),
+            lose_retirement_reply: AtomicBool::new(false),
             forget_failures: AtomicUsize::new(0),
             expiry_seconds: AtomicU64::new(30 * 24 * 60 * 60),
             actions,
@@ -66,6 +78,11 @@ impl MemoryCredentials {
 
 #[async_trait::async_trait]
 impl SandboxCredentialController for MemoryCredentials {
+    fn uses_retirement_reauthorization(&self, sandbox: &Sandbox) -> bool {
+        self.require_retirement_authority.load(Ordering::SeqCst)
+            && sandbox.allows_retirement_credential_recovery()
+    }
+
     async fn issue(
         &self,
         sandbox: &Sandbox,
@@ -165,10 +182,42 @@ impl SandboxCredentialController for MemoryCredentials {
 
     async fn revoke(
         &self,
-        _sandbox: &Sandbox,
+        sandbox: &Sandbox,
         provider_key_id: &str,
     ) -> Result<(), CredentialError> {
-        self.actions.push(format!("revoke:{provider_key_id}"));
+        if self.uses_retirement_reauthorization(sandbox) {
+            let current = *self.retirement_authority.lock().unwrap();
+            if current.is_none()
+                || sandbox
+                    .work
+                    .retirement_credential_recovery
+                    .is_some_and(|recovery| recovery.admitted != current)
+            {
+                let Some(previous) = *self.retirement_issued_authority.lock().unwrap() else {
+                    return Err(CredentialError::Security(
+                        "fixture has no issuance scope".into(),
+                    ));
+                };
+                return Err(CredentialError::OwnerReauthorization {
+                    previous,
+                    missing: current.is_none(),
+                });
+            }
+            self.actions.push(format!("revoke:{provider_key_id}"));
+            if self.lose_retirement_reply.swap(false, Ordering::SeqCst) {
+                self.live_keys.lock().unwrap().remove(provider_key_id);
+                return Err(CredentialError::Unavailable(
+                    "fixture lost provider reply".into(),
+                ));
+            }
+            if !self.live_keys.lock().unwrap().contains(provider_key_id) {
+                return Err(CredentialError::Security(
+                    "fixture provider returned 404".into(),
+                ));
+            }
+        } else {
+            self.actions.push(format!("revoke:{provider_key_id}"));
+        }
         if self
             .revoke_failure_ids
             .lock()
@@ -194,11 +243,22 @@ impl SandboxCredentialController for MemoryCredentials {
             Ok(())
         }
     }
-    async fn settle_revocations(&self, _: &Sandbox) -> Result<(), CredentialError> {
-        match self.settlement_failure.lock().unwrap().clone() {
-            Some(error) => Err(error),
-            None => Ok(()),
+    async fn retirement_authority_version(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Option<layer2_core::sandbox::RetirementAuthorityVersion>, CredentialError> {
+        Ok(*self.retirement_authority.lock().unwrap())
+    }
+    async fn settle_revocations(&self, sandbox: &Sandbox) -> Result<(), CredentialError> {
+        if let Some(error) = self.settlement_failure.lock().unwrap().clone() {
+            return Err(error);
         }
+        if sandbox.credential.current.is_none() {
+            if let Some(error) = self.late_settlement_failure.lock().unwrap().clone() {
+                return Err(error);
+            }
+        }
+        Ok(())
     }
 }
 

@@ -41,6 +41,12 @@ impl ProviderHostedControlTransport {
                         .with_error(error)
                 })?;
             }
+            if endpoint.native_binding().is_some_and(|(runtime, _)| {
+                crate::owner_protocol::staging_inspection_refused(runtime)
+            }) {
+                tracing::info!("Staging fixture refused bound runtime inspection");
+                return Err(OwnershipFailure::http(Phase::Challenge, 503).into());
+            }
             challenge_started.store(true, std::sync::atomic::Ordering::Release);
             let owner = authority.owner();
             let (challenge, challenge_status): (OwnerChallenge, _) = self

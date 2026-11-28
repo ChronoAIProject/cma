@@ -238,6 +238,7 @@ fn image_error(error: AgentLifecycleProvisioningError) -> BotError {
         | AgentLifecycleProvisioningError::Conflict(error) => BotError::Invalid(error),
         AgentLifecycleProvisioningError::SandboxLimitReached { .. }
         | AgentLifecycleProvisioningError::AdmissionPaused
+        | AgentLifecycleProvisioningError::HomeCapacity
         | AgentLifecycleProvisioningError::ConnectionRequired { .. }
         | AgentLifecycleProvisioningError::RepositoryAccessRequired { .. }
         | AgentLifecycleProvisioningError::Unavailable => BotError::Unavailable,

@@ -110,7 +110,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
             socket,
             &request.target.agent_id,
             proof.cwd,
-            (settings, None, true),
+            (settings, None, (true, None)),
             Some(request.target.conversation_id.clone()),
             match &proof.confirmation.native_state {
                 crate::agent_capacity_recovery::ConfirmedAgentState::Idle => None,
@@ -237,6 +237,39 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         response
     }
 
+    async fn exchange_bound_file_read(
+        &self,
+        handle: &RuntimeHandle,
+        pod: &crate::agent_sandbox::PodBinding,
+        request_sha256: &str,
+        request: crate::AgentFileReadRequest,
+    ) -> crate::Result<Option<ResponseFrame>> {
+        if self.native_transport == NativeRuntimeTransport::Direct {
+            return Ok(None);
+        }
+        let endpoint = crate::file_read_diagnostics::transport(
+            crate::wire::WireOperation::ReadAgentFile,
+            crate::file_read_diagnostics::TransportPhase::Endpoint,
+            self.endpoint(handle),
+        )
+        .await?;
+        if !endpoint
+            .native_binding()
+            .is_some_and(|(runtime, observed)| runtime == handle && observed == pod)
+            || !endpoint.native_identity().is_some_and(|identity| {
+                identity.sandbox_id.as_deref() == Some(request.sandbox_id.as_str())
+                    && identity.request_sha256.as_deref() == Some(request_sha256)
+            })
+        {
+            return Err(AdapterError::Rejected(
+                "runtime file read endpoint binding changed".into(),
+            ));
+        }
+        self.control_bound_file_read(&endpoint, request)
+            .await
+            .map(Some)
+    }
+
     async fn verify_checkpoint_hold(
         &self,
         handle: &RuntimeHandle,
@@ -306,11 +339,20 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         };
         self.pin_output_policy(&mut settings);
         let recovered_prompt = settings.recovered_prompt.take();
+        let open_reply_loss = if resume_conversation.is_none() && recovered_prompt.is_none() {
+            self.open_reply_loss_for(handle).await
+        } else {
+            None
+        };
         let opened = Bridge::open_with_relay_policy(
             socket,
             launch.request.agent_id.as_str(),
             launch.request.cwd.clone(),
-            (settings, subscription, self.bounded_update_relay),
+            (
+                settings,
+                subscription,
+                (self.bounded_update_relay, open_reply_loss),
+            ),
             resume_conversation,
             recovered_prompt,
             updates,

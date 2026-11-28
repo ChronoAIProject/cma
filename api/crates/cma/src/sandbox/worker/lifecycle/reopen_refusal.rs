@@ -11,6 +11,30 @@ use super::reopen_output::output_refused;
 use super::SandboxWorker;
 
 impl SandboxWorker {
+    pub(super) fn staging_runtime_update_refusal(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Option<WorkerFailure> {
+        if self.config.park_runtime_update_sandbox.as_ref() != Some(&sandbox.id)
+            || !sandbox.supports_retained_runtime_update()
+        {
+            return None;
+        }
+        let request = sandbox.runtime_update_request()?;
+        let binding = sandbox.runtime.as_ref()?;
+        // The admitted update has restored this home. Park before reopening an Agent.
+        (request.started_at.is_some()
+            && request.completed_at.is_none()
+            && request.retained_transition.is_none()
+            && sandbox.admitted_runtime_update_target() == Some(request.target_version.as_str())
+            && binding.runtime_version == request.target_version)
+            .then(|| {
+                WorkerFailure::terminal_validation(
+                    "staging fixture refused the admitted runtime update",
+                )
+            })
+    }
+
     pub(super) fn reopen_output_refusal_enabled(&self, sandbox: &Sandbox) -> bool {
         self.reopen_output_refusal_enabled_for(sandbox, self.config.release().as_ref())
     }

@@ -1,9 +1,13 @@
 //! Retained source custody and bounded projection, independent of transport.
 mod capture;
+mod completeness;
+pub(crate) use completeness::{CompletenessAttempt, CompletenessReceipt, CompletenessResult};
 mod delivery;
 mod producer;
 pub(crate) use delivery::{DeliveryAttempt, DeliveryOutcome};
 mod inventory;
+mod measured;
+pub(crate) use measured::{retain_binding_bridge, run_repair_command};
 mod outbox;
 pub(crate) use outbox::FrozenUsageEvent;
 mod payload;

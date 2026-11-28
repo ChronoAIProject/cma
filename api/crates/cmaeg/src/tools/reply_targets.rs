@@ -1,7 +1,7 @@
 //! Provider-neutral delayed replies to an authenticated event's original destination.
 mod fence;
 #[cfg(test)]
-mod native_fixture;
+pub(crate) mod native_fixture;
 #[cfg(test)]
 mod native_tests;
 pub(crate) mod receipts;
@@ -203,6 +203,34 @@ impl ToolsState {
         store.finish(claim, &result).await?;
         Ok(result)
     }
+    pub(crate) async fn reply_accepted_answer_to_target(
+        &self,
+        caller: AgentCaller,
+        reference: &ReplyTargetRef,
+        answer: crate::turns::routed::AcceptedAnswerIdentity,
+        message: OutboundMessage,
+    ) -> Result<IntentReceipt, Problem> {
+        validate(&message)?;
+        if message.native_media_update.is_some() || message.clear_native_attachments {
+            return Err(invalid("answer_delivery_requires_a_new_message"));
+        }
+        let target = reference
+            .open(&self.keys, now())
+            .map_err(|error| match error {
+                OpenError::Expired => {
+                    Problem::new(ProblemCode::EventRefExpired, 410, "reply_target_expired")
+                }
+                _ => invalid("reply_target_invalid"),
+            })?
+            .payload;
+        self.authorize_target(caller, &target).await?;
+        let routed = self.routed_replies.as_ref().ok_or_else(unavailable)?;
+        routed
+            .reply_delayed_answer(caller, &target, answer, message)
+            .await
+            .map_err(super::routed_reply_error)
+    }
+
     async fn authorize_target(
         &self,
         caller: AgentCaller,

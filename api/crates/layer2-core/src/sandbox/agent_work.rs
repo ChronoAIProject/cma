@@ -239,6 +239,23 @@ impl AgentWorkState {
         if holder.trim().is_empty() || expires_at.as_str() <= now || !self.is_due(now) {
             return Err(SandboxModelError::invalid_value("agent.work.lease"));
         }
+        // These steps have no provider effects. After an interrupted publication,
+        // a fresh claim can safely repeat the parent read or the local fence.
+        let expires_at = if matches!(
+            self.step,
+            AgentWorkStep::WaitForWorkspace | AgentWorkStep::FenceInteraction
+        ) {
+            use std::time::{Duration, SystemTime};
+            const PUBLICATION_ONLY_LEASE: Duration = Duration::from_secs(30);
+            let claimed_at = crate::seconds_from_rfc3339(now)
+                .ok_or_else(|| SandboxModelError::invalid_value("agent.work.lease"))?;
+            let limit = crate::rfc3339_at(
+                SystemTime::UNIX_EPOCH + Duration::from_secs(claimed_at) + PUBLICATION_ONLY_LEASE,
+            );
+            expires_at.min(limit)
+        } else {
+            expires_at
+        };
         let fence = self.next_fence;
         self.next_fence = fence
             .checked_add(1)

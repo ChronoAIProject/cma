@@ -19,9 +19,11 @@ export const warmPoolView = object({
   cpu_millis: integer,
   memory_mib: integer,
   target_replicas: integer,
+  provider_target_replicas: optional(integer),
   ready_replicas: nullable(integer),
   observed: boolean,
   status: enumeration('pending', 'ready', 'disabled', 'unavailable'),
+  retirement_status: optional(enumeration('pending', 'drained')),
   resource_name: nullable(text),
   error: nullable(text),
   /** The deployment-seeded shared desktop pool; older servers omit it. */

@@ -167,9 +167,6 @@ describe('complete mutation fixtures', () => {
     const fixture = fixtureDocument();
     for (const mutate of [
       (value: typeof fixture.document) => {
-        value.publicJourneys.owners.owner!.image.reference = 'image:latest';
-      },
-      (value: typeof fixture.document) => {
         value.publicJourneys.repository.reference = 'main';
       },
       (value: typeof fixture.document) => {

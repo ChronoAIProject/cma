@@ -82,6 +82,7 @@ impl AgentFileService {
                     sandbox_id: sandbox.id.to_string(),
                     runtime_generation: generation(sandbox)?,
                     boot_id,
+                    home_identity: None,
                     path: path.into(),
                     max_bytes,
                 })

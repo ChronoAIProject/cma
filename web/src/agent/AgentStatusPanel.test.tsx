@@ -3,8 +3,13 @@ import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL } from '../test/agent';
 import { sandboxFixture } from '../test/hierarchy';
 import { AgentStatusPanel } from './AgentStatusPanel';
+import { TurnMascotContext } from './turnVisual';
 
-vi.mock('../character/CharacterAvatar', () => ({ CharacterAvatar: () => null }));
+vi.mock('../character/CharacterAvatar', () => ({
+  CharacterAvatar: ({ pose }: { pose: string }) => (
+    <span className="character-avatar" data-pose={pose} />
+  ),
+}));
 const preparing = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
 
 it('shows preparing until a real ready snapshot arrives, with recorded details collapsed', () => {
@@ -83,11 +88,20 @@ it('keeps working presentation free of invented steps and distinguishes incomple
   };
   const { container, rerender } = render(<AgentStatusPanel {...props} historyIncomplete={false} />);
   expect(screen.getByRole('heading', { name: 'Working on it' })).toBeVisible();
+  expect(container.querySelector('.character-avatar')).toHaveAttribute('data-pose', 'working');
   expect(container.querySelector('ol')).toBeNull();
   expect(container.querySelector('time')).toBeNull();
+  rerender(
+    <TurnMascotContext value={true}>
+      <AgentStatusPanel {...props} historyIncomplete={false} />
+    </TurnMascotContext>,
+  );
+  expect(screen.getByRole('heading', { name: 'Working on it' })).toBeVisible();
+  expect(container.querySelector('.character-avatar')).toBeNull();
   rerender(<AgentStatusPanel {...props} historyIncomplete />);
   expect(screen.queryByRole('heading', { name: 'Working on it' })).not.toBeInTheDocument();
   expect(screen.getByText('Last confirmed: Working')).toBeVisible();
+  expect(container.querySelector('.character-avatar')).toHaveAttribute('data-pose', 'thinking');
 });
 
 it('preserves the real setup failure and remediation behind details', () => {

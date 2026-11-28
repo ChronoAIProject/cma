@@ -10,9 +10,9 @@ import sys
 import time
 
 import selection
-from selection import analyze_summaries, changed_paths, check_sha, recipes, snapshot, summarize
+from selection import analyze_comparison, check_sha, recipes, snapshot, summarize
 from git_comparison import comparison_details
-from image_inputs import NAMES, validate_recipe_sources
+from image_inputs import NAMES, historical_recipe_model, validate_recipe_sources
 from selection_cache import SelectionCache, canonical, fingerprint
 from uncertainty import conservative
 
@@ -21,14 +21,14 @@ def summarize_revision(root, revision, fallback, cache, context):
     inputs = cache.load_inputs(revision, context) if cache else None
     with snapshot(root, revision) as tree:
         if inputs is None:
-            current = summarize(tree, fallback)
+            current = summarize(tree, fallback, historical=True)
             if cache:
                 cache.save_inputs(revision, context, current[1])
             return current
         # Cached maps replace syntax/input analysis only. Ownership and exact
         # reviewed Dockerfile hashes are still validated from immutable source.
         graph, manifest = selection.workspace(tree), recipes(tree, fallback)
-        validate_recipe_sources(tree, manifest)
+        validate_recipe_sources(tree, historical_recipe_model(tree, manifest))
         return graph, inputs, manifest
 
 
@@ -92,6 +92,7 @@ def determine_many(root, revisions, cache=None, parallel=None, deadline=None):
     if len(set(check_sha(revision) for revision in revisions)) != len(revisions):
         raise ValueError('duplicate comparison identity')
     fallback = recipes(root)
+    validate_recipe_sources(root, fallback)
     # git archive can omit a tracked manifest via export-ignore. Bind both
     # kinds of records to the fallback actually available to these snapshots.
     context = hashlib.sha256(canonical(fallback)).hexdigest() if cache else None
@@ -119,7 +120,7 @@ def determine_many(root, revisions, cache=None, parallel=None, deadline=None):
             continue  # Its snapshot was not reached before the deadline.
         current = summaries[head]
         result = (conservative(NAMES, reason, current[0]) if reason else
-                  analyze_summaries(changed_paths(root, base, head), [summaries[base], current]))
+                  analyze_comparison(root, base, head, [summaries[base], current]))
         result.update(base=base, head=head)
         results.append(result)
         if cache is not None:

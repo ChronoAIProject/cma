@@ -12,6 +12,11 @@ use super::{require_use, AgentRoutesState};
 use crate::rest::agent_lifecycle::{
     AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioningError,
 };
+use crate::rest::creation_outcomes::{
+    is_covered_key,
+    routes::{begin_submission, problem},
+    Algorithm, Identity, Operation, RefusalCode, ValidationRefusal,
+};
 use crate::rest::idempotency::{IdempotencyKey, RequestBody};
 use crate::rest::BodyProblem;
 use crate::{AuthenticatedCaller, DelegatedCredential};
@@ -61,23 +66,52 @@ pub(crate) async fn create_lifecycle(
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
-    if let Err(error) = request.validate_template() {
-        return error.into_response();
-    }
-    if request.desktop && request.initial_message.is_none() {
-        return AgentLifecycleProvisioningError::Invalid(
-            "desktop creation requires initial_message".into(),
-        )
-        .into_response();
-    }
-    use crate::rest::creation_outcomes::{
-        is_covered_key,
-        routes::{begin_submission, problem},
-        Operation, RefusalCode,
-    };
     let backend = creation.as_ref().map(|Extension(backend)| backend.as_ref());
     let new_sandbox = request.sandbox_id.is_none() && request.workspace_id.is_none();
     let covered = is_covered_key(&key);
+    let validation_error = request.validate_template().err().or_else(|| {
+        (request.desktop && request.initial_message.is_none()).then(|| {
+            AgentLifecycleProvisioningError::Invalid(
+                "desktop creation requires initial_message".into(),
+            )
+        })
+    });
+    if let Some(error) = validation_error {
+        if let Some(backend) = backend.filter(|backend| {
+            new_sandbox
+                && covered
+                && caller.authorization.allows(Capability::CreateSandbox)
+                && backend.validation_settlement_enabled()
+        }) {
+            let refusal = match &error {
+                AgentLifecycleProvisioningError::Template(error) => {
+                    ValidationRefusal::TaskTemplate {
+                        code: error.code,
+                        field: error.field,
+                    }
+                }
+                AgentLifecycleProvisioningError::Invalid(_) => {
+                    ValidationRefusal::DesktopInitialMessageRequired
+                }
+                _ => return error.into_response(),
+            };
+            let Some(digest) = wire_digest.as_deref() else {
+                return problem(StatusCode::BAD_REQUEST);
+            };
+            let identity = Identity {
+                owner: &caller.subject,
+                deployment: backend.deployment(),
+                operation: Operation::AgentBootstrap,
+                key: &key,
+                algorithm: Algorithm::NyxidWire,
+                wire_digest: digest,
+            };
+            if let Err(status) = backend.refuse_validation(&identity, refusal).await {
+                return problem(status);
+            }
+        }
+        return error.into_response();
+    }
     if covered && !new_sandbox {
         return problem(StatusCode::BAD_REQUEST);
     }
@@ -117,19 +151,30 @@ pub(crate) async fn create_lifecycle(
                 .await
         }
     };
-    if let (
-        Err(AgentLifecycleProvisioningError::SandboxLimitReached { .. }),
-        Some(backend),
-        Some(fence),
-    ) = (&result, backend, fence)
-    {
-        if !matches!(
-            backend
-                .refuse_direct(&caller.subject, &fence, RefusalCode::SandboxLimitReached)
-                .await,
-            Ok(true)
-        ) {
-            return problem(StatusCode::SERVICE_UNAVAILABLE);
+    if let (Err(error), Some(backend), Some(fence)) = (&result, backend, fence) {
+        let refusal = match error {
+            AgentLifecycleProvisioningError::SandboxLimitReached { .. } => {
+                Some(RefusalCode::SandboxLimitReached)
+            }
+            // These failures end admission. The proof-store CAS still requires
+            // an unlinked submission, so an operation that won admission keeps authority.
+            AgentLifecycleProvisioningError::Invalid(_)
+            | AgentLifecycleProvisioningError::DesktopUnsupported(_)
+            | AgentLifecycleProvisioningError::ImageAccessDenied
+            | AgentLifecycleProvisioningError::ImageSelectionUnsupported
+                if backend.terminal_settlement_enabled() =>
+            {
+                Some(RefusalCode::CreationFailed)
+            }
+            _ => None,
+        };
+        if let Some(code) = refusal {
+            if !matches!(
+                backend.refuse_direct(&caller.subject, &fence, code).await,
+                Ok(true)
+            ) {
+                return problem(StatusCode::SERVICE_UNAVAILABLE);
+            }
         }
     }
     result

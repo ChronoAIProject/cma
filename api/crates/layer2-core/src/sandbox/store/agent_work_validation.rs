@@ -1,7 +1,8 @@
 use super::agent_work_identity::{immutable_agent_fields_changed, validate_agent_delta};
+use crate::sandbox::agent_worktree_recovery::exact_recorded_worktree_debt;
 use crate::sandbox::{
     Agent, AgentStatus, AgentStopReason, AgentWorkStep, Sandbox, SandboxStatus, SandboxWorkStep,
-    Worktree,
+    Worktree, WorktreeStatus,
 };
 use crate::seconds_from_rfc3339;
 
@@ -76,13 +77,54 @@ pub fn validate_agent_work_mutation_with_sandbox(
         actual_last_seq,
         mutation,
         retiring_sandbox_process_is_absent(current, sandbox)
-            || retired_sandbox_cleanup_is_absent(current, sandbox),
+            || retired_sandbox_cleanup_is_absent(current, sandbox)
+            || retired_failed_worktree_cleanup_is_absent(current, current_worktree, sandbox),
     )
 }
 
 /// Completed retirement has removed the entire runtime, not just an Agent process.
 /// A stopped Agent may retain its interrupted turn as history; it cannot execute again.
 pub fn retired_sandbox_cleanup_is_absent(agent: &Agent, sandbox: &Sandbox) -> bool {
+    agent.work.cleanup_debt.is_empty() && retired_cleanup_parent_matches(agent, sandbox)
+}
+
+/// A released Sandbox home can settle the exact failed Worktree addition in its lineage.
+pub fn retired_failed_worktree_cleanup_is_absent(
+    agent: &Agent,
+    worktree: &Worktree,
+    sandbox: &Sandbox,
+) -> bool {
+    retired_cleanup_parent_matches(agent, sandbox)
+        && sandbox
+            .lifecycle
+            .home
+            .as_ref()
+            .is_some_and(|home| home.released)
+        && agent.status == AgentStatus::Failed
+        && matches!(agent.work.cleanup_debt.as_slice(), [debt] if exact_recorded_worktree_debt(debt, worktree))
+        && agent.work.receipts.is_empty()
+        && agent.work.warm_conversation_id.is_none()
+        && agent.ready_at.is_none()
+        && agent.conversation.conversation_id.is_none()
+        && agent.conversation.runtime_generation.is_none()
+        && agent.conversation.active_turn.is_none()
+        && agent.conversation.operation.is_none()
+        && worktree.id == agent.worktree_id
+        && worktree.workspace_id == agent.workspace_id
+        && worktree.sandbox_id == sandbox.id
+        && worktree.owner == agent.owner
+        && worktree.agent_id.as_ref() == Some(&agent.id)
+        && matches!(
+            (agent.work.step, worktree.status),
+            (AgentWorkStep::EnsureProcessClosed, WorktreeStatus::Failed)
+                | (
+                    AgentWorkStep::RemoveHome | AgentWorkStep::RemoveWorktree,
+                    WorktreeStatus::Removing
+                )
+        )
+}
+
+fn retired_cleanup_parent_matches(agent: &Agent, sandbox: &Sandbox) -> bool {
     matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed)
         && matches!(
             agent.work.step,
@@ -90,7 +132,6 @@ pub fn retired_sandbox_cleanup_is_absent(agent: &Agent, sandbox: &Sandbox) -> bo
                 | AgentWorkStep::RemoveHome
                 | AgentWorkStep::RemoveWorktree
         )
-        && agent.work.cleanup_debt.is_empty()
         && agent.conversation.queued_messages.is_empty()
         && agent.sandbox_id == sandbox.id
         && agent.owner == sandbox.owner
@@ -188,7 +229,7 @@ fn validate_mutation(
     if current.work.live_skills != mutation.agent.work.live_skills {
         return Err(SandboxStoreError::Conflict);
     }
-    validate_position(current, current_worktree)?;
+    validate_position(current, current_worktree, retired_process_absent)?;
     validate_histories(current, &mutation.agent, &mutation.appended_at)?;
     let kind = classify_publication(current, &mutation.agent)?;
     validate_work_delta(

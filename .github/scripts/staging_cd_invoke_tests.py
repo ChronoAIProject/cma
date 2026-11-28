@@ -368,7 +368,9 @@ class InvokeTests(unittest.TestCase):
         real_deploy = invoke.deploy
         for case, code in (("bound", 20), ("missing", 20), ("wrong-request", 20), ("unknown", 20),
                            ("trailing", 20), ("unsafe", 20), ("bad-result", 20), ("wrong-exit", 30),
-                           ("late-bound", 20), ("late-missing", 20), ("late-success", 0)):
+                           ("late-bound", 20), ("late-missing", 20), ("late-success", 0),
+                           ("dependency-changed", 20), ("dependency-unverified", 20),
+                           ("dependency-changed-after-write-failure", 20)):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 env = self.environment(root)
@@ -382,6 +384,12 @@ class InvokeTests(unittest.TestCase):
                     if case == "bad-result":
                         path.with_name("component-result.json").write_text("{}")
                     value = digest + " write-timeout recovery-ownership\n"
+                    if case == "dependency-changed":
+                        value = digest + " dependency-changed dependency-changed\n"
+                    if case == "dependency-unverified":
+                        value = digest + " acceptance dependency-unverified\n"
+                    if case == "dependency-changed-after-write-failure":
+                        value = digest + " write-response dependency-changed\n"
                     if case == "unknown":
                         value = value.replace("write-timeout", "private-output-canary")
                     if case == "trailing":
@@ -416,7 +424,19 @@ class InvokeTests(unittest.TestCase):
                             expected = "phase-budget recovery=unreported"
                         if case == "bad-result":
                             expected = "result recovery=unreported"
+                        if case == "dependency-changed":
+                            expected = "dependency-changed recovery=dependency-changed cause=operator"
+                        if case == "dependency-unverified":
+                            expected = "acceptance recovery=dependency-unverified cause=operator"
+                        if case == "dependency-changed-after-write-failure":
+                            expected = "write-response recovery=dependency-changed cause=operator"
                         self.assertIn("FAIL verification=" + expected, text)
+                if case.startswith("dependency-"):
+                    self.assertIn("withheld automatic rollback", output.getvalue())
+                    self.assertNotIn("left the candidate", output.getvalue())
+                    self.assertNotIn("installed candidate", output.getvalue())
+                    for text in (output.getvalue(), summary.read_text()):
+                        self.assertIn("Identify the serving revision", text)
 
     def test_verified_rollback_reports_only_an_allowlisted_release_token(self):
         from staging_cd_receipts import sha256

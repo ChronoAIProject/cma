@@ -97,18 +97,25 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       const current = next.toolCalls.find((tool) => tool.id === id);
       if (id === undefined || current === undefined) return next;
       const output = object(kind.output);
-      return updateTool(next, {
-        ...current,
-        title: text(kind.title) ?? current.title,
-        status: text(kind.status) ?? current.status,
-        finishedAt: ['completed', 'failed', 'cancelled', 'error'].includes(text(kind.status) ?? '')
-          ? (current.finishedAt ?? event.appendedAt)
-          : current.finishedAt,
-        output:
-          typeof output?.text === 'string' && typeof output.truncated === 'boolean'
-            ? { text: output.text, truncated: output.truncated }
-            : current.output,
-      });
+      return updateTool(
+        next,
+        {
+          ...current,
+          title: text(kind.title) ?? current.title,
+          status: text(kind.status) ?? current.status,
+          finishedAt: ['completed', 'failed', 'cancelled', 'error'].includes(
+            text(kind.status) ?? '',
+          )
+            ? (current.finishedAt ?? event.appendedAt)
+            : current.finishedAt,
+          output:
+            typeof output?.text === 'string' && typeof output.truncated === 'boolean'
+              ? { text: output.text, truncated: output.truncated }
+              : current.output,
+        },
+        false,
+        event.appendedAt,
+      );
     }
     case 'approval_requested': {
       const id = text(kind.approval_id);
@@ -119,6 +126,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         ...next,
         approvals: upsert(next.approvals, {
           id,
+          runId: next.activeRunId,
           reason: text(kind.action) ?? 'confirmation',
           message: text(kind.detail),
         }),
@@ -139,7 +147,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
       };
     }
     case 'plan_set':
-      return setPlan(next, next.activeRunId, kind.entries);
+      return setPlan(next, next.activeRunId, kind.entries, event.appendedAt);
     case 'usage':
       return durableUsage(next, {
         ...kind,
@@ -245,12 +253,13 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
   }
 }
 
-function approvalFrom(value: unknown): ApprovalRequest | undefined {
+function approvalFrom(value: unknown, runId?: string): ApprovalRequest | undefined {
   const item = object(value);
   const id = text(item?.id);
   if (item === undefined || id === undefined) return undefined;
   return {
     id,
+    runId,
     reason: text(item.reason) ?? 'confirmation',
     message: text(item.message),
   };
@@ -272,7 +281,8 @@ function patchState(
       ...state,
       availableCommands: operation === 'remove' ? undefined : sessionCommands(item.value),
     };
-  if (path === '/plan') return setPlan(state, runId, operation === 'remove' ? [] : item.value);
+  if (path === '/plan')
+    return setPlan(state, runId, operation === 'remove' ? [] : item.value, timestamp);
   if (path.startsWith('/pendingApprovals/')) {
     const id = path.slice('/pendingApprovals/'.length).replaceAll('~1', '/').replaceAll('~0', '~');
     if (operation === 'remove') {
@@ -283,7 +293,7 @@ function patchState(
         ? state
         : { ...state, approvals: upsert(state.approvals, { ...current, decision: 'resolved' }) };
     }
-    const approval = approvalFrom(item.value);
+    const approval = approvalFrom(item.value, runId);
     if (
       approval &&
       state.approvals.some((current) => current.id === approval.id && current.source === 'external')
@@ -428,7 +438,7 @@ function foldLive(
     const outcome = object(event.outcome);
     const interrupts = Array.isArray(outcome?.interrupts) ? outcome.interrupts : [];
     const approvals = interrupts
-      .map(approvalFrom)
+      .map((value) => approvalFrom(value, event.runId))
       .filter((approval): approval is ApprovalRequest => approval !== undefined)
       .reduce(
         (items, approval) =>

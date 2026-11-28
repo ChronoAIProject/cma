@@ -38,6 +38,18 @@ pub(super) fn stream_budget(resources: Router, limit: usize) -> Router {
     ))
 }
 
+pub(super) fn health(
+    stores: &Arc<MongoStores>,
+    workers: &crate::worker_supervision::Workers,
+    config: &crate::config::Config,
+) -> Result<Router, String> {
+    Ok(crate::health::router_with_workers(
+        stores.clone(),
+        workers.clone(),
+        crate::health::pointer_release_source(stores, config)?,
+    ))
+}
+
 pub(super) fn compose(
     resources: Router,
     connections: Arc<BrowserConnections>,
@@ -66,7 +78,14 @@ pub(super) fn compose(
     // Public Stop/Delete charge directly after authentication. Runtime-effect
     // routes retain owner routing before their existing operation budgets.
     let public = match relay {
-        Some(relay) => relay.authenticated_control_routes(public, auth, limits.lifecycle()),
+        Some(relay) => {
+            let public = relay.authenticated_control_routes(public, auth, limits.lifecycle());
+            if config.features.agent_file_single_exchange {
+                crate::agent_manager::relay::Relay::file_preview_identity_route(public)
+            } else {
+                public
+            }
+        }
         None => {
             let public = crate::control_admission::routes(public, limits.lifecycle());
             public.layer(axum::middleware::from_fn_with_state(
@@ -214,7 +233,10 @@ pub(super) fn tools(
 ) -> Result<Router, String> {
     Ok(tools.merge(crate::auth::service_portal::router(
         auth.clone(),
-        config.gateway.as_ref(),
+        config
+            .gateway
+            .as_ref()
+            .map(|gateway| gateway.base_url.as_str()),
     )?))
 }
 

@@ -4,7 +4,9 @@ use layer2_core::sandbox::store::{SandboxStoreError, MAX_AGENT_LOG_BATCH_SIZE};
 pub use layer2_core::sandbox::store::NORMAL_AGENT_LOG_ENTRIES;
 pub const NORMAL_AGENT_LOG_BYTES: usize = 64 * 1024 * 1024;
 pub const STOP_RESERVE_ENTRIES: u64 = 64;
-pub const STOP_RESERVE_BYTES: usize = 512 * 1024;
+// A forced terminal publication may also finalize one published assistant message.
+pub const STOP_RESERVE_BYTES: usize =
+    512 * 1024 + layer2_core::sandbox::MAX_DURABLE_AGENT_MESSAGE_BYTES;
 pub const DELETE_RESERVE_ENTRIES: u64 = 64;
 pub const DELETE_RESERVE_BYTES: usize = 512 * 1024;
 pub const STOP_AGENT_LOG_ENTRIES: u64 = NORMAL_AGENT_LOG_ENTRIES + STOP_RESERVE_ENTRIES;

@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::test_measurement::PoolUsage;
 use mongodb::event::cmap::CmapEvent;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -13,6 +14,7 @@ pub(super) struct Stats {
     pub docs: u64,
     pub bytes: u64,
     pub history_bytes: u64,
+    pub pool: PoolUsage,
     snapshot_requests: BTreeMap<i32, Option<i64>>,
     snapshot_cursors: BTreeSet<i64>,
 }
@@ -24,16 +26,29 @@ pub(super) struct Meter {
 
 impl Meter {
     pub fn clear(&self) {
-        *self.stats.lock().unwrap() = Stats::default();
+        let mut stats = self.stats.lock().unwrap();
+        let mut pool = std::mem::take(&mut stats.pool);
+        pool.reset();
+        *stats = Stats {
+            pool,
+            ..Stats::default()
+        };
     }
     pub async fn client(self: &Arc<Self>) -> Client {
         let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
             .await
             .unwrap();
+        self.stats
+            .lock()
+            .unwrap()
+            .pool
+            .set_limit(options.max_pool_size);
         let observed = self.clone();
         options.cmap_event_handler = Some(EventHandler::callback(move |event| {
+            let mut stats = observed.stats.lock().unwrap();
+            stats.pool.observe(&event);
             if matches!(event, CmapEvent::ConnectionCheckedOut(_)) {
-                observed.stats.lock().unwrap().checkouts += 1;
+                stats.checkouts += 1;
             }
         }));
         let observed = self.clone();

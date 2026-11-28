@@ -13,6 +13,7 @@ pub(super) struct StatusTransport {
     state: Arc<Mutex<api::ApiState>>,
     pub entered: tokio::sync::Notify,
     stall: AtomicBool,
+    replacement_boot: AtomicBool,
     pub fired: AtomicBool,
     pub responses: AtomicUsize,
     pub fault: Mutex<Option<Fault>>,
@@ -24,10 +25,15 @@ impl StatusTransport {
             state,
             entered: Default::default(),
             stall: AtomicBool::new(true),
+            replacement_boot: AtomicBool::new(false),
             fired: AtomicBool::new(false),
             responses: AtomicUsize::new(0),
             fault: Mutex::new(None),
         }
+    }
+    pub(super) fn replaced_boot(&self) {
+        self.replacement_boot.store(true, Ordering::SeqCst);
+        self.stall.store(false, Ordering::SeqCst);
     }
     fn boundary(&self, after: bool) {
         let fault = self.fault.lock().unwrap();
@@ -72,7 +78,12 @@ impl HostedControlTransport for StatusTransport {
             sandbox_id: request.sandbox_id,
             generation: request.generation,
             home_identity: request.home_identity,
-            boot_id: "a".repeat(32),
+            boot_id: if self.replacement_boot.load(Ordering::SeqCst) {
+                "b"
+            } else {
+                "a"
+            }
+            .repeat(32),
             installation_ready: true,
             credential_ready: true,
             restore_pending: false,
@@ -103,6 +114,7 @@ impl HostedControlTransport for StatusTransport {
         panic!("reconciliation must not reopen a child")
     }
     async fn retire(&self, _: &RuntimeHandle) -> layer3_adapter::Result<()> {
-        panic!("held runtime must not be retired")
+        assert!(self.replacement_boot.load(Ordering::SeqCst));
+        Ok(())
     }
 }

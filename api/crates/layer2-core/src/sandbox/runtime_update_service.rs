@@ -87,15 +87,21 @@ impl SandboxRuntimeUpdateService {
 
     /// `can_update` against a release the caller already captured.
     pub fn can_update_to(&self, sandbox: &Sandbox, latest: &str) -> bool {
-        if !sandbox.has_managed_runtime_image() || scoped_explicit_retry(sandbox) {
+        if !sandbox.has_managed_runtime_image()
+            || sandbox.requires_retained_runtime_transition()
+            || scoped_explicit_retry(sandbox)
+        {
             return false;
         }
         if sandbox.unpublished_recovery_candidate() {
+            let pinned = sandbox
+                .runtime_update_request()
+                .filter(|request| request.completed_at.is_none())
+                .map(|request| request.target_version.as_str());
             return self.recovery.is_some()
-                && (self.target_is_qualified(sandbox, latest)
-                    || sandbox
-                        .runtime_update_request()
-                        .is_some_and(|request| request.completed_at.is_none()));
+                && self
+                    .explicit_recovery_target(sandbox, pinned, latest)
+                    .is_some();
         }
         if !sandbox.supports_retained_runtime_update() {
             return false;
@@ -123,11 +129,27 @@ impl SandboxRuntimeUpdateService {
     /// Whether a retry of the pinned target may recover onto the observed release.
     pub fn retry_uses_latest(&self, sandbox: &Sandbox, pinned: &str, latest: &str) -> bool {
         sandbox.has_managed_runtime_image()
-            && self.target_is_qualified(sandbox, latest)
+            && !sandbox.requires_retained_runtime_transition()
             && !scoped_explicit_retry(sandbox)
             && self.recovery.is_some()
             && sandbox.unpublished_recovery_candidate()
-            && recover_on_latest(sandbox, pinned, latest)
+            && self
+                .explicit_recovery_target(sandbox, Some(pinned), latest)
+                .is_some_and(|target| target != pinned)
+    }
+
+    fn explicit_recovery_target<'a>(
+        &self,
+        sandbox: &Sandbox,
+        requested: Option<&'a str>,
+        latest: &'a str,
+    ) -> Option<&'a str> {
+        // A fresh Agent reopen recovery must use the current qualified release,
+        // including when the original target already matches that release.
+        if agent_reopen(sandbox) {
+            return self.store.managed_runtime_target(sandbox, latest);
+        }
+        requested.or_else(|| self.store.managed_runtime_target(sandbox, latest))
     }
 
     pub async fn request(
@@ -251,7 +273,7 @@ impl SandboxRuntimeUpdateService {
             let lane = sandbox
                 .managed_runtime_lane()
                 .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
-            if scoped_explicit_retry(&sandbox) {
+            if sandbox.requires_retained_runtime_transition() || scoped_explicit_retry(&sandbox) {
                 return Err(SandboxRuntimeUpdateError::NotAvailable);
             }
             let latest = lane.version_in(&released).unwrap_or_default();
@@ -273,15 +295,9 @@ impl SandboxRuntimeUpdateService {
                 return Err(SandboxRuntimeUpdateError::NotAvailable);
             }
             if sandbox.unpublished_recovery_candidate() {
-                // Agent reopens can recover on the current release after a
-                // terminal refusal of the pinned release (#2257).
-                let target = if self.target_is_qualified(&sandbox, latest)
-                    && recover_on_latest(&sandbox, target_version, latest)
-                {
-                    latest
-                } else {
-                    target_version
-                };
+                let target = self
+                    .explicit_recovery_target(&sandbox, Some(target_version), latest)
+                    .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
                 if self.released.require_current(&released).is_err() {
                     superseded_release(&released).await;
                     continue;
@@ -359,10 +375,8 @@ impl Sandbox {
     }
 }
 
-/// Agent recovery can rebuild a reopen stalled on a superseded release.
-fn recover_on_latest(sandbox: &Sandbox, requested: &str, latest: &str) -> bool {
+fn agent_reopen(sandbox: &Sandbox) -> bool {
     sandbox.managed_runtime_lane() == Some(ReleasedLane::Agent)
-        && requested != latest
         && matches!(
             sandbox.lifecycle.operation,
             Some(SandboxLifecycleOperation::ImageRotation {

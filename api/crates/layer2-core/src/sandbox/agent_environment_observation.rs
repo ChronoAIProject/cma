@@ -9,11 +9,11 @@ use std::{
 };
 use tokio::sync::{OnceCell, Semaphore};
 
-type Features = (EnvironmentFeature, EnvironmentFeature);
 #[derive(Default)]
 struct Entry {
     started: AtomicBool,
-    value: OnceCell<Features>,
+    browser: OnceCell<EnvironmentFeature>,
+    control: OnceCell<EnvironmentFeature>,
 }
 struct Running(Arc<Entry>);
 impl Drop for Running {
@@ -113,8 +113,9 @@ impl AgentFileService {
         };
         let key: [u8; 32] = Sha256::digest(bytes).into();
         let cell = cache.values.get_with(key, || Arc::new(Entry::default()));
-        let observed = cell.value.get().cloned();
-        if observed.is_none()
+        let observed_control = cell.control.get().cloned();
+        let observed_browser = cell.browser.get().cloned();
+        if observed_control.is_none()
             && cell
                 .started
                 .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
@@ -141,19 +142,21 @@ impl AgentFileService {
                         }
                     }
                     let result = tokio::time::timeout_at(deadline, async {
-                        let browser = service.browser_feature(&held, &id).await?;
-                        let control = service
-                            .browser_control_feature(&held, &id, &browser)
+                        // Browser viewing can proceed while control is still being checked.
+                        let browser = cell
+                            .browser
+                            .get_or_try_init(|| service.browser_feature(&held, &id))
                             .await?;
+                        let control = service.browser_control_feature(&held, &id, browser).await?;
                         service.environment_release(&held, &id).await?;
-                        Ok::<_, AgentFileError>((browser, control))
+                        Ok::<_, AgentFileError>(control)
                     })
                     .await;
                     let outcome = match result {
                         Ok(Ok(value)) => {
                             // The entry owns this generation. Evicted/replaced
                             // entries are never reinserted by a late completion.
-                            if cell.value.set(value).is_ok() {
+                            if cell.control.set(value).is_ok() {
                                 "observed"
                             } else {
                                 "superseded"
@@ -171,39 +174,38 @@ impl AgentFileService {
             }
         }
         self.environment_release(&authorized, agent_id).await?;
-        metrics::counter!("cma_agent_environment_observations_total", "outcome" => if observed.is_some() { "hit" } else { "pending" }).increment(1);
-        tracing::debug!(
-            outcome = if observed.is_some() { "hit" } else { "pending" },
-            "Agent environment observation read"
+        let outcome = if observed_control.is_some() {
+            "hit"
+        } else {
+            "pending"
+        };
+        metrics::counter!("cma_agent_environment_observations_total", "outcome" => outcome)
+            .increment(1);
+        tracing::debug!(outcome, "Agent environment observation read");
+        let browser = observed_browser.unwrap_or_else(pending);
+        let control = observed_control.unwrap_or_else(|| {
+            if authorized
+                .decision
+                .allows(ResourceCapability::ManageSharing)
+            {
+                pending()
+            } else {
+                EnvironmentFeature {
+                    state: EnvironmentAvailability::Forbidden,
+                    reason: "browser_owner_required",
+                    scope: "agent_browser",
+                    writable: false,
+                }
+            }
+        });
+        let retry = matches!(
+            browser.state,
+            EnvironmentAvailability::TemporarilyUnavailable
+        ) || matches!(
+            control.state,
+            EnvironmentAvailability::TemporarilyUnavailable
         );
-        Ok(match observed {
-            Some((browser, control)) => {
-                let retry = matches!(
-                    browser.state,
-                    EnvironmentAvailability::TemporarilyUnavailable
-                ) || matches!(
-                    control.state,
-                    EnvironmentAvailability::TemporarilyUnavailable
-                );
-                (browser, control, retry)
-            }
-            None => {
-                let control = if authorized
-                    .decision
-                    .allows(ResourceCapability::ManageSharing)
-                {
-                    pending()
-                } else {
-                    EnvironmentFeature {
-                        state: EnvironmentAvailability::Forbidden,
-                        reason: "browser_owner_required",
-                        scope: "agent_browser",
-                        writable: false,
-                    }
-                };
-                (pending(), control, true)
-            }
-        })
+        Ok((browser, control, retry))
     }
 
     async fn environment_release(

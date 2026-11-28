@@ -2,6 +2,7 @@ use super::*;
 mod acceptance;
 mod cluster_fixture;
 mod environment;
+mod live_reattach_tests;
 mod transport_auth;
 use axum::{
     http::{HeaderMap, Method, StatusCode, Uri},
@@ -224,6 +225,70 @@ async fn next(lane: &mut AgentLiveSubscription) -> AgentLiveFragment {
     })
     .await
     .expect("live fragment delivered across instances")
+}
+
+#[tokio::test]
+async fn peer_live_stream_survives_its_opening_deadline_and_stops_on_owner_release() {
+    let (store, instances) = cluster(2).await;
+    let id = AgentId("agt-peer-live-deadline".into());
+    let (owner, authority) = acquire(&store, &instances, &id).await;
+    let peer = instances[1 - owner].relay.clone();
+    let mut destination = peer.destination(&id).await.unwrap();
+    // Model a connection opened using a deadline observed before the latest
+    // renewal. The exact owner and member rows both outlive this snapshot.
+    let opening_deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    destination.authority = Authority::new(destination.token.clone(), opening_deadline);
+    let (publisher, mut subscription) = AgentLiveSubscription::channel();
+    let (ready, admitted) = tokio::sync::oneshot::channel();
+    let following = tokio::spawn(async move {
+        peer.follow_remote(destination, &publisher, &mut Some(ready))
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(3), admitted)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let first = fragment(&id, "before the opening deadline");
+    authority
+        .run(async {
+            instances[owner].updates.publish_live_fixture(first.clone());
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        *tokio::time::timeout(Duration::from_secs(2), subscription.recv())
+            .await
+            .unwrap()
+            .unwrap(),
+        first
+    );
+    tokio::time::sleep_until(opening_deadline + Duration::from_millis(50)).await;
+    let second = fragment(&id, "after the opening deadline");
+    authority
+        .run(async {
+            instances[owner]
+                .updates
+                .publish_live_fixture(second.clone());
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        *tokio::time::timeout(Duration::from_secs(2), subscription.recv())
+            .await
+            .expect("the same remote stream stayed open past its opening deadline")
+            .unwrap(),
+        second
+    );
+
+    store.release(&authority.token).await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), following)
+            .await
+            .unwrap()
+            .unwrap(),
+        live::LiveExit::AuthorityUnavailable
+    );
 }
 
 #[tokio::test]

@@ -48,6 +48,9 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
     pub legacy_receiver_image: Option<layer3_adapter::hosted::LegacyReceiverImage>,
     pub stale_turn_runtime_digest: Option<String>,
+    pub(crate) staging_sandbox: super::StagingSandboxControls,
+    pub(crate) inspection_refusal: Option<super::InspectionRefusalControl>,
+    pub(crate) suggestion_control: Option<super::suggestion_control::Target>,
     pub allocate_agent_sandbox: bool,
     pub native_prepared_target: u8,
     pub native_machine_prepared_target: u8,
@@ -331,6 +334,12 @@ impl RuntimeConfig {
             agent_sandbox_runtime_transport,
             legacy_receiver_image,
             stale_turn_runtime_digest,
+            staging_sandbox: super::StagingSandboxControls::from_lookup(lookup)?,
+            inspection_refusal: super::InspectionRefusalControl::from_lookup(
+                lookup,
+                std::time::SystemTime::now(),
+            )?,
+            suggestion_control: super::suggestion_control::from_lookup(lookup)?,
             allocate_agent_sandbox,
             native_prepared_target,
             native_machine_prepared_target,
@@ -356,7 +365,7 @@ impl RuntimeConfig {
     }
 }
 
-pub(super) fn deployment_id_from_lookup(
+pub(crate) fn deployment_id_from_lookup(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<String, String> {
     let value = required(lookup, "CHRONO_DEPLOYMENT_ID")?;
@@ -378,8 +387,8 @@ pub(super) fn deployment_id_from_lookup(
 }
 
 fn parse_canonical_http_origin(key: &str, raw: &str) -> Result<String, String> {
-    let parsed = reqwest::Url::parse(raw)
-        .map_err(|_| format!("{key} must be one canonical absolute HTTP(S) origin"))?;
+    let invalid = || format!("{key} must be one canonical absolute HTTP(S) origin");
+    let parsed = reqwest::Url::parse(raw).map_err(|_| invalid())?;
     let canonical = parsed.origin().ascii_serialization();
     if raw.len() > MAX_URL_LENGTH
         || !matches!(parsed.scheme(), "http" | "https")
@@ -391,9 +400,7 @@ fn parse_canonical_http_origin(key: &str, raw: &str) -> Result<String, String> {
         || parsed.fragment().is_some()
         || raw != canonical
     {
-        return Err(format!(
-            "{key} must be one canonical absolute HTTP(S) origin"
-        ));
+        return Err(invalid());
     }
     Ok(canonical)
 }

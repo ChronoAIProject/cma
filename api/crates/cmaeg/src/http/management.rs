@@ -6,8 +6,10 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use cmaeg_core::{channel::ConformanceLevel, problem::ProblemCode};
+use cmaeg_core::{channel::ConformanceLevel, ids::ChannelId, problem::ProblemCode};
+use cmaeg_engine::management::{ChannelTest, ManagementFailure};
 use serde::{Deserialize, Serialize};
+use std::{future::Future, pin::Pin};
 use utoipa::{IntoParams, ToSchema};
 
 use crate::{
@@ -67,12 +69,7 @@ pub struct RekeyResponse {
     pub kid: u8,
 }
 
-#[derive(Debug, Clone, Serialize, ToSchema)]
-pub struct TestChannelResponse {
-    pub accepted_after_ms: u64,
-    pub first_text: String,
-    pub level: ConformanceLevel,
-}
+pub use cmaeg_engine::management::TestChannelResponse;
 
 #[derive(Debug, Clone, Default, Deserialize, IntoParams)]
 #[serde(deny_unknown_fields)]
@@ -338,20 +335,33 @@ pub async fn test_channel(
     creator: Creator,
     Path(raw_id): Path<String>,
 ) -> Response {
-    let channel_id = match parse_channel_id(&raw_id) {
-        Ok(channel_id) => channel_id,
-        Err(error) => return management_error(error),
-    };
-    match management::test_turn(&state, &creator, &channel_id).await {
-        Ok(result) => no_store(
-            Json(TestChannelResponse {
+    let operation = AuthorizedChannelTest { state, creator };
+    with_management_failure_stage(
+        cmaeg_http::http::management::test_channel(&operation, raw_id).await,
+    )
+}
+
+struct AuthorizedChannelTest {
+    state: ManagementState,
+    creator: Creator,
+}
+
+impl ChannelTest for AuthorizedChannelTest {
+    fn test_channel(
+        &self,
+        channel_id: ChannelId,
+    ) -> Pin<Box<dyn Future<Output = Result<TestChannelResponse, ManagementFailure>> + Send + '_>>
+    {
+        Box::pin(async move {
+            let result = management::test_turn(&self.state, &self.creator, &channel_id)
+                .await
+                .map_err(management_failure)?;
+            Ok(TestChannelResponse {
                 accepted_after_ms: result.accepted_after_ms,
                 first_text: result.first_text,
                 level: result.level,
             })
-            .into_response(),
-        ),
-        Err(error) => management_error(error),
+        })
     }
 }
 
@@ -402,6 +412,8 @@ pub struct ChannelListItem {
     pub record_id: String,
     pub version: u64,
     pub provider: ProviderResponse,
+    /// Omitted for incomplete creations (`definition.creation.ready == false`)
+    /// and legacy records without a recoverable channel ID.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoints: Option<EndpointResponse>,
     pub definition: super::schema::PublicChannelDefinition,

@@ -1,5 +1,6 @@
 //! Dense immutable history must preserve exact projections across cursor batches.
 use super::*;
+use crate::config::report_views::ViewPolicy;
 use layer2_core::sandbox_usage::{UsageEvent, UsageEventKind};
 use mongodb::event::{command::CommandEvent, EventHandler};
 use std::sync::{
@@ -12,6 +13,7 @@ use tracing::instrument::WithSubscriber;
 pub(super) struct Commands {
     pub(super) event_reads: AtomicUsize,
     pub(super) returned: AtomicUsize,
+    pub(super) bucket_find_deadlines_ms: Mutex<Vec<Option<i32>>>,
     max_batch: AtomicUsize,
     pending: Mutex<std::collections::HashSet<i32>>,
 }
@@ -34,6 +36,17 @@ async fn observe_store(original: Arc<ReportingStore>) -> (Arc<ReportingStore>, A
         {
             observed.event_reads.fetch_add(1, Ordering::SeqCst);
             observed.pending.lock().unwrap().insert(e.request_id);
+        }
+        CommandEvent::Started(e)
+            if e.command.get_str("find").ok()
+                == Some(crate::store::allocation_buckets::COLLECTION) =>
+        {
+            let deadline = e.command.get_i32("maxTimeMS").ok();
+            observed
+                .bucket_find_deadlines_ms
+                .lock()
+                .unwrap()
+                .push(deadline);
         }
         CommandEvent::Succeeded(e) if observed.pending.lock().unwrap().remove(&e.request_id) => {
             let cursor = e.reply.get_document("cursor").unwrap();
@@ -183,6 +196,118 @@ async fn dense_history_batches_preserve_exact_allocation_with_fewer_round_trips(
         .allocation_periods(&mut store.snapshot().await.unwrap(), &states, range)
         .await
         .is_err());
+    store.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn bucketed_dense_history_scans_long_range_once_before_daily_reuse() {
+    const MEMBERS: usize = 200;
+    const EVENTS_PER_MEMBER: u64 = 240;
+    const DAY: u64 = 86_400;
+
+    let (original, commands) = observed_store().await;
+    let store = original.with_view_policy(ViewPolicy {
+        allocation_rollups_enabled: true,
+        ..Default::default()
+    });
+    store.initialize_allocation_buckets(true).await.unwrap();
+
+    let day = (now() / DAY - 1) * DAY;
+    let to = day + 17 * 3_600;
+    let created_at = to - EVENTS_PER_MEMBER * 60;
+    let mut states = Vec::with_capacity(MEMBERS);
+    for id in 0..MEMBERS {
+        let mut state = state(id, created_at);
+        state.last_observed_at = to;
+        state.revision = EVENTS_PER_MEMBER;
+        state.source_seq = EVENTS_PER_MEMBER;
+        state.source_revision = EVENTS_PER_MEMBER;
+        let events = (0..EVENTS_PER_MEMBER)
+            .map(|revision| {
+                super::super::super::sandbox_usage::event_document(&event(
+                    &state,
+                    revision,
+                    created_at + revision * 60,
+                ))
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        store
+            .collection("sandbox_usage_events")
+            .insert_many(events)
+            .await
+            .unwrap();
+        states.push(state);
+    }
+    seed(&store, &states).await;
+    store
+        .collection("sandbox_usage_events")
+        .create_index(
+            mongodb::IndexModel::builder()
+                .keys(doc! {"sandbox_id":1,"ended_at":1,"started_at":1,"revision":1})
+                .build(),
+        )
+        .await
+        .unwrap();
+
+    for days in [7, 30] {
+        store
+            .collection(crate::store::sandbox_usage_rollups::COLLECTION)
+            .delete_many(doc! {})
+            .await
+            .unwrap();
+        let range = Range {
+            from: to - days * DAY,
+            to,
+        };
+        commands.event_reads.store(0, Ordering::SeqCst);
+        commands.returned.store(0, Ordering::SeqCst);
+        let prepared = store
+            .bucketed_allocation_range(&mut store.snapshot().await.unwrap(), &states, range)
+            .await
+            .unwrap();
+        assert_eq!(prepared.len(), days as usize + 1);
+        assert!(prepared
+            .values()
+            .all(|projections| projections.len() == MEMBERS));
+        for (from, projections) in &prepared {
+            for projection in projections.values() {
+                let period = &projection.period;
+                assert!(period.complete);
+                assert_eq!(period.unknown_seconds, 0);
+                assert_eq!(period.projected_tail_seconds, 0);
+                let (uptime, core_hours) = if *from == day {
+                    (14_400., 8.)
+                } else {
+                    (0., 0.)
+                };
+                assert_eq!(period.uptime_seconds, uptime);
+                assert!((period.cpu_core_hours - core_hours).abs() < 1e-10);
+            }
+        }
+        assert_eq!(
+            commands.returned.load(Ordering::SeqCst),
+            MEMBERS * EVENTS_PER_MEMBER as usize
+        );
+        // Each eight-Sandbox cursor holds at most 1,920 rows, independent of
+        // the number of UTC days before these Sandboxes were created.
+        assert_eq!(
+            commands.event_reads.load(Ordering::SeqCst),
+            MEMBERS.div_ceil(8)
+        );
+
+        commands.event_reads.store(0, Ordering::SeqCst);
+        let reused = store
+            .bucketed_allocation_range(&mut store.snapshot().await.unwrap(), &states, range)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(reused).unwrap(),
+            serde_json::to_value(prepared).unwrap()
+        );
+        assert_eq!(commands.event_reads.load(Ordering::SeqCst), 0);
+    }
     store.db.drop().await.unwrap();
 }
 

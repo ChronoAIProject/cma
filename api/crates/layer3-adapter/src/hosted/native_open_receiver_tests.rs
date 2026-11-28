@@ -345,3 +345,77 @@ async fn cancelling_open_drops_its_only_renewal_and_never_replays() {
     fixture.transport.retire(&handle()).await.unwrap();
     fixture.drained().await;
 }
+
+#[tokio::test]
+async fn checked_file_read_sends_one_control_exchange_and_refuses_replaced_pod() {
+    let fixture = setup(NativeRuntimeTransport::KubernetesExec).await;
+    let authority = authority();
+    let endpoint = fixture.endpoint().await;
+    let (_, pod) = endpoint.native_binding().unwrap();
+    let file = crate::AgentFileReadRequest {
+        owner_access: true,
+        protected_paths: vec![],
+        sandbox_id: "sandbox-one".into(),
+        runtime_generation: 1,
+        boot_id: "a".repeat(32),
+        home_identity: Some("b".repeat(43)),
+        path: "cma/preview.bin".into(),
+        max_bytes: 3,
+    };
+    let digest = "a".repeat(64);
+    let runtime = handle();
+    let response = scope(
+        authority.clone(),
+        fixture
+            .transport
+            .exchange_bound_file_read(&runtime, pod, &digest, file.clone()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let ResponseFrame::ReadAgentFile(receipt) = response else {
+        panic!("expected an authenticated file receipt");
+    };
+    assert_eq!(receipt.path, "cma/preview.bin");
+    assert_eq!(receipt.content().unwrap(), b"CMA");
+    assert_eq!(opens(&fixture), 1);
+    assert_eq!(authority.renewals.load(Ordering::SeqCst), 1);
+    let lease = scope(
+        authority.clone(),
+        fixture.transport.receiver_lease(&endpoint),
+    )
+    .await
+    .unwrap();
+    let (updates, _receive) = tokio::sync::mpsc::channel(4);
+    let (opened, _socket) = crate::hosted::acp::tests::open_idle_fixture("agent-a", updates).await;
+    let key = (runtime.clone(), AgentSlot::new("agent-a"));
+    let epochs = fixture.transport.open_epochs(&key).await;
+    let _channel = fixture
+        .transport
+        .register_link(key, epochs, opened, lease)
+        .await
+        .unwrap();
+    let response = scope(
+        authority.clone(),
+        fixture
+            .transport
+            .exchange_bound_file_read(&runtime, pod, &digest, file.clone()),
+    )
+    .await
+    .unwrap();
+    assert!(matches!(response, Some(ResponseFrame::ReadAgentFile(_))));
+    assert_eq!(opens(&fixture), 2);
+    assert_eq!(authority.renewals.load(Ordering::SeqCst), 2);
+    fixture.state.restarted.store(true, Ordering::SeqCst);
+    assert!(scope(
+        authority,
+        fixture
+            .transport
+            .exchange_bound_file_read(&runtime, pod, &digest, file)
+    )
+    .await
+    .is_err());
+    assert_eq!(opens(&fixture), 2);
+    fixture.transport.retire(&handle()).await.unwrap();
+    fixture.drained().await;
+}

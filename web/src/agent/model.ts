@@ -15,6 +15,7 @@ export interface ConversationMessage {
   readonly content: string;
   readonly status: 'streaming' | 'complete' | 'error';
   readonly at?: string;
+  readonly progressAt?: string;
   readonly liveOnly?: boolean;
   readonly finalAnswer?: boolean;
   /** Render-only retained text; never a durable message or a successful answer. */
@@ -31,6 +32,7 @@ export interface ConversationMessage {
 export interface ToolCall {
   readonly startedAt?: string;
   readonly finishedAt?: string;
+  readonly progressAt?: string;
   readonly output?: { readonly text: string; readonly truncated: boolean };
   readonly order?: number;
   readonly sequence?: number;
@@ -43,6 +45,8 @@ export interface ToolCall {
 }
 
 export interface ReasoningBlock {
+  readonly startedAt?: string;
+  readonly progressAt?: string;
   readonly order?: number;
   readonly sequence?: number;
   readonly id: string;
@@ -58,6 +62,7 @@ export interface PlanEntry {
 
 /** One turn's latest reported plan; a provider restates the whole plan on every change. */
 export interface PlanSnapshot {
+  readonly progressAt?: string;
   readonly incomplete?: boolean;
   readonly order?: number;
   readonly sequence?: number;
@@ -68,6 +73,7 @@ export interface PlanSnapshot {
 
 export interface NativeApprovalRequest {
   readonly source?: 'native';
+  readonly runId?: string;
   readonly order?: number;
   readonly sequence?: number;
   readonly id: string;

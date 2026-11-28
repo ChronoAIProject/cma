@@ -1,11 +1,19 @@
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { test, expect, type Locator, type Page, type TestInfo } from '@playwright/test';
+import {
+  test,
+  expect,
+  type Download,
+  type Locator,
+  type Page,
+  type TestInfo,
+} from '@playwright/test';
 import type { AgentShareLink } from '../src/api-client/index';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
 // Public HTTP fixtures exercise the full browser UI, not a running Sandbox/backend.
 const longName = 'research-findings-with-a-deliberately-long-filename-for-truncation.md';
+const longAgentTitle = 'ReviewTheCompleteResearchEvidenceBeforePublishingTheFinalReport';
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 
 function hold() {
@@ -92,6 +100,62 @@ async function details(page: Page) {
   await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
 }
 
+async function narrowHeader(page: Page, title: string, owner: boolean) {
+  const header = page.locator('.agent-toolbar');
+  const heading = header.getByRole('heading', { name: title, exact: true });
+  const details = header.getByRole('button', { name: 'Show Agent details' });
+  const more = header.getByRole('button', { name: 'More Agent actions' });
+  const actions = [details, header.getByRole('button', { name: 'Show Agent computer' }), more];
+  const share = header.getByRole('button', { name: 'Share', exact: true });
+  if (owner) actions.splice(1, 0, share);
+  else await expect(share).toHaveCount(0);
+  const widths = [479, 480, 481, 500, 520, 390, 320].map((width) => ({
+    width,
+    conversationWidth: width,
+  }));
+  if (owner) widths.unshift({ width: 784, conversationWidth: 520 });
+  for (const { width, conversationWidth } of widths) {
+    await page.setViewportSize({ width, height: 844 });
+    await expect
+      .poll(() => header.evaluate((element) => element.clientWidth))
+      .toBe(conversationWidth);
+    if (width !== conversationWidth)
+      await expect(page.getByRole('button', { name: 'Hide navigation' })).toBeVisible();
+    await expect(header).toBeInViewport({ ratio: 1 });
+    const titleText = heading.locator('button > span');
+    await expect(titleText).toHaveCSS('height', '40px');
+    expect(
+      (await titleText.boundingBox())!.width,
+      `title text in the ${conversationWidth}px conversation`,
+    ).toBeGreaterThanOrEqual(96);
+    const poster = header.locator('.agent-mascot__poster');
+    await expect(poster).toHaveCSS('width', '32px');
+    await expect(poster).toHaveCSS('height', '32px');
+    await expect.poll(() => poster.evaluate((img: HTMLImageElement) => img.naturalWidth)).toBe(32);
+    await expect(header.locator('.agent-mascot__sprite')).toHaveCount(0);
+    for (const action of actions) {
+      await expect(action).toBeInViewport({ ratio: 1 });
+      const box = (await action.boundingBox())!;
+      expect(box.height).toBeGreaterThanOrEqual(44);
+      expect(box.width).toBeGreaterThanOrEqual(44);
+      expect((await poster.boundingBox())!.y).toBeGreaterThanOrEqual(box.y + box.height);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(width);
+  }
+  await details.focus();
+  for (const action of actions.slice(1)) {
+    await page.keyboard.press('Tab');
+    await expect(action).toBeFocused();
+  }
+  await page.keyboard.press('Enter');
+  const menu = page.getByRole('menu', { name: 'More Agent actions' });
+  await expect(menu).toBeVisible();
+  if (!owner) await expect(menu.getByRole('menuitem', { name: /^Rename/ })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(more).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 1000 });
+}
+
 async function screenshots(page: Page, dialog: Locator, name: string, info: TestInfo) {
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => {
@@ -154,6 +218,8 @@ test('LOCAL owner files and independent share links fit desktop and narrow scree
   baseURL,
 }, info) => {
   const boundary = new LocalStartup();
+  const ownerTitle = `${longAgentTitle} — results, decisions and follow-up from the review`;
+  boundary.agent = { ...boundary.agent, owner_title: ownerTitle };
   await boundary.route(page, baseURL!);
   const filesystem = await files(page);
   let links: AgentShareLink[] = [];
@@ -192,6 +258,7 @@ test('LOCAL owner files and independent share links fit desktop and narrow scree
   });
   await page.setViewportSize({ width: 1440, height: 1000 });
   await page.goto('/agents/agt_contract');
+  await narrowHeader(page, ownerTitle, true);
   const composer = page.getByRole('textbox', { name: 'Message', exact: true });
   await composer.fill('Preserve my unsent message while browsing files.');
   await details(page);
@@ -264,7 +331,7 @@ test('LOCAL share URL redemption opens an attributed reader with read-only files
   const shared = {
     access: 'shared',
     id: 'agt_contract',
-    title: 'Shared research session',
+    title: longAgentTitle,
     status: 'ready',
     created_at: localTime,
     updated_at: localTime,
@@ -330,6 +397,10 @@ test('LOCAL share URL redemption opens an attributed reader with read-only files
   await expect(page.getByRole('heading', { name: shared.title })).toBeVisible();
   await expect(page.getByRole('note')).toContainText('Shared by Alex Chen');
   await expect(page.getByRole('note')).toContainText('View-only access');
+  const status = page.locator('.agent-toolbar__status');
+  await expect(status.getByText('Read only', { exact: true })).toBeVisible();
+  await expect(status.getByText('Ready', { exact: true })).toBeVisible();
+  await narrowHeader(page, shared.title, false);
   expect(new URL(page.url()).hash).toBe('');
   expect(redemption.length).toBeGreaterThan(0);
   expect(redemption.every((body) => JSON.stringify(body) === JSON.stringify({ token }))).toBe(true);
@@ -400,7 +471,16 @@ for (const { access, unavailable } of [
       await page.route('**/api/v1/resource-access/agent/agt_contract', (route) =>
         route.fulfill(
           accessUnavailable
-            ? { status: 503, json: { code: 'temporarily_unavailable' } }
+            ? {
+                status: 503,
+                contentType: 'application/problem+json',
+                json: {
+                  type: 'about:blank',
+                  title: 'Unavailable',
+                  status: 503,
+                  code: 'temporarily_unavailable',
+                },
+              }
             : {
                 json: {
                   capabilities: [
@@ -550,6 +630,8 @@ for (const { access, unavailable } of [
         };
         await downloadDotfile();
         if (access === 'reader') {
+          const interrupted = 'Download was interrupted. Try downloading the file again.';
+          const notice = page.getByRole('main').getByRole('alert').filter({ hasText: interrupted });
           const holdDownload = hold();
           const holdAccess = hold();
           await page.route(
@@ -568,13 +650,98 @@ for (const { access, unavailable } of [
             await page.clock.fastForward(31_000);
             await expect(computer.getByText('Checking file access…')).toBeVisible();
             holdAccess.release();
-            const interrupted = 'Download was interrupted. Try downloading the file again.';
-            await expect(computer.getByRole('alert')).toContainText(interrupted);
+            await expect(notice).toBeVisible();
+            await expect(preview).toHaveValue(dotfile);
           } finally {
             holdAccess.release();
             holdDownload.release();
           }
           await downloadDotfile();
+          await expect(notice).toHaveCount(0);
+          const heldResponse = hold();
+          const lateResponse = hold();
+          const consoleAccess = hold();
+          const consoleRefreshStarted = hold();
+          const downloadEvents: string[] = [];
+          const recordDownload = (download: Download) =>
+            downloadEvents.push(download.suggestedFilename());
+          page.on('download', recordDownload);
+          await page.route(
+            downloadPath,
+            async (route) => {
+              await heldResponse.promise;
+              await route.fulfill({ contentType: 'application/octet-stream', body: dotfile });
+              lateResponse.release();
+            },
+            { times: 1 },
+          );
+          try {
+            const [request] = await Promise.all([
+              page.waitForRequest(downloadPath),
+              downloadButton.click(),
+            ]);
+            await expect(computer.getByText('Downloading file…')).toBeVisible();
+            const failed = page.waitForEvent('requestfailed', {
+              predicate: (item) => item === request,
+            });
+            // Console subscribed to foreground refresh before the shared panels mounted.
+            await page.route(
+              '**/api/v1/agents/agt_contract',
+              async (route) => {
+                consoleRefreshStarted.release();
+                await consoleAccess.promise;
+                await route.fallback();
+              },
+              { times: 1 },
+            );
+            accessUnavailable = true;
+            await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+            await consoleRefreshStarted.promise;
+            await expect(
+              computer.getByText('Checking file access. Your unsaved changes are kept.'),
+            ).toBeVisible();
+            await expect(computer.getByRole('navigation', { name: 'File explorer' })).toHaveCount(
+              0,
+            );
+            expect((await failed).failure()?.errorText).toContain('ABORTED');
+            const unavailableHeading = page.getByRole('heading', { name: 'Agent unavailable' });
+            await expect(unavailableHeading).toHaveCount(0);
+            await expect(notice).toBeVisible();
+            expect(downloadEvents).toEqual([]);
+            consoleAccess.release();
+            await expect(unavailableHeading).toBeVisible();
+            await expect(computer).toHaveCount(0);
+            await expect(notice).toBeVisible();
+            await expect(notice.getByRole('button', { name: 'Dismiss' })).toBeEnabled();
+            expect(downloadEvents).toEqual([]);
+            accessUnavailable = false;
+            await page.getByRole('button', { name: 'Check access again', exact: true }).click();
+            await expect(filesTab).toBeVisible();
+            await expect(filesTab).toHaveAttribute('aria-selected', 'true');
+            await expect(notice).toBeVisible();
+            await computer.getByRole('button', { name: 'Close computer', exact: true }).click();
+            await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+            await filesTab.click();
+            await computer.getByRole('checkbox', { name: 'Show hidden' }).check();
+            await computer.getByRole('button', { name: '.dockerignore', exact: true }).click();
+            await expect(preview).toHaveValue(dotfile);
+            await expect(preview).toHaveAttribute('readonly', '');
+            await downloadDotfile();
+            await expect(notice).toHaveCount(0);
+            heldResponse.release();
+            await lateResponse.promise;
+            await expect(notice).toHaveCount(0);
+            expect(downloadEvents).toHaveLength(1);
+            await computer.getByRole('button', { name: 'Close computer', exact: true }).click();
+            await expect(notice).toHaveCount(0);
+            await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+            await filesTab.click();
+            await expect(downloadButton).toBeEnabled();
+          } finally {
+            consoleAccess.release();
+            heldResponse.release();
+            page.off('download', recordDownload);
+          }
           await page.route(
             downloadPath,
             (route) => route.fulfill({ status: 404, json: { code: 'resource_not_found' } }),
@@ -586,6 +753,7 @@ for (const { access, unavailable } of [
           const denied =
             'File access is no longer available. Ask the Agent owner to check your access.';
           await expect(page.getByRole('alert').filter({ hasText: denied })).toBeVisible();
+          await expect(notice).toHaveCount(0);
           await expect(preview).toHaveCount(0);
           expect(unexpectedDownloads).toEqual([]);
         }

@@ -46,7 +46,7 @@ async fn retained_startup_preserves_exact_identity_or_refuses_without_effect_or_
                 client,
                 "agent-1",
                 "/workspace".into(),
-                (config, None, false),
+                (config, None, (false, None)),
                 None,
                 None,
                 sender,

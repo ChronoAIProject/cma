@@ -23,6 +23,7 @@ mod runtime_inventory;
 mod runtime_migration;
 mod state;
 mod stores;
+mod suggestion_control;
 mod usage;
 use crate::{
     auth::AuthState,
@@ -140,7 +141,7 @@ impl ControlPlaneComposition {
         let projections = projections.with_qualification(qualification);
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
-        let image_resolver = runtime::image_manager_resolver(config)?;
+        let image_resolver = Arc::new(crate::agent_lifecycle::RetiredImageResolver);
         let inline_lifecycle = crate::agent_lifecycle::InlineAgentLifecycle::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),
@@ -250,6 +251,11 @@ impl ControlPlaneComposition {
             },
             runtime::lifecycle_config(config, worker_holder.clone(), ownership.clone(), &stores),
         )?;
+        if let (Some(manager), Some(capture)) =
+            (&agent_manager, sandbox_lifecycle.capture_drain.take())
+        {
+            manager.register_retirement_capture(capture)?;
+        }
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let (admin, binding_diagnostics) = binding_diagnostics::compose(
             config,
@@ -297,8 +303,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             adapter.clone(),
         )?;
-        let cancel_wake = (config.features.command_cancel_wake && ownership.is_some())
-            .then(|| Arc::new(tokio::sync::Notify::new()));
+        let cancel_wake = media::cancel_wake(config, ownership.is_some());
         let command_scheduler = media::commands(
             crate::commands::ProductionCommandDependencies {
                 source_guard: media::guard(&media),
@@ -313,7 +318,8 @@ impl ControlPlaneComposition {
             config.features.command_reconcile_pacing,
             adapters.model_funding.clone(),
         )?
-        .with_cancel_wake(cancel_wake.clone());
+        .with_cancel_wake(cancel_wake.clone())
+        .with_turn_terminal_wake(stores.sandbox_model.agent_turn_terminal.clone());
         let (sandbox_control_scheduler, sandbox_control_service) = access::sandbox_control(
             &stores,
             resource_access.clone(),
@@ -404,6 +410,10 @@ impl ControlPlaneComposition {
             .merge(layer1_public::rest::admin::router(admin));
         let resource_routes =
             routes::resource_budgets(resource_routes, &bindings, config, &limits)?;
+        let resource_routes = suggestion_control::routes(
+            resource_routes,
+            stores.sandbox_model.suggestion_control.clone(),
+        );
         let (bot_routes, bots) = bots::BotComposition::build(bots::BotCompositionDependencies {
             config,
             stores: &stores,
@@ -457,10 +467,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             recorder,
             (limits, config),
-            (
-                crate::health::router_with_workers(stores.clone(), workers.clone()),
-                tool_routes,
-            ),
+            (routes::health(&stores, &workers, config)?, tool_routes),
             relay.as_ref(),
         );
         let router = binding_diagnostics::router(binding_diagnostics, router);

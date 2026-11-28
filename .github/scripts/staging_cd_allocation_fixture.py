@@ -67,6 +67,8 @@ class AllocationServer(GitHub):
             return {"ref": "refs/tags/" + name, "object": {"type": "tag",
                     "sha": "0" * 40 if self.corrupt_readback else self.refs[name]}}
         if path.startswith("actions/runs/"):
+            if "/jobs?" in path:
+                return {"total_count": 0, "jobs": []}
             return {"id": int(path.split("/")[2]), "run_attempt": 1, "event": "push", "status": "completed",
                     "head_branch": "develop", "repository": {"full_name": "ChronoAIProject/cma"}}
         index = self.sources.index(path.split("/")[1]) if path.startswith("commits/") else int(path.split("/")[1]) - 1

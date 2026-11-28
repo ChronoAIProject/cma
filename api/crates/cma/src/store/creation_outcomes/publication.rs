@@ -87,6 +87,21 @@ fn refusal(code: RefusalCode) -> Document {
     doc! {"$set":{"state":{"kind":"refused","code":code}}}
 }
 
+pub(super) async fn refuse_validation(
+    records: &Collection<Document>,
+    owner: &SubjectId,
+    fence: &CreationFence,
+    session: &mut ClientSession,
+) -> Result<bool, mongodb::error::Error> {
+    let mut filter = live_direct(pending(owner.as_str(), fence));
+    filter.insert("operation", "agent_bootstrap");
+    records
+        .update_one(filter, refusal(RefusalCode::CreationFailed))
+        .session(session)
+        .await
+        .map(|result| result.matched_count == 1)
+}
+
 pub(super) async fn refuse_direct(
     database: &Database,
     owner: &SubjectId,
@@ -94,10 +109,15 @@ pub(super) async fn refuse_direct(
     code: RefusalCode,
 ) -> Result<bool, mongodb::error::Error> {
     let filter = live_direct(pending(owner.as_str(), fence));
-    majority_collection::<Document>(database, COLLECTION)
+    let settled = majority_collection::<Document>(database, COLLECTION)
         .update_one(filter, refusal(code))
-        .await
-        .map(|result| result.matched_count == 1)
+        .await?
+        .matched_count
+        == 1;
+    if settled {
+        tracing::info!(creation_proof = %fence.record_id, reason = code.code(), "Sandbox creation refusal committed");
+    }
+    Ok(settled)
 }
 
 pub(in crate::store) async fn refuse_with_operation(
@@ -237,10 +257,16 @@ async fn settle_operation(
             }
         }
         match transaction::commit_transaction(&mut session).await {
-            transaction::CommitOutcome::Committed => return Ok(true),
+            transaction::CommitOutcome::Committed => {
+                tracing::info!(creation_proof = %fence.record_id, reason = code.code(), "Sandbox lifecycle creation refusal committed");
+                return Ok(true);
+            }
             transaction::CommitOutcome::Retry(_) => continue,
-            transaction::CommitOutcome::Unknown(error)
-            | transaction::CommitOutcome::Failed(error) => return Err(driver(error)),
+            transaction::CommitOutcome::Unknown(error) => {
+                tracing::warn!(creation_proof = %fence.record_id, reason = code.code(), "Sandbox lifecycle creation refusal commit acknowledgement unavailable");
+                return Err(driver(error));
+            }
+            transaction::CommitOutcome::Failed(error) => return Err(driver(error)),
         }
     }
     Err(StoreError::Unavailable(

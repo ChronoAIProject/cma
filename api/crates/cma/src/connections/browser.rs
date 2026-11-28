@@ -9,14 +9,13 @@ use std::{
 
 use axum::{
     extract::State,
-    http::{header, HeaderMap, StatusCode},
+    http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::post,
     Extension, Json, Router,
 };
-use layer1_public::{AuthenticatedCaller, AuthenticatedResourceCaller};
+use layer1_public::AuthenticatedCaller;
 use layer2_core::{
-    account_deletion::OwnerSessionAuthority,
     sandbox::SandboxPolicySource,
     trigger_domain::{
         BrokerHandoffState, ServiceConnectionBroker, ServiceConnectionMode, ServiceRequirementState,
@@ -28,16 +27,14 @@ use layer3_adapter::codex::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    auth::{service_authorization, AuthState},
-    store::MongoStores,
-};
+use crate::{auth::AuthState, store::MongoStores};
 
 use super::{
     targets::{ConnectionTarget, ConnectionTargets, StoredConnectionTargets},
     CodexSubscriptions,
 };
 
+mod authorization;
 mod repository_access;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,13 +126,6 @@ struct ConnectionReport {
     active_state: Option<BrokerHandoffState>,
     #[serde(skip_serializing_if = "Option::is_none")]
     service_authorization_recovery: Option<bool>,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct AuthorizationRequest {
-    target: ConnectionTarget,
-    return_to: String,
 }
 
 #[derive(Serialize)]
@@ -388,7 +378,7 @@ pub(crate) fn router(state: Arc<BrowserConnections>, auth: Arc<AuthState>) -> Ro
         .route("/auth/connections/cancel", post(cancel))
         .route(
             "/auth/service-authorization/start",
-            post(start_authorization),
+            post(authorization::start),
         )
         .with_state(state)
         .layer(Extension(auth))
@@ -407,44 +397,6 @@ async fn check(
         report.service_authorization_recovery = Some(true);
     }
     Ok(no_store(report))
-}
-
-async fn start_authorization(
-    State(state): State<Arc<BrowserConnections>>,
-    Extension(auth): Extension<Arc<AuthState>>,
-    AuthenticatedResourceCaller { context, .. }: AuthenticatedResourceCaller,
-    authority: Option<Extension<OwnerSessionAuthority>>,
-    headers: HeaderMap,
-    Json(request): Json<AuthorizationRequest>,
-) -> Response {
-    if let Err(error) =
-        service_authorization::start_allowed(&auth, &headers, context.credential_source)
-    {
-        return error.into_response();
-    }
-    if authority.is_none_or(|Extension(authority)| authority.subject() != &context.caller.subject) {
-        return service_authorization::RecoveryError::Forbidden.into_response();
-    }
-    let services = match state
-        .targets
-        .services(&context.caller, &request.target)
-        .await
-    {
-        Ok(services) => services,
-        Err(error) => return error.into_response(),
-    };
-    service_authorization::begin(
-        &auth,
-        &headers,
-        &context.caller.subject,
-        services
-            .into_iter()
-            .filter(|service| service.as_str() != CODEX_SUBSCRIPTION_CONNECTION)
-            .collect(),
-        &request.return_to,
-    )
-    .await
-    .into_response()
 }
 
 async fn start(

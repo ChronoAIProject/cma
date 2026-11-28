@@ -1,6 +1,7 @@
 //! Exact daily totals and bounded prepared inputs for partial UTC days.
 use super::*;
 use crate::store::sandbox_usage_rollups::AllocationDelta;
+use crate::store::usage_reports::{allocation_operation, ALLOCATION_DB_DEADLINE};
 use std::collections::BTreeMap;
 
 impl ReportingStore {
@@ -15,13 +16,13 @@ impl ReportingStore {
         }
         let _timer = self.time_read("allocation_rollups")?;
         let started = std::time::Instant::now();
-        let cached = cma_am_reporting::allocation_buckets::read_bucket_page(
+        let cached = allocation_operation(cma_am_reporting::allocation_buckets::read_bucket_page(
             self.collection(COLLECTION),
             session,
             states,
             range,
-            DB_DEADLINE,
-        )
+            ALLOCATION_DB_DEADLINE,
+        ))
         .await?;
         let cache_us = started.elapsed().as_micros();
         metrics::histogram!("cma_usage_allocation_bucket_read_seconds", "phase" => "cache")
@@ -34,6 +35,15 @@ impl ReportingStore {
             cached.len()
         );
         let _ = cache_us;
+        // A newly admitted long-range cohort has no daily bucket records yet.
+        // Daily fallbacks would probe the ledger for every slice, and a dense
+        // day would put the entire cohort on one cursor. The cold-range reader
+        // reads bounded groups of Sandboxes and reuses the events across slices.
+        if cached.is_empty() {
+            if let Some(prepared) = self.cold_allocation_range(session, states, range).await? {
+                return Ok(prepared);
+            }
+        }
         let mut out = BTreeMap::new();
         let mut from = range.from;
         while from < range.to {

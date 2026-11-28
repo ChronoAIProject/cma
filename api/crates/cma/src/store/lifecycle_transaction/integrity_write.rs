@@ -4,11 +4,11 @@ use super::*;
 pub(super) async fn advance_agent(
     store: &MongoSandboxStore,
     current: &Agent,
-    change: &SandboxLifecycleAgentMutation,
+    next: &Agent,
     integrity: mongodb::bson::Document,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), ApplyError> {
-    let mut fields = agent_replacement_fields(&change.agent).map_err(ApplyError::Domain)?;
+    let mut fields = agent_replacement_fields(next).map_err(ApplyError::Domain)?;
     let row = store
         .agents
         .find_one(doc! { "_id": current.id.as_str() })
@@ -19,7 +19,7 @@ pub(super) async fn advance_agent(
     crate::store::agent_conversation_store::carry_checkpoint_fields(
         &row,
         current,
-        &change.agent,
+        next,
         &mut fields,
     )
     .map_err(ApplyError::Domain)?;
@@ -27,12 +27,9 @@ pub(super) async fn advance_agent(
     fields.insert(
         "last_seq",
         Bson::Int64(
-            signed(
-                change.agent.conversation.last_seq,
-                "lifecycle agent log sequence",
-            )
-            .map_err(SandboxStoreError::Corrupt)
-            .map_err(ApplyError::Domain)?,
+            signed(next.conversation.last_seq, "lifecycle agent log sequence")
+                .map_err(SandboxStoreError::Corrupt)
+                .map_err(ApplyError::Domain)?,
         ),
     );
     let advanced = store
@@ -59,6 +56,26 @@ pub(super) async fn advance_agent(
     } else {
         Err(ApplyError::Domain(SandboxStoreError::Conflict))
     }
+}
+
+pub(super) async fn finish_published_text(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    next: &mut Agent,
+    logs: &mut Vec<AgentLogEntry>,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), ApplyError> {
+    let row = store
+        .agents
+        .find_one(doc! {"_id":current.id.as_str()})
+        .session(session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    crate::store::agent_conversation_store::checkpoint::finish_published_text(
+        &row, current, next, logs,
+    )
+    .map_err(ApplyError::Domain)
 }
 
 pub(super) fn classify_aggregate_write(error: mongodb::error::Error) -> ApplyError {

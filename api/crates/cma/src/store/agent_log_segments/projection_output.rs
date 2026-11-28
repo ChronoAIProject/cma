@@ -42,22 +42,13 @@ fn change_valid(change: &AgentOutputChange) -> bool {
         || c.after.validate(c.source_sequence).is_err()
         || c.ordinal >= c.source_sequence - c.turn_sequence
         || c.ordinal < c.before.items
-        || c.ordinal > c.before.items + c.before.tool_finishes
+        || c.ordinal > c.before.items + c.before.tool_finishes + c.before.text.deltas
         || c.item_ordinal >= c.after.items
     {
         return false;
     }
     match (&c.tool, c.message_ordinal) {
-        (None, Some(ordinal)) => {
-            ordinal == c.before.messages
-                && c.item_ordinal == c.before.items
-                && c.after.items == c.before.items + 1
-                && c.after.messages == c.before.messages + 1
-                && (c.before.nonempty_messages..=c.before.nonempty_messages + 1)
-                    .contains(&c.after.nonempty_messages)
-                && c.after.tool_starts == c.before.tool_starts
-                && c.after.tool_finishes == c.before.tool_finishes
-        }
+        (None, Some(_)) => c.valid_message_change(),
         (Some(tool), None) => {
             let start = u64::from(tool.start_sequence == c.source_sequence);
             let finish = u64::from(tool.terminal_sequence == Some(c.source_sequence));
@@ -73,6 +64,8 @@ fn change_valid(change: &AgentOutputChange) -> bool {
                 && c.after.tool_finishes == c.before.tool_finishes + finish
                 && c.after.messages == c.before.messages
                 && c.after.nonempty_messages == c.before.nonempty_messages
+                && c.after.text == c.before.text
+                && (start == 0 || !c.before.text.is_open())
         }
         _ => false,
     }

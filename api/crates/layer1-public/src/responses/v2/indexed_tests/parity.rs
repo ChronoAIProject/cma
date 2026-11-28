@@ -1,5 +1,44 @@
 use super::*;
 
+#[tokio::test]
+async fn committed_text_is_visible_while_open_and_every_resume_keeps_its_event_ids() {
+    let delta = |offset, content: &str| AgentLogKind::AgentMessageDelta {
+        offset,
+        content: content.into(),
+    };
+    let mut kinds = beginning();
+    kinds.push(delta(0, "é"));
+    let open = make(kinds.clone()).await;
+    let prefix = suffix(&open, 0).await;
+    assert_eq!(prefix, projection::events(&open.golden(), true));
+    let last = prefix.last().unwrap();
+    assert_eq!(last["type"], "response.output_text.delta");
+    assert_eq!(last["delta"], "é");
+    let cursor = last["sequence_number"].as_u64().unwrap() + 1;
+    kinds.extend([
+        delta(2, "clair"),
+        message("éclair"),
+        tool("call", "completed"),
+        delta(0, "done"),
+        message("done"),
+    ]);
+    for terminal in [
+        AgentLogKind::TurnCompleted { turn_sequence: 3 },
+        AgentLogKind::TurnInterrupted { turn_sequence: 3 },
+    ] {
+        let mut closed_kinds = kinds.clone();
+        closed_kinds.push(terminal);
+        let closed = make(closed_kinds).await;
+        let expected = projection::events(&closed.golden(), true);
+        assert_eq!(&expected[..cursor as usize], prefix.as_slice());
+        assert_eq!(expected[cursor as usize]["delta"], "clair");
+        assert_eq!(expected[cursor as usize]["item_id"], last["item_id"]);
+        for next in cursor..=expected.len() as u64 {
+            assert_eq!(suffix(&closed, next).await, expected[next as usize..]);
+        }
+    }
+}
+
 pub(super) async fn suffix(f: &IndexedFixture, next: u64) -> Vec<Value> {
     let reading = f.reading.clone();
     f.observe(move |source| {

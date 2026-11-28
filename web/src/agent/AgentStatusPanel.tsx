@@ -1,9 +1,11 @@
+import { useContext } from 'react';
 import type { AgentDetail, SandboxEvent } from '../api/types';
 import { CharacterAvatar } from '../character/CharacterAvatar';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import { StateDot } from '../ui/StateDot';
 import type { AgentController } from './controller';
+import { TurnMascotContext } from './turnVisual';
 import './AgentStatusPanel.css';
 
 export function AgentStatusPanel({
@@ -19,6 +21,7 @@ export function AgentStatusPanel({
   readonly running: boolean;
   readonly historyIncomplete: boolean;
 }) {
+  const hasTurnMascot = useContext(TurnMascotContext);
   const steps = agentProgress(detail, events);
   const preparing = detail.status === 'starting' || steps.some((step) => step.status !== 'Done');
   const failed = detail.failure !== undefined || (preparing && detail.status === 'failed');
@@ -42,10 +45,12 @@ export function AgentStatusPanel({
       aria-label={preparing || failed ? 'Agent preparation' : 'Agent activity'}
       data-layout={preparing && !uncertain && !failed ? 'preparing' : 'compact'}
     >
-      <CharacterAvatar
-        pose={failed ? 'failed' : uncertain ? 'thinking' : preparing ? 'preparing' : 'working'}
-        size={preparing && !uncertain && !failed ? 96 : 56}
-      />
+      {preparing || failed || !hasTurnMascot ? (
+        <CharacterAvatar
+          pose={failed ? 'failed' : uncertain ? 'thinking' : preparing ? 'preparing' : 'working'}
+          size={preparing && !uncertain && !failed ? 96 : 56}
+        />
+      ) : null}
       <div className="agent-status-panel__body">
         <div aria-live="polite">
           <h2>{title}</h2>

@@ -41,6 +41,7 @@ import { messageSubmission } from './messageSubmission';
 import { useFirstTextSend } from './useFirstTextSend';
 import { composerInputAvailability } from './composerPresentation';
 import { turnRetryAvailable } from './turnRetryAvailability';
+import { agentHistoryIssue, WORKSPACE_READ_RECONNECTING } from './controllerError';
 
 const SIGN_IN_AGAIN = 'subscription-sign-in';
 const SIGN_IN_AGAIN_LABEL = 'Sign in to your ChatGPT subscription again';
@@ -163,14 +164,7 @@ export function ActiveAgentSurface({
   if (state.status === 'idle' || state.status === 'loading')
     return <AgentOpening headingRef={headingRef} />;
   if (state.status === 'error')
-    return (
-      <AgentUnavailable
-        message={state.message}
-        retryAt={state.retryAt}
-        headingRef={headingRef}
-        onRetry={controller.reload}
-      />
-    );
+    return <AgentUnavailable state={state} headingRef={headingRef} onRetry={controller.reload} />;
 
   const { detail, conversation } = state;
   const inputAvailability = composerInputAvailability(
@@ -209,11 +203,15 @@ export function ActiveAgentSurface({
     !controlReady ||
     !controller.inputAvailability.allowed ||
     controller.controlsUnavailable === true;
-  const issue = state.historyLoading
-    ? 'Loading conversation activity.'
-    : state.historyUnavailable
-      ? 'Earlier activity could not be loaded. Retrying…'
-      : (connectionError ?? connections.error ?? controller.actionError);
+  const historyIssue = agentHistoryIssue(state);
+  const streamIssue = status === 'failed' ? undefined : controller.streamError;
+  const issue = state.workspaceUnavailable
+    ? WORKSPACE_READ_RECONNECTING
+    : (streamIssue ??
+      historyIssue ??
+      connectionError ??
+      connections.error ??
+      controller.actionError);
   const observed = controller.progressObservation;
   const setupRoute = setupEnvironmentRoute(
     status,
@@ -236,6 +234,7 @@ export function ActiveAgentSurface({
     agentId,
     readOnly || verified === undefined ? undefined : lifecycleClient,
   );
+  const commandPending = actionsBusy || controller.pending !== undefined;
   return (
     <ComputerContext value={computerObservation}>
       <section className="agent-surface">
@@ -244,14 +243,10 @@ export function ActiveAgentSurface({
           onViewDeletionStatus={onViewDeletionStatus}
           onTitleUpdated={controller.applyAgentTitle}
           detail={detail}
+          parentSandbox={observed?.stale === false ? currentSandbox : undefined}
           readOnly={readOnly}
-          actionsBusy={actionsBusy || controller.pending !== undefined || !controlReady}
-          busy={
-            status !== 'ready' ||
-            actionsBusy ||
-            controller.pending !== undefined ||
-            state.historyLoading === true
-          }
+          actionsBusy={commandPending || !controlReady}
+          busy={status !== 'ready' || commandPending || state.historyLoading === true}
           filesOpen={filesOpen}
           onFilesOpenChange={accessUncertain ? undefined : onFilesOpenChange}
           title={title}
@@ -310,7 +305,9 @@ export function ActiveAgentSurface({
           <AgentSurfaceIssue
             issue={issue}
             unconfirmed={controller.pendingMessage !== undefined || controller.pendingControl}
-            historyIncomplete={historyIncomplete}
+            historyIncomplete={
+              historyIncomplete || state.workspaceUnavailable === true || streamIssue !== undefined
+            }
             onRetry={connectionError && !readOnly ? connection.retry : undefined}
             onDismiss={() => {
               connection.clearError();
@@ -335,6 +332,11 @@ export function ActiveAgentSurface({
             viewPosition={viewPosition}
             conversation={conversation}
             stopping={stopping}
+            turnPresentation={
+              historyIncomplete || starting || firstSendContext === undefined
+                ? undefined
+                : { status, authEpoch: firstSendContext.authEpoch, sandbox: currentSandbox }
+            }
             agentStatus={status}
             optimisticMessages={messageQueue.messages}
             arrivalsEnabled={!accessUncertain}

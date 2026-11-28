@@ -51,12 +51,11 @@ function validate(value) {
     value.evidence, path => value.raw.get(path));
 }
 
-function generatedRelease() {
+function generatedRelease(names = ['promoted_records', 'retained_records']) {
   const root = mkdtempSync(join(tmpdir(), 'cma-release-plan-'));
   try {
     const roles = ['historical', 'current', 'candidate', 'recovery'];
     const artifacts = Object.fromEntries(roles.map(role => [role, executable(role)]));
-    const names = ['promoted_records', 'retained_records'];
     const inventory = { schema: 'cma-reader-writer-source-inventory-v1',
       old: { source: artifacts.historical.source, tree: sha256('old-tree').slice(0, 40) },
       new: { source: artifacts.candidate.source, tree: sha256('new-tree').slice(0, 40) },
@@ -80,7 +79,7 @@ function generatedRelease() {
     { encoding: 'utf8' }));
     const bytes = readFileSync(output);
     assert.deepEqual(summary, { mode: 'release-declaration', execution: 'NOT_RUN',
-      fixtures: 6, cells: 24, sha256: sha256(bytes) });
+      fixtures: names.length * 3, cells: names.length * 12, sha256: sha256(bytes) });
     return { plan: JSON.parse(bytes), hash: sha256(bytes), artifacts, expectations };
   } finally { rmSync(root, { recursive: true, force: true }); }
 }
@@ -100,6 +99,16 @@ test('Python release declarations preserve four artifacts, fixture writers and p
   for (const fixture of plan.fixtures) {
     assert.deepEqual(fixture.writer, artifacts[fixture.policy === 'retained' ? 'historical' : 'candidate']);
   }
+});
+
+test('a complete release inventory above 170 collections fits the existing cell budget', () => {
+  const names = Array.from({length: 185}, (_, index) => `collection_${index}`);
+  const { plan } = generatedRelease(names);
+  assert.equal(validatePlan(plan), plan);
+  assert.equal(plan.fixtures.length, 555);
+  assert.equal(plan.cells.length, 2220);
+  plan.cells.pop();
+  assert.throws(() => validatePlan(plan));
 });
 
 test('the real validator rejects damaged Python release declarations', () => {

@@ -5,7 +5,7 @@
   margin: 0 auto;
   padding: var(--space-6);
   display: grid;
-  gap: 20px;
+  gap: var(--space-5);
   flex: none;
   color: var(--dsw-specific-task-primary);
   overflow-wrap: anywhere;
@@ -154,39 +154,39 @@
   justify-self: start;
   font-size: var(--text-note);
 }
-.task-home__workspace {
-  display: grid;
-  min-width: 0;
-}
-.task-home__workspace[data-with-mascot] {
-  grid-template-columns: 88px minmax(0, 1fr);
+.task-home[data-overview] {
+  max-width: 960px;
   gap: var(--space-6);
 }
-.task-home__mascot {
-  display: grid;
-  align-content: start;
-  justify-items: center;
-  gap: var(--space-4);
-  padding-top: var(--space-3);
-  color: var(--dsw-alias-label-secondary);
-  font-size: var(--text-note);
+.task-home[data-overview] h1 {
+  font-size: clamp(28px, 3vw, 36px);
+  text-wrap: balance;
 }
-.task-home__eyebrow {
-  color: var(--dsw-alias-label-secondary);
-  font-size: var(--text-note);
+.task-home[data-first-visit] h1 {
+  font-size: clamp(var(--text-page), 4vw, calc(var(--text-display) * 0.75));
 }
 .task-home__first-mascot {
   position: relative;
   isolation: isolate;
   display: grid;
-  place-items: center;
-  width: min(100%, 560px);
-  height: 104px;
+  place-content: center;
+  width: 100%;
+  height: 96px;
   overflow: hidden;
 }
+.task-home__decoration {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
 .task-home[data-first-visit] {
+  width: calc(100% - var(--space-8));
   max-width: 900px;
-  padding-top: var(--space-8);
+  margin-block: var(--space-6);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-xl);
+  background: var(--dsw-alias-bg-layer-1);
 }
 .task-home[data-first-visit] .task-home__heading {
   justify-items: center;
@@ -194,9 +194,13 @@
 .task-home[data-first-visit] .task-home__heading > a {
   justify-self: center;
 }
-.task-home[data-first-visit] h1,
-.task-home[data-first-visit] .task-home__intro {
+.task-home[data-first-visit] h1 {
   text-align: center;
+}
+.task-home__template-chip {
+  height: 36px;
+  min-height: 36px;
+  border-radius: var(--radius-pill);
 }
 .task-home__start-heading,
 .task-crew h2 {
@@ -263,12 +267,6 @@
   .task-crew__cards {
     grid-template-columns: 1fr;
   }
-  .task-home__workspace[data-with-mascot] {
-    grid-template-columns: 1fr;
-  }
-  .task-home__mascot {
-    display: none;
-  }
 }
 
 .task-home__shortcut {
@@ -295,7 +293,7 @@
   justify-content: center;
 }
 .task-home__template {
-  height: 42px;
+  min-height: 44px;
   padding: 0 12px;
   gap: 8px;
   border: 1px solid var(--dsw-specific-task-panel-border);
@@ -376,10 +374,23 @@
 }
 @media (max-width: 600px) {
   .task-home {
-    padding: 16px;
+    padding: var(--space-4);
+  }
+  .task-home[data-first-visit] {
+    width: calc(100% - var(--space-4));
+  }
+  .task-home__first-mascot {
+    height: 48px;
+  }
+  .task-home__first-poster {
+    scale: 0.5;
   }
 }
 @media (pointer: coarse), (max-width: 600px) {
+  .task-home__template-chip {
+    height: 44px;
+    min-height: 44px;
+  }
   .task-home button {
     min-height: 44px;
     min-width: 44px;

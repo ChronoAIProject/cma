@@ -91,6 +91,20 @@ impl Sandbox {
         if (self.status == SandboxStatus::Failed) != self.failure.is_some() {
             return Err(SandboxModelError::invalid_value("sandbox.failure"));
         }
+        if self
+            .work
+            .retirement_credential_recovery
+            .is_some_and(|recovery| {
+                !self.allows_retirement_credential_recovery()
+                    || recovery
+                        .admitted
+                        .is_some_and(|version| !recovery.admits(version))
+            })
+        {
+            return Err(SandboxModelError::invalid_value(
+                "sandbox.work.retirement_credential_recovery",
+            ));
+        }
         if !self.credential.validate()
             || self.work.next_fence == 0
             || self
@@ -156,6 +170,71 @@ impl Sandbox {
         next.work.schedule(SandboxWorkStep::StopAgents, at);
         *self = next;
         Ok(())
+    }
+
+    /// Automatic recovery uses the same ordinary owner credential source that admitted the Sandbox.
+    pub fn allows_retirement_credential_recovery(&self) -> bool {
+        self.status == SandboxStatus::Retiring
+            && self.work.step == SandboxWorkStep::RevokeRetirementCredentials
+            && self.has_ordinary_credential_scope()
+    }
+
+    pub fn has_ordinary_credential_scope(&self) -> bool {
+        self.credential.source.is_default_managed()
+            && self.credential.service_scope.is_none()
+            && self.credential.service_grants.is_empty()
+    }
+
+    /// Exhausted retirements keep their deletion intent and outstanding custody.
+    /// The terminal work event records the exact step and its last failure.
+    pub fn retirement_retry_exhausted(&self) -> bool {
+        self.status == SandboxStatus::Retiring
+            && self.work.step.is_retirement()
+            && self.work.lease.is_none()
+            && self.work.ready_at == super::provision::RETIREMENT_STOPPED
+    }
+
+    pub(crate) fn retirement_can_resume(&self) -> bool {
+        self.retirement_retry_exhausted()
+            || (self.work.lease.is_none()
+                && self
+                    .work
+                    .retirement_credential_recovery
+                    .is_some_and(|recovery| recovery.admitted.is_none()))
+    }
+
+    pub(crate) fn resume_retirement(&mut self, at: String) -> Result<(), SandboxModelError> {
+        if !self.retirement_can_resume() || self.retirement_archive_pending() {
+            return Err(SandboxModelError::invalid_value("sandbox.work.retirement"));
+        }
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| SandboxModelError::invalid_value("sandbox.revision"))?;
+        self.work.retirement_credential_recovery = None;
+        self.work.schedule(self.work.step, at.clone());
+        self.updated_at = at;
+        Ok(())
+    }
+
+    /// MarkRetired follows fenced teardown. Require positive evidence of
+    /// native allocation cleanup or durable home release before freeing quota.
+    pub fn retirement_released_owner_slot(&self) -> bool {
+        self.status == SandboxStatus::Retiring
+            && self.work.step == SandboxWorkStep::MarkRetired
+            && self.runtime.is_none()
+            && self.lifecycle.suspended_runtime.is_none()
+            && self.credential.current.is_none()
+            && self.credential.pending.is_none()
+            && !self.credential.delivered
+            && self.credential.revoke_debt.is_empty()
+            && self.lifecycle.home.as_ref().is_some_and(|home| {
+                home.released
+                    || home
+                        .native_pool
+                        .as_ref()
+                        .is_some_and(|native| native.cleaned)
+            })
     }
 
     pub fn begin_pause(

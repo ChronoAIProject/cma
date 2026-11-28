@@ -3,6 +3,226 @@ import { createServer } from 'node:http';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { cursor, LocalAgentV2 } from './agent-v2.fixture';
+import { previewBoundary } from './deliverable-preview-fixtures';
+
+for (const [colorScheme, width] of [
+  ['light', 1440],
+  ['dark', 390],
+] as const) {
+  test(`LOCAL pans a full-resolution file preview in ${colorScheme} at ${width}px`, async ({
+    page,
+    baseURL,
+    context,
+  }) => {
+    const fixture = new LocalAgentV2();
+    const name = 'contact-sheet.jpg';
+    const bytes = Buffer.from(
+      await page.evaluate(() => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 1600;
+        canvas.height = 1200;
+        const drawing = canvas.getContext('2d')!;
+        const paper = drawing.createImageData(canvas.width, canvas.height);
+        // A deterministic fine texture exercises files above the inline JSON limit.
+        let seed = 57;
+        for (let index = 0; index < paper.data.length; index += 4) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          paper.data.set([seed >>> 24, (seed >>> 16) & 255, (seed >>> 8) & 255, 255], index);
+        }
+        drawing.putImageData(paper, 0, 0);
+        drawing.font = '32px sans-serif';
+        for (let index = 0; index < 6; index += 1) {
+          const x = 24 + (index % 3) * 530;
+          const y = 20 + Math.floor(index / 3) * 600;
+          drawing.fillStyle = 'white';
+          drawing.fillRect(x, y, 490, 76);
+          drawing.fillStyle = 'black';
+          drawing.fillText(`Contact sheet page ${index + 1}`, x + 12, y + 50);
+        }
+        return canvas.toDataURL('image/jpeg', 0.96).split(',')[1]!;
+      }),
+      'base64',
+    );
+    expect(bytes.length).toBeGreaterThan(1024 * 1024);
+    let reads = 0;
+    try {
+      await page.setViewportSize({ width, height: 900 });
+      await fixture.route(page, baseURL!);
+      await page.route('**/api/v1/agents/agt_contract/files/tree**', (route) => {
+        const path = new URL(route.request().url()).searchParams.get('path')!;
+        return route.fulfill({
+          json: {
+            path,
+            entries: [
+              {
+                name,
+                path: path ? `${path}/${name}` : name,
+                kind: 'file',
+                size_bytes: bytes.length,
+                hidden: false,
+              },
+            ],
+          },
+        });
+      });
+      await page.route('**/api/v1/agents/agt_contract/files/download**', (route) => {
+        reads += 1;
+        return route.fulfill({ body: bytes, contentType: 'application/octet-stream' });
+      });
+      await page.goto('/agents/agt_contract');
+      await page.evaluate(
+        (dark) => document.body.toggleAttribute('data-ds-dark-theme', dark),
+        colorScheme === 'dark',
+      );
+      await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+      const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
+      await computer.getByRole('tab', { name: 'Files', exact: true }).click();
+      await computer.getByRole('button', { name, exact: true }).click();
+      const preview = computer.getByRole('region', { name: 'File preview' });
+      const image = preview.getByRole('img', { name });
+      const viewport = preview.getByRole('region', { name: 'Image viewport' });
+      const fit = preview.getByRole('button', { name: 'Fit', exact: true });
+      const zoom = preview.getByLabel('Image zoom', { exact: true });
+      await expect(image).toBeVisible();
+      const dimensions = () =>
+        viewport.evaluate((element) => ({
+          width: element.clientWidth,
+          height: element.clientHeight,
+        }));
+      const originalFrame = await dimensions();
+      const fits = () =>
+        viewport.evaluate(
+          (element) =>
+            element.scrollWidth === element.clientWidth &&
+            element.scrollHeight === element.clientHeight,
+        );
+      await expect.poll(fits).toBe(true);
+      const fitLabel = await zoom.innerText();
+
+      await viewport.scrollIntoViewIfNeeded();
+      const box = (await viewport.boundingBox())!;
+      const x = box.x + box.width / 2;
+      const y = box.y + box.height / 2;
+      if (width === 390) {
+        const cdp = await context.newCDPSession(page);
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchStart',
+          touchPoints: [
+            { x: x - 20, y, id: 1 },
+            { x: x + 20, y, id: 2 },
+          ],
+        });
+        await cdp.send('Input.dispatchTouchEvent', {
+          type: 'touchMove',
+          touchPoints: [
+            { x: x - 62, y, id: 1 },
+            { x: x + 62, y, id: 2 },
+          ],
+        });
+        await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+        await cdp.detach();
+      } else {
+        await page.mouse.move(x, y);
+        await page.keyboard.down('Control');
+        try {
+          await page.mouse.wheel(0, -120);
+        } finally {
+          await page.keyboard.up('Control');
+        }
+      }
+      await expect(zoom).not.toHaveText(fitLabel);
+      await preview.getByRole('button', { name: '100%', exact: true }).click();
+      await expect(zoom).toHaveText('100%');
+      await expect(image).toHaveAttribute('width', '1600');
+      await viewport.focus();
+      await viewport.press('-');
+      await expect(zoom).toHaveText('71%');
+      await viewport.press('+');
+      await expect(zoom).toHaveText('100%');
+      for (let step = 0; step < 5 && (await zoom.innerText()) !== '400%'; step += 1)
+        await preview.getByRole('button', { name: 'Zoom in', exact: true }).click();
+      await expect(zoom).toHaveText('400%');
+      await expect(image).toHaveAttribute('width', '6400');
+      expect(await dimensions()).toEqual(originalFrame);
+      await viewport.scrollIntoViewIfNeeded();
+      const zoomed = (await viewport.boundingBox())!;
+      const pan = () => viewport.evaluate((element) => [element.scrollLeft, element.scrollTop]);
+      const [left, top] = await pan();
+      await page.mouse.move(zoomed.x + 80, zoomed.y + 80);
+      await page.mouse.down();
+      await page.mouse.move(zoomed.x + 30, zoomed.y + 32, { steps: 4 });
+      await page.mouse.up();
+      await expect.poll(async () => (await pan())[0]).toBeGreaterThan(left!);
+      await expect.poll(async () => (await pan())[1]).toBeGreaterThan(top!);
+      await fit.click();
+      await expect(zoom).toHaveText(fitLabel);
+      await expect.poll(fits).toBe(true);
+      expect(await dimensions()).toEqual(originalFrame);
+
+      const open = preview.getByRole('button', { name: 'Open full-screen image' });
+      await open.focus();
+      await open.press('Enter');
+      const dialog = page.getByRole('dialog', { name });
+      await expect(dialog).toBeVisible();
+      await expect(dialog.getByRole('img', { name })).toBeVisible();
+      const fullViewport = dialog.getByRole('region', { name: 'Image viewport' });
+      expect((await fullViewport.boundingBox())!.height).toBeGreaterThan(originalFrame.height);
+      await dialog.getByRole('button', { name: '100%', exact: true }).click();
+      await expect(dialog.getByLabel('Image zoom', { exact: true })).toHaveText('100%');
+      await fullViewport.press('0');
+      await expect(dialog.getByRole('button', { name: 'Fit', exact: true })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      await fullViewport.press('Escape');
+      await expect(dialog).toBeHidden();
+      await expect(open).toBeFocused();
+      expect(reads).toBe(1);
+      expect(fixture.writes).toEqual([]);
+      expect(fixture.boundary.unexpected).toEqual([]);
+    } finally {
+      await fixture.close(page);
+    }
+  });
+}
+
+test('LOCAL opens the verified answer image with the shared viewer and restores focus', async ({
+  page,
+  baseURL,
+}) => {
+  const { boundary, control } = await previewBoundary(page, baseURL!);
+  await page.goto('/agents/agt_contract');
+  const back = page.getByRole('button', { name: 'Back to conversation', exact: true });
+  if (await back.isVisible()) await back.click();
+  await page.getByText('Verified deliveries.', { exact: true }).scrollIntoViewIfNeeded();
+  const card = page.getByRole('button', { name: 'Preview pixel.png', exact: true });
+  await card.click();
+  const preview = page.getByRole('complementary', { name: 'Deliverable preview' });
+  const source = preview.getByRole('img', { name: 'pixel.png', exact: true });
+  await expect(source).toBeVisible();
+  expect(await source.evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+  const open = preview.getByRole('button', { name: 'Open full-screen image' });
+  await open.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'pixel.png', exact: true });
+  await expect(dialog.getByRole('img', { name: 'pixel.png', exact: true })).toBeVisible();
+  const viewport = dialog.getByRole('region', { name: 'Image viewport' });
+  await viewport.press('+');
+  await expect(dialog.getByLabel('Image zoom', { exact: true })).toHaveText('141%');
+  await viewport.press('Escape');
+  await expect(dialog).toHaveCount(0);
+  await expect(open).toBeFocused();
+  await expect(preview).toBeVisible();
+
+  await open.press('Enter');
+  await expect(dialog).toBeVisible();
+  control.revoked = true;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(preview.getByText('Access unavailable', { exact: true })).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  await expect(source).toHaveCount(0);
+  expect(boundary.errors).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+});
 
 // Minimal synthetic OOXML package with content types, a root relationship and a document.
 const docx = Buffer.from(

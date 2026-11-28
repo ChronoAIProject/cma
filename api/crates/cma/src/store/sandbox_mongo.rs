@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::sync::Semaphore;
 
 mod handles;
+mod open_reply_loss;
 mod records;
 pub(super) use records::{
     i64_field_matches, nullable, read_record, record_bson, require_version, signed,
@@ -19,10 +20,12 @@ use super::{durability::majority_collection, schema::initialize_collections};
 
 #[path = "sandbox_mongo_transactions.rs"]
 mod transactions;
+pub(super) use transactions::{
+    abort_with_acknowledgment, commit_transaction_with_refusal, is_transient, PrecommitRefusal,
+};
 pub(crate) use transactions::{
     commit_transaction, is_confirmed_body_retry, is_duplicate_key, start_transaction, CommitOutcome,
 };
-pub(super) use transactions::{commit_transaction_with_refusal, is_transient, PrecommitRefusal};
 
 pub use super::profile_mongo::MongoProfileStore;
 pub(super) use super::schema::DOCUMENT_SCHEMA_VERSION;
@@ -122,6 +125,7 @@ pub struct MongoSandboxStore {
     pub(super) strict_inactivity_session_evidence: bool,
     pub(super) workspaces: Collection<Document>,
     pub(super) bounded_inactivity_legacy_log: bool,
+    pub(super) inactivity_log_preparation: std::sync::Arc<tokio::sync::Semaphore>,
     pub(super) worktrees: Collection<Document>,
     pub(super) agents: Collection<Document>,
     pub(super) agent_writes: std::sync::Arc<super::agent_write_coordination::AgentWrites>,
@@ -134,6 +138,7 @@ pub struct MongoSandboxStore {
     pub(super) agent_reuse_bindings: Collection<Document>,
     pub(super) agent_log: Collection<Document>,
     pub(super) suggestions: Collection<Document>,
+    pub(crate) suggestion_control: Option<crate::store::suggestion_control::SuggestionControl>,
     pub(super) agent_creation_provenance: Collection<Document>,
     pub(super) agent_channel_usage: Collection<Document>,
     pub(super) channel_usage_events: Collection<Document>,
@@ -183,6 +188,7 @@ pub struct MongoSandboxStore {
     pub(crate) agent_admitted: std::sync::Arc<tokio::sync::Notify>,
     // Broadcast to already leased parent waiters without consuming scheduler hints.
     pub(crate) agent_parent_ready: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) agent_turn_terminal: tokio::sync::broadcast::Sender<layer2_core::AgentId>,
 }
 
 impl MongoSandboxStore {

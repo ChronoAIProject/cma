@@ -3,7 +3,13 @@
 use layer2_core::diagnostic_context::DiagnosticContext;
 use std::{sync::Arc, time::Duration};
 
-use axum::{extract::State, http::StatusCode, response::IntoResponse, routing::get, Json, Router};
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Response},
+    routing::get,
+    Json, Router,
+};
 use layer2_core::StoreError;
 use tokio::{sync::watch, time::Instant};
 
@@ -18,6 +24,7 @@ const CHECK_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_CHECK_AGE: Duration = Duration::from_secs(5);
 
 mod build_info;
+pub(crate) use build_info::print_build_info;
 
 #[async_trait::async_trait]
 pub trait ReadinessProbe: Send + Sync {
@@ -53,6 +60,7 @@ struct HealthState {
     workers: Option<crate::worker_supervision::Workers>,
     diagnostics: Option<Arc<Recorder>>,
     backend_free: bool,
+    runtime_release: Option<Arc<releases::Proof>>,
 }
 
 #[cfg(test)]
@@ -63,17 +71,19 @@ pub fn router(probe: Arc<dyn ReadinessProbe>) -> Router {
 pub(crate) fn router_with_workers(
     probe: Arc<dyn ReadinessProbe>,
     workers: crate::worker_supervision::Workers,
+    runtime_release: Option<Arc<releases::Proof>>,
 ) -> Router {
     monitored(
         probe,
         Some(workers),
         false,
         readiness_diagnostics::configured(),
+        runtime_release,
     )
 }
 
 pub(crate) fn backend_free_router(probe: Arc<dyn ReadinessProbe>) -> Router {
-    monitored(probe, None, true, readiness_diagnostics::configured())
+    monitored(probe, None, true, readiness_diagnostics::configured(), None)
 }
 
 #[cfg(test)]
@@ -81,7 +91,7 @@ fn router_with_diagnostics(
     probe: Arc<dyn ReadinessProbe>,
     diagnostics: Option<Arc<Recorder>>,
 ) -> Router {
-    monitored(probe, None, false, diagnostics)
+    monitored(probe, None, false, diagnostics, None)
 }
 
 fn monitored(
@@ -89,6 +99,7 @@ fn monitored(
     workers: Option<crate::worker_supervision::Workers>,
     backend_free: bool,
     diagnostics: Option<Arc<Recorder>>,
+    runtime_release: Option<Arc<releases::Proof>>,
 ) -> Router {
     let (result, state) = watch::channel(None);
     // The sender owns no receiver. Dropping the last router cancels the check
@@ -105,6 +116,7 @@ fn monitored(
         workers,
         diagnostics,
         backend_free,
+        runtime_release,
     })
 }
 
@@ -115,6 +127,7 @@ fn routes(state: CheckState, diagnostics: Option<Arc<Recorder>>) -> Router {
         workers: None,
         diagnostics,
         backend_free: false,
+        runtime_release: None,
     })
 }
 
@@ -124,6 +137,21 @@ fn health_routes(state: HealthState) -> Router {
         .route("/ready", get(readiness))
         .with_state(state)
         .merge(build_info::router())
+}
+
+pub(crate) fn pointer_release_source(
+    stores: &MongoStores,
+    config: &crate::config::Config,
+) -> Result<Option<Arc<releases::Proof>>, String> {
+    let following = config
+        .runtime
+        .runtime_pointer
+        .as_ref()
+        .is_some_and(|pointer| pointer.can_follow());
+    if !following {
+        return Ok(None);
+    }
+    releases::Proof::configured(stores).map(|proof| proof.map(Arc::new))
 }
 
 async fn monitor(
@@ -191,7 +219,7 @@ pub(crate) async fn liveness() -> &'static str {
     "ok"
 }
 
-async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
+async fn readiness(State(state): State<HealthState>, headers: HeaderMap) -> Response {
     let check = state.store.borrow().clone();
     let age = check.as_ref().map(|check| check.completed.elapsed());
     let failure = match &check {
@@ -236,6 +264,12 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
     if state.backend_free {
         body["sandbox"] = serde_json::json!({ "available": false });
     }
+    if headers.contains_key(releases::CHALLENGE) {
+        return match state.runtime_release {
+            Some(proof) => proof.observe(&headers, ready).await,
+            None => StatusCode::NOT_FOUND.into_response(),
+        };
+    }
     (
         if ready {
             StatusCode::OK
@@ -244,7 +278,10 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
         },
         Json(body),
     )
+        .into_response()
 }
+
+mod releases;
 
 #[cfg(test)]
 mod discovery_tests;

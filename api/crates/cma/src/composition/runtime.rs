@@ -5,15 +5,6 @@ use crate::{
     agent_lifecycle::guidance, config::Config, store::MongoStores, warm_pools::NativeWarmPools,
 };
 
-pub(super) fn image_manager_resolver(
-    config: &Config,
-) -> Result<Arc<crate::agent_lifecycle::ImageManagerResolver>, String> {
-    crate::agent_lifecycle::ImageManagerResolver::new(
-        config.image_manager_base_url.clone(),
-        config.features.image_manager_retirement,
-    )
-}
-
 pub(super) fn configure_inline_lifecycle(
     config: &Config,
     stores: &MongoStores,
@@ -161,20 +152,25 @@ pub(super) fn lifecycle_config(
 ) -> crate::sandbox::SandboxLifecycleConfig {
     crate::sandbox::SandboxLifecycleConfig {
         renewable_work: config.agent_manager_replicas.is_some(),
+        workspace_prepare_observations: config.features.workspace_prepare_observations,
         ownership,
         runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
         native_retirement_finality_enabled: config.features.native_retirement_finality_enabled,
+        native_retirement_capture_enabled: config.features.native_retirement_capture_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
+        inspection_refusal: config.runtime.inspection_refusal.clone(),
         startup_sibling_hold_enabled: config.features.startup_sibling_hold_enabled,
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,
         work_retry_policy_enabled: config.features.work_retry_policy_enabled,
         native_create_retry_enabled: config.features.native_create_retry_enabled,
         reopen_output_refusal_enabled: config.features.reopen_output_refusal_enabled,
+        park_runtime_update_sandbox: config.runtime.staging_sandbox.park_runtime_update.clone(),
         cleanup_continuation_enabled: config.features.cleanup_continuation_enabled,
         owner_stop_settlement_enabled: config.features.owner_stop_settlement_enabled,
         bounded_live_fragments: config.features.bounded_live_fragments,
         coordinated_ingress: config.features.coordinated_ingress,
         quiet_output: config.features.quiet_output,
+        incremental_text: config.features.incremental_text,
         access_transport_migration: config.agent_access_transport_migration.clone(),
         managed_documents_enabled: config.document_storage.is_some(),
         event_driven_reconciliation: config.features.event_driven_reconciliation,

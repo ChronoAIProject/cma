@@ -1,6 +1,35 @@
 //! Aggregate CAS and worktree writes inside the publication transaction.
 use super::*;
 
+pub(super) fn is_effect_free_workspace_wait_requeue(mutation: &AgentWorkMutation) -> bool {
+    // An ordinary wait is immediately due. A requeue after a confirmed abort may be delayed.
+    mutation.agent.work.step == AgentWorkStep::WaitForWorkspace
+        && mutation.agent.work.ready_at >= mutation.appended_at
+        && mutation.agent.work.lease.is_none()
+        && mutation.agent_logs.is_empty()
+        && mutation.worktree.is_none()
+        && mutation.sandbox_event.is_none()
+}
+
+pub(super) fn fence_publication_only_work_lease(filter: &mut Document, current: &Agent) {
+    if matches!(
+        current.work.step,
+        AgentWorkStep::WaitForWorkspace | AgentWorkStep::FenceInteraction
+    ) {
+        filter.insert(
+            "$expr",
+            doc! {
+                "$gt": [
+                    { "$dateFromString": {
+                        "dateString": "$work_lease_expires_at", "onError": null, "onNull": null,
+                    }},
+                    "$$NOW",
+                ],
+            },
+        );
+    }
+}
+
 pub(super) async fn advance_agent(
     store: &MongoSandboxStore,
     current_row: &Document,
@@ -49,6 +78,7 @@ pub(super) async fn advance_agent(
     };
     owner_stop::fence_live_lease(&mut filter, mutation);
     restart_ready::fence_live_lease(&mut filter, current);
+    fence_publication_only_work_lease(&mut filter, current);
     let advanced = store
         .agents
         .update_one(filter, doc! { "$set": fields })
@@ -111,4 +141,54 @@ fn classify_aggregate_write(error: mongodb::error::Error) -> ApplyError {
     } else {
         ApplyError::Driver(error)
     }
+}
+
+pub(super) async fn fence_retired_sandbox(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    current_worktree: &Worktree,
+    entry_count: u64,
+    mutation: &AgentWorkMutation,
+    session: &mut mongodb::ClientSession,
+) -> Result<(), ApplyError> {
+    let sandbox = store
+        .sandboxes
+        .find_one(doc! { "_id": current.sandbox_id.as_str() })
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+        .as_ref()
+        .map(crate::store::sandboxes::read_sandbox)
+        .transpose()
+        .map_err(ApplyError::Domain)?
+        .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
+    validate_agent_work_mutation_with_sandbox(
+        current,
+        current_worktree,
+        entry_count,
+        mutation,
+        &sandbox,
+    )
+    .map_err(ApplyError::Domain)?;
+    // Serialize the no-runtime proof with any concurrent parent publication.
+    let written = store
+        .sandboxes
+        .update_one(
+            crate::store::work_schema::query(doc! {
+                "_id": sandbox.id.as_str(),
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "revision": signed(sandbox.revision, "retiring sandbox revision")
+                    .map_err(|_| ApplyError::Domain(SandboxStoreError::Conflict))?,
+            }),
+            doc! { "$inc": { "runtime_writer_claim_fence": 1_i64 } },
+        )
+        .session(&mut *session)
+        .await
+        .map_err(|error| {
+            contention::phase(mutation, "retired_sandbox_fence", ApplyError::Driver(error))
+        })?;
+    if written.matched_count != 1 {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
+    Ok(())
 }

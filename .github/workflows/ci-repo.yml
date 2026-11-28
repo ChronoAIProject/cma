@@ -142,13 +142,6 @@ jobs:
           if [ -n "$hits" ]; then
             echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
           fi
-      -
-        name: "Image Manager has no Agent or Gateway dependencies"
-        run: |
-          if grep -qE 'layer[1-4]-|cmaeg|path *=.*["/]cma["/]|cma-agent-manager' api/crates/cma-image-manager/Cargo.toml; then
-            echo '::error::Image Manager cannot depend on Agent or Gateway implementation crates'
-            exit 1
-          fi
   secrets:
     name: "Secret scanning"
     runs-on: "ubuntu-latest"

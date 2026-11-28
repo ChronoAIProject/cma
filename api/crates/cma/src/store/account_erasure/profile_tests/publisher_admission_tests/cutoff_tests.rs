@@ -60,7 +60,11 @@ async fn catalogue_admission_rechecks_current_caps_after_operator_cutoff() {
             if lowered == 0 {
                 assert!(matches!(
                     result,
-                    Err(SandboxStoreError::LimitReached { limit: 0, live: 1 })
+                    Err(SandboxStoreError::LimitReached {
+                        limit: 0,
+                        live: 1,
+                        ..
+                    })
                 ));
             } else {
                 assert!(matches!(result, Ok(SandboxAdmissionResult::Created(_))));

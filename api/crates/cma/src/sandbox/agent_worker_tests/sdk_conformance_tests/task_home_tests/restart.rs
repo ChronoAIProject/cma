@@ -14,6 +14,8 @@ struct RuntimeBoundary {
     close_proofs: Option<Arc<AtomicUsize>>,
     restart_supported: Arc<AtomicBool>,
     close_refusal: Arc<Mutex<Option<&'static str>>>,
+    replay_restart_history: bool,
+    touch_sandbox_on_restart: Option<(Arc<MongoSandboxStore>, layer2_core::SandboxId)>,
 }
 
 #[async_trait::async_trait]
@@ -90,10 +92,29 @@ impl HostedBackend for RuntimeBoundary {
         settings: HostedAgentOpenSettings,
         updates: mpsc::Sender<ConversationUpdate>,
     ) -> layer3_adapter::Result<(ConversationChannel, FencedReceipt<AgentOpenReceipt>)> {
+        let replay_history = self.replay_restart_history && launch.restart_runtime.is_some();
         let (channel, receipt) = self
             .backend
-            .open_agent(handle, launch, resume, settings, updates)
+            .open_agent(handle, launch, resume, settings, updates.clone())
             .await?;
+        if replay_history {
+            owner_stop::replay_retained_history(
+                channel.conversation_id.as_deref().unwrap(),
+                &updates,
+            )
+            .await?;
+        }
+        if let Some((store, sandbox_id)) = self
+            .touch_sandbox_on_restart
+            .as_ref()
+            .filter(|_| replay_history)
+        {
+            let mut sandbox = store.get_sandbox(sandbox_id).await.unwrap().unwrap();
+            let previous = sandbox.revision;
+            sandbox.revision += 1;
+            sandbox.last_activity_at = rfc3339_at(SystemTime::now() + Duration::from_secs(1));
+            store.save_sandbox(previous, sandbox).await.unwrap();
+        }
         let prompts = self.prompts.clone();
         let lose_response = self.lose_prompt_response;
         let input = ConversationInputSender::spawn(1, move |input| {
@@ -178,6 +199,8 @@ async fn exercise_restart(phase: &str) {
             close_proofs: None,
             restart_supported: Arc::new(AtomicBool::new(false)),
             close_refusal: Arc::new(Mutex::new(None)),
+            replay_restart_history: false,
+            touch_sandbox_on_restart: None,
         }),
         CodexSandboxSpec::default(),
     ));

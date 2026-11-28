@@ -225,17 +225,29 @@ async fn submit(
             Err(_) => return super::routing::error(super::BindingRouteError::SenderUnavailable),
         }
     }
-    let admitted = match state
-        .commands
-        .admit_at_binding_revision(
-            &auth.context,
-            credential.value(),
-            CommandSubmissionSource::Api,
-            submission.clone(),
-            policy_revision,
-        )
-        .await
-    {
+    let admission = if binding {
+        state
+            .commands
+            .admit_at_binding_revision(
+                &auth.context,
+                credential.value(),
+                CommandSubmissionSource::Api,
+                submission.clone(),
+                policy_revision,
+            )
+            .await
+    } else {
+        state
+            .commands
+            .admit(
+                &auth.context,
+                credential.value(),
+                CommandSubmissionSource::Api,
+                submission.clone(),
+            )
+            .await
+    };
+    let admitted = match admission {
         Ok(value) => value,
         Err(layer2_core::sandbox::agent_io::CommandAdmissionError::Ledger(
             layer2_core::sandbox::agent_io::CommandLedgerError::IdempotencyConflict,
@@ -309,7 +321,6 @@ pub(super) async fn retrieve(
     match super::stream::snapshot(&state, &authorization, &status.receipt).await {
         Ok((response, _)) => {
             if state.reads.shared_observation_enabled()
-                && layer2_core::sandbox::agent_observation::observation_agent().is_some()
                 && serde_json::to_vec(&response).map_or(true, |bytes| {
                     bytes.len() > layer2_core::sandbox::store::indexed::OUTPUT_PAGE_BYTES
                 })

@@ -49,7 +49,12 @@ export function retainCurrentMetadata(ready: ReadyAgent, current: AgentResourceS
     current.detail.id === ready.detail.id &&
     current.workspace.id === ready.workspace.id &&
     current.detail.sandbox.id === ready.detail.sandbox.id
-    ? { ...ready, detail: current.detail, workspace: current.workspace }
+    ? {
+        ...ready,
+        detail: current.detail,
+        workspace: current.workspace,
+        ...(current.workspaceUnavailable ? { workspaceUnavailable: true } : {}),
+      }
     : ready;
 }
 

@@ -56,3 +56,30 @@ pub(super) async fn begin_stored_conversation_turn(
     ));
     mutation
 }
+
+pub(super) async fn claim_interaction_fence(store: &MongoSandboxStore, id: &AgentId) -> Agent {
+    use layer2_core::rfc3339_at;
+    use std::time::Duration;
+
+    // Only the lease needs database time. The cleanup fixtures use their fixed
+    // timeline to publish events and drive the subsequent steps.
+    let hello = store
+        .client
+        .database("admin")
+        .run_command(doc! { "hello": 1 })
+        .await
+        .unwrap();
+    let now = hello.get_datetime("localTime").unwrap().to_system_time();
+    let claimed = store
+        .claim_agent_work(
+            id,
+            "worker",
+            rfc3339_at(now),
+            rfc3339_at(now + Duration::from_secs(60)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.work.step, AgentWorkStep::FenceInteraction);
+    claimed
+}

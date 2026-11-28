@@ -4,6 +4,8 @@ use crate::auth::nyxid_proxy::ProxyGrant;
 use layer2_core::sandbox::store::PageRequest;
 use sha2::{Digest as _, Sha256};
 
+#[path = "nyxid_proxy_inventory_tests.rs"]
+mod inventory;
 #[path = "nyxid_proxy_sandbox_control_tests.rs"]
 mod sandbox_controls;
 
@@ -13,7 +15,7 @@ const OWNER_TOKEN: &str = "must-not-leak-access-token";
 
 fn proxy_auth(fixture: &ResourceFixture) -> Arc<AuthState> {
     AuthState::with_store(
-        fixture.identity.auth.mode.clone(),
+        fixture.identity.auth.fixture_mode().clone(),
         None,
         fixture.identity.store.clone(),
     )
@@ -718,7 +720,7 @@ async fn owner_token_rotation_preserves_proxy_grant_but_disabling_proxy_auth_rev
         .await
         .unwrap();
     let disabled = AuthState::with_store(
-        fixture.identity.auth.mode.clone(),
+        fixture.identity.auth.fixture_mode().clone(),
         None,
         fixture.identity.store.clone(),
     )
@@ -761,7 +763,7 @@ impl SignedIngress {
         let server = tokio::spawn(async move {
             axum::serve(listener, app).await.unwrap();
         });
-        let mut mode = fixture.identity.auth.mode.clone();
+        let mut mode = fixture.identity.auth.fixture_mode().clone();
         if let (
             AuthMode::Provider {
                 public_url: current,

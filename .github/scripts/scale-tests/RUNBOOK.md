@@ -78,8 +78,8 @@ cargo test --locked -p cmaeg --test relay_ingress runner_binary::replicas -- --i
 ```
 
 The process test requires an authenticated disposable Mongo replica set via
-`CMA_IM_TEST_MONGODB_URI`; it refuses an ordinary standalone Mongo server. Reuse
-`.github/scripts/image-manager-mongo-contract.{sh,py}` under the environment
+`CMA_AUTHENTICATED_TEST_MONGODB_URI`; it refuses an ordinary standalone Mongo server. Reuse
+`.github/scripts/authenticated-mongo-contract.sh` under the environment
 manager's agreed lifecycle, never an existing production database. The process test uses the same routed admission/recovery selection at N=1/2/3,
 with separate OFF controls and ON ownership cohorts. Each cohort has a fresh
 database; ON invokes `--migrate-replicas`, shares one public deployment origin

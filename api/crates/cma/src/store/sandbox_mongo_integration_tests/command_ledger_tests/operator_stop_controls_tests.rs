@@ -9,6 +9,43 @@ use layer3_adapter::{
     ToolCallUpdate, ToolCallUpdateFields,
 };
 
+pub(super) async fn prepare_approval(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    request: &mut TargetedControlReservation,
+) {
+    DurableAgentUpdateRecorder::new(Arc::new(store.clone()))
+        .record_update(
+            &agent.id,
+            1,
+            &mut AgentMessageAssembly::default(),
+            ConversationUpdate::Asked(PermissionRequest {
+                id: "pending-approval".into(),
+                locator: Some(PermissionLocator::new("private-control-locator")),
+                request: RequestPermissionRequest::new(
+                    "conversation",
+                    ToolCallUpdate::new("call", ToolCallUpdateFields::new().title("Read file")),
+                    vec![],
+                ),
+            }),
+            layer2_core::now_rfc3339(),
+        )
+        .await
+        .unwrap();
+    let waiting = store.get_agent(&agent.id).await.unwrap().unwrap();
+    request.observed_agent_revision = waiting.revision;
+    request.command.expected_agent_revision = waiting.revision;
+    request.command.envelope.command = AgentCommand::AnswerApproval {
+        approval_id: "pending-approval".into(),
+        decision: AgentApprovalDecision::Allow,
+    };
+    request.command.envelope.request_fingerprint =
+        request.command.envelope.command.fingerprint().unwrap();
+    let audit = request.command.admission_audit.as_mut().unwrap();
+    audit.capability = layer2_core::resource_access::ResourceCapability::ResolveApproval;
+    audit.observations[0].capabilities = vec![audit.capability];
+}
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn operator_stop_preserves_interrupt_and_approval_admission_and_exact_replay() {
@@ -28,39 +65,7 @@ async fn operator_stop_preserves_interrupt_and_approval_admission_and_exact_repl
             .await
             .unwrap();
         if approval {
-            DurableAgentUpdateRecorder::new(Arc::new(store.clone()))
-                .record_update(
-                    &agent.id,
-                    1,
-                    &mut AgentMessageAssembly::default(),
-                    ConversationUpdate::Asked(PermissionRequest {
-                        id: "pending-approval".into(),
-                        locator: Some(PermissionLocator::new("private-control-locator")),
-                        request: RequestPermissionRequest::new(
-                            "conversation",
-                            ToolCallUpdate::new(
-                                "call",
-                                ToolCallUpdateFields::new().title("Read file"),
-                            ),
-                            vec![],
-                        ),
-                    }),
-                    layer2_core::now_rfc3339(),
-                )
-                .await
-                .unwrap();
-            let waiting = store.get_agent(&agent.id).await.unwrap().unwrap();
-            request.observed_agent_revision = waiting.revision;
-            request.command.expected_agent_revision = waiting.revision;
-            request.command.envelope.command = AgentCommand::AnswerApproval {
-                approval_id: "pending-approval".into(),
-                decision: AgentApprovalDecision::Allow,
-            };
-            request.command.envelope.request_fingerprint =
-                request.command.envelope.command.fingerprint().unwrap();
-            let audit = request.command.admission_audit.as_mut().unwrap();
-            audit.capability = layer2_core::resource_access::ResourceCapability::ResolveApproval;
-            audit.observations[0].capabilities = vec![audit.capability];
+            prepare_approval(&store, &agent, &mut request).await;
         }
         let accepted = store
             .reserve_targeted_control(request.clone())

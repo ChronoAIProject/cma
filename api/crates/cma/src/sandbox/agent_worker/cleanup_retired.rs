@@ -1,6 +1,7 @@
 use super::super::support::bump_log_sequence;
 use super::*;
-use layer2_core::sandbox::{Sandbox, Workspace, Worktree};
+use layer2_core::sandbox::store::retired_failed_worktree_cleanup_is_absent;
+use layer2_core::sandbox::{Sandbox, SandboxStatus, Workspace, Worktree};
 use layer2_core::{rfc3339_at, sandbox::store::AgentWorkMutation};
 
 pub(in crate::sandbox::agent_worker) enum CleanupPreflightError {
@@ -39,19 +40,31 @@ impl AgentWorker {
         }
         let unstarted = agent.has_no_runtime_effects()
             && matches!(agent.status, AgentStatus::Stopped | AgentStatus::Failed);
-        if !unstarted && !retired_sandbox_cleanup_is_absent(agent, &sandbox) {
+        if !unstarted && sandbox.status != SandboxStatus::Retired {
+            return Ok(None);
+        }
+        let worktree = self
+            .dependencies
+            .store
+            .get_worktree(&agent.worktree_id)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        // Runtime-loss recovery can stop an Agent before its first Worktree
+        // leaves Creating. Recheck provider absence even if its receipts are empty.
+        let abandoned_creation = agent.status == AgentStatus::Stopped
+            && agent.work.step == AgentWorkStep::EnsureProcessClosed
+            && worktree.status == WorktreeStatus::Creating;
+        let unstarted = unstarted && !abandoned_creation;
+        if !unstarted
+            && !retired_sandbox_cleanup_is_absent(agent, &sandbox)
+            && !retired_failed_worktree_cleanup_is_absent(agent, &worktree, &sandbox)
+        {
             return Ok(None);
         }
         let workspace = self
             .dependencies
             .store
             .get_workspace(&agent.workspace_id)
-            .await?
-            .ok_or(SandboxStoreError::NotFound)?;
-        let worktree = self
-            .dependencies
-            .store
-            .get_worktree(&agent.worktree_id)
             .await?
             .ok_or(SandboxStoreError::NotFound)?;
         Ok(Some(RetiredCleanupParents {
@@ -111,13 +124,16 @@ impl AgentWorker {
         let expected_revision = worktree.revision;
         let versioned = match agent.work.step {
             AgentWorkStep::EnsureProcessClosed | AgentWorkStep::RemoveWorktree => {
-                worktree
-                    .transition(if agent.work.step == AgentWorkStep::EnsureProcessClosed {
-                        WorktreeStatus::Removing
-                    } else {
-                        WorktreeStatus::Removed
-                    })
-                    .map_err(|_| SandboxStoreError::Conflict)?;
+                let transition = match (agent.work.step, worktree.status) {
+                    (AgentWorkStep::EnsureProcessClosed, WorktreeStatus::Creating) => {
+                        worktree.remove_abandoned_agent_worktree()
+                    }
+                    (AgentWorkStep::EnsureProcessClosed, _) => {
+                        worktree.transition(WorktreeStatus::Removing)
+                    }
+                    _ => worktree.transition(WorktreeStatus::Removed),
+                };
+                transition.map_err(|_| SandboxStoreError::Conflict)?;
                 Some(VersionedWorktree {
                     expected_revision,
                     worktree: worktree.clone(),
@@ -131,7 +147,14 @@ impl AgentWorker {
                 worktree_id: worktree.id,
             }
         });
-        self.progress(agent.clone(), next, now, None, Vec::new(), versioned, event)
+        let mut agent = agent.clone();
+        if agent.work.step == AgentWorkStep::RemoveWorktree {
+            agent
+                .work
+                .cleanup_debt
+                .retain(|debt| debt.step != AgentWorkStep::AddWorktree);
+        }
+        self.progress(agent, next, now, None, Vec::new(), versioned, event)
             .await
     }
 

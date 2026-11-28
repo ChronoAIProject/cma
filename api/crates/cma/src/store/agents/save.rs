@@ -13,6 +13,31 @@ pub(super) async fn save(
     expected_revision: u64,
     agent: Agent,
 ) -> Result<(), SandboxStoreError> {
+    save_with_format(store, expected_revision, agent, None).await
+}
+
+/// Connection recovery changes only the durable work schedule. Its exact
+/// predecessor can be either a legacy or an adopted Agent.
+pub(in crate::store) async fn save_connection_recovery(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    next: Agent,
+) -> Result<(), SandboxStoreError> {
+    if current.conversation != next.conversation
+        || (store.agent_ownership.is_some()
+            && layer2_core::agent_ownership::execution_owner().is_none())
+    {
+        return Err(SandboxStoreError::Conflict);
+    }
+    save_with_format(store, current.revision, next, Some(current)).await
+}
+
+async fn save_with_format(
+    store: &MongoSandboxStore,
+    expected_revision: u64,
+    agent: Agent,
+    recovery_source: Option<&Agent>,
+) -> Result<(), SandboxStoreError> {
     if agent.revision
         != expected_revision
             .checked_add(1)
@@ -20,7 +45,7 @@ pub(super) async fn save(
     {
         return Err(SandboxStoreError::Conflict);
     }
-    let filter = doc! {
+    let mut filter = doc! {
         "_id": agent.id.as_str(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "revision": signed(expected_revision, "expected agent revision")
@@ -60,10 +85,28 @@ pub(super) async fn save(
         .map_err(driver)?
         .ok_or(SandboxStoreError::Conflict)?;
     let current = read_agent(&current_row)?;
+    if let Some(source) = recovery_source {
+        let bound =
+            super::super::agent_capacity_recovery::source::envelope_filter(source, &current_row)?;
+        filter.extend(bound);
+        filter.insert(
+            "record.revision",
+            signed(source.revision, "recovery Agent revision")
+                .map_err(SandboxStoreError::Corrupt)?,
+        );
+        filter.insert(
+            "record.conversation.last_seq",
+            signed(source.conversation.last_seq, "recovery Agent head")
+                .map_err(SandboxStoreError::Corrupt)?,
+        );
+    }
     if current.conversation.turn_timeout != agent.conversation.turn_timeout {
         return Err(SandboxStoreError::Conflict);
     }
     let mut fields = agent_replacement_fields(&agent)?;
+    if recovery_source.is_some() {
+        super::super::connection_recovery_activity::record_schedule(&agent, &mut fields)?;
+    }
     super::super::agent_log_integrity::carry_integrity_for_revision(
         &current_row,
         &current,
@@ -72,9 +115,22 @@ pub(super) async fn save(
     )?;
     let new_obligation =
         native_retirement_action::adds_obligation(&current, &agent).then_some(&current.sandbox_id);
-    let result = update(store, &agent.id, filter, fields, new_obligation).await?;
+    let carry_proof = recovery_source
+        .filter(|_| store.active_log_proofs && current_row.get_str("agent_log_format").is_ok())
+        .map(|source| (&current_row, source, &agent));
+    let result = update(
+        store,
+        &agent.id,
+        filter,
+        fields,
+        new_obligation,
+        carry_proof,
+    )
+    .await?;
     if result.matched_count == 1 {
         Ok(())
+    } else if recovery_source.is_some() {
+        Err(SandboxStoreError::Conflict)
     } else {
         Err(classify_miss(&store.agents, &agent.id).await?)
     }
@@ -86,11 +142,12 @@ async fn update(
     filter: Document,
     fields: Document,
     new_obligation: Option<&SandboxId>,
+    carry_proof: Option<(&Document, &Agent, &Agent)>,
 ) -> Result<mongodb::results::UpdateResult, SandboxStoreError> {
     let update = doc! {"$set": fields};
     let owner_scoped = store.agent_ownership.is_some()
         && layer2_core::agent_ownership::execution_owner().is_some();
-    if new_obligation.is_none() && !owner_scoped {
+    if new_obligation.is_none() && !owner_scoped && carry_proof.is_none() {
         return store
             .agents
             .update_one(filter, update)
@@ -149,6 +206,27 @@ async fn update(
             }
             Err(error) => return Err(driver(error)),
         };
+        if let Some((row, source, next)) = carry_proof.filter(|_| result.matched_count == 1) {
+            use super::super::agent_log_integrity::TransactionLogError;
+            use super::super::agent_log_segments::{active_proof, read_head};
+            let proof = async {
+                let head = read_head(store, row, &mut session, false).await?;
+                active_proof::carry_claim(store, &head, source, next, &mut session).await
+            }
+            .await;
+            if let Err(error) = proof {
+                let _ = session.abort_guarded().await;
+                match error {
+                    TransactionLogError::Driver(error)
+                        if native_retirement_action::retryable_body_error(&error) =>
+                    {
+                        continue
+                    }
+                    TransactionLogError::Driver(error) => return Err(driver(error)),
+                    TransactionLogError::Domain(error) => return Err(error),
+                }
+            }
+        }
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(result),
             CommitOutcome::Retry(_) => continue,

@@ -61,7 +61,7 @@ async fn read(f: &Fixture, deadline: Duration) -> Result<Value, ProviderVerifica
     let metadata = f.auth.metadata().await.unwrap();
     identity_http::json(
         f.auth
-            .http
+            .fixture_http()
             .get(metadata.userinfo_endpoint.unwrap())
             .bearer_auth("must-not-leak-access-token"),
         tokio::time::Instant::now() + deadline,
@@ -226,7 +226,7 @@ async fn reqwest_body_timeout_retains_its_phase_and_fail_closed_policy() {
     drop(reply);
     let (result, events) = capture(identity_http::json(
         f.auth
-            .http
+            .fixture_http()
             .get(metadata.userinfo_endpoint.unwrap())
             .timeout(Duration::from_secs(1)),
         tokio::time::Instant::now() + Duration::from_secs(5),
@@ -270,7 +270,7 @@ async fn invalid_claims_configuration_and_capacity_are_separate_failures() {
             }
             "configuration" => {
                 f.auth
-                    .metadata
+                    .fixture_metadata()
                     .write()
                     .await
                     .as_mut()
@@ -279,7 +279,12 @@ async fn invalid_claims_configuration_and_capacity_are_separate_failures() {
                 ("userinfo", "configuration", "missing_configuration")
             }
             _ => {
-                permits = f.auth.verification_slots.acquire_many(64).await.unwrap();
+                permits = f
+                    .auth
+                    .fixture_verification_slots()
+                    .acquire_many(64)
+                    .await
+                    .unwrap();
                 assert_eq!(permits.num_permits(), 64);
                 ("verification", "admission", "verification_capacity")
             }
@@ -374,6 +379,6 @@ async fn caller_and_verification_deadlines_are_observed_and_release_capacity() {
             },
             "unavailable",
         );
-        assert_eq!(f.auth.verification_slots.available_permits(), 64);
+        assert_eq!(f.auth.fixture_verification_slots().available_permits(), 64);
     }
 }

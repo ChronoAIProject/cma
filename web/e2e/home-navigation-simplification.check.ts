@@ -2,6 +2,49 @@ import { expect, test, type Page, type TestInfo } from '@playwright/test';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 import { navigation, noEffects, taskAdmission } from './resource-lifecycle.fixture';
 
+test('LOCAL the last live environment scrolls fully into view in a short sidebar', async ({
+  page,
+  baseURL,
+}) => {
+  await page.setViewportSize({ width: 1440, height: 420 });
+  const boundary = new LocalStartup();
+  const sandboxes = Array.from({ length: 10 }, (_, index) => ({
+    ...boundary.sandbox,
+    id: `sbx_scroll_${index + 1}`,
+    name: index < 5 ? `Live environment ${index + 1}` : `Retiring environment ${index - 4}`,
+    status: index < 5 ? 'active' : 'retiring',
+    workspaces: [],
+    workspace_count: 0,
+    worktree_count: 0,
+    agent_count: 0,
+  }));
+  await boundary.route(page, baseURL!);
+  await page.route('**/api/v1/sandboxes?*', (route) =>
+    route.fulfill({ json: { items: sandboxes } }),
+  );
+  for (const sandbox of sandboxes)
+    await page.route(`**/api/v1/sandboxes/${sandbox.id}`, (route) =>
+      route.fulfill({ json: sandbox }),
+    );
+
+  await page.goto('/agent-manager');
+  await navigation(page, true);
+  const sidebar = page.getByRole('complementary', { name: 'Application navigation' });
+  const environments = sidebar.getByRole('button', { name: 'Environments', exact: true });
+  await environments.click();
+  await sidebar.locator('[data-navigation-footer] summary').click();
+  await environments.focus();
+  const last = sidebar.getByRole('tree', { name: 'Live sandboxes' }).getByRole('treeitem').last();
+  await expect(last).toContainText('Live environment 5');
+  await expect(last).not.toBeInViewport({ ratio: 1 });
+  const list = (await sidebar.locator('.manager-navigation__list').boundingBox())!;
+  const row = (await last.boundingBox())!;
+  await page.mouse.move(list.x + 24, list.y + 10);
+  await page.mouse.wheel(0, Math.ceil(row.y - list.y));
+  await expect(last).toBeInViewport({ ratio: 1 });
+  noEffects(boundary);
+});
+
 function parked() {
   const boundary = new LocalStartup();
   boundary.sandbox = {
@@ -62,8 +105,8 @@ for (const width of [1440, 390, 320]) {
       const boundary = parked();
       const empty = {
         ...boundary.sandbox,
-        id: 'sbx_empty',
-        name: 'Environment without Agents',
+        id: 'sbx_0123456789abcdef0123456789abcdef',
+        name: 'Environment without Agents sandbox 0123456789abcdef0123456789abcdef',
         workspaces: [],
         workspace_count: 0,
         worktree_count: 0,
@@ -73,11 +116,13 @@ for (const width of [1440, 390, 320]) {
       await page.route('**/api/v1/sandboxes?*', (route) =>
         route.fulfill({ json: { items: [boundary.sandbox, empty] } }),
       );
-      await page.route('**/api/v1/sandboxes/sbx_empty', (route) => route.fulfill({ json: empty }));
-      await page.route('**/api/v1/sandboxes/sbx_empty/events', (route) =>
+      await page.route(`**/api/v1/sandboxes/${empty.id}`, (route) =>
+        route.fulfill({ json: empty }),
+      );
+      await page.route(`**/api/v1/sandboxes/${empty.id}/events`, (route) =>
         route.fulfill({ json: [] }),
       );
-      await page.route('**/api/v1/resource-access/sandbox/sbx_empty', (route) =>
+      await page.route(`**/api/v1/resource-access/sandbox/${empty.id}`, (route) =>
         route.fulfill({
           json: {
             capabilities: ['view_details', 'view_history', 'manage_sharing'],
@@ -106,6 +151,26 @@ for (const width of [1440, 390, 320]) {
         'data-motion',
         'still',
       );
+      const name = disclosure.getByRole('button', { name: empty.name, exact: true });
+      await expect(disclosure.getByText(empty.id, { exact: true })).toBeVisible();
+      expect(
+        await name.evaluate((button) => {
+          const id = button.parentElement!.querySelector('code')!;
+          const textBounds = (element: Element) => {
+            const range = document.createRange();
+            range.selectNodeContents(element);
+            return range.getBoundingClientRect();
+          };
+          const nameText = textBounds(button);
+          const idText = textBounds(id);
+          const row = button.parentElement!.getBoundingClientRect();
+          return {
+            nameFits: nameText.left >= row.left && nameText.right <= row.right,
+            idFits: idText.left >= row.left && idText.right <= row.right,
+            separate: nameText.bottom <= idText.top,
+          };
+        }),
+      ).toEqual({ nameFits: true, idFits: true, separate: true });
       await capture(page, info, 'runtime-attention', dark);
       await sidebar.getByRole('button', { name: 'Environments', exact: true }).click();
       await sidebar.getByRole('button', { name: 'Filter', exact: true }).click();
@@ -126,10 +191,8 @@ for (const width of [1440, 390, 320]) {
           .locator('[role="treeitem"][aria-level="1"]'),
       ).toHaveCount(2);
       await sidebar.getByRole('button', { name: 'Tasks', exact: true }).click();
-      await disclosure
-        .getByRole('button', { name: 'Environment without Agents', exact: true })
-        .click();
-      await expect(page).toHaveURL(`${baseURL}/sandboxes/sbx_empty`);
+      await name.click();
+      await expect(page).toHaveURL(`${baseURL}/sandboxes/${empty.id}`);
       noEffects(boundary);
     });
 
@@ -240,7 +303,7 @@ for (const width of [1440, 390, 320]) {
         'page',
       );
       await expect(sidebar.getByRole('treeitem')).toHaveCount(1);
-      await expect(group.locator('.character-avatar')).toHaveAttribute('data-motion', 'still');
+      await expect(group.locator('.agent-mascot__poster')).toHaveAttribute('src', /poster-/);
       await expect(sidebar.getByText('No other agents to show.')).toBeVisible();
       await sidebar.getByRole('button', { name: 'Filter', exact: true }).click();
       await sidebar.getByRole('button', { name: 'Agent status filter' }).click();

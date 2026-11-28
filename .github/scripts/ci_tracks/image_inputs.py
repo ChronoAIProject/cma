@@ -15,13 +15,19 @@ from pathlib import Path
 from deployable_manifest import CURRENT, validate_names
 from docker_inputs import ignored, matches, stage_sources
 from policy import closure
-from publication_inputs import contract_images
+from publication_inputs import RECIPE, contract_images
 from rust_build_inputs import inputs as reviewed_build_inputs
 from uncertainty import SelectionIntegrityError
 
 MANIFEST = '.github/scripts/deployables.json'
 NAMES = frozenset(CURRENT)
 CARGO_CONFIG = {'api/Cargo.toml', 'api/Cargo.lock', 'api/rust-toolchain.toml'}
+# PR #4171 changed this exact recipe but left the previous digest in both rows.
+PRE_SEAL_RECIPE = '209e7cc60a75297f873a185081fccd7a9fefc6482d73cfa03a9735074d644562'
+SEAL_RECIPE = '1524620b368bb9e5f03790d46b6f9b41b848a1ba032e00a4a9f36629ae7acde0'
+# PR #4242 added two exact Web startup and drain script COPYs.
+PRE_WEB_DRAIN_RECIPE = '2156db5b2ca81011548685e3319e1e8bfed0498534f56710223684ca308d410a'
+WEB_DRAIN_RECIPE = 'f934534a9c3a4fcead71f637d4aa6194d7faf2446bb25f441c51783c9e2dfe65'
 
 
 def recipes(root, fallback=None):
@@ -131,9 +137,29 @@ def validate_recipe_sources(root, manifest):
             raise SelectionIntegrityError('Dockerfile changed; review and refresh its production-input model')
 
 
-def image_inputs(root, workspace, manifest=None):
+def historical_recipe_model(root, manifest):
+    """Replay reviewed Dockerfiles that landed before their manifest updates."""
+    model = dict(manifest)
+    reviewed = (
+        (RECIPE, PRE_SEAL_RECIPE, SEAL_RECIPE, ('cma-runtime', 'cma-runtime-omarchy')),
+        ('web/Dockerfile', PRE_WEB_DRAIN_RECIPE, WEB_DRAIN_RECIPE, ('cma-web',)),
+    )
+    for path, previous, current, names in reviewed:
+        source = root / path
+        if not source.is_file() or hashlib.sha256(source.read_bytes()).hexdigest() != current:
+            continue
+        for name in names:
+            recipe = model.get(name)
+            if recipe and recipe['dockerfile'] == path and recipe['dockerfile_sha256'] == previous:
+                model[name] = dict(recipe, dockerfile_sha256=current)
+    return model
+
+
+def image_inputs(root, workspace, manifest=None, *, historical=False):
     root = Path(root)
     manifest = recipes(root, manifest)
+    if historical:
+        manifest = historical_recipe_model(root, manifest)
     validate_recipe_sources(root, manifest)
     files = {p.relative_to(root).as_posix() for p in root.rglob('*') if p.is_file() and '.git' not in p.parts}
     result, contexts, analysis, source_cache = {}, {}, {}, {}
@@ -169,12 +195,12 @@ def changed_images(paths, snapshots):
     return changed_input_maps(paths, summaries)
 
 
-def changed_input_maps(paths, summaries):
+def changed_input_maps(paths, summaries, *, read_runtime_recipes=None):
     changed = set(paths)
     selected = {name for inputs, _ in summaries for name, files in inputs.items() if changed & files}
     before, after = summaries[0][1], summaries[-1][1]
     selected.update(name for name in NAMES if before[name] != after[name])
     # A lane is selected only by its own inputs. A publisher repair no longer
     # rebuilds current lanes; allocation retries any lane left behind.
-    selected.update(contract_images(changed))
+    selected.update(contract_images(changed, read_runtime_recipes))
     return sorted(selected)

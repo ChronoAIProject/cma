@@ -1,17 +1,21 @@
 use super::*;
-use layer2_core::agent_ownership::{Authority, OwnershipError};
+use layer2_core::agent_ownership::{Authority, BackgroundHandoffError, OwnershipError};
 
 impl AgentManager {
     pub(super) async fn handoff_receiver(
         &self,
         authority: &Arc<Authority>,
-    ) -> Result<bool, OwnershipError> {
-        match self.coordinator.handoff_background(authority).await {
+    ) -> Result<bool, BackgroundHandoffError> {
+        match self
+            .coordinator
+            .handoff_background_classified(authority)
+            .await
+        {
             Ok(completed) => Ok(completed),
             Err(error) if authority.receiver_cancelled() => {
                 authority.log_receiver_handoff_failure(
                     "cancelled_receiver_cleanup",
-                    &error,
+                    &error.into_ownership_error(),
                     "Receiver cleanup pending; healthy ownership continues",
                 );
                 match self.coordinator.forget_cancelled(authority).await {
@@ -55,7 +59,11 @@ impl AgentManager {
                 self.registry.detach_owner(&authority.token);
                 // A failed receiver remains fenced and is retried independently
                 // of healthy owners. Only confirmed revocation releases a lease.
-                if self.handoff_receiver(&authority).await? {
+                if self
+                    .handoff_receiver(&authority)
+                    .await
+                    .map_err(BackgroundHandoffError::into_ownership_error)?
+                {
                     self.handoffs
                         .lock()
                         .unwrap()

@@ -12,7 +12,7 @@ pub use crate::whatsapp::forms::service::{
 #[cfg(test)]
 #[allow(dead_code)]
 #[path = "../../tests/fake_cma.rs"]
-mod fake_cma;
+pub(crate) mod fake_cma;
 mod history;
 mod thread_history;
 pub use history::DiscordConversationHistory;

@@ -6,6 +6,8 @@
 //! that understands their provenance and retained deferred attempts.
 
 mod admission;
+#[cfg(feature = "test-support")]
+pub use super::agent_runtime::reconnect_guard_for_test;
 mod admission_service;
 mod answer_context;
 pub use answer_context::{answer_context_for_log, require_answer_context, AnswerContext};
@@ -92,7 +94,7 @@ pub use queued_cancellation::{
     QueuedCancellationTarget,
 };
 pub use reservation_policy::validate_command_reservation_policy;
-pub use response_read::AgentResponseReading;
+pub use response_read::{AgentResponseReading, ObservedResponseReadError};
 pub use revival_authority::CommandRevivalAuthorization;
 pub use status::{CommandProjectionView, CommandReceiptView, CommandStatusView};
 pub use targeted_control::{

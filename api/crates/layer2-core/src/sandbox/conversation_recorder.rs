@@ -37,8 +37,8 @@ pub(super) mod live;
 mod live_budget;
 pub use live::AgentHeadSubscription;
 pub use live::{
-    AgentLiveError, AgentLiveFragment, AgentLiveFragmentKind, AgentLivePublisher, AgentLiveSource,
-    AgentLiveSubscription,
+    AgentLiveError, AgentLiveEvent, AgentLiveFragment, AgentLiveFragmentKind,
+    AgentLiveInterruption, AgentLivePublisher, AgentLiveSource, AgentLiveSubscription,
 };
 pub use live_budget::AgentLiveDelivery;
 
@@ -49,6 +49,7 @@ pub struct DurableAgentUpdateRecorder {
     writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
     spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
     coalesce_policy: Option<AgentOutputCoalescePolicy>,
+    incremental_text: bool,
 }
 
 mod configuration;

@@ -5,6 +5,7 @@ import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from '../tes
 import { ApiError } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { workspaceFixture } from '../test/hierarchy';
+import { WorkspaceReadUnavailable } from '../api/rest/workspaceRead';
 import { conversationFromTranscript, type ConversationState } from './conversation';
 import type { AgentController } from './controller';
 import { useAgentController } from './controller';
@@ -136,6 +137,76 @@ it('preserves a draft and visible history while incomplete event activity retrie
   }
 });
 
+it('shows the Workspace HTTP 503 and retry countdown while opening the Agent', async () => {
+  vi.useFakeTimers();
+  const client = agentClient({
+    readWorkspace: vi
+      .fn()
+      .mockRejectedValueOnce(new WorkspaceReadUnavailable(new ApiError(503, 'Busy')))
+      .mockResolvedValue(workspaceFixture()),
+  });
+  function OpeningAgent() {
+    const controller = useAgentController(client, 'agt_1');
+    return (
+      <AgentSurface
+        agentId="agt_1"
+        controller={controller}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    );
+  }
+  const view = render(
+    <CmaClientProvider client={client}>
+      <OpeningAgent />
+    </CmaClientProvider>,
+  );
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(0));
+    expect(
+      screen.getByText(/Workspace status is temporarily unavailable \(HTTP 503\)/),
+    ).toBeVisible();
+    expect(screen.getByText(/Busy, retrying in/)).toBeVisible();
+    await act(() => vi.advanceTimersByTimeAsync(2000));
+    expect(
+      screen.queryByText(/Workspace status is temporarily unavailable/),
+    ).not.toBeInTheDocument();
+    expect(screen.getByText('The repository is ready.')).toBeVisible();
+  } finally {
+    view.unmount();
+    vi.useRealTimers();
+  }
+});
+
+it.each([true, false])(
+  'shows a live reconnect notice with historyLoading=%s',
+  async (historyLoading) => {
+    const notice = 'Live updates are reconnecting. Recorded activity is retained.';
+    render(
+      <AgentSurface
+        agentId="agt_1"
+        controller={controller(
+          {
+            status: 'ready',
+            detail: AGENT_DETAIL,
+            workspace: workspaceFixture(),
+            conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+            historyLoading,
+          },
+          undefined,
+          { streamError: notice },
+        )}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect((await screen.findByText(notice)).closest('[role="status"]')).toBeVisible();
+    expect(screen.getByText('The repository is ready.')).toBeVisible();
+  },
+);
+
 it('holds approval and Stop response controls during history hydration', async () => {
   const conversation: ConversationState = {
     ...conversationFromTranscript(AGENT_TRANSCRIPT),
@@ -205,10 +276,7 @@ it('holds approvals while saving and distinguishes pending admission from an act
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   rerender(draw({ pending: 'send', inputAvailability: { allowed: true } }));
   expect(screen.queryByText('Starting.', { exact: true })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Show Agent details' })).toHaveAttribute(
-    'title',
-    'Agent one · Working',
-  );
+  expect(within(screen.getByRole('banner')).getByText('Working', { exact: true })).toBeVisible();
   expect(screen.queryByRole('button', { name: 'Stop response' })).not.toBeInTheDocument();
   expect(draft).toHaveValue('Keep my draft');
   rerender(draw({ pending: 'send', inputAvailability }, 'run-active'));

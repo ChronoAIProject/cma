@@ -174,4 +174,7 @@ impl AgentOutputReader for MemoReader<'_> {
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
         self.reader().await?.source_page(after, limit).await
     }
+    async fn open_message(&mut self) -> Result<String, SandboxStoreError> {
+        self.reader().await?.open_message().await
+    }
 }

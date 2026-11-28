@@ -12,10 +12,12 @@ use mongodb::{
 use std::sync::{Arc, Mutex};
 
 mod capture;
+mod completeness;
 mod delivery;
 mod delivery_contract;
 mod delivery_recovery;
 mod delivery_worker;
+mod erasure;
 mod inventory;
 mod projection;
 mod safety;
@@ -139,6 +141,7 @@ impl Fixture {
 
 fn config() -> UsageCaptureConfig {
     UsageCaptureConfig {
+        completeness_enabled: false,
         namespace: "cma-fixture".into(),
         owner_issuer: "https://identity.example".into(),
     }

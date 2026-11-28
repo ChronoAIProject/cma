@@ -3,7 +3,7 @@ import type { AutoPausePreview, PauseIdleNow } from '@cma/client';
 import { Button } from '../ui/Button';
 import type { OperatorClient } from './client';
 import { operatorFailure, type OperatorFailure } from './failure';
-import { FailureNotice } from './records';
+import { FailureNotice, stateWord } from './records';
 
 export function AutoPauseControls({
   client,
@@ -88,6 +88,15 @@ export function AutoPauseControls({
             : `${preview.candidates} eligible Sandboxes in this preview batch.${(preview.failed ?? 0) > 0 ? ' Some checks could not be confirmed.' : ''}`}
         </p>
       )}
+      {preview?.refusals?.length ? (
+        <ul aria-label="Sandbox preview refusals">
+          {preview.refusals.map(({ sandbox_id, reason }) => (
+            <li key={sandbox_id}>
+              <code>{sandbox_id}</code> · {stateWord(reason)}
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {paused === undefined ? null : (
         <p role="status">
           {paused.enabled === false

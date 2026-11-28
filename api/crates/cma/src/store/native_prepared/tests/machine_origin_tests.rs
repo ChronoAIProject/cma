@@ -1,10 +1,32 @@
 use super::*;
-use crate::config::ManagedMachineUpdates;
+use crate::config::{FeatureFlags, ManagedMachineUpdates};
 use crate::store::agent_lifecycle_operations::COLLECTION;
 use crate::store::released_runtimes::MongoReleasedRuntimes;
 use crate::store::sandbox_maintenance::mongo_integration_tests::active_sandbox;
+use axum::{
+    body::{to_bytes, Body},
+    http::{Request, StatusCode},
+};
+use layer1_public::rest::{hierarchy_router, HierarchyState};
 use layer2_core::released_runtime::{ReleasedLane, ReleasedLaneRecord};
-use layer3_adapter::{ReleasedLaneRevisions, ReleasedRuntime};
+use layer2_core::{Authorization, Capability};
+use layer3_adapter::{
+    PinnedReleasedRuntime, ReleasedLaneRevisions, ReleasedRuntime, ReleasedRuntimeSource,
+};
+use serde_json::{json, Value};
+use std::sync::Arc;
+use tower::ServiceExt;
+
+fn image_origin_flags(machine_scope: Option<String>) -> FeatureFlags {
+    FeatureFlags::from_lookup(&mut |key| {
+        Ok(match key {
+            "CHRONO_RUNTIME_IMAGE_ORIGIN_ENABLED" => Some("true".into()),
+            "CHRONO_MANAGED_MACHINE_RUNTIME_UPDATES" => machine_scope.clone(),
+            _ => None,
+        })
+    })
+    .unwrap()
+}
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
@@ -15,6 +37,20 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
         .await
         .unwrap();
     let machine = machine_tests::machine_plan();
+    let agent_release = plan().warm.runtime_version;
+    let initial_release = PinnedReleasedRuntime::new(
+        agent_release.clone(),
+        Some(machine.warm.runtime_version.clone()),
+    )
+    .snapshot();
+    let machine_release = format!("registry.example/omarchy@sha256:{}", "d".repeat(64));
+    let releases = Arc::new(PinnedReleasedRuntime::new(
+        agent_release.clone(),
+        Some(machine_release.clone()),
+    ));
+    let defaults = image_origin_flags(None);
+    assert!(defaults.runtime_image_origin_enabled);
+    store.runtime_image_origin_enabled = defaults.runtime_image_origin_enabled;
     for (key, explicit, prepared) in [
         ("cold-managed", false, false),
         ("explicit-choice", true, false),
@@ -22,9 +58,20 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
     ] {
         let owner = SubjectId::new("retained-machine-owner");
         let mut input = lifecycle_input(&machine);
+        input.request.desktop = true;
         if explicit {
-            input.request.image =
-                serde_json::from_value(serde_json::json!({"id":"owner-image"})).unwrap();
+            input.request.image = serde_json::from_value(json!({"id":"owner-image"})).unwrap();
+        } else {
+            assert!(input.request.image.is_none());
+            let lane = crate::store::managed_lifecycle_release_lane(&input.request, input.behavior);
+            assert_eq!(lane, Some(ReleasedLane::Machine));
+            input.resolved_image = lane
+                .and_then(|lane| lane.version_in(&initial_release))
+                .map(str::to_owned);
+            assert_eq!(
+                input.resolved_image.as_deref(),
+                Some(machine.warm.runtime_version.as_str())
+            );
         }
         let mut workspace = machine.warm.workspaces[0].profile.clone();
         workspace.id =
@@ -54,7 +101,14 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
         sandbox.owner = owner.clone();
         sandbox.runtime = native.payload.runtime.clone();
         sandbox.lifecycle.home = native.payload.home.clone();
-        sandbox.work.step = SandboxWorkStep::None;
+        if prepared {
+            sandbox.work.step = SandboxWorkStep::None;
+        } else {
+            sandbox.work.schedule(
+                SandboxWorkStep::WaitForCredentialRotation,
+                "2026-09-05T01:00:00Z".into(),
+            );
+        }
         sandbox.credential.reaches = native.plan.warm.reaches.clone();
         sandbox.profile.id =
             private_sandbox_profile_id(&sandbox.owner, &format!("agent-manager:{key}:sandbox"))
@@ -106,13 +160,49 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
         )
         .unwrap();
         store.sandboxes.insert_one(document).await.unwrap();
-        store.managed_machine_updates = ManagedMachineUpdates::Disabled;
+        store.managed_machine_updates = defaults.managed_machine_updates;
+        assert_eq!(
+            store.managed_machine_updates,
+            ManagedMachineUpdates::Disabled
+        );
         assert!(store
             .qualify_retained_machine(&sandbox, LATER)
             .await
             .unwrap()
             .is_none());
-        store.managed_machine_updates = ManagedMachineUpdates::All;
+        if key == "cold-managed" {
+            let view = runtime_update(&store, releases.clone(), &sandbox).await;
+            eprintln!("shared desktop, scope unset: {view}");
+            assert_eq!(view["current_version"], machine.warm.runtime_version);
+            assert_eq!(view["latest_version"], agent_release);
+            assert_eq!(view["image_origin"], "unknown");
+            assert_eq!(view["can_update"], false);
+            assert_eq!(
+                store.get_sandbox(&sandbox.id).await.unwrap(),
+                Some(sandbox.clone())
+            );
+        }
+        store.managed_machine_updates = if key == "cold-managed" {
+            image_origin_flags(Some(sandbox.id.to_string())).managed_machine_updates
+        } else {
+            ManagedMachineUpdates::All
+        };
+        if key == "cold-managed" {
+            let mut rotating = sandbox.clone();
+            rotating
+                .work
+                .claim(
+                    "rotation-worker".into(),
+                    "2026-09-05T01:00:00Z",
+                    "2026-09-05T01:01:00Z".into(),
+                )
+                .unwrap();
+            assert!(store
+                .qualify_retained_machine(&rotating, "2026-09-05T01:00:01Z")
+                .await
+                .unwrap()
+                .is_none());
+        }
         if prepared {
             native.payload.state = WarmSandboxState::Claimed;
             native.ownership = Some(super::super::model::Ownership {
@@ -162,10 +252,20 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
             assert_eq!(qualified.profile, sandbox.profile);
             assert_eq!(qualified.lifecycle.home, sandbox.lifecycle.home);
             assert_eq!(qualified.runtime, sandbox.runtime);
+            assert_eq!(qualified.work, sandbox.work);
             assert_eq!(
                 store.get_sandbox(&sandbox.id).await.unwrap(),
                 Some(qualified.clone())
             );
+            if key == "cold-managed" {
+                let view = runtime_update(&store, releases.clone(), &qualified).await;
+                eprintln!("shared desktop, scope matches: {view}");
+                assert_eq!(view["current_version"], machine.warm.runtime_version);
+                assert_eq!(view["latest_version"], machine_release);
+                assert_eq!(view["image_origin"], "managed_machine");
+                assert_eq!(view["current_version_confirmed"], true);
+                assert_eq!(view["can_update"], true);
+            }
             crate::store::work_schema::floor::verify(&database)
                 .await
                 .unwrap();
@@ -175,6 +275,53 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
         }
     }
     database.drop().await.unwrap();
+}
+
+async fn runtime_update(
+    store: &MongoSandboxStore,
+    releases: Arc<PinnedReleasedRuntime>,
+    sandbox: &Sandbox,
+) -> Value {
+    let store = Arc::new(store.clone());
+    let profiles = Arc::new(InMemoryProfileStore::default());
+    let operations = crate::store::operation::MongoOperationStore::open(
+        &store.client,
+        &store.sandboxes.namespace().db,
+    )
+    .await
+    .unwrap();
+    let app = hierarchy_router(
+        HierarchyState::new(
+            SandboxService::new(
+                store.clone(),
+                profiles.clone(),
+                SandboxPolicy::default(),
+                Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+            ),
+            WorkspaceService::new(store.clone(), profiles),
+            HierarchyReadService::new(store.clone()),
+            Arc::new(operations),
+        )
+        .with_runtime_updates(Arc::new(SandboxRuntimeUpdateService::with_released(
+            store, releases,
+        ))),
+    );
+    let mut request = Request::builder()
+        .uri(format!("/api/v1/sandboxes/{}", sandbox.id))
+        .body(Body::empty())
+        .unwrap();
+    request
+        .extensions_mut()
+        .insert(layer1_public::AuthenticatedSubject(sandbox.owner.clone()));
+    request
+        .extensions_mut()
+        .insert(Authorization::new([Capability::UseOwnSandboxes]));
+    let response = app.oneshot(request).await.unwrap();
+    let status = response.status();
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap()).unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    body["runtime_update"].clone()
 }
 
 async fn verify_machine_release(

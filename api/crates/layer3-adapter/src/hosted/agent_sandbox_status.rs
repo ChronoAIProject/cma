@@ -53,6 +53,8 @@ impl AgentSandboxBackend {
                         })?;
                     self.client.verify_explicit_runtime_policy(&object).await?;
                     let pod = self.client.pod_binding(handle).await?;
+                    // Bootstrap can replay the same assignment while status is in flight.
+                    // Compare its authority after the fresh Pod and policy reads.
                     if pod != assigned.pod
                         || self.assignments.lock().unwrap().get(handle) != Some(&assigned)
                     {
@@ -66,5 +68,37 @@ impl AgentSandboxBackend {
             .await?;
         }
         Ok(response)
+    }
+    pub(super) async fn exchange_frame(
+        &self,
+        handle: &RuntimeHandle,
+        request: RequestFrame,
+    ) -> Result<ResponseFrame> {
+        if let RequestFrame::RuntimeStatus(status) = request {
+            return self.exchange_bound_status(handle, status).await;
+        }
+        self.transport.exchange(handle, request).await
+    }
+
+    pub(super) fn exchange_admitted_frame<'a>(
+        &'a self,
+        handle: &'a RuntimeHandle,
+        request: OwnedWork<RequestFrame>,
+        policy: &IngressOwnershipPolicy,
+    ) -> std::result::Result<AdmittedOperation<'a, ResponseFrame>, AdmittedError> {
+        if !request.belongs_to(policy) {
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "native exchange request ownership",
+            }
+            .into());
+        }
+        if matches!(&*request, RequestFrame::RuntimeStatus(_)) {
+            // Status must retain exchange_bound_status's assignment and Pod
+            // checks. Its native reads do not yet have admitted ports.
+            return Err(AdmittedError::Unsupported(
+                "native status validation requires admitted reads",
+            ));
+        }
+        self.transport.exchange_admitted(handle, request, policy)
     }
 }

@@ -20,7 +20,7 @@ if (
 export default defineConfig({
   projects: browserProjects(),
   testDir: '.',
-  testMatch: 'sandbox-status-filter.check.ts',
+  testMatch: ['sandbox-status-filter.check.ts', 'sandbox-sidebar-scroll.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,

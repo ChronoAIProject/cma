@@ -9,7 +9,7 @@ use super::{
 use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::MongoSandboxStore};
 use layer2_core::sandbox::{
     agent_io::{AdmittedAgentCommand, AgentCommand, CertifiedCommandSource, CommandEvidence},
-    Agent, AgentLogKind,
+    Agent, AgentLogKind, AgentLogProjectionState,
 };
 use mongodb::{
     bson::{doc, Document},
@@ -29,6 +29,26 @@ pub(in crate::store) async fn read_transaction(
     command: &AdmittedAgentCommand,
     session: &mut ClientSession,
 ) -> Result<Option<CommandEvidence>> {
+    let Some(source) = read_source(store, agent, agent_row, session).await? else {
+        return Ok(None);
+    };
+    read_from_source(store, &source, command, session)
+        .await
+        .map(Some)
+}
+
+pub(in crate::store) struct EvidenceSource {
+    head: Head,
+    state: AgentLogProjectionState,
+}
+
+/// The audit reuses this proof only inside its read-only snapshot transaction.
+pub(in crate::store) async fn read_source(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    agent_row: &Document,
+    session: &mut ClientSession,
+) -> Result<Option<EvidenceSource>> {
     if crate::store::agents::read_agent(agent_row)? != *agent {
         return Err(corrupt().into());
     }
@@ -37,13 +57,23 @@ pub(in crate::store) async fn read_transaction(
     }
     let head = read_head(store, agent_row, session, false).await?;
     let state = projection::read(store, agent, &head, session).await?;
+    Ok(Some(EvidenceSource { head, state }))
+}
+
+pub(in crate::store) async fn read_from_source(
+    store: &MongoSandboxStore,
+    source: &EvidenceSource,
+    command: &AdmittedAgentCommand,
+    session: &mut ClientSession,
+) -> Result<CommandEvidence> {
+    let EvidenceSource { head, state } = source;
     let dispatch = command.work.dispatch.as_ref().ok_or_else(corrupt)?;
-    if dispatch.claim.agent_id != agent.id {
+    if dispatch.claim.agent_id.as_str() != head.agent_id {
         return Err(corrupt().into());
     }
     let turn = dispatch.turn_sequence;
     let Some(EvidenceRecord::Turn { facts }) =
-        projection::evidence(store, &head, "turn", &turn.to_string(), session).await?
+        projection::evidence(store, head, "turn", &turn.to_string(), session).await?
     else {
         return Err(corrupt().into());
     };
@@ -63,7 +93,7 @@ pub(in crate::store) async fn read_transaction(
         sequence,
     }) = projection::evidence(
         store,
-        &head,
+        head,
         "operation",
         &dispatch.operation_sequence.to_string(),
         session,
@@ -85,7 +115,7 @@ pub(in crate::store) async fn read_transaction(
     let pending = if is_message && facts.end_sequence.is_none() {
         // The epoch's range is indexed. One member proves nonemptiness without
         // collecting the approval set or scanning lifetime resolved approvals.
-        pending_approval(store, &head, turn, state.approval_epoch, session).await?
+        pending_approval(store, head, turn, state.approval_epoch, session).await?
     } else {
         None
     };
@@ -98,7 +128,7 @@ pub(in crate::store) async fn read_transaction(
         facts.approval_change_sequence,
         pending.as_ref().map(|(_, seq)| *seq),
     ];
-    let rows = points::read(store, &head, requested, session).await?;
+    let rows = points::read(store, head, requested, session).await?;
     let point = |sequence: u64| rows.get(&sequence).ok_or_else(corrupt);
     let optional = |sequence: Option<u64>| sequence.map(point).transpose();
     let pending_row = optional(pending.as_ref().map(|(_, seq)| *seq))?;
@@ -120,7 +150,6 @@ pub(in crate::store) async fn read_transaction(
             pending_approval: pending_row,
         },
     )
-    .map(Some)
     .map_err(|_| corrupt().into())
 }
 

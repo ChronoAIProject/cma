@@ -10,10 +10,17 @@ mod queued_edits;
 #[path = "command_prepared_admission_tests.rs"]
 mod prepared;
 
+#[path = "command_delivery_refresh_tests.rs"]
+mod delivery;
+
 #[derive(Clone, Copy)]
 enum Progress {
     Parent,
     Agent,
+    ConversationOutput,
+    ConversationUsage,
+    ConversationDelivery,
+    ReplacedDelivery,
     TwoAgentRevisions,
     PreparedReady,
     ModelChange,
@@ -61,6 +68,7 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
         {
             match self.progress {
                 Progress::Agent
+                | Progress::ConversationOutput
                 | Progress::TwoAgentRevisions
                 | Progress::PreparedReady
                 | Progress::Stop => {
@@ -72,6 +80,20 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
                         .unwrap();
                     let revision = agent.revision;
                     agent.revision += 1;
+                    if matches!(self.progress, Progress::ConversationOutput) {
+                        let appended = self
+                            .store
+                            .append_agent_log(
+                                &agent.id,
+                                NOW.into(),
+                                AgentLogKind::AgentMessage {
+                                    content: "Output from the active turn".into(),
+                                },
+                            )
+                            .await
+                            .unwrap();
+                        agent.conversation.last_seq = appended.seq;
+                    }
                     if matches!(self.progress, Progress::Stop) {
                         agent.requested_stop_reason = Some(AgentStopReason::Owner);
                     }
@@ -84,6 +106,49 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
                         agent.conversation.runtime_generation = Some(1);
                     }
                     self.store.save_agent(revision, agent).await.unwrap();
+                }
+                Progress::ConversationUsage => {
+                    let agent = self
+                        .store
+                        .get_agent(&AgentId("agent".into()))
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    let result = crate::sandbox::conversation_observation_fold::usage(
+                        &agent,
+                        &crate::sandbox::AgentMessageAssembly::default(),
+                        &layer3_adapter::ConversationUsage {
+                            turn_id: "active-provider-turn".into(),
+                            input_tokens: 200,
+                            output_tokens: 30,
+                            last_input_tokens: 200,
+                            last_output_tokens: 30,
+                            context_used: 230,
+                            context_window: Some(1000),
+                            counters_reset: false,
+                        },
+                        NOW,
+                    )
+                    .unwrap();
+                    let crate::sandbox::conversation_fold::FoldedConversationUpdate::Changed(
+                        change,
+                    ) = result
+                    else {
+                        panic!("active usage must update the Agent");
+                    };
+                    for log in change.logs {
+                        self.store
+                            .append_agent_log(&agent.id, NOW.into(), log)
+                            .await
+                            .unwrap();
+                    }
+                    self.store
+                        .save_agent(agent.revision, change.agent)
+                        .await
+                        .unwrap();
+                }
+                Progress::ConversationDelivery | Progress::ReplacedDelivery => {
+                    delivery::observe_operation(&self.store, self.progress).await;
                 }
                 Progress::SlowFirstPreparation => {}
                 Progress::ModelChange => prepared::complete_then_change_model(&self.store).await,
@@ -111,6 +176,89 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
             .command_admission_authority(context, credential, owner)
             .await
     }
+}
+
+#[tokio::test]
+async fn queued_message_refreshes_after_output_from_the_same_active_turn() {
+    assert_message_refreshes_after_observation(Progress::ConversationOutput, Some(1)).await;
+}
+
+#[tokio::test]
+async fn queued_message_refreshes_after_usage_from_the_same_active_turn() {
+    assert_message_refreshes_after_observation(Progress::ConversationUsage, Some(1)).await;
+}
+
+#[tokio::test]
+async fn first_message_refreshes_after_usage_on_the_same_idle_conversation() {
+    assert_message_refreshes_after_observation(Progress::ConversationUsage, None).await;
+}
+
+async fn assert_message_refreshes_after_observation(progress: Progress, active_turn: Option<u64>) {
+    let (store, authority) = observation_fixture(progress, active_turn).await;
+    assert_observation_admission(store, authority, progress).await;
+}
+
+async fn observation_fixture(
+    progress: Progress,
+    active_turn: Option<u64>,
+) -> (Arc<InMemorySandboxStore>, Arc<Authority>) {
+    let (store, authority, mut agent) = retry_results::ordinary_fixture().await;
+    if let Some(turn) = active_turn {
+        let revision = agent.revision;
+        agent.status = AgentStatus::Working;
+        agent.conversation.active_turn = Some(turn);
+        if matches!(
+            progress,
+            Progress::ConversationDelivery | Progress::ReplacedDelivery
+        ) {
+            agent.conversation.operation = Some(delivery::confirmed_operation(&agent, turn));
+        }
+        agent.revision += 1;
+        store.save_agent(revision, agent).await.unwrap();
+    }
+    (store, authority)
+}
+
+async fn assert_observation_admission(
+    store: Arc<InMemorySandboxStore>,
+    authority: Arc<Authority>,
+    progress: Progress,
+) {
+    let (service, progressing) = service(&store, authority, progress);
+    let owner = context("owner");
+    let request = submission("message-during-observation");
+    let accepted = service
+        .admit(
+            &owner,
+            "selected-credential",
+            CommandSubmissionSource::Api,
+            request.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.status, AgentResponseStatus::Queued);
+    assert_eq!(progressing.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        service
+            .lookup_admitted(
+                &owner,
+                "selected-credential",
+                CommandSubmissionSource::Api,
+                request
+            )
+            .await
+            .unwrap(),
+        Some(accepted)
+    );
+    assert_eq!(
+        store
+            .command_work_page(&PageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
 }
 
 async fn bootstrap_fixture() -> (Arc<InMemorySandboxStore>, Arc<Authority>, Agent) {
@@ -186,7 +334,13 @@ fn service(
         calls: AtomicUsize::new(0),
     });
     (
-        AgentCommandService::new(store.clone(), access, authority.clone()),
+        AgentCommandService::new(
+            Arc::new(retry_results::RecordedReservations::with_stale_abort(
+                store.clone(),
+            )),
+            access,
+            authority.clone(),
+        ),
         authority,
     )
 }
@@ -273,7 +427,7 @@ async fn bootstrap_refresh_preserves_explicit_revision_and_refuses_stop_or_polic
             )),
             _ => assert!(matches!(
                 error,
-                CommandAdmissionError::Ledger(CommandLedgerError::Conflict)
+                CommandAdmissionError::Ledger(CommandLedgerError::KnownAborted)
             )),
         }
         assert_eq!(
@@ -306,7 +460,9 @@ async fn bootstrap_refresh_stops_after_bounded_conflicts_without_a_receipt() {
                 submission("contended-input"),
             )
             .await,
-        Err(CommandAdmissionError::Ledger(CommandLedgerError::Conflict))
+        Err(CommandAdmissionError::Ledger(
+            CommandLedgerError::KnownAborted
+        ))
     ));
     assert_eq!(authority.calls.load(Ordering::SeqCst), 3);
     assert!(store

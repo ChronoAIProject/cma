@@ -42,6 +42,7 @@ pub(crate) struct AgentManager {
     handoffs: Mutex<BTreeMap<AgentId, Instant>>,
     contained: receiver_containment::ContainedHandoffs,
     lifecycle: OnceLock<crate::agent_lifecycle::LifecycleDrain>,
+    retirement_capture: OnceLock<crate::agent_lifecycle::LifecycleDrain>,
     containment_times: Mutex<containment::IntentTimes>,
     supervisor: tokio::sync::Mutex<Option<tokio::task::JoinHandle<Result<(), ()>>>>,
     supervisor_outcome: OnceLock<Result<(), String>>,
@@ -133,6 +134,7 @@ impl AgentManager {
             handoffs: Mutex::new(BTreeMap::new()),
             contained: Default::default(),
             lifecycle: OnceLock::new(),
+            retirement_capture: OnceLock::new(),
             containment_times: Mutex::default(),
             supervisor: tokio::sync::Mutex::new(None),
             supervisor_outcome: OnceLock::new(),
@@ -140,8 +142,7 @@ impl AgentManager {
         Ok(manager)
     }
 
-    /// Contain a transient receiver housekeeping failure to that receiver
-    /// instead of stopping the process (#3069). Off unless configured.
+    /// Extend legacy receiver containment to transient lease release failures.
     pub fn enable_receiver_containment(&self) {
         if !self.coordinator.contains_failures() {
             self.contained.enable();

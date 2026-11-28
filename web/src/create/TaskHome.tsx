@@ -12,7 +12,7 @@ import { useLifecycleIntent } from './lifecycleIntent';
 import { lifecycleFailureMessage } from './lifecycleFailure';
 import { useLifecycleAgent } from './lifecycleAgent';
 import { useLifecycleTransport } from './lifecycleTransport';
-import { TaskCreationStatus } from './TaskCreationStatus';
+import { TaskCreationStatus, TaskQuotaNotice } from './TaskCreationStatus';
 import { TaskHomeLayout } from './TaskHomeLayout';
 import { TaskTemplatePanel } from './TaskTemplatePanel';
 import { TaskComposer } from './TaskComposer';
@@ -125,8 +125,11 @@ function TaskHomeContent({
       ? { owner: viewerId, intentKey: intent.key, workspaceId, sandboxId }
       : undefined,
   );
-  const quotaFailed =
-    operation?.status === 'failed' && operation.failure?.code === 'sandbox_limit_reached';
+  const quotaFailure =
+    operation?.status === 'failed' && operation.failure?.code === 'sandbox_limit_reached'
+      ? operation.failure
+      : undefined;
+  const quotaFailed = quotaFailure !== undefined;
   const failure = lifecycleFailureMessage(
     lifecycle.failure,
     intent?.receipt ? retryTaskStatus : lifecycle.connection ? continueTask : recoverTask,
@@ -378,6 +381,8 @@ function TaskHomeContent({
       ) : null}
       <TaskCreationStatus
         titleId={titleId}
+        motion={{ client, viewerId, authEpoch: home?.authEpoch, visible: home?.visible }}
+        connectionRequired={Boolean(lifecycle.connection)}
         draft={<PreparationDraft draft={preparationDraft} />}
         intent={intent}
         operation={operation}
@@ -446,12 +451,7 @@ function TaskHomeContent({
           onRecheck={() => void lifecycle.submit()}
         />
       ) : null}
-      {quotaFailed ? (
-        <p role="alert">
-          The Sandbox environment limit is now reached. Your task draft is saved. Manage
-          environments and check capacity before starting again.
-        </p>
-      ) : null}
+      {quotaFailed ? <TaskQuotaNotice quotaUsage={quotaFailure?.quota_usage} /> : null}
       <RepositoryPreparationHelp
         client={client}
         viewerId={viewerId}

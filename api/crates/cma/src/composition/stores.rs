@@ -57,6 +57,9 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_launch_admission_policy(config.features.launch_admission_policy()),
     );
     let mut sandbox_model = (*stores.sandbox_model).clone();
+    sandbox_model.suggestion_control = config.runtime.suggestion_control.clone().map(|target| {
+        crate::store::suggestion_control::SuggestionControl::new(&sandbox_model, target)
+    });
     sandbox_model.runtime_image_origin_enabled = config.features.runtime_image_origin_enabled;
     sandbox_model.managed_machine_updates = config.features.managed_machine_updates;
     sandbox_model.desktop_verified_runtime_image = config.desktop_verified_runtime_image.clone();
@@ -137,6 +140,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
                 ),
         );
     }
+    Arc::make_mut(&mut stores.agent_lifecycle).global_sandbox_limit = config.global_sandbox_limit;
     Ok(Arc::new(
         stores
             .with_empty_discovery(config.features.empty_discovery)

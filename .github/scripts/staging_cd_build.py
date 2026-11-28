@@ -37,7 +37,8 @@ def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None,
     if result.returncode != 0:
         # The cause marks transport failures, so only a caller's explicit retry
         # policy can repeat this command; the refusal itself stays fixed text.
-        raise ImageCommandRefusal(args, result.stderr) from ci_retry.cli_cause(result.stderr)
+        raise ImageCommandRefusal(args, result.stderr, stdout=result.stdout,
+                                  returncode=result.returncode) from ci_retry.cli_cause(result.stderr)
     return result.stdout
 
 

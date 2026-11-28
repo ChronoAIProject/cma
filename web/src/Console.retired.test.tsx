@@ -59,7 +59,7 @@ it('projects the authorized selected retired Agent despite an empty hierarchy an
   expect(
     within(group).getByRole('link', { name: 'Retained original task, Retired' }),
   ).toHaveAttribute('aria-current', 'page');
-  expect(group.querySelector('.character-avatar')).toHaveAttribute('data-motion', 'still');
+  expect(group.querySelector('img')?.getAttribute('src')).toContain('/rest/poster-');
   expect(screen.getByText('No other agents to show.')).toBeVisible();
   expect(restoreDeletions('owner')).toEqual([sibling]);
   expect(screen.queryByRole('region', { name: 'Deletion request' })).not.toBeInTheDocument();

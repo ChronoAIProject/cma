@@ -12,6 +12,7 @@ use crate::{auth::AuthMode, store::AuthEncryptionKey};
 
 mod access_migration;
 mod access_origins;
+pub(crate) use access_origins::retained as parse_agent_access_retained_origins;
 mod access_snapshot;
 mod activity;
 mod lifecycle_failure;
@@ -31,7 +32,7 @@ mod global_admission;
 mod http_connections;
 mod provider_tool_relay;
 mod public_owner_sandbox_limit;
-pub(crate) use access_migration::AgentAccessMigration;
+pub(crate) use access_migration::{parse as parse_agent_access_migration, AgentAccessMigration};
 #[cfg(test)]
 pub(crate) use anonymous_public::AnonymousPublicConfig;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
@@ -47,23 +48,31 @@ mod public_streams;
 mod rate_default_lease;
 mod rate_limits;
 pub use rate_limits::RateLimitConfig;
+mod inspection_refusal;
+pub(crate) use inspection_refusal::InspectionRefusalControl;
 mod relay_capacity;
+mod repository_runtime_images;
 mod runtime;
+mod staging_sandbox;
+mod startup_failure_fixture;
+pub(crate) mod suggestion_control;
+pub(crate) use runtime::deployment_id_from_lookup;
+pub(crate) use staging_sandbox::StagingSandboxControls;
 mod runtime_capacity;
 mod runtime_migration;
 mod shell_settings;
 pub(crate) use relay_capacity::RelayCapacityConfig;
 pub(crate) use shell_settings::BackendFreeConfig;
 
+mod feature_switches;
 mod features;
 mod quiet_output;
 pub(crate) mod task_audit;
 mod task_experience;
+pub(crate) use cma_am_auth::service_config::ServiceAuthorizationConfig;
 pub(crate) use features::home_backup::HomeBackupConfig;
 pub(crate) use features::{FeatureFlags, ManagedMachineUpdates};
-mod service_authorization;
 pub(crate) use gateway::GatewayConfig;
-pub(crate) use service_authorization::ServiceAuthorizationConfig;
 mod bot_father;
 mod browser_session;
 mod documents;
@@ -174,9 +183,6 @@ pub struct Config {
     pub agent_access_retained_origins: Vec<String>,
     pub(crate) agent_access_transport_migration: Option<AgentAccessMigration>,
     pub(crate) provider_tool_relay: Option<ProviderToolRelay>,
-    /// Base URL for the independently deployed Image Manager service.  CMA
-    /// only uses it with the request's delegated user credential.
-    pub image_manager_base_url: String,
     pub nyxid_public_url: Option<String>,
     pub nyxid_service_id: Option<String>,
     pub nyxid_oauth_api_resource: Option<String>,
@@ -194,6 +200,8 @@ pub struct Config {
     pub mongodb_authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub deployment_id: String,
     pub runtime: RuntimeConfig,
+    pub(crate) staging_startup_failure:
+        Option<layer3_adapter::runtime_bootstrap::StagingStartupFailure>,
     pub execution: layer2_core::sandbox::ProvisioningExecution,
     pub baseline_services: Vec<ServiceId>,
     pub auth_encryption_key: AuthEncryptionKey,
@@ -220,6 +228,7 @@ pub struct Config {
     pub(crate) usage_capture: Option<UsageCaptureConfig>,
     pub(crate) usage_export: Option<UsageExportConfig>,
     pub(crate) usage_metrics: MetricsConfig,
+    pub(crate) usage_measured: bool,
     pub sandbox_billing: Option<SandboxBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
     pub document_storage: Option<DocumentStorageConfig>,
@@ -236,8 +245,9 @@ impl StartupConfig {
     }
 
     pub(crate) fn from_lookup(
-        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        lookup: impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
+        let mut lookup = feature_switches::with_bundle(lookup)?;
         match runtime::RuntimeMode::from_lookup(&mut lookup)? {
             runtime::RuntimeMode::Execution(provider) => Config::with_provider(lookup, provider)
                 .map(|config| Self::Execution(Box::new(config))),
@@ -272,20 +282,21 @@ impl Config {
 
     #[cfg(test)]
     fn from_lookup(
-        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        lookup: impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
-        let runtime::RuntimeMode::Execution(provider) =
-            runtime::RuntimeMode::from_lookup(&mut lookup)?
-        else {
-            return Err("an execution backend is required for runtime configuration".into());
-        };
-        Self::with_provider(lookup, provider)
+        match StartupConfig::from_lookup(lookup)? {
+            StartupConfig::Execution(config) => Ok(*config),
+            StartupConfig::BackendFree(_) => {
+                Err("an execution backend is required for runtime configuration".into())
+            }
+        }
     }
 
     fn with_provider(
-        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        lookup: impl FnMut(&str) -> Result<Option<String>, String>,
         provider: runtime::Provider,
     ) -> Result<Self, String> {
+        let mut lookup = repository_runtime_images::with_bundle(lookup)?;
         let shell_settings::ServerSettings {
             bind,
             metrics_bind,
@@ -303,14 +314,6 @@ impl Config {
         {
             return Err("CHRONO_AGENT_ACCESS_TRANSPORT_MIGRATION origin must match CHRONO_SERVER_PUBLIC_URL".into());
         }
-        let image_manager_base_url = parse_service_base_url(
-            "CHRONO_IMAGE_MANAGER_BASE_URL",
-            &value_or(
-                &mut lookup,
-                "CHRONO_IMAGE_MANAGER_BASE_URL",
-                &format!("{}/api/image-manager", public_url.trim_end_matches('/')),
-            )?,
-        )?;
         let features = FeatureFlags::from_lookup(&mut lookup)?;
         if features.home_backup_expiry_enabled {
             return Err("CHRONO_HOME_BACKUP_EXPIRY_ENABLED requires a qualified deletion provider; retention preparation cannot be enabled".into());
@@ -394,7 +397,6 @@ impl Config {
             agent_access_retained_origins,
             agent_access_transport_migration,
             provider_tool_relay,
-            image_manager_base_url,
             nyxid_public_url,
             nyxid_service_id: lookup("CHRONO_NYXID_SERVICE_ID")?.filter(|id| !id.trim().is_empty()),
             nyxid_oauth_api_resource: oauth_resource::parse(lookup(
@@ -412,6 +414,10 @@ impl Config {
             mongodb_authority,
             deployment_id,
             runtime,
+            staging_startup_failure: startup_failure_fixture::from_lookup(
+                &mut lookup,
+                std::time::SystemTime::now(),
+            )?,
             execution,
             baseline_services,
             auth_encryption_key,
@@ -445,6 +451,7 @@ impl Config {
             usage_capture: UsageCaptureConfig::from_lookup(&mut lookup)?,
             usage_export: UsageExportConfig::from_lookup(&mut lookup)?,
             usage_metrics: MetricsConfig::from_lookup(&mut lookup)?,
+            usage_measured: sandbox_usage_export::measured_enabled(&mut lookup)?,
             sandbox_billing: SandboxBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
             document_storage,
@@ -455,9 +462,9 @@ impl Config {
 #[path = "config_validation.rs"]
 mod validation;
 use validation::{
-    parse_canonical_https_origin, parse_networks, parse_service_base_url, parse_service_ids,
-    parse_u64, parse_usize, positive_u32, required, strict_env, validate_cloudflare_networks,
-    validate_mongodb_uri, validate_origin, value_or,
+    parse_canonical_https_origin, parse_networks, parse_service_ids, parse_u64, parse_usize,
+    positive_u32, required, strict_env, validate_cloudflare_networks, validate_mongodb_uri,
+    validate_origin, value_or,
 };
 
 #[cfg(test)]

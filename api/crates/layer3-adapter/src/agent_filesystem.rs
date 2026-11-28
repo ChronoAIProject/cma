@@ -63,6 +63,9 @@ pub struct AgentFileReadRequest {
     pub sandbox_id: String,
     pub runtime_generation: u64,
     pub boot_id: String,
+    /// When supplied, the Runtime proves this mounted home is ready in the read itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_identity: Option<String>,
     pub path: String,
     pub max_bytes: u64,
 }

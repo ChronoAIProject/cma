@@ -29,6 +29,7 @@ pub struct RoutedTargetExecutor {
     tracker: Arc<TurnTracker>,
     worker: String,
     failure_text: String,
+    acknowledgement_text: String,
     pub(super) frame_limit: usize,
     pub(super) renew_interval: Duration,
     pub(super) invocation_bound: Duration,
@@ -51,13 +52,21 @@ impl RoutedTargetExecutor {
             tracker,
             worker: format!("routed-{}", uuid::Uuid::new_v4()),
             failure_text: config.failure_text.clone(),
+            acknowledgement_text: config.ack_text.clone(),
             frame_limit: MAX_FRAMES,
             renew_interval,
             invocation_bound: INVOCATION_BOUND,
         }
     }
     async fn run(&self, work: &WorkItem) -> Result<Disposition, ExecutionError> {
-        let dispatcher = self.port.clone().dispatcher();
+        let dispatcher = self
+            .port
+            .clone()
+            .dispatcher()
+            .with_readiness_acknowledgement(
+                self.delivery.coordinator.clone(),
+                &self.acknowledgement_text,
+            );
         let journal = dispatcher.journal();
         let outcome = dispatcher
             .dispatch(&work.identity, &work.target_id, &self.worker)
@@ -160,12 +169,18 @@ impl RoutedTargetExecutor {
         }) {
             return Ok(Disposition::Settled);
         }
-        if matches!(
-            self.delivery
-                .tool_reply_status(&work.identity, &work.target_id, lease, body)
-                .await?,
-            ToolReplyStatus::Unknown
-        ) {
+        let inspect_primary = journal.accepted_answer_receipts
+            && body.delivery.auto_final
+            && body.delivery.destination == cmaeg_core::channel::ReplyChoice::Origin
+            && !super::custom_delivery::is_custom_origin(body);
+        if !inspect_primary
+            && matches!(
+                self.delivery
+                    .tool_reply_status(&work.identity, &work.target_id, lease, body)
+                    .await?,
+                ToolReplyStatus::Unknown
+            )
+        {
             return Ok(Disposition::Settled);
         }
         let started = Instant::now();
@@ -236,10 +251,18 @@ impl RoutedTargetExecutor {
                 // rollback, without regenerating IDs or requiring new headers.
                 projection.retain_trace_contract(&mut frame);
                 journal.guard(lease).await?;
+                let primary = super::AcceptedAnswerIdentity::from_frame(
+                    &frame,
+                    journal.accepted_answer_receipts,
+                )?
+                .is_some()
+                    && inspect_primary;
                 let effect = if let Some(effect) = projection.pending_effect(&frame)? {
                     effect
                 } else {
-                    let durable_reply = if projection.needs_tool_receipt(&frame, body) {
+                    // The shared answer operation handles both matching and
+                    // unrelated guards for a committed primary frame.
+                    let durable_reply = if !primary && projection.needs_tool_receipt(&frame, body) {
                         match self
                             .delivery
                             .tool_reply_status(&work.identity, &work.target_id, lease, body)
@@ -276,7 +299,8 @@ impl RoutedTargetExecutor {
                 if trace.is_none() {
                     trace = BoundOperation::start(projection.trace.get(), Stage::Replay);
                 }
-                let delivery = self.deliver_with_tool_wait(work, journal, lease, &frame, effect);
+                let delivery =
+                    self.deliver_with_tool_wait(work, journal, lease, &frame, effect, primary);
                 let delivered = match &trace {
                     Some(trace) => trace.within(delivery).await,
                     None => delivery.await,

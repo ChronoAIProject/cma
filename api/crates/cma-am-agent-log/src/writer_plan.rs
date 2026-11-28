@@ -10,7 +10,7 @@ use super::{corrupt, digest, Head, Seal, MAX_BYTES, MAX_SEAL_BYTES, MAX_SEQUENCE
 const NORMAL_COUNT: i64 = 10_000;
 pub const NORMAL_BYTES: i64 = 64 * 1024 * 1024;
 pub const STOP_COUNT: i64 = NORMAL_COUNT + 64;
-pub const STOP_BYTES: i64 = NORMAL_BYTES + 512 * 1024;
+pub const STOP_BYTES: i64 = super::capacity::STOP_AGENT_LOG_BYTES as i64;
 pub const DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 
 /// Permission is resolved from durable gate/admission evidence before planning.

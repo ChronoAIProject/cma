@@ -100,6 +100,45 @@ async fn disabled_environment_preserves_waited_observation() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn enabled_browser_remains_available_when_the_control_probe_times_out() {
+    let (files, _, probe, owner) = observed(true).await;
+    let id = agent().id;
+    probe.enabled.store(true, Ordering::SeqCst);
+    probe.control_delay_ms.store(1_500, Ordering::SeqCst);
+
+    assert_eq!(
+        read(&files, &owner, &id).await["browser"]["reason"],
+        "observation_pending"
+    );
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(1_100)).await;
+    tokio::task::yield_now().await;
+
+    let pending = read(&files, &owner, &id).await;
+    assert_eq!(pending["browser"]["state"], "available");
+    assert_eq!(pending["control"]["writable"], false);
+    assert!(pending["revalidate_at"].as_str().is_some());
+    assert_eq!(
+        pending.get("access_revalidate_at"),
+        Some(&serde_json::Value::Null)
+    );
+
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
+    let retry = read(&files, &owner, &id).await;
+    assert_eq!(retry["browser"]["state"], "available");
+    assert_eq!(retry["control"]["state"], "temporarily_unavailable");
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_millis(1_600)).await;
+    tokio::task::yield_now().await;
+
+    let settled = read(&files, &owner, &id).await;
+    assert_eq!(settled["browser"]["state"], "available");
+    assert_eq!(settled["control"]["state"], "unsupported");
+    assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(start_paused = true)]
 async fn environment_background_capacity_and_timeout_release_are_bounded() {
     let (files, store, probe, owner) = observed(true).await;
     probe.delay_ms.store(30_000, Ordering::SeqCst);

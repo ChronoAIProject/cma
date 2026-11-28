@@ -5,6 +5,7 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc,
     },
+    time::Duration,
 };
 
 use futures_util::{SinkExt, StreamExt};
@@ -225,6 +226,8 @@ impl Fixture {
     fn request(&self) -> RuntimeBootstrapRequest {
         RuntimeBootstrapRequest {
             version: crate::runtime_bootstrap::RUNTIME_BOOTSTRAP_VERSION,
+            staging_startup_failure: None,
+            staging_startup_confirmed: false,
             pod_uid: "original-pod".into(),
             environment: BTreeMap::from([
                 ("CHRONO_SANDBOX_ID".into(), "logical-sandbox".into()),

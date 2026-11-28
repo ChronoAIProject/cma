@@ -129,7 +129,7 @@ class KindNodeImageTests(unittest.TestCase):
     def campaign(self, directory, *node):
         plan = Path(directory) / 'plan.json'
         plan.write_text('{}')
-        return runner.Campaign(Path(directory) / 'run', 'kind-not-invoked', 1, plan, *node)
+        return runner.Campaign(Path(directory) / 'run', 'kind-not-invoked', 1, plan.read_bytes(), *node)
 
     def test_default_node_image_is_unchanged(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -167,7 +167,7 @@ class ImageLoadTests(unittest.TestCase):
     def campaign(self, directory, status):
         plan = Path(directory) / 'plan.json'
         plan.write_text('{}')
-        campaign = runner.Campaign(Path(directory) / 'run', 'kind-bin', 1, plan)
+        campaign = runner.Campaign(Path(directory) / 'run', 'kind-bin', 1, plan.read_bytes())
         calls = []
 
         def command(argv, **kwargs):

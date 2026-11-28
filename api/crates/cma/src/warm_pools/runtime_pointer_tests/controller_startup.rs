@@ -1,5 +1,6 @@
 use super::*;
 use crate::{startup::pointer_pool_startup, warm_pools::startup::WarmPoolStartup};
+use layer3_adapter::hosted::RuntimeRoutingStore;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
@@ -74,6 +75,70 @@ async fn first_pointer_startup_holds_ambiguous_pool_authority_without_bootstrapp
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn held_agent_lane_holds_tied_machine_selections() {
+    let fixture = Fixture::new().await;
+    let fixed = fixture.replica_pinned_to('b').await;
+    fixed.seed_defaults().await;
+    let initial = fixed
+        .target_for(&fixture.plan(Lane::Machine, '1', capacity()))
+        .await;
+    let second_size = SandboxCapacity {
+        memory_mib: 4096,
+        ..capacity()
+    };
+    let mut tied = initial.clone();
+    tied.id = "tied-machine-sizing".into();
+    tied.plan = fixture.plan(Lane::Machine, '1', second_size);
+    tied.requested.memory_mib = second_size.memory_mib;
+    fixed.store.insert(tied.clone()).await.unwrap();
+
+    // The configured plan must be the one the single-row sort returns, so
+    // the ambiguity check is necessary even though that plan appears latest.
+    let selected = fixture
+        .database
+        .collection::<PoolTarget>("native_warm_pool_targets")
+        .find_one(
+            doc! {"plan.deployment":DEPLOYMENT,"machine":true,"activated_at":{"$type":"date"}},
+        )
+        .sort(doc! {"activated_at":-1,"machine_plan_activated_at":-1})
+        .await
+        .unwrap()
+        .unwrap();
+    let stale = fixture
+        .replica_with_capacity(
+            'a',
+            SandboxCapacity {
+                cpu_millis: selected.requested.cpu_millis,
+                memory_mib: selected.requested.memory_mib,
+            },
+        )
+        .await;
+    let before = fixed.store.list().await.unwrap();
+    let publisher = bind_controller(&stale, |_| panic!("bootstrap reads MongoDB"), true).await;
+    publisher.controller.register_boot().await.unwrap();
+    publisher.controller.bootstrap().await.unwrap();
+    assert!(publisher.pools.default_held(false));
+    assert!(publisher.pools.default_held(true));
+    for lane in [ReleasedLane::Agent, ReleasedLane::Machine] {
+        assert!(publisher
+            .controller
+            .release
+            .lanes
+            .load(lane)
+            .await
+            .unwrap()
+            .is_none());
+    }
+    let after = fixed.store.list().await.unwrap();
+    assert_eq!(
+        mongodb::bson::serialize_to_bson(&before).unwrap(),
+        mongodb::bson::serialize_to_bson(&after).unwrap()
+    );
+    fixture.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn first_pointer_startup_rechecks_a_release_activated_after_preflight() {
     for published in [false, true] {
         let fixture = Fixture::new().await;
@@ -93,7 +158,7 @@ async fn first_pointer_startup_rechecks_a_release_activated_after_preflight() {
             .unwrap();
         let pointer = bind_controller(&stale, |_| panic!("startup only reads MongoDB"), true).await;
         pointer.controller.register_boot().await.unwrap();
-        let (reached, resume) = stale.retirement.hold_activation(&old.id);
+        let (reached, resume) = stale.retirement.hold_preparation(&old.id);
         let newer = async {
             reached.await.unwrap();
             let active = fixture.replica_pinned_to('b').await;
@@ -171,4 +236,139 @@ async fn first_pointer_startup_rechecks_a_release_activated_after_preflight() {
         );
         fixture.database.drop().await.unwrap();
     }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn existing_machine_pointer_holds_only_a_superseded_same_image_size() {
+    let fixture = Fixture::new().await;
+    let original = fixture.replica().await;
+    original.seed_defaults().await;
+    let agent = fixture.plan(Lane::Agent, 'a', capacity());
+    let old_plan = fixture.plan(Lane::Machine, '1', capacity());
+    for plan in [&agent, &old_plan] {
+        fixture
+            .provider
+            .configure_planned(plan, TARGET)
+            .await
+            .unwrap();
+        fixture.readiness(plan, TARGET);
+    }
+    let active = bind_controller(&original, |_| panic!("startup only reads MongoDB"), true).await;
+    active.bootstrap().await.unwrap();
+    let old = original.target_for(&old_plan).await;
+    let new_size = SandboxCapacity {
+        memory_mib: 4096,
+        ..capacity()
+    };
+    let new_plan = fixture.plan(Lane::Machine, '1', new_size);
+    let mut replacement = old.clone();
+    replacement.id = "new-machine-sizing".into();
+    replacement.plan = new_plan;
+    replacement.requested.memory_mib = new_size.memory_mib;
+    replacement.binding = None;
+    replacement.activated_at = None;
+    replacement.machine_plan_activated_at = None;
+    replacement.lease = None;
+    replacement.lease_until = DateTime::from_millis(0);
+    replacement.applied_revision = 0;
+    original.store.insert(replacement.clone()).await.unwrap();
+    original.store.activate(&replacement.id).await.unwrap();
+
+    let stale = fixture.replica().await;
+    let pointer = bind_controller(&stale, |_| panic!("startup only reads MongoDB"), true).await;
+    pointer.controller.register_boot().await.unwrap();
+    let before = fixture.provider.inventory.lock().unwrap().effects.len();
+    let outcome = tokio::time::timeout(DEADLINE, pointer_pool_startup(&pointer.controller, None))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(outcome, WarmPoolStartup::Ready));
+    assert!(pointer.pools.default_held(true));
+    assert!(!pointer.pools.default_held(false));
+    let routing = crate::store::runtime_routing::MongoRuntimeRouting::open_with_default_pool_holds(
+        &fixture.database,
+        DEPLOYMENT,
+        true,
+        pointer.pools.default_holds.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(routing
+        .require_allocation_image(&image(Lane::Machine, '1'))
+        .is_err());
+    assert!(routing
+        .require_allocation_image(&image(Lane::Agent, 'a'))
+        .is_ok());
+    assert_eq!(
+        pointer.durable_release(Lane::Machine).await.active,
+        image(Lane::Machine, '1')
+    );
+    assert_eq!(
+        pointer.durable_release(Lane::Agent).await.active,
+        image(Lane::Agent, 'a')
+    );
+    {
+        let inventory = fixture.provider.inventory.lock().unwrap();
+        assert!(inventory.effects[before..].iter().all(|effect| !matches!(effect,
+            Effect::Configure(hash, _) | Effect::Resize(hash, _) if hash == &old_plan.config_sha256)));
+    }
+    fixture.database.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn concurrent_pointer_startups_share_one_legacy_machine_selection() {
+    let fixture = Fixture::new().await;
+    let original = fixture.replica().await;
+    original.seed_defaults().await;
+    let agent = fixture.plan(Lane::Agent, 'a', capacity());
+    let machine = fixture.plan(Lane::Machine, '1', capacity());
+    for plan in [&agent, &machine] {
+        fixture
+            .provider
+            .configure_planned(plan, TARGET)
+            .await
+            .unwrap();
+        fixture.readiness(plan, TARGET);
+    }
+    let active = bind_controller(&original, |_| panic!("startup only reads MongoDB"), true).await;
+    active.bootstrap().await.unwrap();
+    let legacy = original.target_for(&machine).await;
+    fixture
+        .database
+        .collection::<Document>("native_warm_pool_targets")
+        .update_one(
+            doc! {"_id": &legacy.id},
+            doc! {"$unset": {"machine_plan_activated_at": ""}},
+        )
+        .await
+        .unwrap();
+    let first = fixture.replica().await;
+    let second = fixture.replica().await;
+    let a = bind_controller(&first, |_| panic!("startup only reads MongoDB"), true).await;
+    let b = bind_controller(&second, |_| panic!("startup only reads MongoDB"), true).await;
+    a.controller.register_boot().await.unwrap();
+    b.controller.register_boot().await.unwrap();
+    let (one, two) = tokio::time::timeout(DEADLINE, async {
+        tokio::join!(
+            pointer_pool_startup(&a.controller, None),
+            pointer_pool_startup(&b.controller, None)
+        )
+    })
+    .await
+    .unwrap();
+    assert!(matches!(one.unwrap(), WarmPoolStartup::Ready));
+    assert!(matches!(two.unwrap(), WarmPoolStartup::Ready));
+    assert!(!a.pools.default_held(true));
+    assert!(!b.pools.default_held(true));
+    let selected = first.target_for(&machine).await;
+    assert_eq!(selected.id, legacy.id);
+    assert_eq!(selected.activated_at, legacy.activated_at);
+    assert!(selected.machine_plan_activated_at.is_some());
+    assert_eq!(
+        second.target_for(&machine).await.machine_plan_activated_at,
+        selected.machine_plan_activated_at
+    );
+    fixture.database.drop().await.unwrap();
 }

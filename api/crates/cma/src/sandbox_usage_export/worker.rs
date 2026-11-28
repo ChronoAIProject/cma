@@ -1,7 +1,9 @@
 use super::*;
 use crate::{
     config::UsageExportConfig,
-    store::sandbox_usage_export::{CaptureStore, DeliveryAttempt, DeliveryOutcome},
+    store::sandbox_usage_export::{
+        CaptureStore, CompletenessResult, DeliveryAttempt, DeliveryOutcome,
+    },
 };
 use std::{sync::Arc, time::Duration};
 
@@ -57,13 +59,29 @@ impl UsageExporter {
             let mut ticks = tokio::time::interval(Duration::from_secs(5));
             ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             let mut after = String::new();
+            let mut completeness_after = String::new();
+            let mut source_after = String::new();
             loop {
                 tokio::select! {
                     _ = stop.changed() => break,
                     _ = ticks.tick() => {
                         tokio::select! {
                             _ = stop.changed() => break,
-                            result = self.sweep(&mut after) => {
+                            result = async {
+                                let result = self.sweep(&mut after).await;
+                                if self.store.completeness_enabled() {
+                                    if let Err(error) = self.sweep_completeness_source(&mut source_after).await {
+                                        tracing::warn!(%error, "usage completeness source remains pending");
+                                    }
+                                    if let Err(error) = self.store.rebuild_measured_completeness().await {
+                                        tracing::warn!(%error, "usage completeness repair remains pending");
+                                    }
+                                    if let Err(error) = self.sweep_completeness(&mut completeness_after).await {
+                                        tracing::warn!(%error, "usage completeness delivery remains pending");
+                                    }
+                                }
+                                result
+                            } => {
                                 if result.is_err() { tracing::warn!("usage evidence delivery remains pending"); }
                             }
                         }
@@ -135,6 +153,75 @@ impl UsageExporter {
             if forbidden {
                 break;
             }
+        }
+        Ok(())
+    }
+
+    async fn sweep_completeness_source(
+        &self,
+        after: &mut String,
+    ) -> Result<(), layer2_core::sandbox::store::SandboxStoreError> {
+        let ids = self.store.completeness_source_page(after).await?;
+        if ids.is_empty() {
+            after.clear();
+            return Ok(());
+        }
+        for id in ids {
+            *after = id.clone();
+            if self.store.backfill_completeness(&id).await? {
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    async fn sweep_completeness(
+        &self,
+        after: &mut String,
+    ) -> Result<(), layer2_core::sandbox::store::SandboxStoreError> {
+        if self.store.producer_blocked(&self.destination).await? {
+            return Ok(());
+        }
+        let ids = self.store.completeness_delivery_page(after).await?;
+        if ids.is_empty() {
+            after.clear();
+            return Ok(());
+        }
+        for id in ids {
+            *after = id.clone();
+            let Some(attempt) = self
+                .store
+                .claim_completeness(&id, &self.destination)
+                .await?
+            else {
+                continue;
+            };
+            let result = async {
+                let receipt = match self.transport.completeness_receipt(&id).await? {
+                    Some(receipt) => receipt,
+                    None => self.transport.submit_completeness(&attempt).await?,
+                };
+                if !receipt.validates(&attempt) {
+                    return Err(TransportError::Conflict);
+                }
+                Ok(receipt)
+            }
+            .await;
+            let outcome = match result {
+                Ok(receipt) => CompletenessResult::Accepted(receipt),
+                Err(TransportError::Invalid | TransportError::Conflict) => CompletenessResult::Hold,
+                Err(error) => CompletenessResult::Retry(reconcile::retry_seconds(
+                    attempt.generation,
+                    match error {
+                        TransportError::RateLimited(seconds) => Some(seconds),
+                        _ => None,
+                    },
+                    uuid::Uuid::new_v4().as_bytes()[0],
+                )),
+            };
+            self.store.finish_completeness(&attempt, outcome).await?;
+            // At most one additional HTTP delivery per sweep.
+            break;
         }
         Ok(())
     }

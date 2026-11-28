@@ -39,7 +39,12 @@ async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
     *provider.state.github_proxy_scopes.lock().unwrap() = Some("read:user".into());
     assert!(matches!(
         broker.verify_github_repo_connection(&owner, "strong").await,
-        Err(ServiceConnectionError::Refused)
+        Err(ServiceConnectionError::Malformed(_))
+    ));
+    *provider.state.github_proxy_scopes.lock().unwrap() = Some("repo,,read:user".into());
+    assert!(matches!(
+        broker.verify_github_repo_connection(&owner, "strong").await,
+        Err(ServiceConnectionError::Malformed(_))
     ));
     *provider.state.github_proxy_scopes.lock().unwrap() = Some("read:user, repo".into());
     let proof = broker
@@ -49,7 +54,7 @@ async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
     assert_eq!(proof.id(), "strong");
     assert_eq!(proof.catalog_id(), "github-catalog");
     let reads = provider.state.github_proxy_reads.lock().unwrap().clone();
-    assert_eq!(reads, vec![("github-catalog".into(), "strong".into()); 3]);
+    assert_eq!(reads, vec![("github-catalog".into(), "strong".into()); 4]);
 
     for (field, value) in [
         ("status", Some(json!("revoked"))),
@@ -132,6 +137,12 @@ async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
         report["connections"][1]["account"],
         json!({"login":"fixture-weak","observed_scopes":null})
     );
+    *provider.state.github_proxy_scopes.lock().unwrap() = Some("repo,,read:user".into());
+    let report = serde_json::to_value(broker.github_connections(&owner, true).await).unwrap();
+    assert_eq!(
+        report["connections"][0]["account"],
+        json!({"login":"fixture-strong","observed_scopes":null})
+    );
     *provider.state.github_proxy_scopes.lock().unwrap() = Some("read:user, repo".into());
     let report = serde_json::to_value(broker.github_connections(&owner, true).await).unwrap();
     assert_eq!(
@@ -146,6 +157,8 @@ async fn verifies_only_the_selected_active_user_service_and_its_live_grant() {
         vec![
             ("github-catalog".into(), "strong".into()),
             ("github-catalog".into(), "strong".into()),
+            ("github-catalog".into(), "strong".into()),
+            ("github-catalog".into(), "weak".into()),
             ("github-catalog".into(), "weak".into()),
             ("github-catalog".into(), "weak".into()),
         ]

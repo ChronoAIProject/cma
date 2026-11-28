@@ -22,6 +22,8 @@ IMAGE = re.compile(r"^(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]+)?/)+"
                    r"[a-z0-9][a-z0-9._/-]*@sha256:[a-f0-9]{64}$")
 ID = re.compile(r"^[a-z][a-z0-9-]{0,95}$")
 ROLES = ("historical", "current", "candidate", "recovery")
+POLICIES = ("retained", "disabled", "enabled")
+MAX_CELLS = 4096
 MAX_BYTES = 4 * 1024 * 1024
 
 
@@ -71,9 +73,9 @@ def selections(artifacts):
 
 def fixtures_for(inventory, old, new):
     rows = inventory.get("collections") if isinstance(inventory, dict) else None
-    # Each collection creates three fixtures; the existing validator permits 512.
-    if not isinstance(rows, list) or not 0 < len(rows) * 3 <= 512:
-        raise ValueError("inventory must fit the matrix fixture limit")
+    # A collection adds every reader/policy combination to the matrix.
+    if not isinstance(rows, list) or not 0 < len(rows) * len(POLICIES) * len(ROLES) <= MAX_CELLS:
+        raise ValueError("inventory must fit the matrix cell limit")
     if any(not isinstance(row, dict) or not isinstance(row.get("name"), str) for row in rows):
         raise ValueError("inventory collections require names")
     names = [row["name"] for row in rows]
@@ -84,7 +86,8 @@ def fixtures_for(inventory, old, new):
         raise ValueError("collection fixture ids would collide")
     fixtures = []
     for name, key in zip(names, slugs):
-        for policy, writer in (("retained", old), ("disabled", new), ("enabled", new)):
+        for policy in POLICIES:
+            writer = old if policy == "retained" else new
             fixture_id = checked_id(f"collection-{key}-{policy}")
             material = json.dumps({"collection": name, "policy": policy,
                                    "writer": writer}, sort_keys=True).encode()
@@ -94,7 +97,7 @@ def fixtures_for(inventory, old, new):
 
 
 def reviewed_cells(expectations, pairs):
-    if not isinstance(expectations, list) or not 0 < len(expectations) <= 4096:
+    if not isinstance(expectations, list) or not 0 < len(expectations) <= MAX_CELLS:
         raise ValueError("complete reviewed expectations required")
     required = set(pairs)
     selected, ids = {}, set()

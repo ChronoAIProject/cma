@@ -9,7 +9,7 @@ use crate::{
 use cmaeg_core::seal::MasterKeyRing;
 use std::{sync::Arc, time::Duration};
 
-pub(super) fn state(
+pub(crate) fn state(
     records: RecordClient,
     keys: Arc<MasterKeyRing>,
     provider: &HttpServer,

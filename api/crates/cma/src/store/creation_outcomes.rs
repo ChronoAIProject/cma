@@ -5,6 +5,7 @@ use std::time::Duration;
 use axum::http::StatusCode;
 use layer1_public::rest::creation_outcomes::{
     self as contract, Backend, Begin, Identity, LookupRequest, Operation, Outcome, RefusalCode,
+    ValidationRefusal,
 };
 use layer2_core::{sandbox::store::CreationFence, StoreError, SubjectId};
 use mongodb::{
@@ -22,6 +23,7 @@ mod expiry;
 mod legacy;
 mod publication;
 mod reads;
+mod validation;
 pub(super) use publication::{
     cancel_with_operation, cancellation_committed, link_operation, publish_sandbox,
     refuse_with_operation,
@@ -105,6 +107,10 @@ impl CreationOutcomes {
             records,
         };
         store.initialize_coverage().await?;
+        tracing::info!(
+            terminal_settlement_enabled = store.config.terminal_settlement,
+            "Sandbox creation outcome coverage initialized"
+        );
         Ok(store)
     }
 
@@ -218,6 +224,22 @@ impl Backend for CreationOutcomes {
         &self.config.deployment
     }
 
+    fn terminal_settlement_enabled(&self) -> bool {
+        self.config.terminal_settlement
+    }
+
+    fn validation_settlement_enabled(&self) -> bool {
+        self.config.terminal_settlement && self.config.validation_settlement
+    }
+
+    async fn refuse_validation(
+        &self,
+        identity: &Identity<'_>,
+        refusal: ValidationRefusal,
+    ) -> Result<(), StatusCode> {
+        self.settle_validation(identity, refusal).await
+    }
+
     async fn lookup(
         &self,
         identity: &Identity<'_>,
@@ -225,7 +247,18 @@ impl Backend for CreationOutcomes {
     ) -> Result<Outcome, StatusCode> {
         let start = std::time::Instant::now();
         let result = self.resolve(identity, query).await;
-        tracing::debug!(operation = ?identity.operation, outcome = reads::outcome_name(&result), elapsed_ms = start.elapsed().as_millis(), "Sandbox creation lookup");
+        let unknown_reason = match &result {
+            Ok(Outcome::Unknown { reason }) => Some(reason),
+            _ => None,
+        };
+        tracing::debug!(
+            creation_proof = %record_id(identity),
+            operation = ?identity.operation,
+            outcome = reads::outcome_name(&result),
+            ?unknown_reason,
+            elapsed_ms = start.elapsed().as_millis(),
+            "Sandbox creation lookup"
+        );
         result
     }
 

@@ -74,6 +74,14 @@ impl AgentWorker {
         &self,
         agent: &Agent,
     ) -> Result<AgentContext, WorkerFailure> {
+        self.context_with_parent(agent, None).await
+    }
+
+    pub(in crate::sandbox::agent_worker) async fn context_with_parent(
+        &self,
+        agent: &Agent,
+        parent: Option<layer2_core::sandbox::Sandbox>,
+    ) -> Result<AgentContext, WorkerFailure> {
         if agent.status == AgentStatus::Starting
             && agent.work.step == AgentWorkStep::OpenConversation
         {
@@ -82,7 +90,12 @@ impl AgentWorker {
         // These IDs come from the claimed Agent. Read independently, then retain
         // the existing error precedence and validate all lineage before adoption.
         let (sandbox, workspace, worktree) = tokio::join!(
-            self.dependencies.store.get_sandbox(&agent.sandbox_id),
+            async {
+                match parent {
+                    Some(parent) => Ok(Some(parent)),
+                    None => self.dependencies.store.get_sandbox(&agent.sandbox_id).await,
+                }
+            },
             self.dependencies.store.get_workspace(&agent.workspace_id),
             self.dependencies.store.get_worktree(&agent.worktree_id),
         );
@@ -135,6 +148,7 @@ impl AgentWorker {
         let attached = super::super::inspection_park::observe(
             agent,
             &sandbox,
+            self.config.inspection_refusal.as_ref(),
             crate::sandbox::runtime_attachment::inspect_bound_runtime(
                 self.dependencies.adapter.as_ref(),
                 &sandbox,

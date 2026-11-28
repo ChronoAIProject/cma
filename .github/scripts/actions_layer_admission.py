@@ -5,6 +5,7 @@ import json
 import os
 import re
 import stat
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -93,6 +94,57 @@ def select(api, run, component):
     return artifact["id"]
 
 
+def select_am_receipt(api, run):
+    run_id, attempt = run["id"], run["run_attempt"]
+    name = f"staging-receipts-{run_id}-{attempt}-am"
+    artifacts = api.list(f"runs/{run_id}/artifacts", "artifacts", name=name)
+    if not artifacts:
+        return None
+    require(len(artifacts) == 1, "Ambiguous AM publication receipt")
+    artifact = artifacts[0]
+    require(artifact["name"] == name and artifact["expired"] is False
+            and type(artifact["id"]) is int and artifact["id"] > 0
+            and type(artifact["size_in_bytes"]) is int and 0 < artifact["size_in_bytes"] <= 1024**2
+            and re.fullmatch(r"sha256:[a-f0-9]{64}", artifact.get("digest", "")), "Invalid AM receipt artifact")
+    jobs = api.list(f"runs/{run_id}/attempts/{attempt}/jobs", "jobs")
+    for name, steps in (
+            ("Release am / Publish", {"Retain only public publication receipts", "Retry retaining only public publication receipts"}),
+            ("Release am / Finalize", {"Publish digest-bound final tags and remove successful reservations"})):
+        matches = [job for job in jobs if job["name"] == name]
+        if len(matches) != 1:
+            return None
+        job = matches[0]
+        if not (job["run_id"] == run_id and job["run_attempt"] == attempt and job["head_sha"] == run["head_sha"]
+                and job["status"] == "completed" and job["conclusion"] == "success"
+                and any(step["name"] in steps and step["conclusion"] == "success" for step in job["steps"])):
+            return None
+    return artifact["id"]
+
+
+def reservation_policy_revision(loaded):
+    """Refresh archive reservation authority after detached candidate replay."""
+    require(isinstance(loaded, str) and re.fullmatch(r"[a-f0-9]{40}", loaded),
+            "Invalid loaded archive policy revision")
+
+    def git(*args, check=True):
+        return subprocess.run(
+            ["git", "-c", "credential.helper=", *args],
+            check=check, capture_output=True, text=True, timeout=20,
+            env={"PATH": os.environ["PATH"], "GIT_TERMINAL_PROMPT": "0"},
+        )
+
+    git("fetch", "--quiet", "--no-tags", f"https://github.com/{REPOSITORY}.git", DEVELOP)
+    current = git("rev-parse", "--verify", "FETCH_HEAD^{commit}").stdout.strip()
+    require(re.fullmatch(r"[a-f0-9]{40}", current), "Invalid current archive policy revision")
+    if current != loaded:
+        require(git("merge-base", "--is-ancestor", loaded, current, check=False).returncode == 0,
+                "Develop does not contain the loaded archive policy revision")
+        trees = git("rev-parse", f"{loaded}:.github", f"{current}:.github").stdout.splitlines()
+        require(len(trees) == 2 and re.fullmatch(r"[a-f0-9]{40}", trees[0]) and trees[0] == trees[1],
+                "Develop archive policy changed during candidate replay")
+    return current
+
+
 def reserve(api, ledger, key, archive, revision, *, replay_bytes=0):
     require(KEY.fullmatch(key), "Invalid archive key")
     info = archive.lstat()
@@ -173,7 +225,7 @@ def main(env, mode):
     api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
     key = archive_key(component, run)
     if mode == "select":
-        artifact = select(api, run, component)
+        artifact = select_am_receipt(api, run) if component == "am" else select(api, run, component)
         if artifact is not None:
             with Path(env["GITHUB_OUTPUT"]).open("a") as output:
                 output.write(f"artifact={artifact}\nrun_id={run['id']}\n")
@@ -194,8 +246,14 @@ def main(env, mode):
     require((reservation["component"], reservation["run_id"], reservation["run_attempt"])
             == (component, run["id"], run["run_attempt"]), "Layer candidate replay differs")
     with archive.open("rb") as stream:
-        require(digest(stream) == value["archive_digest"], "Layer candidate archive differs")
-    result = reserve(api, ledger, key, archive, env["GITHUB_SHA"], replay_bytes=replay.stat().st_size)
+        fingerprint = digest(stream)
+    require(fingerprint == value["archive_digest"], "Layer candidate archive differs")
+    if component == "am":
+        require(value.get("kind") == "am-dependencies"
+                and env.get("LAYER_REUSE_ARCHIVE_DIGEST") == fingerprint,
+                "AM candidate must prove dependency reuse before reservation")
+    revision = reservation_policy_revision(env["GITHUB_SHA"])
+    result = reserve(api, ledger, key, archive, revision, replay_bytes=replay.stat().st_size)
     with Path(env["GITHUB_OUTPUT"]).open("a") as output:
         output.write(f"key={key}\nallowed={str(result['allowed']).lower()}\n")
     print(json.dumps(result), flush=True)

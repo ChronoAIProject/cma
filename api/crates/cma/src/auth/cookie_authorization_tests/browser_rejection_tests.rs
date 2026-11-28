@@ -12,15 +12,15 @@ use layer2_core::sandbox::{
 use layer2_core::{OperationClaim, OperationReservation, OperationStore, RuntimeCapabilities};
 use tower::ServiceExt as _;
 
-struct NoOperations;
+pub(super) struct NoOperations;
 
 #[async_trait::async_trait]
 impl OperationStore for NoOperations {
     async fn reserve(&self, _: &OperationClaim) -> Result<OperationReservation, StoreError> {
-        panic!("unauthenticated requests must not reserve work")
+        panic!("this request must not reserve work")
     }
     async fn complete(&self, _: &OperationClaim, _: Vec<u8>) -> Result<(), StoreError> {
-        panic!("unauthenticated requests must not complete work")
+        panic!("this request must not complete work")
     }
 }
 
@@ -344,14 +344,14 @@ async fn browser_transport_failure_and_body_deadline_do_not_sign_out_or_mutate_c
     let metadata = fixture.auth.metadata().await.unwrap();
     let mut unavailable = metadata.clone();
     unavailable.userinfo_endpoint = Some("http://127.0.0.1:0/userinfo".into());
-    *fixture.auth.metadata.write().await = Some(unavailable);
+    *fixture.auth.fixture_metadata().write().await = Some(unavailable);
     for (method, path) in routes() {
         assert_eq!(
             browser.request(method, path).await.0,
             StatusCode::SERVICE_UNAVAILABLE
         );
     }
-    *fixture.auth.metadata.write().await = Some(metadata);
+    *fixture.auth.fixture_metadata().write().await = Some(metadata);
     {
         let mut reply = fixture.control.userinfo.write().await;
         reply.body = "{".into();

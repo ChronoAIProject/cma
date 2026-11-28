@@ -11,12 +11,6 @@ export async function publisherFixture(page: Page, baseURL: string, role: Publis
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL);
   const subject = `publisher-${role}`;
-  const image = {
-    id: `image-${role}`,
-    name: `Image ${role}`,
-    version: 'version-one',
-    reference: `registry.example.test/runtime@sha256:${'a'.repeat(64)}`,
-  };
   const commands: Harness['commands'] = [];
   const resources: Harness['journal']['resources'] = [];
   const repository = { url: 'https://github.com/example/repository', ref: 'b'.repeat(40) };
@@ -30,16 +24,6 @@ export async function publisherFixture(page: Page, baseURL: string, role: Publis
         visitor: false,
         subject,
         capabilities: ['publish_triggers', 'create_sandbox', 'use_own_sandboxes'],
-      };
-    if (path === `/api/image-manager/v1/images/${image.id}`)
-      return { ...image, visibility: 'public' };
-    if (path === '/api/image-manager/v1/images')
-      return { items: [{ ...image, visibility: 'public' }] };
-    if (path === `/api/image-manager/v1/images/${image.id}/versions`)
-      return {
-        items: [
-          { id: image.version, phase: 'succeeded', reference: image.reference, created_at_ms: 1 },
-        ],
       };
     if (path === '/api/v1/triggers') return { items: document ? [document] : [] };
     if (path.endsWith('/revisions')) return [revision];
@@ -74,12 +58,7 @@ export async function publisherFixture(page: Page, baseURL: string, role: Publis
         contentType: 'image/svg+xml',
         body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>',
       });
-    if (
-      path !== '/auth/session' &&
-      !path.startsWith('/api/v1/triggers') &&
-      !path.startsWith('/api/image-manager/')
-    )
-      return route.fallback();
+    if (path !== '/auth/session' && !path.startsWith('/api/v1/triggers')) return route.fallback();
     if (request.method() === 'GET') return route.fulfill({ json: read(path) });
     const body = request.postDataJSON();
     commands.push({
@@ -150,7 +129,7 @@ export async function publisherFixture(page: Page, baseURL: string, role: Publis
       publicJourneys: {
         repository: { url: 'https://github.com/example/repository', reference: 'b'.repeat(40) },
         owners: {
-          [role]: { image, model: 'fixture-model', embedUrl: `https://embed.example.test/${role}` },
+          [role]: { model: 'fixture-model', embedUrl: `https://embed.example.test/${role}` },
         },
       },
       baselineServices: ['model'],

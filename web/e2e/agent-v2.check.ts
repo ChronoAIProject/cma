@@ -4,7 +4,7 @@ import { binding, LocalAgentV2 } from './agent-v2.fixture';
 import { traceOpeningReads, openingReads } from './agent-v2-reads.fixture';
 
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true });
-const thinking = (page: Page) => page.getByRole('status').filter({ hasText: /^Thinking$/ });
+const thinking = (page: Page) => page.getByRole('status').filter({ hasText: /^Running a tool$/ });
 const recover = (page: Page) => page.getByRole('button', { name: 'Recover pending request' });
 function clean(fixture: LocalAgentV2) {
   expect(fixture.boundary.writes).toEqual([]);
@@ -95,6 +95,7 @@ for (const theme of ['light', 'dark']) {
         (dark) => document.body.toggleAttribute('data-ds-dark-theme', dark),
         theme === 'dark',
       );
+      const activityPanel = page.locator('.thinking');
       const fits = () =>
         page.evaluate(() => {
           const dock = document.querySelector('.thinking')!.getBoundingClientRect();
@@ -116,7 +117,7 @@ for (const theme of ['light', 'dark']) {
         });
       for (const width of [1440, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
-        await toggle.scrollIntoViewIfNeeded();
+        await activityPanel.scrollIntoViewIfNeeded();
         await expect.poll(fits).toBe(true);
         await page.locator('.agent-surface__conversation').evaluate((element) => {
           element.scrollTop = 0;
@@ -133,7 +134,7 @@ for (const theme of ['light', 'dark']) {
             }),
           )
           .toBe(true);
-        await toggle.scrollIntoViewIfNeeded();
+        await activityPanel.scrollIntoViewIfNeeded();
         await expect.poll(fits).toBe(true);
         await page.screenshot({
           path: info.outputPath(`agent-v2-${theme}-${width}.png`),

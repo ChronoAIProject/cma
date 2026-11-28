@@ -190,7 +190,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b"
         }
       },
@@ -359,7 +359,7 @@
       "occurrences": 2,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/build-arch-openssl-cli.sh": "197eca4614bfc35634d442e4f72b323cebe716c52c78ee5db1498e75d7af4d56",
           "api/crates/layer4-runtime/image/build-omarchy-base.sh": "87ffb596ef639b183286ab24d6d7d45cf51cc822fc45dcc7c7e79504e9d7ee3c",
           "api/crates/layer4-runtime/image/install-arch-openssl-cli.sh": "cabc06916d5d4e529eea51f2d441cf1f6181b5012ab48050b5717681ec49c7e5",
@@ -4595,7 +4595,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940"
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266"
         }
       },
       "package_member": {
@@ -4742,7 +4742,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940"
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266"
         }
       },
       "package_member": {
@@ -4826,7 +4826,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940"
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266"
         }
       },
       "package_member": {
@@ -4977,10 +4977,10 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
           "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
-          "api/crates/layer4-runtime/image/install-provider.sh": "7a9c79bb89accc1d5fb2b6eb6be2ce540e759faead336214fca5c6ab9705b294"
+          "api/crates/layer4-runtime/image/install-provider.sh": "2efa1c314740c48ab0fda32d316f4c9b1cf887d8896f9a79507be9b98f1adf8a"
         }
       },
       "package_member": {
@@ -4994,236 +4994,6 @@
       },
       "package_sha256": "c969740cf8297e4c31905cd551efeb2c99af5080c12c236bdf825598b250139a",
       "path": "usr/local/lib/node_modules/@agentclientprotocol/codex-acp/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
-      "platform": "linux/amd64"
-    },
-    {
-      "component": "runtime-omarchy",
-      "digest_frames": {
-        "frames": [
-          {
-            "offset": 265472864,
-            "parts": [
-              {
-                "proof_sha256": "2ef2e6924930f11112452c68001f7ca45517866af64ea5bf67db463913616aa0",
-                "sha256": "a3b4d77a08fe11524e939d25d1ac99edf9fc08bdd235b7716573b23f6cd65231",
-                "size": 18,
-                "source_line": 131,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              },
-              {
-                "proof_sha256": "59e532e633fde079868f4e68cea6cfd344a6c09dbf2d837f58e9cc8243432266",
-                "sha256": "b0f66adc83641586656866813fd9dd0b8ebb63796075661ba45d1aa8089e1d44",
-                "size": 6,
-                "source_line": 121,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              },
-              {
-                "proof_sha256": "d7f22e37253715ce992db0da4bab47cb6ba5abb3958729ec6cb4ff06c7c2107d",
-                "sha256": "ccb62d7725a1fc742e675434367a80bcee1c1ffc2eaa500d75b86052ff2b02c8",
-                "size": 15,
-                "source_line": 121,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              },
-              {
-                "proof_sha256": "be32d504feaaa28dc0c95c2a57186214ee6c0fc051a152fd374e28bcd00964fd",
-                "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
-                "size": 1,
-                "source_line": 111,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              },
-              {
-                "proof_sha256": "d7b94dfe10f95f0ad0ba8d231b737299663c648a812a526c6570377bc4451f74",
-                "sha256": "f4ac8c422fa0eed7738a541e8de925dfbebd1402d6d64ca845e6effa1a5537c8",
-                "size": 10,
-                "source_line": 111,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              }
-            ],
-            "sha256": "8ec6da57b5223577a26f57eaa23ca2e3f05028e8b0718e0048a3549027b5a883",
-            "size": 50
-          },
-          {
-            "offset": 265472960,
-            "parts": [
-              {
-                "proof_sha256": "b96449058fc353a7de29c5586211d8d69e585f809280bd11da39cd01423ffab2",
-                "sha256": "60d35b159e5edccc5261c1a6b797c663678fdfbc941f619fb9d99f8431b79efd",
-                "size": 18,
-                "source_line": 104,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              },
-              {
-                "proof_sha256": "7e5a744d7717ea927ee55b96a90de5305b8ae04c42cbe245e9c11797a2745c01",
-                "sha256": "e7ecebbc590bc88b3761fa6cd03d749f87463dabb67021a5c6768c25ec68b3f2",
-                "size": 14,
-                "source_line": 373,
-                "source_member": "crypto/rsa/rsa_sp800_56b_check.c"
-              },
-              {
-                "proof_sha256": "111995db792d5b4c695c47a2015b512f03fc27843f745fdb69161ae3dabb9486",
-                "sha256": "840a8dcfeae95966a870b0b5257997ce94cbc19dd979409d1671d2e93a9e0de6",
-                "size": 2,
-                "source_line": 373,
-                "source_member": "crypto/rsa/rsa_sp800_56b_check.c"
-              }
-            ],
-            "sha256": "197266f527bae22c20c1d49f4a428c0b3063d0a130ff83fa603cfdce59918b74",
-            "size": 34
-          }
-        ],
-        "release": {
-          "archive_sha256": "9bffaa1ad1e07b354c21bd3324ec02fa15579f45a7d0494b3e74bc449b7333ef",
-          "authority_sha256": "369172009843c9ae481dfc4a830e5c6bb82c084f0e2de00e7ded6e64d75632fe",
-          "name": "openssl",
-          "version": "3.6.4"
-        }
-      },
-      "file_sha256": "c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5",
-      "matches": [
-        {
-          "candidate_sha256": null,
-          "explanation": "published-digest-encoding",
-          "line": null,
-          "proof_sha256": "b760c251939d67a85ff8285a143cfa33ce88b9b15e73291b878bddc66bf4628b",
-          "rule": "content.binary-private-key"
-        }
-      ],
-      "member": null,
-      "occurrences": 1,
-      "ownership": {
-        "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
-          "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
-          "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
-          "api/crates/layer4-runtime/image/install-provider.sh": "7a9c79bb89accc1d5fb2b6eb6be2ce540e759faead336214fca5c6ab9705b294"
-        }
-      },
-      "package_member": {
-        "locator": "0/1",
-        "path": [
-          "decoded",
-          "package/vendor/x86_64-unknown-linux-musl/bin/codex"
-        ],
-        "sha256": "c06a67fd8ac76508dc78bd99ce20c9f317b8d568beda59485f3f4134df9962d5",
-        "type": "regular"
-      },
-      "package_sha256": "f997cd6ef5987126e19cd3c82e847a4a6461270f32f97340c5e99a65fb6f9b8a",
-      "path": "usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
-      "platform": "linux/amd64"
-    },
-    {
-      "component": "runtime-omarchy",
-      "digest_frames": {
-        "frames": [
-          {
-            "offset": 66339552,
-            "parts": [
-              {
-                "proof_sha256": "24c6224998ff22a60177f3ab58e80f90a948d1d1eec2a16aea3c42bb89292e7a",
-                "sha256": "a3b4d77a08fe11524e939d25d1ac99edf9fc08bdd235b7716573b23f6cd65231",
-                "size": 18,
-                "source_line": 131,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              },
-              {
-                "proof_sha256": "5a5685651112b93b41217e2b060568866dc3b455c623e72bad17dfb029df5879",
-                "sha256": "b0f66adc83641586656866813fd9dd0b8ebb63796075661ba45d1aa8089e1d44",
-                "size": 6,
-                "source_line": 121,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              },
-              {
-                "proof_sha256": "bfce3a86b45f30f1c23aac36cbdbb4186e33158ae7f0b63f8433ee43986d66b3",
-                "sha256": "ccb62d7725a1fc742e675434367a80bcee1c1ffc2eaa500d75b86052ff2b02c8",
-                "size": 15,
-                "source_line": 121,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              },
-              {
-                "proof_sha256": "5f0c62719dc890f48f8ae0225394afb4c8093c874038e11c1a5137279df3c07d",
-                "sha256": "6e340b9cffb37a989ca544e6bb780a2c78901d3fb33738768511a30617afa01d",
-                "size": 1,
-                "source_line": 111,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              },
-              {
-                "proof_sha256": "01a2ad89e052e9d3dbee5a5123e0075b9fe2832d8c3bedc4bf60ac8993fbef67",
-                "sha256": "f4ac8c422fa0eed7738a541e8de925dfbebd1402d6d64ca845e6effa1a5537c8",
-                "size": 10,
-                "source_line": 111,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              }
-            ],
-            "sha256": "8ec6da57b5223577a26f57eaa23ca2e3f05028e8b0718e0048a3549027b5a883",
-            "size": 50
-          },
-          {
-            "offset": 66339648,
-            "parts": [
-              {
-                "proof_sha256": "ea186e01885ab133ea9a1b9948632aa06cdae83e64dc3659a0e49b8313324a79",
-                "sha256": "60d35b159e5edccc5261c1a6b797c663678fdfbc941f619fb9d99f8431b79efd",
-                "size": 18,
-                "source_line": 104,
-                "source_member": "crypto/rsa/rsa_sign.c"
-              },
-              {
-                "proof_sha256": "c4e80e48b6ff2598fb0fbadd4ffc4184bfc71b82a8a79b55e147bb8aeffbda53",
-                "sha256": "e7ecebbc590bc88b3761fa6cd03d749f87463dabb67021a5c6768c25ec68b3f2",
-                "size": 14,
-                "source_line": 373,
-                "source_member": "crypto/rsa/rsa_sp800_56b_check.c"
-              },
-              {
-                "proof_sha256": "3c59c034c3afaa36d8a8c1a379ece7afac0ad9e1d29fd07fa23d761cc38eb4e5",
-                "sha256": "840a8dcfeae95966a870b0b5257997ce94cbc19dd979409d1671d2e93a9e0de6",
-                "size": 2,
-                "source_line": 373,
-                "source_member": "crypto/rsa/rsa_sp800_56b_check.c"
-              }
-            ],
-            "sha256": "197266f527bae22c20c1d49f4a428c0b3063d0a130ff83fa603cfdce59918b74",
-            "size": 34
-          }
-        ],
-        "release": {
-          "archive_sha256": "9bffaa1ad1e07b354c21bd3324ec02fa15579f45a7d0494b3e74bc449b7333ef",
-          "authority_sha256": "369172009843c9ae481dfc4a830e5c6bb82c084f0e2de00e7ded6e64d75632fe",
-          "name": "openssl",
-          "version": "3.6.4"
-        }
-      },
-      "file_sha256": "522935d4392ec9674fab60b239b5495992c6a93e4deb65113a216b6f5451ccd4",
-      "matches": [
-        {
-          "candidate_sha256": null,
-          "explanation": "published-digest-encoding",
-          "line": null,
-          "proof_sha256": "ccc78a06eea43b6e8c615c3b57396f55626726e4d257532ab01c268a1d464b31",
-          "rule": "content.binary-private-key"
-        }
-      ],
-      "member": null,
-      "occurrences": 1,
-      "ownership": {
-        "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
-          "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
-          "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
-          "api/crates/layer4-runtime/image/install-provider.sh": "7a9c79bb89accc1d5fb2b6eb6be2ce540e759faead336214fca5c6ab9705b294"
-        }
-      },
-      "package_member": {
-        "locator": "0/2",
-        "path": [
-          "decoded",
-          "package/vendor/x86_64-unknown-linux-musl/bin/codex-code-mode-host"
-        ],
-        "sha256": "522935d4392ec9674fab60b239b5495992c6a93e4deb65113a216b6f5451ccd4",
-        "type": "regular"
-      },
-      "package_sha256": "f997cd6ef5987126e19cd3c82e847a4a6461270f32f97340c5e99a65fb6f9b8a",
-      "path": "usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex-code-mode-host",
       "platform": "linux/amd64"
     },
     {
@@ -5242,10 +5012,10 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
           "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
-          "api/crates/layer4-runtime/image/install-provider.sh": "7a9c79bb89accc1d5fb2b6eb6be2ce540e759faead336214fca5c6ab9705b294"
+          "api/crates/layer4-runtime/image/install-provider.sh": "2efa1c314740c48ab0fda32d316f4c9b1cf887d8896f9a79507be9b98f1adf8a"
         }
       },
       "package_member": {
@@ -5277,10 +5047,10 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
           "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
-          "api/crates/layer4-runtime/image/install-provider.sh": "7a9c79bb89accc1d5fb2b6eb6be2ce540e759faead336214fca5c6ab9705b294"
+          "api/crates/layer4-runtime/image/install-provider.sh": "2efa1c314740c48ab0fda32d316f4c9b1cf887d8896f9a79507be9b98f1adf8a"
         }
       },
       "package_member": {
@@ -5336,7 +5106,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940"
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266"
         }
       },
       "package_member": {
@@ -5368,7 +5138,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5403,7 +5173,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5452,7 +5222,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5511,7 +5281,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5553,7 +5323,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5595,7 +5365,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5630,7 +5400,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -5665,7 +5435,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/image/install-npm.sh": "590ea469e323c7e03411d130684bb02fdd21738dec81d072c967fca8f3e7b613",
           "api/crates/layer4-runtime/image/npm/package-lock.json": "ac7ca8516e50dac2e7f507d7c59795816f1baa5620bd25e109aa539d8e2149bc",
           "api/crates/layer4-runtime/image/npm/package.json": "acfe34b995f6f26c27024f19e6f1a8379a90b33c60551d9981e0e28ba94674f9"
@@ -6285,7 +6055,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b"
         }
       },
@@ -6518,7 +6288,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b"
         }
       },
@@ -6785,7 +6555,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b",
           "api/crates/layer4-runtime/src/omarchy/remove-google-account.patch": "6cc22a06a77dd6e474896f3c5176acc43247e8d2d14df016d98855fbcbec74f1"
         }
@@ -6819,7 +6589,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b",
           "api/crates/layer4-runtime/src/omarchy/remove-google-account.patch": "6cc22a06a77dd6e474896f3c5176acc43247e8d2d14df016d98855fbcbec74f1"
         }
@@ -6853,7 +6623,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b",
           "api/crates/layer4-runtime/src/omarchy/remove-google-account.patch": "6cc22a06a77dd6e474896f3c5176acc43247e8d2d14df016d98855fbcbec74f1"
         }
@@ -6887,7 +6657,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b",
           "api/crates/layer4-runtime/src/omarchy/remove-google-account.patch": "6cc22a06a77dd6e474896f3c5176acc43247e8d2d14df016d98855fbcbec74f1"
         }
@@ -6921,7 +6691,7 @@
       "occurrences": 1,
       "ownership": {
         "build_inputs": {
-          "api/crates/layer4-runtime/Dockerfile": "734451198e0263f86f90523f29fc6f9be9c4fa7b15ece60c031dc9200e8b8940",
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
           "api/crates/layer4-runtime/src/omarchy/install.sh": "f47cb65f445ee3f85e8bae6075069fc2d90adf94240abee550e4197f543af83b",
           "api/crates/layer4-runtime/src/omarchy/remove-google-account.patch": "6cc22a06a77dd6e474896f3c5176acc43247e8d2d14df016d98855fbcbec74f1"
         }
@@ -7238,6 +7008,99 @@
           }
         ]
       }
+    },
+    {
+      "component": "runtime-omarchy",
+      "file_sha256": "1e9d2fb238b9c0d012c9b36e1ba1203ab5a8382ae937720320775c00d853d6dd",
+      "matches": [
+        {
+          "candidate_sha256": "09c531b64877f0b8723e3587cb6da2902625c57b319d314ca17ac8f28d64ebde",
+          "explanation": "public-noncredential-constant",
+          "line": null,
+          "proof_sha256": "132ced302f62d8baf3a59053d30867d79b1764f5ef4a60a64ae967def0c03c53",
+          "rule": "gitleaks.image-secret-assignment"
+        },
+        {
+          "candidate_sha256": "507ff12f57781c83ebf447ef99e4fe8931290f6342a8f559b2f5611f586e214b",
+          "explanation": "public-noncredential-constant",
+          "line": null,
+          "proof_sha256": "132ced302f62d8baf3a59053d30867d79b1764f5ef4a60a64ae967def0c03c53",
+          "rule": "gitleaks.image-secret-assignment"
+        },
+        {
+          "candidate_sha256": "fbbb0e0379f291c26d972f0b535f833ce54d89bd0fe4d87d2e8327a5aaa0ad9b",
+          "explanation": "public-noncredential-constant",
+          "line": null,
+          "proof_sha256": "132ced302f62d8baf3a59053d30867d79b1764f5ef4a60a64ae967def0c03c53",
+          "rule": "gitleaks.generic-api-key"
+        },
+        {
+          "candidate_sha256": "a64264b43ba005f6628875ffa672c043f8ba1778190b811907d2a746b1257f70",
+          "explanation": "public-noncredential-constant",
+          "line": null,
+          "proof_sha256": "132ced302f62d8baf3a59053d30867d79b1764f5ef4a60a64ae967def0c03c53",
+          "rule": "gitleaks.generic-api-key"
+        }
+      ],
+      "member": null,
+      "occurrences": 1,
+      "ownership": {
+        "build_inputs": {
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
+          "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
+          "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
+          "api/crates/layer4-runtime/image/install-codex-package.py": "74dc27f50b2295f90d5dd7a143fb71d8c1adbd40933941eb087fb477d894e14e",
+          "api/crates/layer4-runtime/image/install-provider.sh": "2efa1c314740c48ab0fda32d316f4c9b1cf887d8896f9a79507be9b98f1adf8a"
+        }
+      },
+      "package_member": {
+        "locator": "0/1",
+        "path": [
+          "decoded",
+          "bin/codex"
+        ],
+        "sha256": "1e9d2fb238b9c0d012c9b36e1ba1203ab5a8382ae937720320775c00d853d6dd",
+        "type": "regular"
+      },
+      "package_sha256": "a42f99774031bcdfb5785554c0f5b458e463054e87df09d3d67851787f994ee8",
+      "path": "usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex",
+      "platform": "linux/amd64"
+    },
+    {
+      "component": "runtime-omarchy",
+      "file_sha256": "6d40220f43b937342f9cf7eaa50ba2965cc36b33ff8e36eda2760382e2691f25",
+      "matches": [
+        {
+          "candidate_sha256": "a64264b43ba005f6628875ffa672c043f8ba1778190b811907d2a746b1257f70",
+          "explanation": "public-noncredential-constant",
+          "line": null,
+          "proof_sha256": "132ced302f62d8baf3a59053d30867d79b1764f5ef4a60a64ae967def0c03c53",
+          "rule": "gitleaks.generic-api-key"
+        }
+      ],
+      "member": null,
+      "occurrences": 1,
+      "ownership": {
+        "build_inputs": {
+          "api/crates/layer4-runtime/Dockerfile": "fbfd84a30127d8a3b68d82f176f0514ad2cfbdab466a5774ee685873c23a7266",
+          "api/crates/layer4-runtime/image/desktop-provider/package-lock.json": "e5cd0739406680570b5c0ce9cfc141ddbef3807c857ce888a9fb403d24d4833f",
+          "api/crates/layer4-runtime/image/desktop-provider/package.json": "94867a57ccf9147178414475860c2b6d9d091a9335b099950993ed0b03cd0e23",
+          "api/crates/layer4-runtime/image/install-codex-package.py": "74dc27f50b2295f90d5dd7a143fb71d8c1adbd40933941eb087fb477d894e14e",
+          "api/crates/layer4-runtime/image/install-provider.sh": "2efa1c314740c48ab0fda32d316f4c9b1cf887d8896f9a79507be9b98f1adf8a"
+        }
+      },
+      "package_member": {
+        "locator": "0/2",
+        "path": [
+          "decoded",
+          "bin/codex-code-mode-host"
+        ],
+        "sha256": "6d40220f43b937342f9cf7eaa50ba2965cc36b33ff8e36eda2760382e2691f25",
+        "type": "regular"
+      },
+      "package_sha256": "a42f99774031bcdfb5785554c0f5b458e463054e87df09d3d67851787f994ee8",
+      "path": "usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/bin/codex-code-mode-host",
+      "platform": "linux/amd64"
     }
   ],
   "packages": [
@@ -7584,6 +7447,14 @@
       "authority_type": "arch-signature",
       "name": "xxhash",
       "version": "0.8.4-1"
+    },
+    {
+      "architecture": "x86_64",
+      "artifact_sha256": "a42f99774031bcdfb5785554c0f5b458e463054e87df09d3d67851787f994ee8",
+      "authority_sha256": "e401966755fc84d22787195a3066bb95e9dd1a7a53a4a5e12d38839dbbe920cd",
+      "authority_type": "pinned-upstream",
+      "name": "cma-codex-native",
+      "version": "cma-codex-0.165.0-146878dacb49"
     }
   ],
   "scanner_manifest_sha256": "4ad252394ac8d144da7b316f138c71f90ebf9578bce9f3d118b77bee7b8da11c",

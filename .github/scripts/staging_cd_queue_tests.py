@@ -165,7 +165,9 @@ class QueueTests(unittest.TestCase):
         reservations.list.return_value = [owned]
         run = {"id": 9, "run_attempt": 1, "event": "push", "head_branch": "develop",
                "repository": {"full_name": "ChronoAIProject/cma"}, "status": "in_progress"}
-        api.request.side_effect = None
+        api.request.side_effect = lambda path, **_kwargs: (
+            {"total_count": 0, "jobs": []} if "/jobs?" in path else api.request.return_value
+        )
         api.request.return_value = run
         queue = self.queue()
         queue["changes"] = queue["changes"][:1]

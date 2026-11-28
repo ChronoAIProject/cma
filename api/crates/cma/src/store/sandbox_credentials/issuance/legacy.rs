@@ -43,6 +43,7 @@ pub(in crate::store) async fn preserve(
             mongodb::error::Error::custom("legacy credential generation overflow")
         })?,
         identity: IssuanceIdentity::LegacyUnobserved,
+        owner_authority: None,
         original_holder: lease.holder.clone(),
         original_fence: lease.fence,
         created_at: next.updated_at.clone(),

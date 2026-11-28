@@ -44,7 +44,7 @@ async fn mixed_replicas_preserve_an_admitted_agent_image_pin() {
         )
     };
     let legacy = build(Arc::new(PublishedImage(reference.clone())));
-    let retired = build(ImageManagerResolver::new("http://127.0.0.1:1".into(), true).unwrap());
+    let retired = build(Arc::new(RetiredImageResolver));
     // Keep admission independent of the background worker while checking the
     // two replica facades against a shared, real operation store.
     let permits = crate::store::DISCOVERY_BATCH as u32;

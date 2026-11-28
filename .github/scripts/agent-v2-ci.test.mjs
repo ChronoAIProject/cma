@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { jobRunning } from "./ci-web-jobs.mjs";
 
 const workflow = readFileSync(
   new URL("../workflows/ci-web.yml", import.meta.url),
@@ -12,7 +13,8 @@ const config = readFileSync(
 );
 const invocation =
   "node node_modules/playwright/cli.js test --config e2e/agent-v2.config.ts";
-function verify(job, suite) {
+function verify(workflow, suite) {
+  const job = jobRunning(workflow, "Local Agent v2 contracts");
   const step = job
     .split('name: "Local Agent v2 contracts"')[1]
     ?.split("\n      -")[0];
@@ -20,9 +22,10 @@ function verify(job, suite) {
     step?.includes(invocation),
     "Web must execute the LOCAL Agent v2 config",
   );
+  assert.match(step, /^\s*timeout-minutes: 8$/m);
   assert.doesNotMatch(step, /--grep|--project|--shard|continue-on-error|\|\|/);
   assert.match(
-    job,
+    workflow,
     /node --test \.\.\/\.github\/scripts\/agent-v2-ci\.test\.mjs/,
   );
   const matches = suite.match(/testMatch:\s*\[([^\]]*)\]/)?.[1];

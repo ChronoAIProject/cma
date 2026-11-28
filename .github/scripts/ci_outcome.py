@@ -277,6 +277,8 @@ def render(family, code, *, subject, stage=None, site=None, component=None, pr=N
     if "recovery" in values:
         recovered = entry("deploy-verification", values["recovery"])
         details.append(f"Recovery check: {values['recovery']}. {recovered['meaning']}")
+        if values["recovery"] in ("dependency-changed", "dependency-unverified"):
+            next_step = recovered["next"]
     if "attempts" in values:
         details.append("Attempts: " + values["attempts"])
     if spec.get("effect"):

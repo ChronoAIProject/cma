@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use super::SandboxModelError;
 
+// A stopped retirement keeps the failing step for a revision-fenced operator
+// retry. A distant due time also keeps older workers from claiming the row.
+pub(crate) const RETIREMENT_STOPPED: &str = "9999-12-31T23:59:59Z";
+
 /// One durable sandbox lifecycle step. Each worker claim executes at most one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "index", rename_all = "snake_case")]
@@ -32,6 +36,16 @@ impl SandboxWorkStep {
     pub const fn is_pending(self) -> bool {
         !matches!(self, Self::None)
     }
+
+    pub const fn is_retirement(self) -> bool {
+        matches!(
+            self,
+            Self::StopAgents
+                | Self::RevokeRetirementCredentials
+                | Self::TeardownRuntime
+                | Self::MarkRetired
+        )
+    }
 }
 
 /// Finite ownership of one lifecycle step.
@@ -41,6 +55,30 @@ pub struct SandboxWorkLease {
     pub holder: String,
     pub fence: u64,
     pub expires_at: String,
+}
+
+/// Provider-verified version of the owner authority used to revoke an exact key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetirementAuthorityVersion {
+    pub grant: [u8; 16],
+    pub scope: [u8; 32],
+    pub granted_at_ms: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetirementCredentialRecovery {
+    pub newer_than_ms: u64,
+    pub expected_scope: [u8; 32],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admitted: Option<RetirementAuthorityVersion>,
+}
+
+impl RetirementCredentialRecovery {
+    pub fn admits(&self, authority: RetirementAuthorityVersion) -> bool {
+        authority.granted_at_ms > self.newer_than_ms && authority.scope == self.expected_scope
+    }
 }
 
 /// Durable scheduling and fencing state for lifecycle work.
@@ -56,6 +94,8 @@ pub struct SandboxWorkState {
     /// worker consumes it only after a fresh runtime inspection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prepared_installation_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retirement_credential_recovery: Option<RetirementCredentialRecovery>,
     pub step: SandboxWorkStep,
     pub ready_at: String,
     pub next_fence: u64,
@@ -70,6 +110,7 @@ impl SandboxWorkState {
             authority_protocol: None,
             execution: None,
             prepared_installation_digest: None,
+            retirement_credential_recovery: None,
             step,
             ready_at,
             next_fence: 1,
@@ -80,6 +121,7 @@ impl SandboxWorkState {
 
     pub fn is_due(&self, now: &str) -> bool {
         self.step.is_pending()
+            && self.ready_at != RETIREMENT_STOPPED
             && self.ready_at.as_str() <= now
             && self
                 .lease
@@ -115,6 +157,9 @@ impl SandboxWorkState {
     }
 
     pub fn schedule(&mut self, step: SandboxWorkStep, ready_at: String) {
+        if self.step != step {
+            self.retirement_credential_recovery = None;
+        }
         self.step = step;
         self.ready_at = ready_at;
         self.attempts = 0;
@@ -152,6 +197,16 @@ impl SandboxWorkState {
         self.lease = None;
         Ok(())
     }
+
+    pub fn stop_retirement(&mut self, holder: &str, fence: u64) -> Result<(), SandboxModelError> {
+        if !self.step.is_retirement() || !self.owns(holder, fence) {
+            return Err(SandboxModelError::invalid_value("sandbox.work.retirement"));
+        }
+        self.attempts = self.attempts.saturating_add(1);
+        self.lease = None;
+        self.ready_at = RETIREMENT_STOPPED.into();
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -182,5 +237,33 @@ mod tests {
         state.prepared_installation_digest = Some("a".repeat(64));
         let encoded = serde_json::to_value(state).unwrap();
         assert!(serde_json::from_value::<LegacySandboxWorkState>(encoded).is_err());
+    }
+}
+
+#[cfg(test)]
+mod retirement_authority_tests {
+    use super::*;
+
+    #[test]
+    fn retirement_authority_requires_a_strictly_newer_same_scope_grant() {
+        let recovery = RetirementCredentialRecovery {
+            newer_than_ms: 42,
+            expected_scope: [1; 32],
+            admitted: None,
+        };
+        let version = RetirementAuthorityVersion {
+            grant: [1; 16],
+            scope: [1; 32],
+            granted_at_ms: 43,
+        };
+        assert!(recovery.admits(version));
+        assert!(!recovery.admits(RetirementAuthorityVersion {
+            granted_at_ms: 42,
+            ..version
+        }));
+        assert!(!recovery.admits(RetirementAuthorityVersion {
+            scope: [2; 32],
+            ..version
+        }));
     }
 }

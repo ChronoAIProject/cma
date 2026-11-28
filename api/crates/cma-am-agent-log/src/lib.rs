@@ -20,7 +20,7 @@ pub const READER: &str = "agent_log_segments_v1";
 pub const MIGRATION: &str = "2026-11-05-am-log-segment-readers-v1";
 pub const MAX_SEQUENCE: i64 = 9_007_199_254_740_991;
 pub const MAX_ENTRIES: i64 = 10_128;
-pub const MAX_BYTES: i64 = 65 * 1024 * 1024;
+pub const MAX_BYTES: i64 = capacity::PHYSICAL_AGENT_LOG_BYTES as i64;
 pub const MAX_SEAL_BYTES: usize = 1024 * 1024;
 
 pub fn corrupt() -> SandboxStoreError {

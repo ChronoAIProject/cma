@@ -100,6 +100,7 @@ it.each([
   expect(
     await screen.findByRole('heading', { name: 'Configure Agents directly' }),
   ).toBeInTheDocument();
+  expect(screen.getByText(/New Sandboxes use the deployed runtime image\./)).toBeInTheDocument();
   expect(clients.fetch.mock.calls.some(([url]) => /profile|marketplace/.test(String(url)))).toBe(
     false,
   );

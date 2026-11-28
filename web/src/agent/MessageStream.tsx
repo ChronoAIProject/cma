@@ -24,6 +24,7 @@ import { messageStreamKey } from './streamTimeline';
 import { acceptanceForTurn } from './taskAcceptance';
 import { currentExternalApproval } from './externalApproval';
 import { TurnRetryAction } from './TurnRetryAction';
+import { TurnMascotContext, useTurnVisual, type TurnPresentation } from './turnVisual';
 
 interface MessageStreamProps {
   readonly retained?: boolean;
@@ -49,6 +50,7 @@ interface MessageStreamProps {
   readonly deliverables?: AnswerDeliveryAccess;
   /** Local interrupt admission is pending; terminal state still comes from the event stream. */
   readonly stopping?: boolean;
+  readonly turnPresentation?: TurnPresentation;
 }
 
 export function MessageStream({
@@ -73,8 +75,29 @@ export function MessageStream({
   media,
   deliverables,
   stopping = false,
+  turnPresentation,
 }: MessageStreamProps) {
   const activeRunId = historyOnly ? undefined : conversation.activeRunId;
+  const {
+    client: turnClient,
+    agentId: turnAgent,
+    viewerId: turnViewer,
+    authority: turnAccess,
+  } = retainedOutput ?? {};
+  const epoch = turnPresentation?.authEpoch;
+  const turnAuthority = useMemo(
+    () =>
+      turnClient && epoch !== undefined
+        ? { turnClient, turnAgent, turnViewer, turnAccess, epoch }
+        : undefined,
+    [turnClient, turnAgent, turnViewer, turnAccess, epoch],
+  );
+  const turnVisual = useTurnVisual(
+    historyOnly ? undefined : turnPresentation,
+    turnAuthority,
+    conversation,
+    taskAcceptance,
+  );
   const {
     agentId: deliveryAgent,
     viewerId,
@@ -181,6 +204,7 @@ export function MessageStream({
               key={messageStreamKey(entry)}
               entry={entry}
               approvalBusy={approvalBusy}
+              hideApprovalCharacter={turnAuthority !== undefined}
               approvalReadOnly={
                 approvalReadOnly ||
                 (entry.kind === 'approval' &&
@@ -232,7 +256,9 @@ export function MessageStream({
             </p>
           ))}
         </div>
-        {historyOnly ? null : <ActiveThinking conversation={conversation} stopping={stopping} />}
+        {historyOnly ? null : (
+          <ActiveThinking conversation={conversation} stopping={stopping} brand={turnVisual} />
+        )}
         {optimisticMessages?.map((message, index) => (
           <article
             className={`message message--user${message.queued ? ' message--queued' : ''}`}
@@ -275,7 +301,7 @@ export function MessageStream({
             </Button>
           </div>
         ) : null}
-        {children}
+        <TurnMascotContext value={turnVisual !== undefined}>{children}</TurnMascotContext>
         {feedback?.error ? (
           <div className="message-footer__error" role="status">
             <span>{feedback.error}</span>

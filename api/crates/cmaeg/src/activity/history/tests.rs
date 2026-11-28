@@ -22,6 +22,7 @@ pub(super) fn setup() -> (Arc<test_repository::Memory>, ActivityHistory, i64) {
 pub(super) fn row(id: &str, at: i64) -> ChannelActivity {
     let activity = fixture::message("private-content-must-not-be-retained");
     ChannelActivity {
+        source_refusal: None,
         event_id: id.into(),
         quoted_context: None,
         kind: Some("message".into()),

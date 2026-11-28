@@ -40,6 +40,7 @@ mod home_backup_expiry;
 mod http_serving;
 mod image_manager_retirement;
 mod media_continuations;
+#[cfg(test)]
 use cma_am_auth::permissions;
 mod producer_token;
 mod profile_authoring;
@@ -69,6 +70,7 @@ mod worker_supervision;
 
 use std::sync::Arc;
 
+pub(crate) use projections::{rest_links, rest_router, REST_LINKS};
 use startup::serve;
 
 use axum::{
@@ -77,10 +79,8 @@ use axum::{
     http::{header, HeaderMap, HeaderName, HeaderValue, Method},
     middleware::Next,
     response::Response,
-    routing::any,
     Router,
 };
-use layer1_public::rest::HttpProblem;
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -88,9 +88,6 @@ use tower_http::{
 use tracing::Level;
 
 pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
-pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
-    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", <https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
-);
 
 const DEFAULT_LOG_FILTER: &str = "info";
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
@@ -116,6 +113,13 @@ fn main() {
 #[tokio::main]
 async fn run() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments == ["--print-build-info"] {
+        if let Err(error) = health::print_build_info() {
+            eprintln!("{error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     if arguments.first().is_some_and(|value| {
         matches!(
             value.as_str(),
@@ -156,6 +160,9 @@ async fn run() {
                 std::process::exit(2);
             }
         }
+        return;
+    }
+    if store::sandbox_usage_export::run_repair_command(&arguments).await {
         return;
     }
     if retirement_archive::is_command(&arguments) {
@@ -282,8 +289,8 @@ async fn run() {
         }
         return;
     }
-    if store::provenance_progress::is_command(&arguments) {
-        match store::provenance_progress::command(&arguments).await {
+    if let Some(result) = store::backfill_progress_command(&arguments).await {
+        match result {
             Ok(result) => println!("{result}"),
             Err(message) => {
                 eprintln!("{message}");
@@ -315,29 +322,13 @@ async fn run() {
         return;
     }
     if !arguments.is_empty() && arguments != ["--agent-manager-drain"] {
-        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-capture SANDBOX FROM TO | --measured-preview SAMPLE FROM TO | --measured-freeze PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-evidence-read PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-period-read PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-period-replay PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-index-backfill [EXPECTED_PREDECESSOR_SHA256] | --measured-index-certify | --home-backup-catalog-export PRIVATE_NEW_FILE | --task-audit PRIVATE_SELECTION PRIVATE_NEW_FILE | --allocator-self-test]");
+        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-build-info | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-capture SANDBOX FROM TO | --measured-preview SAMPLE FROM TO | --measured-freeze PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-evidence-read PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-period-read PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-period-replay PRIVATE_REQUEST PRIVATE_NEW_FILE | --measured-index-backfill [EXPECTED_PREDECESSOR_SHA256] | --measured-index-certify | --home-backup-catalog-export PRIVATE_NEW_FILE | --task-audit PRIVATE_SELECTION PRIVATE_NEW_FILE | --allocator-self-test]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {
         tracing::error!(error = %error, "CMA stopped");
         std::process::exit(1);
     }
-}
-
-fn rest_router(resource_routes: Router) -> Router {
-    layer1_public::rest::router()
-        .merge(resource_routes)
-        .route("/api/v1", any(|| async { HttpProblem::NotFound }))
-        .route("/api/v1/", any(|| async { HttpProblem::NotFound }))
-        .route("/api/v1/{*path}", any(|| async { HttpProblem::NotFound }))
-        .method_not_allowed_fallback(|| async { HttpProblem::MethodNotAllowed })
-        .layer(axum::middleware::from_fn(rest_links))
-}
-
-async fn rest_links(request: Request, next: Next) -> Response {
-    let mut response = next.run(request).await;
-    response.headers_mut().append(header::LINK, REST_LINKS);
-    response
 }
 
 fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {
@@ -474,17 +465,9 @@ fn with_request_context(router: Router) -> Router {
         )
         .layer(axum::middleware::from_fn(diagnostic_request::scope))
         .layer(SetRequestIdLayer::new(X_REQUEST_ID, MakeRequestUuid))
-        .layer(axum::middleware::from_fn(discard_unusable_request_id))
-}
-
-async fn discard_unusable_request_id(mut request: Request, next: Next) -> Response {
-    let normalized = layer1_public::rest::request_id_from_headers(request.headers())
-        .and_then(|value| HeaderValue::from_bytes(value.as_bytes()).ok());
-    request.headers_mut().remove(X_REQUEST_ID);
-    if let Some(normalized) = normalized {
-        request.headers_mut().insert(X_REQUEST_ID, normalized);
-    }
-    next.run(request).await
+        .layer(axum::middleware::from_fn(
+            diagnostic_request::discard_unusable_request_id,
+        ))
 }
 
 #[cfg(test)]

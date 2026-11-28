@@ -28,19 +28,9 @@ impl NyxidServiceConnectionBroker {
                 .github_user(credential, catalog_id, connection_id, deadline)
                 .await
                 .ok()?;
-            let observed_scopes = response
-                .headers()
-                .get("x-oauth-scopes")
-                .and_then(|value| value.to_str().ok())
-                .and_then(|value| {
-                    let values: Vec<_> = value
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|scope| !scope.is_empty())
-                        .collect();
-                    (values.len() <= 100 && values.iter().all(|scope| valid_provider_id(scope)))
-                        .then(|| values.into_iter().map(str::to_owned).collect())
-                });
+            let observed_scopes = observed_oauth_scopes(response.headers())
+                .ok()
+                .map(|scopes| scopes.into_iter().map(str::to_owned).collect());
             let user: GitHubUser = decode(response).await.ok()?;
             (user.id > 0
                 && !user.login.is_empty()

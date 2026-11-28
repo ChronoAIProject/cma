@@ -28,6 +28,7 @@ mod receiver_incarnation;
 pub(crate) use receiver_incarnation::ReceiverIncarnation;
 mod native_runtime_proof;
 pub(crate) use native_runtime_proof::NativeRuntimeProof;
+pub(crate) use pool::NativeHomeRevision;
 mod network_policy;
 mod nonexecuting;
 mod observation;
@@ -87,17 +88,27 @@ pub struct AgentSandboxClient {
     scope: HomeVolumeScope,
     native_home_scope: HomeVolumeScope,
     legacy_home_scope: HomeVolumeScope,
+    staging_startup_failure: Option<crate::runtime_bootstrap::StagingStartupFailure>,
     pub(crate) runtime_capacity: std::sync::Arc<RuntimeCapacityAuthority>,
     #[cfg(test)]
     runtime_requests: std::sync::Arc<tokio::sync::Semaphore>,
 }
 
 impl AgentSandboxClient {
+    pub fn with_staging_startup_failure(
+        mut self,
+        fault: Option<crate::runtime_bootstrap::StagingStartupFailure>,
+    ) -> Self {
+        self.staging_startup_failure = fault;
+        self
+    }
+
     pub(crate) fn shares_runtime_authority(&self, other: &Self) -> bool {
         std::sync::Arc::ptr_eq(&self.pools, &other.pools)
             && std::sync::Arc::ptr_eq(&self.runtime_capacity, &other.runtime_capacity)
             && self.config == other.config
             && self.native_home_scope == other.native_home_scope
+            && self.staging_startup_failure == other.staging_startup_failure
     }
 
     pub async fn infer(config: AgentSandboxConfig) -> Result<Self> {
@@ -149,6 +160,7 @@ impl AgentSandboxClient {
                 &[authority, &config.namespace, &config.deployment],
             )?,
             native_home_scope,
+            staging_startup_failure: None,
             scope,
             config,
             #[cfg(test)]

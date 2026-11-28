@@ -79,7 +79,7 @@ pub(in crate::store) async fn verify_full_log_cleanup(bytes: bool, boundary: Opt
         })
         .await
         .unwrap();
-    let fenced = claim(&store, &agent.id, MINUTE).await;
+    let fenced = claim_interaction_fence(&store, &agent.id).await;
     store
         .commit_agent_work(advance(&fenced, AgentWorkStep::CloseProcess, MINUTE))
         .await
@@ -174,7 +174,10 @@ pub(in crate::store) async fn verify_full_log_cleanup(bytes: bool, boundary: Opt
             &store,
             publishing,
             (!bytes).then_some(10_127 + u64::from(over)),
-            bytes.then_some(65 * 1024 * 1024 - pending_bytes + usize::from(over)),
+            bytes.then_some(
+                crate::store::agent_log_integrity::PHYSICAL_AGENT_LOG_BYTES - pending_bytes
+                    + usize::from(over),
+            ),
         )
         .await;
     }
@@ -213,7 +216,10 @@ pub(in crate::store) async fn verify_full_log_cleanup(bytes: bool, boundary: Opt
             while let Some(row) = rows.try_next().await.unwrap() {
                 total += row.to_vec().unwrap().len();
             }
-            assert_eq!(total, 65 * 1024 * 1024);
+            assert_eq!(
+                total,
+                crate::store::agent_log_integrity::PHYSICAL_AGENT_LOG_BYTES
+            );
         } else {
             assert_eq!(deleted.agent.conversation.last_seq, 10_128);
         }

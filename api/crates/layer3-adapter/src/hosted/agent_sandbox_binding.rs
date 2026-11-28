@@ -5,12 +5,21 @@ use std::time::Duration;
 
 pub(super) const MAX_ASSIGNMENTS: usize = 1024;
 
-#[derive(Clone, PartialEq, Eq)]
 pub(super) struct Assignment {
     pub(super) pod: PodBinding,
     pub(super) request: ProviderSandboxRequest,
-    request_sha256: String,
+    pub(super) request_sha256: String,
+    pub(super) file_read: tokio::sync::Mutex<super::file_read::FileReadBinding>,
 }
+
+impl PartialEq for Assignment {
+    fn eq(&self, other: &Self) -> bool {
+        self.pod == other.pod
+            && self.request == other.request
+            && self.request_sha256 == other.request_sha256
+    }
+}
+impl Eq for Assignment {}
 
 impl Assignment {
     fn for_request(pod: &PodBinding, request: &ProviderSandboxRequest) -> Result<Option<Self>> {
@@ -26,6 +35,7 @@ impl Assignment {
             pod: pod.clone(),
             request: request.clone(),
             request_sha256: crate::provider_request_digest(request)?,
+            file_read: Default::default(),
         }))
     }
 }
@@ -62,7 +72,12 @@ impl AgentSandboxBackend {
         Ok(Assignment::for_request(pod, request)?
             .as_ref()
             .is_some_and(|candidate| {
-                self.assignments.lock().unwrap().get(handle) == Some(candidate)
+                self.assignments
+                    .lock()
+                    .unwrap()
+                    .get(handle)
+                    .map(Arc::as_ref)
+                    == Some(candidate)
             }))
     }
 
@@ -122,7 +137,12 @@ impl AgentSandboxBackend {
         .await?;
         let candidate = Assignment::for_request(&pod, request)?;
         let acknowledged = candidate.as_ref().is_some_and(|candidate| {
-            self.assignments.lock().unwrap().get(handle) == Some(candidate)
+            self.assignments
+                .lock()
+                .unwrap()
+                .get(handle)
+                .map(Arc::as_ref)
+                == Some(candidate)
         });
         if acknowledged {
             // Policy is a live admission authority. Check it before binding
@@ -242,7 +262,7 @@ impl AgentSandboxBackend {
             self.client.assign_pool_runtime(handle, pod, request),
         )
         .await?;
-        if assigned.is_some() {
+        if let Some((receipt, confirmation)) = assigned {
             if let (Some(incarnation), Some(identity)) = (incarnation, identity) {
                 self.startup_breaker.delivered(
                     handle,
@@ -257,7 +277,16 @@ impl AgentSandboxBackend {
                 if assignments.len() >= MAX_ASSIGNMENTS {
                     assignments.pop_first();
                 }
-                assignments.insert(handle.clone(), candidate);
+                assignments.insert(handle.clone(), Arc::new(candidate));
+            }
+            if let Some(bootstrap) = confirmation {
+                if let Err(error) = self
+                    .client
+                    .confirm_staging_startup_failure(handle, pod, bootstrap, &receipt)
+                    .await
+                {
+                    tracing::warn!(%error, "staging startup failure confirmation did not complete");
+                }
             }
         }
         self.bind_transport(handle, request).await

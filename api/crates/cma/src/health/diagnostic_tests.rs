@@ -144,6 +144,7 @@ async fn diagnostic_worker_refusal_preserves_dependency_reason_and_recovery() {
             Some(workers.clone()),
             false,
             Some(capture.recorder.clone()),
+            None,
         );
         tokio::task::yield_now().await;
         let (status, body) = response(&app, "/ready").await;

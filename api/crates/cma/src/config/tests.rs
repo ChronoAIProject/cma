@@ -9,8 +9,120 @@ mod native;
 #[path = "runtime_canary_tests.rs"]
 mod runtime_canaries;
 pub(crate) use runtime_canaries::{desktop_canary_config, retained_runtime_config};
+#[path = "repository_runtime_images_tests.rs"]
+mod repository_runtime_images;
 mod home_tests {
     include!("home_tests.rs");
+}
+
+#[test]
+fn startup_loads_bundled_switches_through_their_existing_readers() {
+    let config = configured(&[(
+        "CHRONO_FEATURE_SWITCHES",
+        concat!(
+            "CHRONO_GITHUB_CONNECTION_APPROVAL_ENABLED=true, ",
+            "CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED=true, ",
+            "CHRONO_V2_UI_TRANSPORT_ENABLED=false, ",
+            "CHRONO_AGENT_FILE_WRITE_HANDOFF_ENABLED=true, ",
+            "CHRONO_AGENT_MODEL_CREDIT_REQUIRED=true, ",
+            "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED=true, ",
+            "CHRONO_AGENT_SESSION_GUIDANCE_V8_ENABLED=true, ",
+            "CHRONO_AGENT_SETTINGS_OWNER_RELAY_ENABLED=true, ",
+            "CHRONO_OWNER_AGENT_RESTART_ENABLED=true, ",
+            "CHRONO_AM_BATCH_OWNERSHIP_RENEWAL=true",
+        ),
+    )])
+    .unwrap();
+    assert!(config.features.github_connection_approval);
+    assert!(config.rate_limits.response_input_tier_enabled);
+    assert!(!config.features.v2_ui_transport);
+    assert!(config.features.agent_file_write_handoff);
+    assert!(config.features.model_credit_required);
+    assert!(config.features.agent_model_discovery_cache);
+    assert!(config.features.session_guidance_v8);
+    assert!(config.features.agent_settings_owner_relay);
+    assert!(config.features.owner_agent_restart_enabled);
+    assert!(config.features.batch_ownership_renewal);
+}
+
+#[test]
+fn startup_gives_individual_switches_precedence() {
+    let config = configured(&[
+        (
+            "CHRONO_FEATURE_SWITCHES",
+            "CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED=true,CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED=false",
+        ),
+        ("CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED", "false"),
+        ("CHRONO_SERVER_RATE_RESPONSE_INPUT_ENABLED", "true"),
+    ])
+    .unwrap();
+    assert!(!config.features.bot_effect_reservations);
+    assert!(config.rate_limits.response_input_tier_enabled);
+    let error = configured(&[
+        (
+            "CHRONO_FEATURE_SWITCHES",
+            "CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED=true",
+        ),
+        ("CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED", ""),
+    ])
+    .unwrap_err();
+    assert_eq!(
+        error,
+        "CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED must be true or false"
+    );
+}
+
+#[test]
+fn startup_preserves_defaults_with_an_empty_bundle() {
+    let defaults = configured(&[]).unwrap();
+    let empty = configured(&[("CHRONO_FEATURE_SWITCHES", "")]).unwrap();
+    assert_eq!(empty.features, defaults.features);
+    assert_eq!(
+        empty.rate_limits.response_input_tier_enabled,
+        defaults.rate_limits.response_input_tier_enabled
+    );
+}
+
+#[test]
+fn startup_refuses_malformed_or_duplicate_bundled_switches() {
+    for invalid in [
+        "CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED",
+        "CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED=invalid-marker",
+        "CHRONO_MONGODB_DATABASE=true",
+        "OTHER_SWITCH_ENABLED=true",
+        "CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED=true,",
+        "CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED=true, CHRONO_BOT_EFFECT_RESERVATIONS_ENABLED=false",
+    ] {
+        let error = configured(&[("CHRONO_FEATURE_SWITCHES", invalid)]).unwrap_err();
+        assert!(error.starts_with("CHRONO_FEATURE_SWITCHES entry "));
+        assert!(!error.contains(invalid));
+    }
+}
+
+#[test]
+fn startup_rejects_bundled_switches_with_independent_environment_readers() {
+    for name in [
+        "CHRONO_AGENT_MANAGER_REPLICAS_ENABLED",
+        "CHRONO_AGENT_MANAGER_OWNERSHIP_DIAGNOSTICS_ENABLED",
+        "CHRONO_MONGO_DIAGNOSTICS_ENABLED",
+    ] {
+        let bundle = format!("{name}=true");
+        let error = configured(&[("CHRONO_FEATURE_SWITCHES", &bundle)]).unwrap_err();
+        assert_eq!(
+            error,
+            "CHRONO_FEATURE_SWITCHES entry 1 has an unsupported switch"
+        );
+    }
+}
+
+#[test]
+fn startup_validates_cross_switch_prerequisites_for_bundled_values() {
+    let error = configured(&[(
+        "CHRONO_FEATURE_SWITCHES",
+        "CHRONO_HOME_BACKUP_EXPIRY_ENABLED=true",
+    )])
+    .unwrap_err();
+    assert!(error.contains("requires a qualified deletion provider"));
 }
 
 #[test]

@@ -168,6 +168,7 @@ export function GitHubConnectionDetails(props: ConnectionDetailsProps) {
 
 function ConnectionDetails({ target, owner, selection }: ConnectionDetailsProps) {
   const [result, setResult] = useState<{ readonly inventory?: Inventory }>();
+  const [refresh, setRefresh] = useState(0);
   useEffect(() => {
     const controller = new AbortController();
     void readRepositoryConnections(target, controller.signal).then(
@@ -179,7 +180,7 @@ function ConnectionDetails({ target, owner, selection }: ConnectionDetailsProps)
       },
     );
     return () => controller.abort();
-  }, [target, owner]);
+  }, [target, owner, refresh]);
   return (
     <>
       {result === undefined ? <p role="status">Looking up GitHub connections…</p> : null}
@@ -215,7 +216,14 @@ function ConnectionDetails({ target, owner, selection }: ConnectionDetailsProps)
                       ? 'Granted scopes unavailable'
                       : `Reported scopes: ${row.granted_scopes.join(', ') || 'None'}`}
                 </p>
-                {selection && row.granted_scopes?.includes('repo') ? (
+                {selection &&
+                row.granted_scopes?.includes('repo') &&
+                !row.account?.observed_scopes ? (
+                  <p>Live repository permissions could not be verified.</p>
+                ) : null}
+                {selection &&
+                row.granted_scopes?.includes('repo') &&
+                row.account?.observed_scopes?.includes('repo') ? (
                   <Button
                     size="sm"
                     aria-pressed={selection.id === row.id}
@@ -229,6 +237,18 @@ function ConnectionDetails({ target, owner, selection }: ConnectionDetailsProps)
             ))}
           </ul>
         </>
+      ) : null}
+      {selection && !selection.id && result !== undefined ? (
+        <Button
+          size="sm"
+          disabled={selection.disabled}
+          onClick={() => {
+            setResult(undefined);
+            setRefresh((value) => value + 1);
+          }}
+        >
+          Refresh GitHub connections
+        </Button>
       ) : null}
     </>
   );

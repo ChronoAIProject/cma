@@ -1,5 +1,5 @@
 //! A bounded, explicit allowlist for previously issued runtime tool authority.
-pub(super) fn retained(
+pub(crate) fn retained(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<Vec<String>, String> {
     let key = "CHRONO_AGENT_ACCESS_RETAINED_ORIGINS";

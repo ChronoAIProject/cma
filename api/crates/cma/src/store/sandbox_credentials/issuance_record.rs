@@ -36,8 +36,13 @@ pub(super) fn validate(intent: &CredentialIssuance) -> Result<(), CredentialCust
                 provider_identity,
                 request_digest,
             } => !digest(provider_identity) || !digest(request_digest),
-            IssuanceIdentity::LegacyUnobserved => intent.state != IssuanceState::Unknown,
+            IssuanceIdentity::LegacyUnobserved => {
+                intent.state != IssuanceState::Unknown || intent.owner_authority.is_some()
+            }
         }
+        || intent
+            .owner_authority
+            .is_some_and(|version| version.granted_at_ms == 0)
         || seconds_from_rfc3339(&intent.created_at).is_none()
         || seconds_from_rfc3339(&intent.next_check_at).is_none()
     {

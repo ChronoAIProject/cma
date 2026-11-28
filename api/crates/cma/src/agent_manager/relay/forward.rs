@@ -26,10 +26,11 @@ pub(super) fn send(
     destination: Destination,
     request: &Request,
     body: &[u8],
+    browser_claim: Option<file_identity::ProjectedIdentity>,
     deadline: Instant,
     diagnostic: Option<&mut RelayDiagnostic>,
 ) -> impl std::future::Future<Output = Result<reqwest::Response, Failure>> + use<> {
-    let outgoing = prepare(relay, destination, request, body, diagnostic);
+    let outgoing = prepare(relay, destination, request, body, browser_claim, diagnostic);
     async move {
         let (request, write_tag) = outgoing?;
         match tokio::time::timeout_at(deadline, request.send()).await {
@@ -53,29 +54,37 @@ fn prepare(
     destination: Destination,
     request: &Request,
     body: &[u8],
+    browser_claim: Option<file_identity::ProjectedIdentity>,
     diagnostic: Option<&mut RelayDiagnostic>,
 ) -> Result<(RequestBuilder, Option<authentication::WriteNotEntered>), Failure> {
     let mut headers = HeaderMap::new();
     for (name, value) in ingress::headers(request) {
         if !matches!(
             name.as_str(),
-            file_read::HANDOFF_HEADER | file_write::NOT_ENTERED_HEADER
+            file_read::HANDOFF_HEADER | file_write::NOT_ENTERED_HEADER | file_identity::HEADER
         ) && authentication::forwarded(name.as_str())
         {
             headers.append(name, value.clone());
         }
     }
-    let headers = relay
-        .authentication
-        .signed_headers(
+    let headers = match browser_claim {
+        Some(claim) => relay.authentication.signed_file_preview_headers(
+            &relay.coordinator.instance_id,
+            &destination.token,
+            request.uri(),
+            headers,
+            claim,
+        ),
+        None => relay.authentication.signed_headers(
             &relay.coordinator.instance_id,
             &destination.token,
             request.method(),
             request.uri(),
             headers,
             body,
-        )
-        .map_err(|_| Failure::Signature)?;
+        ),
+    }
+    .map_err(|_| Failure::Signature)?;
     if let Some(diagnostic) = diagnostic {
         diagnostic.correlate_hop(headers[PROOF].as_bytes());
     }
@@ -199,6 +208,7 @@ pub(super) async fn forward(
         destination,
         &request,
         body,
+        None,
         deadline,
         diagnostic.as_mut(),
     )

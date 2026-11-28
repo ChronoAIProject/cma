@@ -16,6 +16,7 @@ from staging_cd_build import build, command, identity, inspect, snapshot
 from staging_cd_common import Refusal, matches, require
 from staging_cd_cargo_artifact import artifact_name as cargo_artifact_name, index_name as cargo_index_name
 from staging_cd_github import GitHub
+from staging_cd_native_archive import COMPONENTS as NATIVE_COMPONENTS, try_fetch as fetch_native
 from staging_cd_release_archive import load as load_prepared_archive, path_for
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_resolve import output as step_output
@@ -253,6 +254,7 @@ def main():
     cache_metrics = []
     reuse_misses = []
     reused_prepared = []
+    reused_native = []
     layer_exports = []
     skip = {"disposition": "reservation_superseded"}
     def operation(_masker, diagnostics):
@@ -260,6 +262,19 @@ def main():
         require(env["GITHUB_EVENT_NAME"] == "push", "Image publication only accepts develop pushes")
         diagnostics.mark("validate")
         tasks = validated_tasks(json.loads(env["CD_TASKS"]), env)
+        native_artifact = env.get("CD_NATIVE_IMAGE_ARTIFACT")
+        require(not native_artifact or (len(tasks) == 1 and tasks[0][0] == "publish"
+                and env["CD_COMPONENT"] in NATIVE_COMPONENTS), "Native image handoff tasks differ")
+        web_scope = env.get("CD_WEB_CONTINUITY_SCOPE")
+        protected_web = env.get("CD_WEB_CONTINUITY") == "required"
+        if protected_web:
+            from staging_cd_set import document
+            from staging_cd_web_continuity import validate_scope
+            from staging_cd_web_publication import publish as publish_web, resume as resume_web
+            require(env["CD_COMPONENT"] == "web" and len(tasks) == 1, "Protected Web publication requires one task")
+            web_scope = validate_scope(document(web_scope))
+        else:
+            require(not web_scope, "Web publication scope requires the protected writer")
         receipts = []
         output = Path(env["CD_RECEIPTS_PATH"])
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -276,7 +291,7 @@ def main():
             diagnostics.mark("validate")
             if mode == "resume":
                 diagnostics.mark("resume")
-                receipt = value
+                receipt = resume_web(value, web_scope, registry) if web_scope else value
                 require(registry.exists(receipt["repository"], receipt["digest"]), "Published digest is unavailable")
                 retain(receipt)
             else:
@@ -285,10 +300,11 @@ def main():
                 prepared_path = None
                 if env.get("CD_PREPARED_ARCHIVE") == "true":
                     prepared_path = path_for(Path(env["RUNNER_TEMP"]) / "cma-prepared-release", reservation)
+                require(not web_scope or prepared_path is not None, "Protected Web publication requires a prepared archive")
                 # A queued release can yield before a fallback build. A producer
                 # that already finished its build retains the same write fences.
                 try:
-                    reservations.require_current(reservation, build_started=prepared_path is not None)
+                    reservations.require_current(reservation, build_started=prepared_path is not None or bool(native_artifact))
                 except SourceAlreadyFinal:
                     # An older run published this source and no run is known to deploy
                     # this group, so the report fails this skip instead of handling it.
@@ -306,7 +322,16 @@ def main():
                     qualified = False
                     prepared_checksum = None
                     with timings.stage("reuse"):
-                        if prepared_path is not None:
+                        if native_artifact:
+                            prepared = fetch_native(release, native_artifact, directory, source, api,
+                                                    env.get("GH_TOKEN"), reuse_misses.append)
+                            archive = prepared.path if prepared is not None else None
+                            if prepared is not None:
+                                prepared_checksum = prepared.sha256
+                                reused_native.append(release["component"])
+                            else:
+                                reservations.require_current(reservation, build_started=False)
+                        elif prepared_path is not None:
                             prepared = load_prepared_archive(prepared_path, release)
                             require(prepared is not None, "Prepared release archive is missing")
                             archive = prepared.path
@@ -346,14 +371,23 @@ def main():
                                 finish_export = cache_work.enter_context(cache.background_export(directory))
 
                         try:
-                            receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
-                                              env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
-                                              diagnostics=diagnostics, timings=timings,
-                                              scan_evidence=output.parent / "package-policy",
-                                              prepared_checksum=prepared_checksum,
-                                              on_verified_image=start_cache_export,
-                                              reservation_check=lambda: reservations.require_current(
-                                                  reservation, build_started=True))
+                            def current():
+                                return reservations.require_current(reservation, build_started=True)
+
+                            if web_scope:
+                                receipt = publish_web(archive, release, web_scope, directory, registry,
+                                                      env.get("GH_TOKEN"), env.get("GITHUB_ACTOR"), source=source,
+                                                      reservation_check=current, prepared_checksum=prepared_checksum,
+                                                      max_files=int(env["CD_WEB_RETENTION_FILE_LIMIT"]),
+                                                      max_bytes=int(env["CD_WEB_RETENTION_BYTE_LIMIT"]),
+                                                      mark=diagnostics.mark)
+                            else:
+                                receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
+                                                  env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
+                                                  diagnostics=diagnostics, timings=timings,
+                                                  scan_evidence=output.parent / "package-policy",
+                                                  prepared_checksum=prepared_checksum,
+                                                  on_verified_image=start_cache_export, reservation_check=current)
                         except CleanupIncomplete as error:
                             # Keep only the fixed-schema cleanup receipt.
                             output.with_name("runtime-cleanup.json").write_text(
@@ -379,6 +413,9 @@ def main():
 
     outcome = {}
     result = run_publication(operation, on_superseded=superseded, component=env.get("CD_COMPONENT"), outcome=outcome)
+    if env.get("CD_WEB_CONTINUITY") == "required" and outcome.get("registry_failure"):
+        registry_operation, status = outcome["registry_failure"]
+        print(f"Web registry authorization refused operation={registry_operation} http_status={status}", flush=True)
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
     component = env.get("CD_COMPONENT")
@@ -403,6 +440,8 @@ def main():
         # in it names its failing tests: names matched by fixed failure
         # patterns and re-validated here, never raw build output.
         annotate_failed_tests(label, build_metrics[-1], sys.stdout)
+    for component in reused_native:
+        print(f"Staging image reuse result=reserved-native-ci component={component} build=skipped", flush=True)
     if reused_prepared:
         print("Staging image reuse result=prepared-reservation", flush=True)
     for reason in reuse_misses:

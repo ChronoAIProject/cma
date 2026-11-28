@@ -24,12 +24,12 @@ OMARCHY_PACKAGE_EVIDENCE = Path(".github/scripts/image-omarchy-package-evidence.
 # Independently reviewed evidence and verdict digests. Evidence gathered from
 # the candidate image cannot supply either pin.
 APPROVED_PACKAGE_EVIDENCE = (
-    "e8959a2bd117052b27f71622a4b05fa63fa2a1716068119861b183618beb2341",
-    "8357c237798fae05330155831ef92daa64e6d0995ffb839a1c37b8f587e28c13",
+    "0ecccfb36bb63c1b458734fdecb45e9bc9228842e38d6609c177e820aa55ed96",
+    "325c8ac4b3a8251660e6462e317d553afcfca13a2506401600da00d9c0df75bc",
 )
 APPROVED_OMARCHY_PACKAGE_EVIDENCE = (
-    "7b41629625071530353bde2a701e3cc0182bb03327719ab55e32aaf8b182f065",
-    "8357c237798fae05330155831ef92daa64e6d0995ffb839a1c37b8f587e28c13",
+    "925a59a3be1a0c37f3f8116abb2713d815a2660346fb86f8a5503387c3d30b6b",
+    "325c8ac4b3a8251660e6462e317d553afcfca13a2506401600da00d9c0df75bc",
 )
 # Runtime scope requires a new exact-manifest review before activation.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",

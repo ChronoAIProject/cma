@@ -28,6 +28,7 @@ pub(crate) struct RuntimePointerConfig {
     token: Option<String>,
     tag: String,
     machine: bool,
+    cutover_epoch: Option<uuid::Uuid>,
 }
 
 impl RuntimePointerConfig {
@@ -42,12 +43,20 @@ impl RuntimePointerConfig {
         };
         let agent = lookup("CHRONO_RUNTIME_POINTER")?.filter(|value| !value.is_empty());
         let machine = lookup("CHRONO_MACHINE_RUNTIME_POINTER")?.filter(|value| !value.is_empty());
+        let cutover_epoch = lookup("CHRONO_RUNTIME_POINTER_CUTOVER_EPOCH")?
+            .map(|value| {
+                uuid::Uuid::parse_str(&value)
+                    .ok()
+                    .filter(|epoch| !epoch.is_nil() && epoch.to_string() == value)
+                    .ok_or("CHRONO_RUNTIME_POINTER_CUTOVER_EPOCH must be a canonical nonzero UUID")
+            })
+            .transpose()?;
         let token = if enabled {
             lookup("CHRONO_RUNTIME_REGISTRY_TOKEN")?.filter(|token| !token.is_empty())
         } else {
             None
         };
-        if agent.is_none() && machine.is_none() && token.is_none() {
+        if agent.is_none() && machine.is_none() && token.is_none() && cutover_epoch.is_none() {
             return Ok(None);
         }
         if token.as_ref().is_some_and(|token| {
@@ -82,11 +91,16 @@ impl RuntimePointerConfig {
             token,
             tag: tag.into(),
             machine: has_machine,
+            cutover_epoch,
         }))
     }
 
     pub(crate) fn can_follow(&self) -> bool {
         self.token.is_some()
+    }
+
+    pub(crate) fn cutover_epoch(&self) -> Option<uuid::Uuid> {
+        self.cutover_epoch
     }
 }
 
@@ -346,7 +360,7 @@ impl RuntimePointerSource for RegistryRuntimePointers {
     }
 }
 
-pub(super) fn valid_digest(value: &str) -> bool {
+pub(crate) fn valid_digest(value: &str) -> bool {
     value.strip_prefix("sha256:").is_some_and(|value| {
         value.len() == 64
             && value

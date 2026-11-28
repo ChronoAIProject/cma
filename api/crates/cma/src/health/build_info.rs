@@ -61,11 +61,19 @@ fn is_release_version(version: &str) -> bool {
         && metadata.next().is_none_or(valid_suffix)
 }
 
+fn compiled_stamp() -> Option<BuildInfo> {
+    BuildInfo::from_stamp(option_env!("CHRONO_BUILD"), option_env!("CHRONO_BUILD_SHA"))
+}
+
+pub(crate) fn print_build_info() -> Result<(), &'static str> {
+    let stamp = compiled_stamp().ok_or("Agent Manager has no valid compiled build stamp")?;
+    let json = serde_json::to_string(&stamp).map_err(|_| "Could not encode the build stamp")?;
+    println!("{json}");
+    Ok(())
+}
+
 pub(super) fn router() -> Router {
-    routes(BuildInfo::from_stamp(
-        option_env!("CHRONO_BUILD"),
-        option_env!("CHRONO_BUILD_SHA"),
-    ))
+    routes(compiled_stamp())
 }
 
 fn routes(stamp: Option<BuildInfo>) -> Router {

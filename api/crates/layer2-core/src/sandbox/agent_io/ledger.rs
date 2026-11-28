@@ -110,6 +110,13 @@ pub enum CommandLedgerError {
     IdempotencyConflict,
     #[error("Agent admission observation is stale")]
     Conflict,
+    #[error("response control reservation is temporarily busy")]
+    ControlBusy,
+    /// The reservation transaction was explicitly aborted and its abort was
+    /// acknowledged before any commit could be sent. Callers may refresh the
+    /// observation within the original request's retry budget.
+    #[error("Agent admission reservation was conclusively aborted")]
+    KnownAborted,
     #[error("command worker claim is stale")]
     StaleClaim,
     #[error("Agent cannot accept this command")]
@@ -132,6 +139,8 @@ impl CommandLedgerError {
             Self::NotFound => "agent_not_found",
             Self::IdempotencyConflict => "agent_command_key_conflict",
             Self::Conflict => "agent_command_admission_conflict",
+            Self::ControlBusy => "response_control_busy",
+            Self::KnownAborted => "agent_command_admission_conflict",
             Self::StaleClaim => "agent_command_claim_stale",
             Self::NotAdmissible => "agent_command_not_admissible",
             Self::QueueFull => "agent_command_queue_full",
@@ -223,7 +232,8 @@ pub trait AgentCommandStore: Send + Sync {
 
     /// Atomically deduplicate, assign a per-Agent order, check the bounded queue
     /// and retain the receipt. No TTL may silently make an old key reusable.
-    /// `Conflict` proves this attempt did not commit; an uncertain commit must
+    /// `KnownAborted` proves an acknowledged pre-commit abort and permits a
+    /// bounded refresh. A generic `Conflict` is lookup-only. An uncertain commit must
     /// return `Unavailable` so callers retain the original key for recovery.
     async fn reserve_command(
         &self,

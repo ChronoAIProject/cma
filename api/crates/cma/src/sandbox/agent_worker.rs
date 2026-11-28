@@ -81,6 +81,7 @@ pub(crate) struct AgentWorkerDependencies {
 
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
+    pub capture_delivery: Option<super::native_retirement_delivery::CaptureDelivery>,
     pub ownership_retry_hints: Option<Arc<dyn super::ownership_retry_hint::OwnershipRetryHints>>,
     pub retirement_reporter:
         Option<Arc<dyn crate::store::native_retirement_action::RetirementRecords>>,
@@ -88,6 +89,7 @@ pub(crate) struct AgentWorkerConfig {
     skip_ineligible_reconciliation: bool,
     defer_foreign_reconciliation: bool,
     pub parent_not_ready_pacing_enabled: bool,
+    pub inspection_refusal: Option<crate::config::InspectionRefusalControl>,
     startup_sibling_hold_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
@@ -107,12 +109,14 @@ pub(crate) struct AgentWorkerConfig {
 impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
+            capture_delivery: None,
             retirement_reporter: None,
             ownership: None,
             skip_ineligible_reconciliation: false,
             defer_foreign_reconciliation: false,
             ownership_retry_hints: None,
             parent_not_ready_pacing_enabled: false,
+            inspection_refusal: None,
             startup_sibling_hold_enabled: false,
             retry_single_marker_enabled: false,
             work_retry_policy_enabled: false,

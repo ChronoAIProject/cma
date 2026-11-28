@@ -16,6 +16,22 @@ impl Backend for Reader {
         DEPLOYMENT
     }
 
+    fn terminal_settlement_enabled(&self) -> bool {
+        false
+    }
+
+    fn validation_settlement_enabled(&self) -> bool {
+        false
+    }
+
+    async fn refuse_validation(
+        &self,
+        _: &Identity<'_>,
+        _: ValidationRefusal,
+    ) -> Result<(), StatusCode> {
+        panic!("a read must never publish a validation refusal");
+    }
+
     async fn lookup(
         &self,
         identity: &Identity<'_>,

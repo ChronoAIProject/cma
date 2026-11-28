@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::agent_tool_open;
 use layer2_core::sandbox::binding::{BindingConversationState, BindingState, BindingWork};
 use layer2_core::sandbox::store::AgentProvenanceSnapshot;
 use layer2_core::sandbox::{Agent, AgentCreationOrigin, RuntimeBinding};
@@ -16,11 +17,24 @@ pub(super) struct Scope {
     pub runtime: RuntimeBinding,
     pub(super) request_sha256: String,
     pub(super) endpoint: String,
+    // The launch digest can repeat on later Opens of the same conversation.
+    // Existing scope IDs omit the field for the original Open.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) numbered_open: Option<String>,
 }
 
 impl Scope {
     pub(super) fn id(&self) -> layer3_adapter::Result<String> {
         layer2_core::profiles::content_digest(self).map_err(unavailable)
+    }
+
+    pub(super) fn matches_open(&self, request: &AgentOpenRequest) -> bool {
+        self.request_sha256 == request.request_sha256
+            && self.numbered_open.as_deref()
+                == request
+                    .restart_runtime
+                    .as_ref()
+                    .map(|_| request.operation_id.as_str())
     }
 }
 
@@ -35,24 +49,16 @@ pub(super) fn validate(
     let (mut scope, proxy) = identity(snapshot, binding, conversation, runtime)?;
     let lineage = &snapshot.resource.lineage;
     let agent = lineage.agent.as_ref().ok_or_else(refused)?;
-    let tree = lineage.worktree.as_ref().ok_or_else(refused)?;
-    let expected = AgentOpenRequest::new(
-        format!("agent:{}:open:v1", agent.id),
-        crate::sandbox::runtime_options(agent, &lineage.sandbox, tree),
-        request.resume_conversation.clone(),
-    );
-    if request.options.slot.0 != agent.id.as_str()
-        || !request.has_valid_sha256()
-        || request != &expected
-        || request
-            .resume_conversation
-            .as_deref()
-            .is_some_and(|id| agent.conversation.conversation_id.as_deref() != Some(id))
-        || !valid_fence(agent, fence)
+    if !agent_tool_open::matches(lineage, request)
+        || !agent_tool_open::valid_fence(agent, request, fence)
     {
         return Err(refused());
     }
     scope.request_sha256 = request.request_sha256.clone();
+    scope.numbered_open = request
+        .restart_runtime
+        .as_ref()
+        .map(|_| request.operation_id.clone());
     Ok((scope, proxy))
 }
 
@@ -148,6 +154,7 @@ pub(super) fn identity(
         runtime: process.clone(),
         request_sha256: String::new(),
         endpoint: endpoint.clone(),
+        numbered_open: None,
     };
     let proxy = ToolProxyRequest {
         sandbox_id: sandbox.id.to_string(),
@@ -157,21 +164,6 @@ pub(super) fn identity(
     };
     proxy.validate()?;
     Ok((scope, proxy))
-}
-
-fn valid_fence(agent: &Agent, fence: u64) -> bool {
-    fence > 0
-        && agent
-            .work
-            .lease
-            .as_ref()
-            .map_or(agent.work.next_fence == fence, |lease| {
-                lease.fence == fence
-                    && layer2_core::seconds_from_rfc3339(&lease.expires_at).is_some_and(|expiry| {
-                        std::time::UNIX_EPOCH + std::time::Duration::from_secs(expiry)
-                            > std::time::SystemTime::now()
-                    })
-            })
 }
 
 fn worktree_may_open(agent: &Agent, tree: &layer2_core::sandbox::Worktree) -> bool {

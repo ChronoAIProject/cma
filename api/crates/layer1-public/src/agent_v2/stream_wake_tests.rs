@@ -179,7 +179,7 @@ async fn local_commit_wakes_before_fallback_and_precedes_stale_live() {
 async fn live_racing_durable_head_delivers_durable_first() {
     let (mut open, f, _) = prepared(true).await;
     publish(&open, "live after steering").await;
-    open.queue_live();
+    open.queue_live(false);
     append(
         &f.store,
         AgentLogKind::OwnerMessage {

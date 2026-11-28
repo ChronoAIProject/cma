@@ -43,7 +43,9 @@ async fn standing_gate_erasing_session_hides_profile_but_preserves_authenticatio
         json!({"sub":"owner","name":"Live Owner","email":"owner@example.test","picture":"https://images.example/avatar.png"}),
     );
     let standing = Arc::new(SessionStanding(std::sync::atomic::AtomicBool::new(false)));
-    Arc::get_mut(&mut fixture.auth).unwrap().standing = standing.clone();
+    Arc::get_mut(&mut fixture.auth)
+        .unwrap()
+        .set_fixture_standing(standing.clone());
     let headers = credential(&fixture, true).await;
     let app = application(&fixture);
     let (status, body) = session(&app, &headers).await;
@@ -73,7 +75,9 @@ async fn standing_gate_erasing_session_hides_profile_but_preserves_authenticatio
 async fn session_standing_failure_never_releases_profile() {
     let mut fixture = Fixture::new().await;
     fixture.seed().await;
-    Arc::get_mut(&mut fixture.auth).unwrap().standing = Arc::new(UnavailableStanding);
+    Arc::get_mut(&mut fixture.auth)
+        .unwrap()
+        .set_fixture_standing(Arc::new(UnavailableStanding));
     let headers = credential(&fixture, true).await;
     let (status, body) = session(&application(&fixture), &headers).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
@@ -88,7 +92,9 @@ async fn standing_gate_denies_verified_browser_and_independent_bearer_reads_and_
         let mut fixture = Fixture::new().await;
         fixture.seed().await;
         let headers = credential(&fixture, cookie).await;
-        Arc::get_mut(&mut fixture.auth).unwrap().standing = Arc::new(DeletingAccount);
+        Arc::get_mut(&mut fixture.auth)
+            .unwrap()
+            .set_fixture_standing(Arc::new(DeletingAccount));
         let app = Router::new()
             .route(
                 "/api/v1/sandboxes",

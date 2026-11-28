@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import markMarkup from '../assets/brand/cma-mark.svg?raw';
 import { elapsedTime } from './workspaceTime';
-import { ThinkingProgress } from './ThinkingProgress';
+import { ThinkingProgress, type recordedTurnActivity } from './ThinkingProgress';
 const markHtml = { __html: markMarkup };
 import './Thinking.css';
 
@@ -23,11 +23,13 @@ export interface ThinkingActivity {
 }
 
 interface ThinkingProps {
+  readonly branded?: boolean;
   readonly waitingForResponse?: boolean;
   readonly progressKey?: string;
   readonly text?: string;
   readonly activities?: readonly ThinkingActivity[];
   readonly startedAt?: string;
+  readonly recordedActivity?: ReturnType<typeof recordedTurnActivity>;
 }
 
 export function activityDuration(activity: ThinkingActivity): string {
@@ -48,11 +50,13 @@ export function activitySummary(activity: ThinkingActivity): string {
 
 /** Active-turn liveness, with a clock anchored to the public turn record rather than mount. */
 export function Thinking({
+  branded = false,
   text = '',
   activities = [],
   startedAt,
   progressKey,
   waitingForResponse = false,
+  recordedActivity,
 }: ThinkingProps) {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now);
@@ -82,14 +86,22 @@ export function Thinking({
   return (
     <section className="thinking" aria-label="What the agent is working through">
       <div className="thinking__key">
-        <span className="thinking__logo" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
-        <span className="thinking__title" role="status">
-          {waitingForResponse ? 'Waiting for a response' : 'Thinking'}
-        </span>
+        {branded ? null : (
+          <>
+            <span
+              className="thinking__logo"
+              aria-hidden="true"
+              dangerouslySetInnerHTML={markHtml}
+            />
+            <span className="thinking__title" role="status">
+              {waitingForResponse ? 'Waiting for a response' : 'Thinking'}
+            </span>
+          </>
+        )}
         {seconds === undefined ? null : (
           <span className="thinking__elapsed">{elapsedTime(seconds * 1000)}</span>
         )}
-        <span aria-hidden="true">·</span>
+        {branded && seconds === undefined ? null : <span aria-hidden="true">·</span>}
         <button
           type="button"
           className="thinking__activity-toggle"
@@ -112,24 +124,50 @@ export function Thinking({
       </p>
       <ThinkingProgress key={progressKey ?? JSON.stringify([text, activities])} />
       {open ? (
-        <div className="thinking__body" id={bodyId} ref={bodyRef}>
-          {text === '' ? null : <div className="thinking__reasoning">{text}</div>}
-          {text === '' && activities.length === 0 ? 'Waiting for the next update.' : null}
-          {activities.length === 0 ? null : (
-            <ul className="thinking__activities">
-              {activities.map((item) => (
-                <li className="thinking__activity" key={item.id}>
-                  <p className="thinking__activityline">{activitySummary(item)}</p>
-                  <ActivityBody label="Arguments" body={item.arguments} />
-                  <ActivityBody label="Result" body={item.result} />
-                  <ActivityBody label="Details" body={item.detail} />
-                </li>
-              ))}
-            </ul>
+        <div id={bodyId}>
+          {recordedActivity === undefined ? null : (
+            <dl className="thinking__facts">
+              <dt>Current phase</dt>
+              <dd>{recordedActivity.phase}</dd>
+              <dt>Phase started</dt>
+              <dd>
+                <ActivityTime value={recordedActivity.since} />
+              </dd>
+              <dt>Last recorded progress</dt>
+              <dd>
+                <ActivityTime value={recordedActivity.lastAt} />
+              </dd>
+            </dl>
+          )}
+          {text === '' && activities.length === 0 ? null : (
+            <div className="thinking__body" ref={bodyRef}>
+              {text === '' ? null : <div className="thinking__reasoning">{text}</div>}
+              {activities.length === 0 ? null : (
+                <ul className="thinking__activities">
+                  {activities.map((item) => (
+                    <li className="thinking__activity" key={item.id}>
+                      <p className="thinking__activityline">{activitySummary(item)}</p>
+                      <ActivityBody label="Arguments" body={item.arguments} />
+                      <ActivityBody label="Result" body={item.result} />
+                      <ActivityBody label="Details" body={item.detail} />
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ActivityTime({ value }: { readonly value?: string }) {
+  const timestamp = Date.parse(value ?? '');
+  return Number.isFinite(timestamp) ? (
+    <time dateTime={value}>{new Date(timestamp).toLocaleString()}</time>
+  ) : (
+    'Unavailable'
   );
 }
 

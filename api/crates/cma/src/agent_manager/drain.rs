@@ -10,19 +10,35 @@ pub(crate) struct HandoffFailure {
     error: OwnershipError,
 }
 
-pub(crate) async fn handoff(
+pub(crate) async fn handoff<F: Future<Output = Result<(), OwnershipError>>>(
     coordinator: &OwnershipCoordinator,
     authority: &Arc<Authority>,
-    revoke: impl Future<Output = Result<(), OwnershipError>>,
+    until: Instant,
+    mut revoke: impl FnMut() -> F,
 ) -> Result<(), HandoffFailure> {
     let mut receivers_settled = false;
     let result = coordinator
-        .handoff(authority, async {
-            revoke.await?;
-            receivers_settled = true;
-            Ok(())
-        })
+        .handoff_during_drain(
+            authority,
+            async {
+                // Revoke carries the exact owner token. A retry after an
+                // unconfirmed result revisits only unsettled receivers.
+                match revoke().await {
+                    Err(OwnershipError::Unavailable(_)) => revoke().await?,
+                    result => result?,
+                }
+                receivers_settled = true;
+                Ok(())
+            },
+            until,
+        )
         .await;
+    if result.is_ok() && receivers_settled {
+        let correlation = authority.receiver_correlation();
+        tracing::info!(parent: None, stage = "durable_release", outcome = "released",
+            agent_sha256 = %correlation.agent_sha256, instance_sha256 = %correlation.instance_sha256,
+            epoch = authority.token.epoch, "Agent Manager drain handoff confirmed");
+    }
     result.map_err(|error| {
         let phase = if receivers_settled {
             "durable_release"
@@ -40,9 +56,21 @@ pub(crate) async fn handoff(
 }
 
 impl AgentManager {
+    pub(crate) fn register_retirement_capture(
+        &self,
+        capture: crate::agent_lifecycle::LifecycleDrain,
+    ) -> Result<(), String> {
+        self.retirement_capture
+            .set(capture)
+            .map_err(|_| "Agent Manager retirement capture already registered".into())
+    }
+
     pub(crate) fn stop_admission(&self) {
         self.serving.store(false, Ordering::Release);
         self.coordinator.stop_admission();
+        if let Some(capture) = self.retirement_capture.get() {
+            capture.close();
+        }
         if let Some(lifecycle) = self.lifecycle.get() {
             lifecycle.close();
         }
@@ -75,6 +103,16 @@ impl AgentManager {
         }
     }
 
+    pub(super) async fn drain_retirement_capture(&self, until: Instant) -> Result<(), String> {
+        if let Some(capture) = self.retirement_capture.get() {
+            capture
+                .drain(Duration::from_secs(5).min(until.saturating_duration_since(Instant::now())))
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     async fn drain_inner(&self, until: Instant) -> Result<(), String> {
         let mut drained = self.drain.lock().await;
         if *drained {
@@ -91,13 +129,12 @@ impl AgentManager {
             .drain(Duration::from_secs(5))
             .await
             .map_err(|error| error.to_string())?;
+        self.drain_retirement_capture(until).await?;
         let results = stream::iter(owned.into_iter().map(|authority| async move {
             self.registry.detach_owner(&authority.token);
-            handoff(
-                &self.coordinator,
-                &authority,
-                authority.revoke_transports_after_local_drain(),
-            )
+            handoff(&self.coordinator, &authority, until, || {
+                authority.revoke_transports_after_local_drain()
+            })
             .await
         }))
         .buffer_unordered(4)

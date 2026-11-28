@@ -36,6 +36,12 @@ impl SandboxWorker {
         {
             return self.retry_failure(sandbox, failure, now).await;
         }
+        if let Some(finalizer) = finalizer {
+            if let Err(error) = finalizer.offer_capture(&sandbox).await {
+                // Continue the regular finalizer checks, including complete provider absence.
+                tracing::debug!(%error, "retirement capture offer was not confirmed");
+            }
+        }
         match self.request_agent_stop(&sandbox).await {
             Ok(()) => {
                 self.advance(
@@ -80,6 +86,8 @@ impl SandboxWorker {
             }
             let mut cleaned = sandbox.clone();
             if let Some(failure) = self.prepare_retirement_cleanup(&mut cleaned, now).await? {
+                // Dispatch custody continues to own the original runtime binding.
+                self.suspend_retiring_compute(&sandbox, &failure).await?;
                 return self.retry_failure(sandbox, failure, now).await;
             }
             sandbox = cleaned;
@@ -119,7 +127,24 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if self.retirement_reauthorization_disabled(&sandbox) {
+            let failure = super::support::WorkerFailure::new(
+                "owner_reauthorization_disabled",
+                "revision-fenced Operations resume is required",
+                false,
+            );
+            return self.retry_failure(sandbox, failure, now).await;
+        }
+        if sandbox
+            .work
+            .retirement_credential_recovery
+            .is_some_and(|recovery| recovery.admitted.is_none())
+        {
+            return self.probe_retirement_reauthorization(sandbox, now).await;
+        }
         if let Err(failure) = self.settle_retirement_credentials(&mut sandbox, now).await {
+            self.suspend_credential_blocked_retirement(&mut sandbox, &failure)
+                .await?;
             return self.retry_failure(sandbox, failure, now).await;
         }
         self.advance(
@@ -159,12 +184,22 @@ impl SandboxWorker {
             return self.retry_failure(sandbox, failure, now).await;
         }
         if let Some(home) = &mut sandbox.lifecycle.home {
+            let was_released = home.released;
             if let Err(error) =
                 crate::sandbox::home::release_home(self.dependencies.adapter.as_ref(), home).await
             {
                 return self
                     .retry_failure(sandbox, adapter_failure(error), now)
                     .await;
+            }
+            if !was_released {
+                let expected = sandbox.revision;
+                sandbox.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
+                sandbox.updated_at = sandbox.updated_at.max(rfc3339_at(now));
+                self.dependencies
+                    .store
+                    .save_sandbox(expected, sandbox.clone())
+                    .await?;
             }
         }
         let policy = match self.config.policy.current_sandbox_policy().await {

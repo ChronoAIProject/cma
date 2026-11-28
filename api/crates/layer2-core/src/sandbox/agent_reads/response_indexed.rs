@@ -18,6 +18,23 @@ impl AgentOutputObservation<'_> {
     pub fn metadata(&self) -> &AgentOutputMetadata {
         self.reader.metadata()
     }
+    pub async fn open_message(&mut self) -> Result<String, AgentReadError> {
+        let index = self
+            .metadata()
+            .index
+            .as_ref()
+            .ok_or_else(|| corrupt("missing turn"))?;
+        if self.metadata().active_turn != Some(index.turn_sequence) || !index.totals.text.is_open()
+        {
+            return Err(corrupt("output turn has no open message"));
+        }
+        let bytes = index.totals.text.open_bytes as usize;
+        let content = self.reader.open_message().await.map_err(log_store_error)?;
+        if content.len() != bytes {
+            return Err(corrupt("open message does not match its certified extent"));
+        }
+        Ok(content)
+    }
     pub async fn changes(
         &mut self,
         from: u64,

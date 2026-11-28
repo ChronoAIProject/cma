@@ -62,6 +62,7 @@ impl MongoSandboxStore {
             strict_inactivity_session_evidence: false,
             workspaces: majority_collection(&database, WORKSPACES),
             bounded_inactivity_legacy_log: false,
+            inactivity_log_preparation: std::sync::Arc::new(tokio::sync::Semaphore::new(1)),
             worktrees: majority_collection(&database, WORKTREES),
             agents: majority_collection(&database, AGENTS),
             agent_writes: Default::default(),
@@ -84,6 +85,7 @@ impl MongoSandboxStore {
             agent_reuse_bindings: majority_collection(&database, AGENT_REUSE_BINDINGS),
             agent_log: majority_collection(&database, AGENT_LOG),
             suggestions: majority_collection(&database, "agent_suggestions"),
+            suggestion_control: None,
             agent_creation_provenance: majority_collection(&database, "agent_creation_provenance"),
             agent_channel_usage: majority_collection(&database, "agent_channel_usage"),
             channel_usage_events: majority_collection(&database, "channel_usage_events"),
@@ -132,6 +134,7 @@ impl MongoSandboxStore {
             access_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
+            agent_turn_terminal: tokio::sync::broadcast::channel(128).0,
         }
     }
 

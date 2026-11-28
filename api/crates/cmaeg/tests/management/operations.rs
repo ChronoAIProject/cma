@@ -116,6 +116,22 @@ async fn test_turn_creates_conversation_and_bounds_unicode_text() {
     let (base, stop, task) = app(&provider, &cma, &nyxid).await;
     let client = Client::new();
     let initial = created(&client, &base).await;
+    let before = provider.requests().len();
+    let invalid = client
+        .post(format!("{base}/v1/channels/invalid/test"))
+        .bearer_auth("token-alice")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid.status(), 400);
+    assert_eq!(invalid.headers()["cache-control"], "no-store");
+    assert_eq!(
+        invalid.headers()["content-type"],
+        "application/problem+json"
+    );
+    let problem: serde_json::Value = invalid.json().await.unwrap();
+    assert_eq!(problem["code"], "invalid_request");
+    assert_eq!(provider.requests().len(), before);
     let response = client
         .post(format!(
             "{base}/v1/channels/{}/test",
@@ -126,6 +142,7 @@ async fn test_turn_creates_conversation_and_bounds_unicode_text() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+    assert_eq!(response.headers()["cache-control"], "no-store");
     let body: serde_json::Value = response.json().await.unwrap();
     assert!(body["accepted_after_ms"].is_number());
     assert_eq!(body["first_text"].as_str().unwrap().chars().count(), 200);

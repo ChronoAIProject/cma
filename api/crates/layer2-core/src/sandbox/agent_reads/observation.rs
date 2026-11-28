@@ -1,7 +1,9 @@
 use super::*;
 
 impl AgentReadService {
-    pub(in crate::sandbox) async fn observed_command(
+    // Used inside the combined read so the command result is still private
+    // when the caller acquires the final authorization snapshot.
+    pub(in crate::sandbox) async fn observed_command_unreleased(
         &self,
         authorization: &AgentEventStreamAuthorization,
         id: &crate::ids::AgentResponseId,
@@ -10,9 +12,7 @@ impl AgentReadService {
             return Err(AgentReadError::NotFound);
         }
         let service = self.observation.as_ref().ok_or(AgentReadError::NotFound)?;
-        let result = service.command(authorization, id).await;
-        self.validate_event_stream(authorization).await?;
-        result
+        service.command(authorization, id).await
     }
     pub fn shared_observation_enabled(&self) -> bool {
         self.observation.is_some()
@@ -68,7 +68,11 @@ impl AgentReadService {
         tail: bool,
         visit: &mut (dyn FnMut(AgentLogEntry) -> Result<(), SandboxStoreError> + Send),
     ) -> Result<(), SandboxStoreError> {
-        if let Some(service) = &self.observation {
+        if let Some(service) = self
+            .observation
+            .as_ref()
+            .filter(|_| !super::super::agent_observation::durable_read_fallback())
+        {
             let page = service
                 .source_page(agent, (after, through, limit, tail), || async {
                     let mut page = Some(Vec::new());

@@ -3,10 +3,7 @@ import type { AppRoute } from '../routing/routes';
 import type { AssistantReplyPreview } from '../api/replyPreview';
 import { taskTitle } from '../shell/taskTitle';
 import { taskColor } from '../shell/taskGroups';
-import { activityLabel } from '../shell/treePresentation';
-import { CharacterAvatar, characterPhase } from '../character/CharacterAvatar';
-import { characterForStatus } from '../character/status';
-import { sandboxChildStatus } from '../sandbox/lifecycle';
+import { activityLabel, agentListAction, agentSignal } from '../shell/treePresentation';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
 import { selectTaskHomePresentation } from './taskHomePresentation';
@@ -52,13 +49,12 @@ export function TaskCrew({
             onClick={() => onNavigate({ kind: 'agent', agentId: agent.id })}
           >
             <span className="task-crew__top">
-              <CharacterAvatar
-                {...characterForStatus(sandboxChildStatus(sandbox, agent.status))}
-                color={sandbox.color ?? taskColor(agent.id)}
-                phase={characterPhase(agent.id)}
-                size={56}
-                still={!characterForStatus(sandboxChildStatus(sandbox, agent.status)).animate}
-              />
+              {agentSignal(
+                agentListAction(agent.status, sandbox, presentation),
+                presentation.label,
+                48,
+                sandbox.color ?? taskColor(agent.id),
+              )}
               {!commonStatus ? (
                 <Badge
                   tone={

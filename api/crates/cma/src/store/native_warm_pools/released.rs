@@ -62,25 +62,6 @@ impl MongoNativeWarmPools {
             .map_err(|_| WarmPoolError::Unavailable)?;
         Ok(true)
     }
-    pub(crate) async fn retain_release_authority(
-        &self,
-        target: &PoolTarget,
-    ) -> Result<(), WarmPoolError> {
-        let mut filter = self.scope();
-        filter.extend(doc! {"_id": &target.id, "activated_at": {"$type": "date"},
-        "retiring": {"$ne": true}, "retired": {"$ne": true}});
-        self.check_fenced_write(
-            self.targets
-                .update_one(
-                    filter,
-                    doc! {
-                        "$set": {"durable_release_authority": true},
-                    },
-                )
-                .await,
-        )
-        .await
-    }
     pub(crate) async fn historical_candidate(
         &self,
         machine: bool,
@@ -131,14 +112,26 @@ impl MongoNativeWarmPools {
         machine: bool,
         image: &str,
     ) -> Result<(), WarmPoolError> {
+        self.verify_bootstrap_in(machine, image, None).await
+    }
+
+    pub(super) async fn verify_bootstrap_in(
+        &self,
+        machine: bool,
+        image: &str,
+        mut session: Option<&mut ClientSession>,
+    ) -> Result<(), WarmPoolError> {
         let mut scope = retirement::release_scope(self, machine);
         scope.insert("activated_at", doc! {"$type": "date"});
-        let Some(latest) = self
+        let query = self
             .targets
             .find_one(scope.clone())
-            .sort(doc! {"activated_at": -1})
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?
+            .sort(retirement::release_order(machine));
+        let Some(latest) = (match session.as_deref_mut() {
+            Some(session) => query.session(session).await,
+            None => query.await,
+        })
+        .map_err(|_| WarmPoolError::Unavailable)?
         else {
             return Ok(());
         };
@@ -149,12 +142,13 @@ impl MongoNativeWarmPools {
             "activated_at": latest.activated_at,
             "plan.spec.image.uri": {"$ne": image},
         });
-        if self
-            .targets
-            .find_one(scope)
-            .await
-            .map_err(|_| WarmPoolError::Unavailable)?
-            .is_some()
+        let query = self.targets.find_one(scope);
+        if (match session {
+            Some(session) => query.session(session).await,
+            None => query.await,
+        })
+        .map_err(|_| WarmPoolError::Unavailable)?
+        .is_some()
         {
             return Err(WarmPoolError::Conflict);
         }
@@ -283,6 +277,9 @@ impl MongoNativeWarmPools {
         promotion_at: DateTime,
         session: &mut ClientSession,
     ) -> Result<(), WarmPoolError> {
+        self.fence_activation(active.machine, session)
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?;
         let observed = lane.candidate.as_ref().ok_or(WarmPoolError::Conflict)?;
         if !ready.observed
             || candidate.binding.as_ref() != Some(&ready.binding)
@@ -303,7 +300,7 @@ impl MongoNativeWarmPools {
         let latest = self
             .targets
             .find_one(scope.clone())
-            .sort(doc! {"activated_at": -1})
+            .sort(retirement::release_order(active.machine))
             .session(&mut *session)
             .await
             .map_err(|_| WarmPoolError::Unavailable)?
@@ -311,6 +308,7 @@ impl MongoNativeWarmPools {
         if latest.plan.spec.image.uri != lane.active.image
             || latest.retiring
             || latest.retired
+            || (active.machine && latest.id != active.id)
             || latest.activated_at.is_none_or(|at| at >= promotion_at)
         {
             return Err(WarmPoolError::Conflict);
@@ -363,6 +361,9 @@ impl MongoNativeWarmPools {
             "retired": {"$ne": true}, "retiring": {"$ne": true},
         });
         let mut fields = doc! {"activated_at": promotion_at};
+        if candidate.machine {
+            fields.insert("machine_plan_activated_at", promotion_at);
+        }
         if let Some(choice) = active.operator_replicas {
             fields.insert(
                 "operator_replicas",

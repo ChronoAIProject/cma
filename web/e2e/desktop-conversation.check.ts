@@ -220,10 +220,9 @@ for (const width of [1600, 1024, 390]) {
           .toBe(true);
         await page.screenshot({ path: info.outputPath(`split-${width}-${theme}.png`) });
         await page.getByRole('button', { name: 'Full screen', exact: true }).click();
-        await expect(
-          page.getByRole('button', { name: 'Exit full screen', exact: true }),
-        ).toBeVisible();
-        await page.getByRole('button', { name: 'Exit full screen', exact: true }).click();
+        const exit = page.getByRole('button', { name: /^Exit (full screen|expanded view)$/ });
+        await expect(exit).toBeVisible();
+        await exit.click();
         await expectPaintedDesktop();
         expect(connections).toHaveLength(1);
         expect(await message.evaluate((node, original) => node === original, field)).toBe(true);

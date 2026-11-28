@@ -90,10 +90,7 @@ impl ControlPlaneComposition {
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
         let (projections, observations) =
             observation::prepare(config, &stores, &agent_manager, projections).await?;
-        let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
-            config.image_manager_base_url.clone(),
-            config.features.image_manager_retirement,
-        )?;
+        let image_resolver = Arc::new(crate::agent_lifecycle::RetiredImageResolver);
         let inline_lifecycle = crate::agent_lifecycle::InlineAgentLifecycle::new(
             Arc::clone(&sandbox_service),
             Arc::clone(&workspace_service),
@@ -250,8 +247,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             adapter.clone(),
         )?;
-        let cancel_wake = (config.features.command_cancel_wake && ownership.is_some())
-            .then(|| Arc::new(tokio::sync::Notify::new()));
+        let cancel_wake = media::cancel_wake(config, ownership.is_some());
         let command_scheduler = media::commands(
             crate::commands::ProductionCommandDependencies {
                 source_guard: media::guard(&media),
@@ -266,7 +262,8 @@ impl ControlPlaneComposition {
             config.features.command_reconcile_pacing,
             adapters.model_funding.clone(),
         )?
-        .with_cancel_wake(cancel_wake.clone());
+        .with_cancel_wake(cancel_wake.clone())
+        .with_turn_terminal_wake(stores.sandbox_model.agent_turn_terminal.clone());
         let (sandbox_control_scheduler, sandbox_control_service) = access::sandbox_control(
             &stores,
             resource_access.clone(),
@@ -417,7 +414,7 @@ impl ControlPlaneComposition {
             recorder,
             (limits, config),
             (
-                crate::health::router_with_workers(stores.clone(), workers.clone()),
+                routes::health(&stores, &workers, config)?,
                 tool_routes.merge(service_portal::router(
                     auth.clone(),
                     config.gateway.as_ref(),

@@ -151,7 +151,8 @@ it.each(['failure', 'sandboxFailure'] as const)(
     );
     expect(screen.getByText('Task hasn’t started')).toBeVisible();
     expect(screen.queryByText('Preparing cloud computer')).toBeNull();
-    expect(container.querySelectorAll('[data-motion="live"]')).toHaveLength(0);
+    expect(container.querySelectorAll('.agent-mascot__poster')).toHaveLength(1);
+    expect(container.querySelector('.agent-mascot__sprite')).toBeNull();
   },
 );
 
@@ -167,7 +168,7 @@ it('uses one bound preparation view and transfers only the follow-up into the mo
   expect(screen.getAllByText('Setup details')).toHaveLength(1);
   expect(screen.getByLabelText('Follow-up draft')).toHaveValue(text);
   expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
-  expect(view.container.querySelectorAll('[data-motion="live"]')).toHaveLength(1);
+  expect(view.container.querySelectorAll('.agent-mascot__artwork')).toHaveLength(1);
   fireEvent.keyDown(screen.getByLabelText('Follow-up draft'), { key: 'Enter', ctrlKey: true });
   expect(h.connection).not.toHaveBeenCalled();
   expect(h.create).not.toHaveBeenCalled();

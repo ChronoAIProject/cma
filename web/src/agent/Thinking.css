@@ -4,6 +4,17 @@
   min-width: 0;
 }
 
+.turn-activity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: var(--space-2);
+}
+
+.turn-activity > .active-thinking {
+  flex: 1 1 12rem;
+}
+
 .active-thinking {
   display: grid;
   grid-template-rows: 1fr;
@@ -70,6 +81,21 @@
 .thinking__activity-toggle:focus-visible {
   outline: none;
   box-shadow: var(--focus-ring);
+}
+
+.thinking__facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0;
+  padding: 0 0 10px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+}
+
+.thinking__facts dd {
+  margin: 0;
 }
 
 /*

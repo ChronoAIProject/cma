@@ -1,14 +1,15 @@
 //! Public projections and sanitized management refusals.
-use super::{
-    management::{ChannelListItem, ChannelResponse, ProviderResponse},
-    problems::{no_store, problem},
-};
+use super::management::{ChannelListItem, ChannelResponse, ProviderResponse};
 use crate::channels::management::{ManagementError, ManagementState};
 use axum::{
     http::{header, HeaderMap, StatusCode},
     response::Response,
 };
-use cmaeg_core::{ids::ChannelId, problem::ProblemCode};
+use cmaeg_core::{
+    ids::ChannelId,
+    problem::{Problem, ProblemCode},
+};
+use cmaeg_engine::management::{ManagementFailure, ManagementFailureStage};
 use subtle::ConstantTimeEq;
 pub(super) fn channel_response(
     state: &ManagementState,
@@ -47,31 +48,24 @@ pub(super) fn channel_list_item(
         ));
     }
     let definition = &record.definition;
-    let known = definition
-        .creation
-        .as_ref()
-        .map(|creation| {
-            crate::console::channel_ids::opens_to(
-                &creation.channel_id,
-                &definition.record_id,
-                &state.master_keys,
-                &state.records,
-            )
-            .map_err(|_| ManagementError::Internal("retained channel ID is invalid".into()))?;
-            channel_response(
-                state,
-                &creation.channel_id,
-                definition,
-                record.version,
-                provider_response(definition),
-                &definition.record_id,
-            )
-        })
-        .transpose()?;
+    let creation = definition.creation.as_ref();
+    if let Some(creation) = creation {
+        crate::console::channel_ids::opens_to(
+            &creation.channel_id,
+            &definition.record_id,
+            &state.master_keys,
+            &state.records,
+        )
+        .map_err(|_| ManagementError::Internal("retained channel ID is invalid".into()))?;
+    }
     Ok(ChannelListItem {
         native_discord_activation: crate::discord::activation::view(state, definition),
-        channel_id: known.as_ref().map(|response| response.channel_id.clone()),
-        endpoints: known.map(|response| response.endpoints),
+        channel_id: creation.map(|creation| creation.channel_id.to_string()),
+        // Keep the original ID for recovery and cleanup. Advertise delivery
+        // URLs only after provider setup has been confirmed.
+        endpoints: creation.filter(|creation| creation.ready).map(|creation| {
+            super::channel_endpoints::channel_endpoints(state, &creation.channel_id, definition)
+        }),
         record_id: definition.record_id.to_string(),
         version: record.version,
         provider: provider_response(definition),
@@ -175,21 +169,38 @@ fn release_refused_detail(status: u16, code: &str) -> String {
 mod release_tests;
 
 pub(super) fn management_error(error: ManagementError) -> Response {
+    with_management_failure_stage(cmaeg_http::http::management::failure_response(
+        management_failure(error),
+    ))
+}
+
+pub(super) fn with_management_failure_stage(mut response: Response) -> Response {
     use crate::telemetry::http_failure::FailureStage;
+    let Some(stage) = response.extensions_mut().remove::<ManagementFailureStage>() else {
+        return response;
+    };
+    let stage = match stage {
+        ManagementFailureStage::RequestValidation => FailureStage::RequestValidation,
+        ManagementFailureStage::ChannelRecord => FailureStage::ChannelRecord,
+        ManagementFailureStage::ChannelProvider => FailureStage::ChannelProvider,
+        ManagementFailureStage::ChannelOperation => FailureStage::ChannelOperation,
+    };
+    stage.response(response)
+}
+
+pub(super) fn management_failure(error: ManagementError) -> ManagementFailure {
     let stage = match &error {
         ManagementError::Provider(_) | ManagementError::ReleaseRefused { .. } => {
-            FailureStage::ChannelProvider
+            ManagementFailureStage::ChannelProvider
         }
-        ManagementError::Record(_) | ManagementError::NotFound => FailureStage::ChannelRecord,
-        ManagementError::Invalid(_) => FailureStage::RequestValidation,
-        _ => FailureStage::ChannelOperation,
+        ManagementError::Record(_) | ManagementError::NotFound => {
+            ManagementFailureStage::ChannelRecord
+        }
+        ManagementError::Invalid(_) => ManagementFailureStage::RequestValidation,
+        _ => ManagementFailureStage::ChannelOperation,
     };
     let (status, code, detail) = match error {
-        ManagementError::Invalid(error) => (
-            StatusCode::BAD_REQUEST,
-            ProblemCode::InvalidRequest,
-            error.to_string(),
-        ),
+        ManagementError::Invalid(error) => return ManagementFailure::invalid_request(error),
         ManagementError::Provider(crate::providers::ProviderError::UnknownProvider(detail))
         | ManagementError::Provider(crate::providers::ProviderError::InvalidRequest(detail)) => {
             (StatusCode::BAD_REQUEST, ProblemCode::InvalidRequest, detail)
@@ -304,7 +315,10 @@ pub(super) fn management_error(error: ManagementError) -> Response {
             "channel operation failed".into(),
         ),
     };
-    stage.response(no_store(problem(status, code, detail)))
+    ManagementFailure {
+        problem: Problem::new(code, status.as_u16(), detail),
+        stage,
+    }
 }
 
 #[cfg(test)]
@@ -319,6 +333,10 @@ mod telemetry_tests {
     #[test]
     fn record_and_provider_outages_have_distinct_stages() {
         for (error, stage) in [
+            (
+                ManagementError::Invalid(cmaeg_core::ValidationError::new("/", "invalid")),
+                FailureStage::RequestValidation,
+            ),
             (
                 ManagementError::Record(RecordError::NotFound),
                 FailureStage::ChannelRecord,
@@ -336,6 +354,10 @@ mod telemetry_tests {
         ] {
             let response = management_error(error);
             assert_eq!(response.extensions().get::<FailureStage>(), Some(&stage));
+            assert!(response
+                .extensions()
+                .get::<ManagementFailureStage>()
+                .is_none());
         }
     }
 }

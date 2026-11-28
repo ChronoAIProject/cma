@@ -135,6 +135,23 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
             "issuance custody is not supported".into(),
         ))
     }
+    async fn has_retirement_receipt(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+    ) -> Result<bool, CredentialCustodyError> {
+        Ok(false)
+    }
+    async fn record_retirement_receipt(
+        &self,
+        _sandbox: &Sandbox,
+        _intent: &super::CredentialIssuance,
+        _receipt: &crate::auth::keys::CredentialRetirementReceipt,
+    ) -> Result<(), CredentialCustodyError> {
+        Err(CredentialCustodyError::Unavailable(
+            "credential retirement receipts are not supported".into(),
+        ))
+    }
     async fn observe_issuance(
         &self,
         _sandbox: &Sandbox,
@@ -182,6 +199,11 @@ pub(crate) trait SandboxCredentialCustody: Send + Sync {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub(crate) enum CredentialError {
+    #[error("verified owner reauthorization is required")]
+    OwnerReauthorization {
+        previous: layer2_core::sandbox::RetirementAuthorityVersion,
+        missing: bool,
+    },
     #[error("credential issuance is uncertain; retry reconciliation")]
     Uncertain,
     #[error("service is not granted: {0}")]
@@ -194,6 +216,13 @@ pub(crate) enum CredentialError {
 
 #[async_trait::async_trait]
 pub(crate) trait OwnerTokenSource: Send + Sync {
+    async fn retirement_authority_version(
+        &self,
+        _sandbox: &Sandbox,
+        _token: &SecretValue,
+    ) -> Result<Option<layer2_core::sandbox::RetirementAuthorityVersion>, CredentialError> {
+        Ok(None)
+    }
     async fn token_for(&self, owner: &SubjectId) -> Result<Option<SecretValue>, String>;
     async fn token_for_sandbox(&self, sandbox: &Sandbox) -> Result<Option<SecretValue>, String> {
         self.token_for(&sandbox.owner).await
@@ -211,6 +240,10 @@ impl OwnerTokenSource for AuthState {
 
 #[async_trait::async_trait]
 pub(crate) trait SandboxCredentialController: Send + Sync {
+    fn uses_retirement_reauthorization(&self, _sandbox: &Sandbox) -> bool {
+        false
+    }
+
     async fn retire_channel(
         &self,
         _sandbox: &Sandbox,
@@ -271,6 +304,12 @@ pub(crate) trait SandboxCredentialController: Send + Sync {
     }
     async fn revoke(&self, sandbox: &Sandbox, provider_key_id: &str)
         -> Result<(), CredentialError>;
+    async fn retirement_authority_version(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Option<layer2_core::sandbox::RetirementAuthorityVersion>, CredentialError> {
+        Ok(None)
+    }
     async fn settle_revocations(&self, _sandbox: &Sandbox) -> Result<(), CredentialError> {
         Ok(())
     }

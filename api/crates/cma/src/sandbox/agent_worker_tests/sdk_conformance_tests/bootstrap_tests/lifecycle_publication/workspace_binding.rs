@@ -1,5 +1,198 @@
 use super::*;
 
+async fn pending_initial_credential() -> (Fixture, Agent) {
+    use layer2_core::sandbox::store::WorkAuthorityProtocol;
+
+    let mut fixture = Fixture::new().await;
+    let protocol = Some(WorkAuthorityProtocol::RenewedV1);
+    fixture.bootstrap.ready_parent.work.authority_protocol = protocol;
+    fixture.bootstrap.ready_workspace.work.authority_protocol = protocol;
+    let waiting = fixture.bootstrap.admit(Some("queued prompt")).await;
+    let h = &fixture.bootstrap.harness;
+    let mut installing = fixture.bootstrap.ready_parent.clone();
+    installing.status = SandboxStatus::Installing;
+    installing.work.step = SandboxWorkStep::DeliverInitialCredential;
+    installing.credential.pending = installing.credential.current.take();
+    installing.credential.delivered = false;
+    let sandbox_revision = h
+        .store
+        .get_sandbox(&waiting.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap()
+        .revision;
+    installing.revision = sandbox_revision + 1;
+    h.store
+        .save_sandbox(sandbox_revision, installing)
+        .await
+        .unwrap();
+
+    let mut preparing = h
+        .store
+        .get_workspace(&waiting.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let expected = preparing.revision;
+    preparing.work.authority_protocol = protocol;
+    preparing.revision += 1;
+    h.store.save_workspace(expected, preparing).await.unwrap();
+
+    // Both live parents use the same envelope the renewable staging workers write.
+    let database = fixture.admin.database(&fixture.database);
+    for (collection, id) in [
+        ("sandboxes", waiting.sandbox_id.as_str()),
+        ("workspaces", waiting.workspace_id.as_str()),
+    ] {
+        let row = database
+            .collection::<Document>(collection)
+            .find_one(doc! {"_id": id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.get_i64("document_schema_version").unwrap(), 3);
+    }
+
+    (fixture, waiting)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
+async fn workspace_wait_requeues_after_concurrent_initial_credential_delivery() {
+    let (fixture, waiting) = pending_initial_credential().await;
+    let h = &fixture.bootstrap.harness;
+    let (claimed, now) = fixture.claim(&waiting.id).await;
+    let requests_before = h.backend.requests().await.len();
+    *fixture.trace.deliver_initial_credential.lock().unwrap() = Some(waiting.sandbox_id.clone());
+    h.worker
+        .execute_claimed_for_test(claimed.clone(), now)
+        .await
+        .unwrap();
+    let parent = h
+        .store
+        .get_sandbox(&waiting.sandbox_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(parent.credential.delivered);
+    assert_eq!(parent.status, SandboxStatus::Installing);
+    assert_eq!(
+        h.store
+            .get_workspace(&waiting.workspace_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .status,
+        WorkspaceStatus::Preparing
+    );
+    let deferred = h.stored(&waiting.id).await;
+    assert_eq!(deferred.work.step, AgentWorkStep::WaitForWorkspace);
+    assert!(deferred.work.lease.is_none());
+    assert_eq!(
+        deferred.conversation.first_message,
+        waiting.conversation.first_message
+    );
+    assert_eq!(h.backend.requests().await.len(), requests_before);
+
+    fixture.bootstrap.ready().await;
+    let (next, now) = fixture.claim(&waiting.id).await;
+    assert!(next.work.next_fence > claimed.work.next_fence);
+    h.worker.execute_claimed_for_test(next, now).await.unwrap();
+    let ready = h
+        .store
+        .get_workspace(&waiting.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_bound(&fixture, &claimed, &ready, requests_before).await;
+    fixture.cleanup().await;
+}
+
+#[path = "workspace_wait_expiry.rs"]
+mod workspace_wait_expiry;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
+async fn workspace_becoming_ready_during_defer_does_not_strand_agent_startup() {
+    let fixture = Fixture::new().await;
+    let h = &fixture.bootstrap.harness;
+    let waiting = fixture.bootstrap.admit(None).await;
+    fixture.bootstrap.activate_sandbox().await;
+    let (claimed, now) = fixture.claim(&waiting.id).await;
+    let requests_before = h.backend.requests().await.len();
+    *fixture.trace.publish_ready_workspace.lock().unwrap() =
+        Some(fixture.bootstrap.ready_workspace.clone());
+
+    let result = h
+        .worker
+        .execute_claimed_for_test(claimed.clone(), now)
+        .await;
+    let workspace = h
+        .store
+        .get_workspace(&claimed.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(workspace.status, WorkspaceStatus::Ready);
+    result.unwrap();
+    assert_bound(&fixture, &claimed, &workspace, requests_before).await;
+    fixture.cleanup().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
+async fn expired_recovery_read_leaves_the_workspace_for_a_new_agent_claim() {
+    let fixture = Fixture::new().await;
+    let h = &fixture.bootstrap.harness;
+    let waiting = fixture.bootstrap.admit(None).await;
+    fixture.bootstrap.activate_sandbox().await;
+    let (claimed, now) = fixture.claim_for(&waiting.id, Duration::from_secs(5)).await;
+    let lease = claimed.work.lease.as_ref().unwrap();
+    let expiry = layer2_core::seconds_from_rfc3339(&lease.expires_at).unwrap();
+    let requests_before = h.backend.requests().await.len();
+    fixture.trace.bodies.store(0, Ordering::SeqCst);
+    *fixture.trace.publish_ready_workspace.lock().unwrap() =
+        Some(fixture.bootstrap.ready_workspace.clone());
+    *fixture.trace.recovery_read.lock().unwrap() = Some(RecoveryRead {
+        // The first read belongs to the invalidated defer publication. Hold
+        // the second, when the worker observes parents for its recovery.
+        workspace_reads_remaining: 2,
+        claim_expires_at: SystemTime::UNIX_EPOCH + Duration::from_secs(expiry),
+    });
+
+    h.worker
+        .execute_claimed_for_test(claimed.clone(), now)
+        .await
+        .unwrap();
+
+    assert!(fixture.trace.recovery_read.lock().unwrap().is_none());
+    assert_eq!(h.stored(&claimed.id).await, claimed);
+    let worktree = h
+        .store
+        .get_worktree(&claimed.worktree_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(worktree.base_commit.is_empty());
+    let workspace = h
+        .store
+        .get_workspace(&claimed.workspace_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(workspace.status, WorkspaceStatus::Ready);
+    assert_eq!(h.backend.requests().await.len(), requests_before);
+
+    let (successor, now) = fixture.claim(&waiting.id).await;
+    assert!(successor.work.lease.as_ref().unwrap().fence > lease.fence);
+    h.worker
+        .execute_claimed_for_test(successor, now)
+        .await
+        .unwrap();
+    assert_bound(&fixture, &claimed, &workspace, requests_before).await;
+    fixture.cleanup().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]
 async fn workspace_wait_requeue_rebuilds_after_a_concurrent_workspace_revision() {
@@ -47,6 +240,9 @@ async fn workspace_wait_requeue_rebuilds_after_a_concurrent_workspace_revision()
     assert_bound(&fixture, &claimed, &ready, requests_before).await;
     fixture.cleanup().await;
 }
+
+#[path = "workspace_wait_contention.rs"]
+mod workspace_wait_contention;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing to a disposable replica set"]

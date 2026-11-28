@@ -119,6 +119,8 @@ async fn expiry_and_drain_reject_stale_effects_and_allow_takeover() {
         .await
         .unwrap()
         .unwrap();
+    let lifetime = store.live_lease_remaining_ms(&first.token).await.unwrap();
+    assert!((1..=DEFAULT_LEASE_MS).contains(&lifetime));
     store
         .heartbeat(&first.token.instance_id, true)
         .await
@@ -129,6 +131,10 @@ async fn expiry_and_drain_reject_stale_effects_and_allow_takeover() {
     assert!(store.acquire(&agent, &next).await.unwrap().is_none());
     assert_eq!(store.renew(&first.token).await, Err(OwnershipError::Stale));
     assert_eq!(store.check(&first.token).await, Err(OwnershipError::Stale));
+    assert_eq!(
+        store.live_lease_remaining_ms(&first.token).await,
+        Err(OwnershipError::Stale)
+    );
     let mut session = store.client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
     assert_eq!(
@@ -139,6 +145,12 @@ async fn expiry_and_drain_reject_stale_effects_and_allow_takeover() {
     expire(&store, &first.token).await;
     let second = store.acquire(&agent, &next).await.unwrap().unwrap();
     assert_eq!(second.token.epoch, first.token.epoch + 1);
+    let mut stale_epoch = second.token.clone();
+    stale_epoch.epoch = first.token.epoch;
+    assert_eq!(
+        store.live_lease_remaining_ms(&stale_epoch).await,
+        Err(OwnershipError::Stale)
+    );
     start_transaction(&mut session).await.unwrap();
     assert_eq!(
         store.fence_transaction(&first.token, &mut session).await,

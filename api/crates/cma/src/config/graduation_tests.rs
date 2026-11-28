@@ -43,10 +43,6 @@ const STAGING: &[(&str, &str)] = &[
     ("CHRONO_CMAEG_PUBLIC_URL", "https://cmaeg-staging.nyxid.ai"),
     ("CHRONO_DEPLOYMENT_ID", "chrono-ai-staging"),
     (
-        "CHRONO_IMAGE_MANAGER_BASE_URL",
-        "https://cma-staging.nyxid.ai/api/image-manager",
-    ),
-    (
         "CHRONO_MACHINE_SANDBOX_IMAGE",
         "ghcr.io/chronoaiproject/cma-runtime-omarchy@sha256:86c0193dbb96cba20b1194ec31677e0e7c9e840a62722a6978cbd8370cdbc53c",
     ),
@@ -259,7 +255,7 @@ fn staging_loads_with_each_graduated_gate_alone_explicitly_false() {
 
 #[test]
 fn the_staging_fixture_matches_live_keys_and_file_handling() {
-    assert_eq!(STAGING.len(), 51);
+    assert_eq!(STAGING.len(), 50);
     let live = |key: &str| {
         STAGING
             .iter()

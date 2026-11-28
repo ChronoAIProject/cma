@@ -10,9 +10,10 @@ import subprocess
 import sys
 import tempfile
 
-from image_inputs import NAMES, changed_input_maps, image_inputs, recipes, validate_recipe_sources
+from image_inputs import NAMES, changed_input_maps, historical_recipe_model, image_inputs, recipes, validate_recipe_sources
 from git_comparison import check_sha, comparison_details, git
-from policy import Workspace, select
+from policy import TRACKS, Workspace, select
+from publication_inputs import RECIPE
 from uncertainty import SelectionIntegrityError, conservative, unknown_paths
 
 APPROVAL_CONTRACT_INPUTS = frozenset({
@@ -68,16 +69,16 @@ def workspace(root):
     return Workspace(json.loads(run.stdout), root)
 
 
-def summarize(root, fallback):
+def summarize(root, fallback, *, historical=False):
     graph = workspace(root)
-    return summarize_graph(root, graph, fallback)
+    return summarize_graph(root, graph, fallback, historical=historical)
 
 
-def summarize_graph(root, graph, fallback):
+def summarize_graph(root, graph, fallback, *, historical=False):
     manifest = recipes(root, fallback)
-    validate_recipe_sources(root, manifest)
+    validate_recipe_sources(root, historical_recipe_model(root, manifest) if historical else manifest)
     try:
-        inputs = image_inputs(root, graph, manifest)
+        inputs = image_inputs(root, graph, manifest, historical=historical)
     except SelectionIntegrityError:
         raise
     except (ValueError, KeyError, OSError):
@@ -87,7 +88,7 @@ def summarize_graph(root, graph, fallback):
     return graph, inputs, manifest
 
 
-def analyze_summaries(paths, summaries):
+def analyze_summaries(paths, summaries, *, read_runtime_recipes=None):
     select(paths, force_all=True)
     if any(inputs is None for _, inputs, _ in summaries):
         return conservative(NAMES, 'input-analysis-uncertain', summaries[-1][0], len(paths))
@@ -103,7 +104,9 @@ def analyze_summaries(paths, summaries):
         if result[track] and not result[track + '_packages']:
             result[track + '_packages'] = sorted(summaries[-1][0].owned[track])
     result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
-    result['deployables'] = changed_input_maps(paths, [(inputs, manifest) for _, inputs, manifest in summaries])
+    result['deployables'] = changed_input_maps(
+        paths, [(inputs, manifest) for _, inputs, manifest in summaries],
+        read_runtime_recipes=read_runtime_recipes)
     result['changed_path_count'] = len(paths)
     return result
 
@@ -111,6 +114,15 @@ def analyze_summaries(paths, summaries):
 def analyze(paths, snapshots):
     summaries = [summarize_graph(tree, graph, fallback) for tree, graph, fallback in snapshots]
     return analyze_summaries(paths, summaries)
+
+
+def analyze_comparison(root, base, head, summaries):
+    paths = changed_paths(root, base, head)
+
+    def read_runtime_recipes():
+        return tuple(git(root, 'show', f'{revision}:{RECIPE}').decode('utf-8') for revision in (base, head))
+
+    return analyze_summaries(paths, summaries, read_runtime_recipes=read_runtime_recipes)
 
 
 def determine(root, event, event_name, *, release=False):
@@ -122,7 +134,7 @@ def determine(root, event, event_name, *, release=False):
     if not reason:
         try:
             with snapshot(root, base) as old:
-                previous = summarize(old, fallback)
+                previous = summarize(old, fallback, historical=True)
         except (ValueError, KeyError, OSError, subprocess.SubprocessError):
             # A develop-to-main release compares against the previous release,
             # which can predate the current ownership policy and recipes. That
@@ -135,10 +147,28 @@ def determine(root, event, event_name, *, release=False):
     if reason:
         result = conservative(NAMES, reason, current[0])
     else:
-        paths = changed_paths(root, base, head)
-        result = analyze_summaries(paths, [previous, current])
+        result = analyze_comparison(root, base, head, [previous, current])
     result.update(base=base, head=head)
     return result
+
+
+def validate_ci_checkout(root, event, event_name):
+    checkout = check_sha(os.environ['GITHUB_SHA'])
+    if checkout == '0' * 40 or git(root, 'rev-parse', 'HEAD').decode().strip() != checkout:
+        raise SelectionIntegrityError('CI checkout differs from event SHA')
+    if event_name == 'merge_group' and checkout != event['merge_group']['head_sha']:
+        raise SelectionIntegrityError('merge queue checkout differs from event head')
+
+
+def apply_pr_rust_coverage(root, paths, result, full):
+    graph = workspace(root)
+    # Removed paths retain their original tracks. Only current paths can add owners.
+    current_paths = [path for path in paths if not unknown_paths([path], [graph])]
+    coverage = select(current_paths, graph, force_all=full or all(result[track] for track in TRACKS))
+    for track in ('am', 'eg'):
+        if coverage[track] or result[track]:
+            result[track] = True
+            result[track + '_packages'] = coverage[track + '_packages'] or sorted(graph.owned[track])
 
 
 def determine_ci(root, event, event_name, repository):
@@ -149,18 +179,24 @@ def determine_ci(root, event, event_name, repository):
         result = determine(root, {'after': verification_head()}, 'push')
     else:
         result = determine(root, event, event_name, release=full and event_name == 'pull_request')
-    if full:
+    paths = [] if full else changed_paths(root, result['base'], result['head'])
+    if event_name == 'pull_request' and (full or result['am'] or result['eg']):
+        apply_pr_rust_coverage(root, paths, result, full)
+    elif full:
         with snapshot(root, result['head']) as tree:
             coverage = select([], workspace(tree), force_all=True)
-        for key in ('repo', 'am', 'eg', 'web', 'am_packages', 'eg_packages'):
+        for key in ('am_packages', 'eg_packages'):
             result[key] = coverage[key]
-        result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
+    if full:
+        for track in TRACKS:
+            result[track] = True
         result['reasons'] = sorted(set(result['reasons']) | {'full-ci-event'})
+    result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
     # A Web consumer change can require the shared Rust test archive without
     # changing Agent Manager's product test or image scope.
     result['approval_contract'] = result['am'] or any(
         path in APPROVAL_CONTRACT_INPUTS or path.startswith(APPROVAL_CONTRACT_DIRECTORIES)
-        for path in changed_paths(root, result['base'], result['head'])
+        for path in paths
     )
     return result
 
@@ -175,7 +211,9 @@ def main():
     try:
         event = json.loads(args.event.read_text()) if args.event else {}
         if args.ci:
-            result = determine_ci(args.root.resolve(), event, args.event_name, os.environ['GITHUB_REPOSITORY'])
+            root = args.root.resolve()
+            validate_ci_checkout(root, event, args.event_name)
+            result = determine_ci(root, event, args.event_name, os.environ['GITHUB_REPOSITORY'])
         else:
             result = determine(args.root.resolve(), event, args.event_name)
     except (KeyError, TypeError, ValueError, subprocess.SubprocessError, OSError):

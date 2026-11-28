@@ -18,7 +18,7 @@ use crate::{
     config::{Config, StartupConfig},
     image_manager_retirement, read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
-    startup_timing::{observe, Phase},
+    startup_timing::{observe, observe_managed_machine_scope, Phase},
     telemetry,
     warm_pools::{startup::WarmPoolStartup, NativeWarmPools},
     with_cors, with_request_context,
@@ -59,6 +59,10 @@ async fn serve_inner(
     if std::env::args().nth(1).as_deref() == Some("--agent-manager-drain") {
         return agent_manager::relay::prestop(&config).await;
     }
+    observe_managed_machine_scope(
+        config.features.managed_machine_updates,
+        config.features.runtime_image_origin_enabled,
+    );
     let recorder = telemetry::install()?;
     let task_cohorts = telemetry::task_cohort::Cache::default();
     let _metrics_server =
@@ -101,13 +105,9 @@ async fn serve_inner(
         std::mem::take(&mut composition.router),
         std::mem::take(&mut config.cors_origins),
     );
-    let app = with_request_context(image_manager_retirement::mount(
-        router,
-        config.features.image_manager_retirement,
-    ))
-    .layer(axum::Extension(telemetry::http::ContextDiagnosticsEnabled(
-        config.features.context_diagnostics,
-    )));
+    let app = with_request_context(image_manager_retirement::mount(router)).layer(axum::Extension(
+        telemetry::http::ContextDiagnosticsEnabled(config.features.context_diagnostics),
+    ));
     if config.features.am_startup_health_serving {
         return early::serve(&config, composition, app, startup_started).await;
     }

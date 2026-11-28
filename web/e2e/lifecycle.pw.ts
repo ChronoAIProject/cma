@@ -19,7 +19,7 @@ test('J6 image and inline Workspace tasks preserve identity through retry, pause
   harness: h,
 }) => {
   const page = await h.open('owner');
-  const published = await publishCurrentTrigger(h, page, 'owner', true);
+  const published = await publishCurrentTrigger(h, page, 'owner');
   const beforeStats = await h.get<TriggerStatistics>(
     page,
     `/api/v1/triggers/${published.document.id}/stats`,

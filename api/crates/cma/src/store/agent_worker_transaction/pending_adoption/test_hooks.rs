@@ -8,6 +8,7 @@ pub(crate) enum Boundary {
     BeforeAdmission,
     Admitted,
     BeforeCommit,
+    BeforeInteractionFenceAuthority,
 }
 
 type Key = (String, Boundary);
@@ -41,7 +42,7 @@ pub(in crate::store::agent_worker_transaction) async fn stop(database: &str, bou
         // Each step independently validates the entire retained prefix.
         let pause_budget = match boundary {
             Boundary::Admitted | Boundary::BeforeCommit => 180,
-            Boundary::BeforeAdmission => 45,
+            Boundary::BeforeAdmission | Boundary::BeforeInteractionFenceAuthority => 45,
         };
         tokio::time::timeout(
             std::time::Duration::from_secs(pause_budget),

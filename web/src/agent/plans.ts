@@ -53,17 +53,29 @@ export function setPlan(
   state: ConversationState,
   runId: string | undefined,
   value: unknown,
+  reportedAt?: string,
 ): ConversationState {
   const entries = planEntries(value);
   if (entries === undefined) return state;
   const id = `plan:${runId ?? 'unattributed'}`;
   const current = state.plans.find((plan) => plan.id === id);
+  const incomplete = entries.length !== (value as unknown[]).length || undefined;
+  if (
+    current?.incomplete === incomplete &&
+    current?.entries.length === entries.length &&
+    current.entries.every(
+      (entry, index) =>
+        entry.title === entries[index]?.title && entry.status === entries[index]?.status,
+    )
+  )
+    return state;
   const plan = {
     ...current,
     id,
     runId,
     entries,
-    incomplete: entries.length !== (value as unknown[]).length || undefined,
+    incomplete,
+    progressAt: reportedAt ?? current?.progressAt,
   };
   return {
     ...state,

@@ -355,7 +355,7 @@ function ViewerNavigation({
     />
   );
   return (
-    <div ref={root} className="manager-navigation">
+    <div ref={root} className="manager-navigation" data-navigation-view={view}>
       <NavigationFilters
         scope={
           client === undefined ? undefined : (
