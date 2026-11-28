@@ -433,6 +433,14 @@ pub(super) struct Planner {
     pub(super) inventory_drift: Arc<AtomicBool>,
     pub(super) bound_drift: Arc<AtomicBool>,
     pub(super) superseded_target: Arc<AtomicBool>,
+    pub(super) retirement_calls: Arc<Mutex<Vec<RetirementCall>>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum RetirementCall {
+    Begin(String),
+    CheckDefinitions(Vec<layer3_adapter::HomeVolumeAttachment>),
+    Drain(String, NativePoolDrain),
 }
 
 impl Planner {
@@ -451,6 +459,42 @@ impl Planner {
 
 #[async_trait]
 impl NativePoolControl for Planner {
+    async fn begin_retirement(&self, binding: &NativePoolBinding) -> layer3_adapter::Result<()> {
+        self.retirement_calls
+            .lock()
+            .unwrap()
+            .push(RetirementCall::Begin(binding.uid.clone()));
+        Ok(())
+    }
+    async fn retire_pool(
+        &self,
+        _: &NativePoolBinding,
+        homes: &[layer3_adapter::HomeVolumeAttachment],
+    ) -> layer3_adapter::Result<bool> {
+        self.retirement_calls
+            .lock()
+            .unwrap()
+            .push(RetirementCall::CheckDefinitions(homes.to_vec()));
+        Ok(false)
+    }
+    async fn request_spare_drain(
+        &self,
+        binding: &NativePoolBinding,
+        drain: &NativePoolDrain,
+    ) -> layer3_adapter::Result<()> {
+        self.retirement_calls
+            .lock()
+            .unwrap()
+            .push(RetirementCall::Drain(
+                binding.uid.clone(),
+                NativePoolDrain {
+                    homes: drain.homes.clone(),
+                    claims: drain.claims.clone(),
+                },
+            ));
+        Ok(())
+    }
+
     fn plan(&self, spec: &NativePoolSpec) -> layer3_adapter::Result<NativePoolConfiguration> {
         let identity = serde_json::to_vec(spec).expect("spec serializes");
         Ok(NativePoolConfiguration {

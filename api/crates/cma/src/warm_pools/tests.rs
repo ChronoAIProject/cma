@@ -1,6 +1,6 @@
 use super::*;
 use layer3_adapter::agent_sandbox::{
-    NativePoolClaim, NativePoolClaimRequest, NativePoolCleanup, NativePoolControl,
+    NativePoolClaim, NativePoolClaimRequest, NativePoolCleanup, NativePoolControl, NativePoolDrain,
     NativePoolPodPolicy,
 };
 use std::collections::BTreeMap;
@@ -83,19 +83,23 @@ struct Memory {
 }
 #[async_trait]
 impl PoolTargetStore for Memory {
-    async fn retirement_drain_homes(
+    async fn scan_retirement_drain(
         &self,
         _: &PoolTarget,
         _: &str,
-    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
+    ) -> Result<RetirementScan, WarmPoolError> {
         self.calls.lock().unwrap().push("drain-scan".into());
-        Ok((!self
+        if self
             .drain_block
             .lock()
             .unwrap()
             .pop_front()
-            .unwrap_or(false))
-        .then_some(NativePoolDrain::default()))
+            .unwrap_or(false)
+        {
+            Ok(RetirementScan::Blocked)
+        } else {
+            Ok(RetirementScan::Ready(NativePoolDrain::default()))
+        }
     }
     async fn retirement_homes(
         &self,

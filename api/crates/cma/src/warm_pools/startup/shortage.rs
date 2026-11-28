@@ -72,15 +72,23 @@ async fn confirm_spare_shortage(
 // its recorded settlement before classifying startup as capacity-only.
 async fn confirm_retirement_settlement(
     store: &dyn PoolTargetStore,
-    attempts: &BTreeMap<String, bool>,
+    attempts: &BTreeMap<String, RetirementAttempt>,
 ) -> Result<(), WarmPoolError> {
-    for (id, acknowledged) in attempts {
-        if !acknowledged {
+    for (id, attempt) in attempts {
+        if matches!(attempt, RetirementAttempt::Unacknowledged) {
             return Err(WarmPoolError::Unavailable);
         }
         let target = store.find(id).await?.ok_or(WarmPoolError::Unavailable)?;
+        let eligible = match attempt {
+            RetirementAttempt::QuarantineDeferred { revision } => {
+                // This attempt stopped before either retirement marker. A
+                // prior unresolved effect must still fail the shortage check.
+                target.revision == *revision && !store.candidate_protected(&target).await?
+            }
+            _ => target.retiring,
+        };
         if !target.retired
-            && (!target.retiring
+            && (!eligible
                 || target.lease.is_some()
                 || target.error.is_some()
                 || target.applied_revision != target.revision)
@@ -97,7 +105,7 @@ pub(super) async fn confirm_after_retirement(
     plan: &NativePoolConfiguration,
     target_fencing: bool,
     admission: &Admission,
-    attempts: &BTreeMap<String, bool>,
+    attempts: &BTreeMap<String, RetirementAttempt>,
 ) -> Result<WarmPoolStartup, WarmPoolError> {
     tokio::select! {
         biased;

@@ -281,3 +281,145 @@ async fn operator_machine_count_survives_retirement_and_concurrent_release_seedi
     assert_eq!(agent_pool.operator_replicas, None);
     db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn quarantine_defers_startup_retirement_without_masking_unresolved_effects() {
+    use crate::{
+        startup::Admission, store::native_warm_pools::quarantined_retirement_fixture,
+        warm_pools::startup::WarmPoolStartup,
+    };
+    use resize::RetirementCall;
+    use tokio::time::Instant;
+
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let client = mongodb::Client::with_uri_str(uri).await.unwrap();
+    let db = client.database(&format!(
+        "warm_quarantine_{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let store = Arc::new(MongoNativeWarmPools::open(&db, "test").await.unwrap());
+    let planner = resize::Planner::default();
+    let (marked, repaired, old, image, home) = quarantined_retirement_fixture();
+
+    let pools = resize::deployment(store.clone(), planner.clone(), &image, None)
+        .with_empty_pool_startup(true);
+    pools.ensure_default().await.unwrap();
+    let current = resize::only(store.list().await.unwrap());
+    let binding = resize::Planner::binding(&current.plan);
+    let targets = db.collection::<Document>("native_warm_pool_targets");
+    targets
+        .update_one(
+            doc! {"_id": &current.id},
+            doc! {"$set": {
+                "activated_at": DateTime::from_millis(2),
+                "applied_revision": current.revision,
+                "binding": mongodb::bson::serialize_to_bson(&binding).unwrap(),
+                "reconcile_after": DateTime::from_millis(i64::MAX),
+            }},
+        )
+        .await
+        .unwrap();
+    planner.inventory.lock().unwrap().push(NativePoolStatus {
+        binding,
+        desired_replicas: current.target_replicas,
+        ready_replicas: 0,
+        observed: true,
+    });
+    store.insert(old.clone()).await.unwrap();
+    let sandboxes = db.collection::<Document>("sandboxes");
+    let sandbox_id = doc! {"_id": marked.get("_id").unwrap()};
+    sandboxes.insert_one(&marked).await.unwrap();
+
+    let boot = || async {
+        pools
+            .await_default_ready_by(
+                Some(&Admission::new()),
+                None,
+                Instant::now() + Duration::from_secs(2),
+            )
+            .await
+    };
+    assert!(matches!(
+        boot().await.unwrap(),
+        WarmPoolStartup::CapacityDeferred(proof) if proof.desired() == current.target_replicas
+    ));
+    let held = store.find(&old.id).await.unwrap().unwrap();
+    assert!(held.reconcile_after > old.reconcile_after);
+    assert!(held.lease.is_none() && held.error.is_none() && !held.retiring);
+    assert_eq!(held.revision, old.revision);
+    assert_eq!(held.target_replicas, old.target_replicas);
+    assert_eq!(held.binding, old.binding);
+    assert!(planner.retirement_calls.lock().unwrap().is_empty());
+
+    targets
+        .update_one(
+            doc! {"_id": &old.id},
+            doc! {"$set": {
+                "error": "previous provider effect not confirmed",
+                "reconcile_after": DateTime::from_millis(0),
+            }},
+        )
+        .await
+        .unwrap();
+    assert!(matches!(boot().await, Err(WarmPoolError::Unavailable)));
+    let unresolved = store.find(&old.id).await.unwrap().unwrap();
+    assert_eq!(
+        unresolved.error.as_deref(),
+        Some("previous provider effect not confirmed")
+    );
+    assert!(unresolved.reconcile_after > DateTime::from_millis(0));
+    assert!(planner.retirement_calls.lock().unwrap().is_empty());
+    let retained = sandboxes
+        .find_one(sandbox_id.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(retained.to_vec().unwrap(), marked.to_vec().unwrap());
+
+    sandboxes
+        .replace_one(sandbox_id.clone(), &repaired)
+        .await
+        .unwrap();
+    targets
+        .update_one(
+            doc! {"_id": &old.id},
+            doc! {"$set": {"reconcile_after": DateTime::from_millis(0)}},
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        boot().await.unwrap(),
+        WarmPoolStartup::CapacityDeferred(_)
+    ));
+    let retiring = store.find(&old.id).await.unwrap().unwrap();
+    assert!(retiring.retiring && retiring.error.is_none() && retiring.lease.is_none());
+    assert_eq!(retiring.target_replicas, 0);
+    assert_eq!(retiring.applied_revision, retiring.revision);
+    let uid = old.binding.unwrap().uid;
+    assert_eq!(
+        *planner.retirement_calls.lock().unwrap(),
+        [
+            RetirementCall::Begin(uid.clone()),
+            RetirementCall::CheckDefinitions(vec![home.clone()]),
+            RetirementCall::Drain(
+                uid,
+                NativePoolDrain {
+                    homes: vec![home],
+                    claims: vec![]
+                }
+            ),
+        ]
+    );
+    assert_eq!(
+        sandboxes
+            .find_one(sandbox_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .to_vec()
+            .unwrap(),
+        repaired.to_vec().unwrap()
+    );
+    db.drop().await.unwrap();
+}

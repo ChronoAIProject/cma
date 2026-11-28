@@ -8,10 +8,7 @@ use layer1_public::rest::admin::warm_pools::{
 };
 use layer2_core::{Caller, Capability};
 use layer3_adapter::{
-    agent_sandbox::{
-        NativePoolBinding, NativePoolConfiguration, NativePoolDrain, NativePoolSpec,
-        NativePoolStatus,
-    },
+    agent_sandbox::{NativePoolBinding, NativePoolConfiguration, NativePoolSpec, NativePoolStatus},
     HomeVolumePolicy, RuntimeImage, SandboxAdapter,
 };
 use serde::{Deserialize, Serialize};
@@ -24,6 +21,7 @@ mod holds;
 pub(crate) use holds::DefaultPoolHolds;
 mod released;
 mod retirement;
+pub(crate) use retirement::RetirementScan;
 pub(crate) mod startup;
 mod supervision;
 pub(crate) mod telemetry;
@@ -103,11 +101,17 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     ) -> Result<Option<Vec<layer3_adapter::HomeVolumeAttachment>>, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
-    async fn retirement_drain_homes(
+    async fn scan_retirement_drain(
         &self,
         _target: &PoolTarget,
         _image: &str,
-    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
+    ) -> Result<RetirementScan, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn defer_quarantined_retirement(
+        &self,
+        _target: &PoolTarget,
+    ) -> Result<(), WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
     async fn begin_retirement(&self, _target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {

@@ -1,4 +1,5 @@
 //! Prevent the first allocation after promotion from taking an avoidable cold path.
+use super::retirement::RetirementAttempt;
 use super::{
     reconcile_claimed, NativePoolConfiguration, NativePoolSpec, NativePoolStatus, NativeWarmPools,
     PoolApply, PoolTarget, PoolTargetStore, WarmPoolError,
@@ -96,7 +97,16 @@ impl NativeWarmPools {
         admission: Option<&Admission>,
         writer: Option<StartupWriter<'_>>,
     ) -> Result<WarmPoolStartup, WarmPoolError> {
-        let deadline = Instant::now() + STARTUP_WARMUP_LIMIT;
+        self.await_default_ready_by(admission, writer, Instant::now() + STARTUP_WARMUP_LIMIT)
+            .await
+    }
+
+    pub(super) async fn await_default_ready_by(
+        &self,
+        admission: Option<&Admission>,
+        writer: Option<StartupWriter<'_>>,
+        deadline: Instant,
+    ) -> Result<WarmPoolStartup, WarmPoolError> {
         let provider = self
             .adapter
             .native_pools()
@@ -191,7 +201,7 @@ impl NativeWarmPools {
         &self,
         stopping: &impl Fn() -> bool,
         writer: Option<StartupWriter<'_>>,
-        unsettled: &mut BTreeMap<String, bool>,
+        unsettled: &mut BTreeMap<String, RetirementAttempt>,
     ) {
         if self
             .retire_superseded(stopping, writer, unsettled)
@@ -210,7 +220,7 @@ impl NativeWarmPools {
         &self,
         stopping: &impl Fn() -> bool,
         writer: Option<StartupWriter<'_>>,
-        unsettled: &mut BTreeMap<String, bool>,
+        unsettled: &mut BTreeMap<String, RetirementAttempt>,
     ) -> Result<(), WarmPoolError> {
         let Some(provider) = self.adapter.native_pools() else {
             return Ok(());
@@ -232,12 +242,13 @@ impl NativeWarmPools {
             // marked retiring and deferred is resumed, not skipped.
             boot_effect(writer, async {
                 if !stopping() {
-                    let previous = unsettled.insert(target.id.clone(), false);
+                    let previous =
+                        unsettled.insert(target.id.clone(), RetirementAttempt::Unacknowledged);
                     if let Some(claimed) = self.store.claim_retirement(&target.id).await? {
-                        self.retire_claimed(provider, claimed).await?;
-                        unsettled.insert(target.id.clone(), true);
-                    } else if let Some(acknowledged) = previous {
-                        unsettled.insert(target.id.clone(), acknowledged);
+                        let attempt = self.retire_claimed(provider, claimed).await?;
+                        unsettled.insert(target.id.clone(), attempt);
+                    } else if let Some(attempt) = previous {
+                        unsettled.insert(target.id.clone(), attempt);
                     } else {
                         unsettled.remove(&target.id);
                     }

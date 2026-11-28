@@ -67,6 +67,40 @@ pub(super) fn upgraded() -> (Sandbox, PoolTarget, String) {
     (sandbox, target, image)
 }
 
+pub(crate) fn quarantined_retirement_fixture(
+) -> (Document, Document, PoolTarget, String, HomeVolumeAttachment) {
+    use crate::store::{sandbox_quarantine, sandboxes, work_schema};
+
+    let (sandbox, mut old, image) = upgraded();
+    old.activated_at = Some(DateTime::from_millis(1));
+    old.applied_revision = old.revision;
+    old.lease = None;
+    old.lease_until = DateTime::from_millis(0);
+    let repaired = sandboxes::sandbox_document(&sandbox, 0).unwrap();
+    let mut marked = repaired.clone();
+    marked.insert("document_schema_version", work_schema::RENEWED_VERSION);
+    let record = marked.get_document_mut("record").unwrap();
+    record
+        .get_document_mut("lifecycle")
+        .unwrap()
+        .insert("runtime_image_origin", "managed_machine");
+    record
+        .get_document_mut("work")
+        .unwrap()
+        .insert("authority_protocol", "renewed_v1");
+    assert!(matches!(
+        sandboxes::read_sandbox(&marked),
+        Err(layer2_core::sandbox::SandboxStoreError::Corrupt(reason))
+            if reason == "runtime image origin disagrees with ordinary-work envelope"
+    ));
+    marked.insert(
+        sandbox_quarantine::FIELD,
+        doc! {"reason": "invalid_retained_sandbox", "detected_at": layer2_core::now_rfc3339()},
+    );
+    let home = sandbox.lifecycle.home.unwrap().attachment().unwrap();
+    (marked, repaired, old, image, home)
+}
+
 #[test]
 fn settled_old_or_failed_home_allows_spare_drain_without_definition_retirement() {
     let (mut sandbox, target, image) = upgraded();

@@ -1,10 +1,10 @@
 use super::{
     MongoNativeWarmPools, NativePoolBinding, NativePoolConfiguration, PoolTarget, PoolTargetStore,
 };
-use crate::warm_pools::OperatorReplicas;
+use crate::warm_pools::{OperatorReplicas, RetirementScan};
 use async_trait::async_trait;
 use layer1_public::rest::admin::warm_pools::{ResizeWarmPoolBody, WarmPoolError};
-use layer3_adapter::{agent_sandbox::NativePoolDrain, HomeVolumeAttachment};
+use layer3_adapter::HomeVolumeAttachment;
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
@@ -106,12 +106,16 @@ impl PoolTargetStore for RetirementStore {
         self.store.retirement_homes(target, image).await
     }
 
-    async fn retirement_drain_homes(
+    async fn scan_retirement_drain(
         &self,
         target: &PoolTarget,
         image: &str,
-    ) -> Result<Option<NativePoolDrain>, WarmPoolError> {
-        self.store.retirement_drain_homes(target, image).await
+    ) -> Result<RetirementScan, WarmPoolError> {
+        self.store.scan_retirement_drain(target, image).await
+    }
+
+    async fn defer_quarantined_retirement(&self, target: &PoolTarget) -> Result<(), WarmPoolError> {
+        self.store.defer_quarantined_retirement(target).await
     }
 
     async fn begin_retirement(&self, target: &PoolTarget) -> Result<PoolTarget, WarmPoolError> {

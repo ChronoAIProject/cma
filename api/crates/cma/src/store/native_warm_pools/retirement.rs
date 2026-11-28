@@ -1,7 +1,7 @@
 //! Retirement needs current release authority plus every durable allocation.
 use super::*;
 use layer2_core::sandbox::{Sandbox, SandboxStatus, WarmSandbox, WarmSandboxState};
-use layer3_adapter::HomeVolumeAttachment;
+use layer3_adapter::{agent_sandbox::NativePoolDrain, HomeVolumeAttachment};
 
 mod eligibility;
 pub(super) mod machine_selection;
@@ -214,14 +214,17 @@ pub(super) async fn homes(
     target: &PoolTarget,
     image: &str,
 ) -> Result<Option<Vec<HomeVolumeAttachment>>, WarmPoolError> {
-    Ok(scan(store, target, image, false).await?.map(|e| e.homes))
+    Ok(scan(store, target, image, false)
+        .await?
+        .into_drain()
+        .map(|e| e.homes))
 }
 
 pub(super) async fn drain_homes(
     store: &MongoNativeWarmPools,
     target: &PoolTarget,
     image: &str,
-) -> Result<Option<NativePoolDrain>, WarmPoolError> {
+) -> Result<RetirementScan, WarmPoolError> {
     scan(store, target, image, true).await
 }
 
@@ -230,7 +233,7 @@ async fn scan(
     target: &PoolTarget,
     image: &str,
     draining: bool,
-) -> Result<Option<NativePoolDrain>, WarmPoolError> {
+) -> Result<RetirementScan, WarmPoolError> {
     if !authorized(store, target, image).await? {
         return Ok(deferred(target, "release_settling"));
     }
@@ -254,7 +257,14 @@ async fn scan(
         return Ok(deferred(target, "lifecycle_admission"));
     }
     let mut evidence = NativePoolDrain::default();
+    let mut quarantined = false;
     for document in documents(store, "sandboxes", doc! {}).await? {
+        if crate::store::sandbox_quarantine::contains(&document) {
+            // Ownership is unknown. Preserve the hold while checking for
+            // independent blockers that must still fail startup admission.
+            quarantined = true;
+            continue;
+        }
         let sandbox = crate::store::sandboxes::read_sandbox(&document)
             .map_err(|_| WarmPoolError::Unavailable)?;
         match owned_home(&sandbox, target, image)? {
@@ -319,12 +329,21 @@ async fn scan(
     if !authorized(store, target, image).await? {
         return Ok(deferred(target, "release_settling"));
     }
-    Ok(Some(evidence))
+    if quarantined {
+        log_deferral(target, "quarantined_sandbox");
+        return Ok(RetirementScan::QuarantinedSandbox);
+    }
+    Ok(RetirementScan::Ready(evidence))
 }
 
 /// Retirement used to defer silently, leaving obsolete capacity running with
 /// no sign of why. Name the blocking class so a stuck record is diagnosable.
-fn deferred(target: &PoolTarget, reason: &'static str) -> Option<NativePoolDrain> {
+fn deferred(target: &PoolTarget, reason: &'static str) -> RetirementScan {
+    log_deferral(target, reason);
+    RetirementScan::Blocked
+}
+
+fn log_deferral(target: &PoolTarget, reason: &'static str) {
     tracing::info!(
         target: "cma::warm_pools",
         pool = %target.id,
@@ -332,7 +351,6 @@ fn deferred(target: &PoolTarget, reason: &'static str) -> Option<NativePoolDrain
         reason,
         "native warm pool retirement deferred"
     );
-    None
 }
 
 pub(super) async fn begin(
@@ -383,6 +401,6 @@ pub(super) async fn remove(
 }
 
 #[cfg(test)]
-mod eligibility_tests;
+pub(super) mod eligibility_tests;
 #[cfg(test)]
 mod tests;
