@@ -40,6 +40,7 @@ pub(crate) fn admission_failure(error: CommandAdmissionError) -> Response {
         CommandAdmissionError::Ledger(CommandLedgerError::SessionCapacityUnavailable) => InstanceProblem::SessionCapacityUnavailable.into_response(),
         CommandAdmissionError::Ledger(CommandLedgerError::AdmissionPaused) => InstanceProblem::AdmissionPaused.into_response(),
         CommandAdmissionError::Ledger(CommandLedgerError::Budget(reason)) => InstanceProblem::Budget(reason).into_response(),
+        CommandAdmissionError::Ledger(CommandLedgerError::OwnerBudgetExhausted { reset_at }) => crate::model_budget_problem::owner_exhausted(reset_at),
         CommandAdmissionError::Access(error) => ResourceProblem(error).into_response(),
         CommandAdmissionError::Input(error) => InstanceProblem::from(error).into_response(),
         CommandAdmissionError::Authority(CommandAuthorizationError::Revoked) => InstanceProblem::Forbidden.into_response(),

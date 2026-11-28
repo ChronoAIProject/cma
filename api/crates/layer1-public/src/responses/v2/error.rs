@@ -222,6 +222,14 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
             reason.guidance(),
             None,
         ),
+        CommandAdmissionError::Ledger(CommandLedgerError::OwnerBudgetExhausted { reset_at }) => {
+            error(
+                StatusCode::PAYMENT_REQUIRED,
+                layer2_core::budget::BudgetError::OwnerExhausted.code(),
+                &crate::model_budget_problem::owner_reset_guidance(reset_at),
+                None,
+            )
+        }
         CommandAdmissionError::Ledger(CommandLedgerError::IdempotencyConflict) => error(
             StatusCode::CONFLICT,
             "agent_command_key_conflict",
@@ -266,6 +274,27 @@ fn model_funding(reason: layer2_core::sandbox::model_credit::FundingError) -> Re
     // A funding outcome cannot authorize resending an uncertain original intent.
     response.headers_mut().remove("retry-after");
     response
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn owner_budget_reset_preserves_the_responses_error_shape() {
+    let reset_at = layer2_core::seconds_from_rfc3339("2026-12-01T00:00:00Z").unwrap();
+    let response = admission(CommandLedgerError::OwnerBudgetExhausted { reset_at }.into());
+    assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+    assert!(response.headers().get("retry-after").is_none());
+
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let error = &body["error"];
+    assert_eq!(error["code"], "owner_budget_exhausted");
+    assert_eq!(error.as_object().unwrap().len(), 4);
+    assert!(error["message"]
+        .as_str()
+        .unwrap()
+        .contains("2026-12-01T00:00:00Z"));
 }
 
 #[cfg(test)]

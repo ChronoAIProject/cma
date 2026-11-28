@@ -1,7 +1,11 @@
 //! Transactional reservations backed by CMA's recorded model usage.
 
 use layer2_core::budget::{BudgetError, BudgetPolicy, OwnerBudget, TurnReservation};
-use layer2_core::sandbox::{store::AgentConversationMutation, Agent, AgentLogKind};
+use layer2_core::sandbox::{
+    agent_io::CommandLedgerError,
+    store::{AgentConversationMutation, SandboxStoreError},
+    Agent, AgentLogKind,
+};
 use mongodb::bson::{doc, Document};
 use mongodb::ClientSession;
 use serde::{Deserialize, Serialize};
@@ -183,19 +187,13 @@ pub(super) async fn reserve_command(
     cause: layer2_core::admission::AdmissionCause,
     existing_consumer: bool,
     session: &mut ClientSession,
-) -> Result<(), ApplyError> {
+) -> Result<(), super::agent_commands::ApplyError> {
     let snapshot = period::fenced_snapshot(store, &agent.owner, session).await?;
-    let Some(policy) = snapshot.owner.clone() else {
+    let Some(policy) = snapshot.owner.as_ref() else {
         period::require_unbudgeted(store, &snapshot, now, cause, session).await?;
-        return require_command_capacity(
-            store,
-            agent,
-            &snapshot,
-            cause,
-            existing_consumer,
-            session,
-        )
-        .await;
+        require_command_capacity(store, agent, &snapshot, cause, existing_consumer, session)
+            .await?;
+        return Ok(());
     };
     reserve(
         store,
@@ -206,9 +204,20 @@ pub(super) async fn reserve_command(
         now,
         session,
     )
-    .await?;
+    .await
+    .map_err(|error| match error {
+        ApplyError::Domain(SandboxStoreError::Budget(BudgetError::OwnerExhausted)) => {
+            let refusal = match policy.next_reset_at(now) {
+                Ok(reset_at) => CommandLedgerError::OwnerBudgetExhausted { reset_at },
+                Err(_) => CommandLedgerError::Budget(BudgetError::OwnerExhausted),
+            };
+            super::agent_commands::ApplyError::Domain(refusal)
+        }
+        other => other.into(),
+    })?;
     period::require_operator_open(&snapshot, cause)?;
-    require_command_capacity(store, agent, &snapshot, cause, existing_consumer, session).await
+    require_command_capacity(store, agent, &snapshot, cause, existing_consumer, session).await?;
+    Ok(())
 }
 
 async fn require_command_capacity(
@@ -237,7 +246,7 @@ async fn reserve(
     store: &MongoSandboxStore,
     agent: &Agent,
     key: String,
-    policy: BudgetPolicy,
+    policy: &BudgetPolicy,
     snapshot: &period::PolicySnapshot,
     now: u64,
     session: &mut ClientSession,
@@ -256,8 +265,8 @@ async fn reserve(
         }
         return Ok(());
     }
-    let mut owner = owner_budget(store, agent, &policy, now, session).await?;
-    owner.reserve(&policy, now).map_err(domain)?;
+    let mut owner = owner_budget(store, agent, policy, now, session).await?;
+    owner.reserve(policy, now).map_err(domain)?;
     let charge = period::admit_liability(
         store,
         snapshot,
@@ -276,7 +285,7 @@ async fn reserve(
             agent_id: agent.id.clone(),
             turn_sequence: None,
             runtime_generation: None,
-            reservation: TurnReservation::new(policy, now),
+            reservation: TurnReservation::new(policy.clone(), now),
             period_start: charge.map(|charge| charge.start),
             period_shard: charge.and_then(|charge| charge.shard),
             certification: None,
@@ -357,7 +366,7 @@ async fn start_turn(
                 )
                 .await;
             };
-            reserve(store, agent, key.clone(), policy, &snapshot, now, session).await?;
+            reserve(store, agent, key.clone(), &policy, &snapshot, now, session).await?;
             let document = store
                 .model_budget
                 .find_one(doc! {"_id": &key})

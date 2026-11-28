@@ -67,16 +67,17 @@ impl Fixture {
                         writes.conflicts += 1;
                     }
                 }
-                CommandEvent::Succeeded(event) if writes.pending.remove(&event.request_id) => {
-                    if event.reply.get_array("writeErrors").is_ok_and(|errors| {
-                        errors.iter().any(|error| {
-                            error
-                                .as_document()
-                                .is_some_and(|error| matches!(error.get_i32("code"), Ok(112)))
-                        })
-                    }) {
-                        writes.conflicts += 1;
-                    }
+                CommandEvent::Succeeded(event)
+                    if writes.pending.remove(&event.request_id)
+                        && event.reply.get_array("writeErrors").is_ok_and(|errors| {
+                            errors.iter().any(|error| {
+                                error
+                                    .as_document()
+                                    .is_some_and(|error| matches!(error.get_i32("code"), Ok(112)))
+                            })
+                        }) =>
+                {
+                    writes.conflicts += 1;
                 }
                 _ => {}
             }

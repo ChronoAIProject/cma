@@ -9,6 +9,7 @@ mod conversation;
 #[path = "rest/desktop_telemetry.rs"]
 pub mod desktop_telemetry;
 pub mod mcp;
+mod model_budget_problem;
 mod model_funding_problem;
 pub mod pty;
 mod resource_auth;

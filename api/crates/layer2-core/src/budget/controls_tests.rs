@@ -19,6 +19,39 @@ fn instant(value: &str) -> u64 {
 }
 
 #[test]
+fn next_reset_matches_the_accounting_window_boundary() {
+    for (zone, now, reset) in [
+        ("UTC", "2026-11-30T23:59:59Z", "2026-12-01T00:00:00Z"),
+        ("UTC", "2026-12-01T00:00:00Z", "2026-12-02T00:00:00Z"),
+        (
+            "Asia/Singapore",
+            "2026-11-30T15:59:59Z",
+            "2026-11-30T16:00:00Z",
+        ),
+        (
+            "America/New_York",
+            "2026-03-08T05:00:00Z",
+            "2026-03-09T04:00:00Z",
+        ),
+        (
+            "Pacific/Apia",
+            "2011-12-30T09:59:59Z",
+            "2011-12-30T10:00:00Z",
+        ),
+    ] {
+        let budget = policy(zone);
+        let now = instant(now);
+        let reset = instant(reset);
+        assert_eq!(budget.next_reset_at(now), Ok(reset), "{zone}");
+        assert_eq!(budget.day(reset - 1), budget.day(now), "{zone}");
+        assert!(
+            budget.day(reset).unwrap() > budget.day(now).unwrap(),
+            "{zone}"
+        );
+    }
+}
+
+#[test]
 fn local_midnight_and_dst_boundaries_reset_spend_without_freeing_holds() {
     for (zone, before, after) in [
         (
