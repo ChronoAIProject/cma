@@ -40,7 +40,10 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
             def log_message(self, *_):
                 pass
 
-        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        class Server(ThreadingHTTPServer):
+            request_queue_size = 32
+
+        server = Server(("127.0.0.1", 0), Handler)
         service = Thread(target=server.serve_forever, kwargs={"poll_interval": 0.01}, daemon=True)
         service.start()
         self.addCleanup(server.server_close)
@@ -68,6 +71,11 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
         )
 
     def test_full_catalog_uses_same_edge_and_defers_candidate_only_paths_until_settled(self):
+        stock = {f"incumbent-{index}.js": f"export default {index};".encode() for index in range(136)}
+        prepare = stock | {f"candidate-{index}.js": f"export default {index};".encode() for index in range(151)}
+        self.stock = json.loads(catalog_bytes(stock))
+        self.prepare = json.loads(catalog_bytes(prepare))
+        self.serve = lambda name: (200, stock[name]) if name in stock else (404, b"missing asset")
         sampled = Event()
 
         def record(row):
@@ -77,12 +85,12 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
 
         def rollout():
             self.assertTrue(sampled.wait(2))
-            self.serve = self.serve_prepare
+            self.serve = lambda name: (200, prepare[name])
 
         self.watch(rollout, record=record)
         assets = [row for row in self.rows if row["type"] == "asset"]
-        self.assertEqual([row["phase"] for row in assets if row["path"] == "/assets/chunk-new.js"], ["prepare"])
-        for phase, expected in (("stock", STOCK), ("overlap", STOCK), ("prepare", PREPARE)):
+        self.assertEqual({row["phase"] for row in assets if row["path"].startswith("/assets/candidate-")}, {"prepare"})
+        for phase, expected in (("stock", stock), ("overlap", stock), ("prepare", prepare)):
             self.assertEqual({row["path"] for row in assets if row["phase"] == phase},
                              {"/assets/" + name for name in expected})
         self.assertEqual(len(self.requests), len({row["marker"] for row in assets}))
