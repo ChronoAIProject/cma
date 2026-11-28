@@ -31,8 +31,8 @@ struct Attempt {
 
 impl Writer {
     pub(crate) fn configured(
-        origin: &str,
-        auth: crate::service_auth::ServiceAuth,
+        config: &crate::Config,
+        auth: &crate::service_auth::ServiceAuth,
     ) -> Result<Option<Arc<Self>>, Box<dyn std::error::Error + Send + Sync>> {
         let enabled = match std::env::var("CMAEG_REQUEST_AUDIT_ENABLED").as_deref() {
             Err(std::env::VarError::NotPresent) | Ok("false") => false,
@@ -42,7 +42,7 @@ impl Writer {
         if !enabled {
             return Ok(None);
         }
-        if !matches!(&auth, crate::service_auth::ServiceAuth::Account(_)) {
+        if !matches!(auth, crate::service_auth::ServiceAuth::Account(_)) {
             return Err("Gateway request audit requires the configured service account".into());
         }
         let client = reqwest::Client::builder()
@@ -51,9 +51,12 @@ impl Writer {
             .timeout(DEADLINE)
             .build()?;
         Ok(Some(Arc::new(Self {
-            endpoint: format!("{}{PATH}", origin.trim_end_matches('/')),
+            endpoint: format!(
+                "{}{PATH}",
+                config.management.cma_base_url.trim_end_matches('/')
+            ),
             client,
-            auth,
+            auth: auth.clone(),
             slots: Semaphore::new(64),
         })))
     }

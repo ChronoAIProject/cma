@@ -1,6 +1,9 @@
 //! Method permissions and current organization scope for creator requests.
-use super::{bearer, service_error, Creator, CreatorAuthError, CreatorAuthState};
-use axum::{extract::FromRequestParts, http::request::Parts};
+use super::{bearer, selected_owner, service_error, Creator, CreatorAuthError, CreatorAuthState};
+use axum::{
+    extract::FromRequestParts,
+    http::{request::Parts, HeaderMap},
+};
 use cmaeg_core::request_audit::Credential;
 
 impl<S> FromRequestParts<S> for Creator
@@ -42,7 +45,7 @@ where
                 .authenticate(&parts.headers)
                 .await
                 .map_err(service_error)?;
-            super::require_permission(&principal, permission).await?;
+            require_permission(&principal, permission).await?;
             let creator = auth
                 .service_creator(principal.subject.clone(), &parts.headers)
                 .await?;
@@ -56,4 +59,58 @@ where
         }
         auth.authenticate(&parts.headers).await
     }
+}
+
+impl CreatorAuthenticator {
+    pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Creator, CreatorAuthError> {
+        if bearer(headers).is_some_and(cma_service_auth::is_service_key) {
+            let creator = self
+                .authenticate_owner_key(headers, "cma-eg:channels:read")
+                .await?;
+            crate::request_audit::bind(&creator.subject, None, Credential::OwnerKey).await?;
+            return Ok(creator);
+        }
+        if let Some(service) = &self.service {
+            let principal = service.authenticate(headers).await.map_err(service_error)?;
+            require_permission(&principal, "cma-eg:channels:read").await?;
+            let creator = self
+                .service_creator(principal.subject.clone(), headers)
+                .await?;
+            crate::request_audit::bind(
+                &principal.subject,
+                creator.organization.then_some(creator.subject.as_str()),
+                Credential::Bearer,
+            )
+            .await?;
+            return Ok(creator);
+        }
+        let token = bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?;
+        let owner = selected_owner(headers)?;
+        let creator = self.authenticate_token(token, owner).await?;
+        if crate::request_audit::active() {
+            let actor = if owner.is_some() {
+                self.authenticate_token(token, None).await?.subject
+            } else {
+                creator.subject.clone()
+            };
+            crate::request_audit::bind(
+                &actor,
+                creator.organization.then_some(creator.subject.as_str()),
+                Credential::Bearer,
+            )
+            .await?;
+        }
+        Ok(creator)
+    }
+}
+
+pub(super) async fn require_permission(
+    principal: &cma_service_auth::Principal,
+    permission: &str,
+) -> Result<(), CreatorAuthError> {
+    if let Err(error) = principal.require(permission) {
+        crate::request_audit::bind(&principal.subject, None, Credential::Bearer).await?;
+        return Err(service_error(error));
+    }
+    Ok(())
 }
