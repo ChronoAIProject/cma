@@ -201,6 +201,8 @@ fn open_legacy(
                 }
                 return None;
             }
+            #[cfg(any(test, feature = "test-support"))]
+            open.state.wait_for_replay_refresh(open.next).await;
             let wake = tokio::time::Instant::now() + Duration::from_millis(250);
             let wake = open
                 .authorization
