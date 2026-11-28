@@ -94,6 +94,14 @@ async function fixture(
         settings,
         model_budget_writes_available: available,
         model_request_budget_writes_available: requestAvailable,
+        setting_changes: {
+          spend_controls: {
+            actor_reference: 'fixture-admin',
+            actor_name: 'Test administrator',
+            at: '2026-11-10T00:00:00Z',
+            revision,
+          },
+        },
       },
     });
   });
@@ -143,11 +151,25 @@ async function fixture(
   };
 }
 
+async function openSettingsEditors(page: Page) {
+  await page.goto('/operations?tab=settings');
+  await expect(page.getByRole('navigation', { name: 'Settings overview' })).toBeVisible();
+  const collapsed = page.getByRole('button', { name: /^(Edit |View fields for )/ });
+  const count = await collapsed.count();
+  for (let remaining = count; remaining > 0; remaining--) {
+    await collapsed.first().click();
+  }
+}
+
 test('LOCAL admin spend save, disable and exact-number validation', async ({ page, baseURL }) => {
   const local = await fixture(page, baseURL!);
-  await page.goto('/operations?tab=settings');
+  await openSettingsEditors(page);
   await expect(page.getByRole('heading', { name: 'Spend controls' })).toBeVisible();
-  await expect(page.getByText(/Last platform settings change: Test administrator/)).toBeVisible();
+  await expect(
+    page
+      .getByRole('region', { name: 'Spend controls', exact: true })
+      .getByText(/Last changed by Test administrator/),
+  ).toBeVisible();
   await page.getByLabel('Enable spend controls').check();
   const cap = page.getByLabel('Platform period cap (accounting units)', { exact: true });
   await cap.fill('9007199254740991.1');
@@ -174,7 +196,7 @@ test('LOCAL conflicts require review and server validation errors retain the dra
   baseURL,
 }) => {
   const local = await fixture(page, baseURL!);
-  await page.goto('/operations?tab=settings');
+  await openSettingsEditors(page);
   await page.getByLabel('Per-turn cap (accounting units)', { exact: true }).fill('80');
   local.advance();
   local.setFailure(409);
@@ -208,8 +230,12 @@ for (const available of [false, undefined]) {
     baseURL,
   }) => {
     const local = await fixture(page, baseURL!, { value: available });
-    await page.goto('/operations?tab=settings');
-    await expect(page.getByText(/Saving spend controls is not available yet/)).toBeVisible();
+    await openSettingsEditors(page);
+    await expect(
+      page
+        .getByRole('region', { name: 'Spend controls', exact: true })
+        .getByText(/Saving spend controls is not available yet/),
+    ).toBeVisible();
     await expect(page.getByLabel('Enable spend controls')).toBeDisabled();
     await expect(
       page.getByLabel('Per-turn cap (accounting units)', { exact: true }),
@@ -232,7 +258,7 @@ for (const available of [false, undefined]) {
   }) => {
     const budget = { enabled: false, owners: [] };
     const local = await fixture(page, baseURL!, { value: available, budget });
-    await page.goto('/operations?tab=settings');
+    await openSettingsEditors(page);
     await expect(page.getByLabel('Enable spend controls')).toBeDisabled();
     await page.getByLabel('Agent log retention (days)').fill('45');
     await page.getByRole('button', { name: 'Save settings' }).click();
@@ -253,7 +279,7 @@ for (const available of [false, undefined]) {
         request_models: [{ model: 'fixture-model', input_overhead_tokens: 1 }],
       },
     });
-    await page.goto('/operations?tab=settings');
+    await openSettingsEditors(page);
     await expect(
       page.getByLabel('Per-turn cap (accounting units)', { exact: true }),
     ).toBeDisabled();
@@ -276,7 +302,7 @@ for (const gate of ['foundation', 'request']) {
       budget: { ...testBudget, request_models: models },
     });
     const setGate = gate === 'foundation' ? local.setAvailable : local.setRequestAvailable;
-    await page.goto('/operations?tab=settings');
+    await openSettingsEditors(page);
     const cap = page.getByLabel('Per-turn cap (accounting units)', { exact: true });
     await cap.fill('80');
     setGate(false);
@@ -323,7 +349,7 @@ test('LOCAL isolated owner and request-model editing saves explicit policy and v
   baseURL,
 }, testInfo) => {
   const local = await fixture(page, baseURL!, { value: true, request: true });
-  await page.goto('/operations?tab=settings');
+  await openSettingsEditors(page);
   await addOwner(page);
   await page.getByRole('button', { name: 'Remove default owner policy' }).click();
   await page.getByRole('button', { name: 'Add request model' }).click();
@@ -372,7 +398,7 @@ test('LOCAL concurrent owner-list edits stay visible without overwriting the ser
   baseURL,
 }) => {
   const local = await fixture(page, baseURL!, { value: true, request: true });
-  await page.goto('/operations?tab=settings');
+  await openSettingsEditors(page);
   await addOwner(page);
   local.advance();
   local.setFailure(409);
@@ -395,7 +421,7 @@ for (const available of [false, undefined]) {
     baseURL,
   }) => {
     const local = await fixture(page, baseURL!, { value: true, request: available });
-    await page.goto('/operations?tab=settings');
+    await openSettingsEditors(page);
     await expect(page.getByRole('button', { name: 'Add request model' })).toBeDisabled();
     await expect(page.getByText(/Saving request models is not available yet/)).toBeVisible();
     await addOwner(page);

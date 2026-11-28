@@ -5,7 +5,10 @@ use kube::{
 };
 use serde_json::json;
 
-use super::{api_error, management, model, rejected, AgentSandboxPools, NativePoolBinding, Result};
+use super::{
+    api_error, management, model, rejected, AgentSandboxPools, NativePoolBinding,
+    NativePoolConfiguration, Result,
+};
 use crate::HomeVolumeAttachment;
 
 pub(super) const RETIRING: &str = "cma/native-pool-retiring";
@@ -99,6 +102,66 @@ impl AgentSandboxPools {
         self.retirement_inventory(binding, retained_homes).await
     }
 
+    pub(super) async fn recover_retirement_binding(
+        &self,
+        plan: &NativePoolConfiguration,
+    ) -> Result<Option<NativePoolBinding>> {
+        if plan.namespace != self.config.namespace || plan.deployment != self.config.deployment {
+            return Err(rejected(
+                "native retirement plan belongs to another authority",
+            ));
+        }
+        let mut binding = NativePoolBinding {
+            spec: plan.spec.clone(),
+            pod_policy: plan.pod_policy.clone(),
+            name: model::pool_name(&verified_plan_digest(self, plan)?),
+            uid: String::new(),
+            template_name: String::new(),
+            template_uid: String::new(),
+            config_sha256: plan.config_sha256.clone(),
+        };
+        let config = model::binding_config(&self.config, &binding);
+        let desired_template = model::template(&config, &plan.spec)?;
+        binding.template_name = desired_template.name_any();
+        let (template, pool) = tokio::join!(
+            self.templates.get_opt(&binding.template_name),
+            self.pools.get_opt(&binding.name),
+        );
+        match (template.map_err(api_error)?, pool.map_err(api_error)?) {
+            (Some(template), Some(pool)) => {
+                model::verify(&template, &desired_template)?;
+                let desired_pool =
+                    model::pool(&config, &plan.spec, &template, management::target(&pool)?)?;
+                model::verify(&pool, &desired_pool)?;
+                Ok(Some(management::binding(
+                    &config, &plan.spec, &template, &pool,
+                )?))
+            }
+            (None, None) => {
+                // Blank UIDs are used only in this read-only proof. Any matching
+                // original name, plan label, or dependent remains a blocker.
+                if !self.retirement_inventory(&binding, &[]).await?
+                    || self
+                        .templates
+                        .get_opt(&binding.template_name)
+                        .await
+                        .map_err(api_error)?
+                        .is_some()
+                    || self
+                        .pools
+                        .get_opt(&binding.name)
+                        .await
+                        .map_err(api_error)?
+                        .is_some()
+                {
+                    return Err(rejected("native retirement still has provider dependants"));
+                }
+                Ok(None)
+            }
+            _ => Err(rejected("native retirement found a partial definition")),
+        }
+    }
+
     /// Validate each original definition independently so lost deletion replies
     /// and restarts do not require recreating an already removed definition.
     pub(super) async fn retirement_definitions(
@@ -140,6 +203,22 @@ impl AgentSandboxPools {
         }
         Ok((template, pool))
     }
+}
+
+fn verified_plan_digest(
+    pools: &AgentSandboxPools,
+    plan: &NativePoolConfiguration,
+) -> Result<String> {
+    let digest = model::policy_digest(
+        &pools.config.namespace,
+        &pools.config.deployment,
+        &plan.pod_policy,
+        &plan.spec,
+    )?;
+    if digest != plan.config_sha256 {
+        return Err(rejected("native retirement plan digest changed"));
+    }
+    Ok(digest)
 }
 
 fn retirement_target(pool: &DynamicObject) -> Result<bool> {

@@ -67,6 +67,7 @@ pub(crate) fn target() -> PoolTarget {
         target_replicas: 3,
         applied_revision: 0,
         error: None,
+        reconciliation_failure: None,
         lease: Some("lease".into()),
         lease_until: mongodb::bson::DateTime::from_millis(i64::MAX),
         reconcile_after: mongodb::bson::DateTime::from_millis(0),
@@ -96,7 +97,10 @@ impl PoolTargetStore for Memory {
             .pop_front()
             .unwrap_or(false)
         {
-            Ok(RetirementScan::Blocked)
+            Ok(RetirementScan::Blocked(PoolFailure::retirement(
+                "retained_allocation",
+                "A saved allocation still depends on the pool.",
+            )))
         } else {
             Ok(RetirementScan::Ready(NativePoolDrain::default()))
         }
