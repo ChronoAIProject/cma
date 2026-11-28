@@ -2,7 +2,9 @@
 
 use super::agent_log_telemetry::ScanCaller;
 use layer2_core::ids::AgentId;
-use layer2_core::sandbox::store::{SandboxStoreError, MAX_AGENT_LOG_BATCH_SIZE};
+use layer2_core::sandbox::store::SandboxStoreError;
+#[cfg(test)]
+use layer2_core::sandbox::store::MAX_AGENT_LOG_BATCH_SIZE;
 use layer2_core::sandbox::{Agent, AgentLogEntry};
 use mongodb::bson::{doc, Binary, Bson, Document, RawDocumentBuf};
 use sha2::{Digest, Sha256};
@@ -10,47 +12,24 @@ use sha2::{Digest, Sha256};
 use super::agent_log::{log_document, log_id, read_entry};
 use super::sandbox_mongo::{signed, unsigned, MongoSandboxStore};
 
-pub(super) use layer2_core::sandbox::store::NORMAL_AGENT_LOG_ENTRIES;
-pub(super) const NORMAL_AGENT_LOG_BYTES: usize = 64 * 1024 * 1024;
-const STOP_RESERVE_ENTRIES: u64 = 64;
-// A forced terminal publication may also finalize one published assistant message.
-pub(super) const STOP_RESERVE_BYTES: usize =
-    512 * 1024 + layer2_core::sandbox::MAX_DURABLE_AGENT_MESSAGE_BYTES;
-const DELETE_RESERVE_ENTRIES: u64 = 64;
-pub(super) const DELETE_RESERVE_BYTES: usize = 512 * 1024;
-const STOP_AGENT_LOG_ENTRIES: u64 = NORMAL_AGENT_LOG_ENTRIES + STOP_RESERVE_ENTRIES;
-pub(super) const STOP_AGENT_LOG_BYTES: usize = NORMAL_AGENT_LOG_BYTES + STOP_RESERVE_BYTES;
-const PHYSICAL_AGENT_LOG_ENTRIES: u64 = STOP_AGENT_LOG_ENTRIES + DELETE_RESERVE_ENTRIES;
-pub(super) const PHYSICAL_AGENT_LOG_BYTES: usize = STOP_AGENT_LOG_BYTES + DELETE_RESERVE_BYTES;
-const MAX_AGENT_LOG_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
+pub(super) use cma_am_agent_log::capacity::{
+    ensure_append_batch_size, AppendCapacity, NORMAL_AGENT_LOG_ENTRIES, PHYSICAL_AGENT_LOG_BYTES,
+};
+#[cfg(test)]
+use cma_am_agent_log::capacity::{
+    DELETE_RESERVE_BYTES, DELETE_RESERVE_ENTRIES, STOP_AGENT_LOG_ENTRIES, STOP_RESERVE_BYTES,
+    STOP_RESERVE_ENTRIES,
+};
+use cma_am_agent_log::capacity::{MAX_AGENT_LOG_DOCUMENT_BYTES, PHYSICAL_AGENT_LOG_ENTRIES};
+#[cfg(test)]
+pub(super) use cma_am_agent_log::capacity::{NORMAL_AGENT_LOG_BYTES, STOP_AGENT_LOG_BYTES};
 pub(super) const INTEGRITY_FIELD: &str = "agent_log_integrity_v1";
 pub(super) const QUARANTINE_FIELD: &str = "agent_log_integrity_quarantine_v1";
 const SEMANTIC_FIELD: &str = "semantic_checkpoint_v1";
 const INTEGRITY_FORMAT: i64 = 1;
 const HASH_BYTES: usize = 32;
 
-#[derive(Debug)]
-pub(super) enum TransactionLogError {
-    Domain(SandboxStoreError),
-    Driver(mongodb::error::Error),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum AppendCapacity {
-    Normal,
-    StopOrFailure,
-    Delete,
-}
-
-impl AppendCapacity {
-    fn limits(self) -> (u64, usize) {
-        match self {
-            Self::Normal => (NORMAL_AGENT_LOG_ENTRIES, NORMAL_AGENT_LOG_BYTES),
-            Self::StopOrFailure => (STOP_AGENT_LOG_ENTRIES, STOP_AGENT_LOG_BYTES),
-            Self::Delete => (PHYSICAL_AGENT_LOG_ENTRIES, PHYSICAL_AGENT_LOG_BYTES),
-        }
-    }
-}
+pub(super) use cma_am_agent_log::TransactionLogError;
 
 #[derive(Default)]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
@@ -264,20 +243,6 @@ pub(super) fn ensure_append_capacity(
     }
 }
 
-pub(super) fn ensure_append_batch_size(pending: usize) -> Result<(), SandboxStoreError> {
-    if pending <= MAX_AGENT_LOG_BATCH_SIZE {
-        Ok(())
-    } else {
-        tracing::warn!(
-            limit_kind = "batch_entries",
-            pending_entries = pending,
-            max_entries = MAX_AGENT_LOG_BATCH_SIZE,
-            "Agent log capacity rejected"
-        );
-        Err(capacity_error())
-    }
-}
-
 /// Refuse recovery near normal capacity before any native reopen. Startup
 /// metadata and the reopen/publication suffix need ordinary log capacity; the
 /// stop/delete reserves are never borrowed to make a failed Agent usable.
@@ -318,12 +283,6 @@ fn capacity_allows(
 
 fn capacity_error() -> SandboxStoreError {
     SandboxStoreError::AgentLogCapacityExceeded
-}
-
-impl From<SandboxStoreError> for TransactionLogError {
-    fn from(error: SandboxStoreError) -> Self {
-        Self::Domain(error)
-    }
 }
 
 #[cfg(test)]

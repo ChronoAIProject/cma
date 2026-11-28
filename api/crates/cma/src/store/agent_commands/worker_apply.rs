@@ -7,7 +7,7 @@ use mongodb::bson::doc;
 use mongodb::ClientSession;
 
 use super::super::agents::read_agent;
-use super::super::sandbox_mongo::{signed, MongoSandboxStore};
+use super::super::sandbox_mongo::MongoSandboxStore;
 use super::worker::Change;
 use super::{lane_records, records, ApplyError};
 
@@ -77,26 +77,14 @@ pub(super) async fn load_claim(
     now: &str,
     session: &mut ClientSession,
 ) -> Result<(AdmittedAgentCommand, CommandLane), ApplyError> {
-    let lane = store
-        .agent_command_orders
-        .find_one(doc! { "_id": claim.agent_id.as_str() })
-        .session(&mut *session)
-        .await?
-        .ok_or(CommandLedgerError::StaleClaim)?;
-    let lane = lane_records::read(&lane, claim.agent_id.as_str())?;
-    lane.require_claim(claim, now)?;
-    let command = store
-        .agent_commands
-        .find_one(doc! { "_id": claim.command_id.as_str() })
-        .session(&mut *session)
-        .await?
-        .ok_or(CommandLedgerError::StaleClaim)?;
-    let command = records::read(&command)?;
-    command.require_claim(claim, now)?;
-    if lane.lease != command.work.lease {
-        return Err(CommandLedgerError::Corrupt.into());
-    }
-    Ok((command, lane))
+    cma_am_agent_commands::transaction::load_claim(
+        &store.agent_commands,
+        &store.agent_command_orders,
+        claim,
+        now,
+        session,
+    )
+    .await
 }
 
 async fn claim_next(
@@ -247,22 +235,13 @@ pub(in crate::store) async fn write(
     // Terminal Trigger projection is completed by the scoped transaction root.
     // Dispatch binding and reconciliation already have dispatch evidence;
     // queued input edits are nonterminal and require no first-message event.
-    let mut fields = records::document(command)?;
-    fields.remove("_id");
-    let result = store.agent_commands.update_one(doc! { "_id": command.receipt.envelope.command_id.as_str(), "channel_history_seal": {"$exists": false}, "revision": signed(expected_revision, "command revision").map_err(|_| CommandLedgerError::Corrupt)? }, doc! { "$set": fields }).session(&mut *session).await?;
-    if result.matched_count != 1 {
-        return Err(CommandLedgerError::Conflict.into());
-    }
-    let result = store
-        .agent_command_orders
-        .update_one(
-            doc! { "_id": command.receipt.envelope.agent_id.as_str() },
-            doc! { "$set": lane_records::fields(lane)? },
-        )
-        .session(&mut *session)
-        .await?;
-    if result.matched_count != 1 {
-        return Err(CommandLedgerError::Conflict.into());
-    }
-    Ok(())
+    cma_am_agent_commands::transaction::write(
+        &store.agent_commands,
+        &store.agent_command_orders,
+        command,
+        expected_revision,
+        lane,
+        session,
+    )
+    .await
 }

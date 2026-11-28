@@ -11,9 +11,17 @@ real-model-suggestion-samples = []
 [dependencies]
 cma-qualification = { path = "../cma-qualification", optional = true }
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
+cma-am-agent-commands = { path = "../cma-am-agent-commands" }
+cma-am-agent-log = { path = "../cma-am-agent-log" }
 cma-am-auth = { path = "../cma-am-auth" }
+cma-am-bindings = { path = "../cma-am-bindings" }
+cma-am-catalog = { path = "../cma-am-catalog" }
+cma-am-maintenance = { path = "../cma-am-maintenance" }
 cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
 cma-am-reporting = { path = "../cma-am-reporting" }
+cma-am-sandbox-state = { path = "../cma-am-sandbox-state" }
+cma-am-spend = { path = "../cma-am-spend" }
+cma-am-triggers = { path = "../cma-am-triggers" }
 async-trait = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }

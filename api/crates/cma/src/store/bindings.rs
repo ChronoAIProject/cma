@@ -1,8 +1,8 @@
 //! Durable binding reservations share the Sandbox transaction boundary.
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::binding::store::{
-    binding_has_work, conversation_has_work, conversation_storage_key, validate_binding_write,
-    validate_conversation_write, validate_page_limit,
+    conversation_storage_key, validate_binding_write, validate_conversation_write,
+    validate_page_limit,
 };
 use layer2_core::sandbox::binding::{BindingConversation, BindingStore, ProviderBinding};
 use layer2_core::sandbox::store::SandboxStoreError;

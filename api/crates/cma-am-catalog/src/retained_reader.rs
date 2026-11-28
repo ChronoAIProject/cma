@@ -8,7 +8,8 @@ use layer2_core::{
 };
 use mongodb::bson::Document;
 
-use super::super::sandbox_mongo::{record_bson, require_version};
+use crate::DOCUMENT_SCHEMA_VERSION;
+use cma_am_mongo_primitives::{record_bson, require_version};
 
 fn corrupt() -> ProfileStoreError {
     ProfileStoreError::Corrupt("invalid retained Profile erasure tombstone".into())
@@ -18,7 +19,7 @@ pub(super) fn is_retained(document: &Document) -> Result<bool, ProfileStoreError
     if !document.contains_key("account_erasure_retained") {
         return Ok(false);
     }
-    require_version(document).map_err(ProfileStoreError::Corrupt)?;
+    require_version(document, DOCUMENT_SCHEMA_VERSION).map_err(ProfileStoreError::Corrupt)?;
     if document.get_bool("account_erasure_retained").ok() != Some(true)
         || document.get_bool("account_erasure_fenced").ok() != Some(true)
         || document.get_datetime("account_erasure_fenced_at").is_err()

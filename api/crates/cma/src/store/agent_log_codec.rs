@@ -1,41 +1,20 @@
 //! BSON envelope helpers shared by the Agent-log readers and writers.
 
+#[cfg(test)]
 use layer2_core::ids::AgentId;
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::AgentLogEntry;
-use mongodb::bson::{doc, Document};
+use mongodb::bson::Document;
 
-use super::sandbox_mongo::{
-    i64_field_matches, read_record, record_bson, signed, string_field_matches,
-    DOCUMENT_SCHEMA_VERSION,
-};
-
-pub(super) fn log_id(id: &AgentId, seq: u64) -> String {
-    format!("{}:{seq:020}", id.as_str())
-}
+use super::sandbox_mongo::DOCUMENT_SCHEMA_VERSION;
+pub(super) use cma_am_agent_log::legacy::log_id;
 
 pub(super) fn log_document(entry: &AgentLogEntry) -> Result<Document, SandboxStoreError> {
-    Ok(doc! {
-        "_id": log_id(&entry.agent_id, entry.seq),
-        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-        "agent_id": entry.agent_id.as_str(),
-        "seq": signed(entry.seq, "agent log sequence").map_err(SandboxStoreError::Corrupt)?,
-        "record": record_bson(entry).map_err(SandboxStoreError::Corrupt)?,
-    })
+    cma_am_agent_log::legacy::log_document(entry, DOCUMENT_SCHEMA_VERSION)
 }
 
 pub(super) fn read_entry(document: &Document) -> Result<AgentLogEntry, SandboxStoreError> {
-    let entry: AgentLogEntry = read_record(document).map_err(SandboxStoreError::Corrupt)?;
-    let seq = signed(entry.seq, "agent log sequence").map_err(SandboxStoreError::Corrupt)?;
-    if !string_field_matches(document, "_id", &log_id(&entry.agent_id, entry.seq))
-        || !string_field_matches(document, "agent_id", entry.agent_id.as_str())
-        || !i64_field_matches(document, "seq", seq)
-    {
-        return Err(SandboxStoreError::Corrupt(
-            "agent log query fields disagree with its record".into(),
-        ));
-    }
-    Ok(entry)
+    cma_am_agent_log::legacy::read_entry(document, DOCUMENT_SCHEMA_VERSION)
 }
 
 #[cfg(test)]

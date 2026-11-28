@@ -9,7 +9,7 @@ use super::{
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::store) struct Head {
+pub struct Head {
     #[serde(rename = "_id")]
     pub agent_id: String,
     pub format_version: i64,
@@ -32,7 +32,7 @@ pub(in crate::store) struct Head {
 }
 
 impl Head {
-    pub(in crate::store) fn read(document: Document) -> Result<Self, SandboxStoreError> {
+    pub fn read(document: Document) -> Result<Self, SandboxStoreError> {
         require_int64(
             &document,
             &[
@@ -54,7 +54,7 @@ impl Head {
         Ok(head)
     }
 
-    pub(in crate::store) fn validate(&self) -> Result<(), SandboxStoreError> {
+    pub fn validate(&self) -> Result<(), SandboxStoreError> {
         if self.format_version != 1
             || self.agent_id.is_empty()
             || self.agent_id.len() > 512
@@ -96,7 +96,7 @@ impl Head {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub(in crate::store) struct Seal {
+pub struct Seal {
     #[serde(rename = "_id")]
     pub id: String,
     pub format_version: i64,
@@ -120,11 +120,11 @@ pub(in crate::store) struct Seal {
 }
 
 impl Seal {
-    pub(in crate::store) fn identity(agent: &str, incarnation: &str, ordinal: i64) -> String {
+    pub fn identity(agent: &str, incarnation: &str, ordinal: i64) -> String {
         format!("{agent}:{incarnation}:{ordinal:020}")
     }
 
-    pub(in crate::store) fn read(document: Document) -> Result<Self, SandboxStoreError> {
+    pub fn read(document: Document) -> Result<Self, SandboxStoreError> {
         require_int64(
             &document,
             &[
@@ -150,7 +150,7 @@ impl Seal {
         Ok(seal)
     }
 
-    pub(in crate::store) fn validate(&self) -> Result<(), SandboxStoreError> {
+    pub fn validate(&self) -> Result<(), SandboxStoreError> {
         if self.format_version != 1
             || self.agent_id.is_empty()
             || self.agent_id.len() > 512
@@ -190,7 +190,7 @@ impl Seal {
         Ok(())
     }
 
-    pub(in crate::store) fn digest(&self) -> Binary {
+    pub fn digest(&self) -> Binary {
         let mut hash = Sha256::new();
         hash.update(b"cma.agent-log.seal.sha256_raw_bson_v1\0");
         for field in [&self.id, &self.agent_id, &self.incarnation] {
@@ -224,7 +224,7 @@ impl Seal {
         digest::binary(hash.finalize().to_vec())
     }
 
-    pub(in crate::store) fn follows(&self, previous: &Self) -> Result<(), SandboxStoreError> {
+    pub fn follows(&self, previous: &Self) -> Result<(), SandboxStoreError> {
         if self.agent_id != previous.agent_id
             || self.incarnation != previous.incarnation
             || previous.ordinal.checked_add(1) != Some(self.ordinal)
@@ -237,7 +237,7 @@ impl Seal {
         Ok(())
     }
 
-    pub(in crate::store) fn precedes(&self, head: &Head) -> Result<(), SandboxStoreError> {
+    pub fn precedes(&self, head: &Head) -> Result<(), SandboxStoreError> {
         if self.agent_id != head.agent_id
             || self.incarnation != head.incarnation
             || self.ordinal.checked_add(1) != Some(head.active_ordinal)

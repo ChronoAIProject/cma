@@ -35,7 +35,8 @@ pub(super) async fn activate(
     let documents = counters
         .iter()
         .map(Counter::document)
-        .collect::<Result<Vec<_>, _>>()?;
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(domain)?;
     store
         .model_budget
         .insert_many(documents)

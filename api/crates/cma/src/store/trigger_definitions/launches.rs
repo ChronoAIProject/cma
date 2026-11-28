@@ -205,9 +205,7 @@ pub(super) fn unavailable(error: impl std::fmt::Display) -> LaunchStoreError {
     LaunchStoreError::Unavailable(error.to_string())
 }
 
-pub(super) fn corrupt(detail: impl Into<String>) -> LaunchStoreError {
-    LaunchStoreError::Corrupt(detail.into())
-}
+pub(super) use cma_am_triggers::corrupt;
 
 pub(super) fn trigger_error(
     error: layer2_core::trigger_domain::TriggerStoreError,

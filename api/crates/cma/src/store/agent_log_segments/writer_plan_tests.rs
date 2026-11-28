@@ -1,5 +1,6 @@
 use super::*;
 use layer2_core::ids::AgentId;
+use layer2_core::sandbox::AgentLogKind;
 
 fn head(count: i64, bytes: i64) -> Head {
     Head {
@@ -53,7 +54,7 @@ fn publication(
 #[test]
 fn normal_count_boundary_rolls_the_whole_batch_without_a_new_event_number() {
     let current = head(9999, 1_000_000);
-    let batch = EncodedBatch::new(&current, &[entry(10_000, "x".into())]).unwrap();
+    let batch = encode_batch(&current, &[entry(10_000, "x".into())]).unwrap();
     let result = publication(
         &current,
         &batch,
@@ -65,7 +66,7 @@ fn normal_count_boundary_rolls_the_whole_batch_without_a_new_event_number() {
     assert!(result.seal.is_none());
     assert_eq!(result.head.active_count, 10_000);
     let current = result.head;
-    let batch = EncodedBatch::new(
+    let batch = encode_batch(
         &current,
         &[entry(10_001, "a".into()), entry(10_002, "b".into())],
     )
@@ -95,10 +96,10 @@ fn normal_count_boundary_rolls_the_whole_batch_without_a_new_event_number() {
         (1, 10_001, 10_002)
     );
     assert_eq!(result.head.active_count, 2);
-    assert_eq!(result.head.active_bytes, batch.encoded_bytes);
+    assert_eq!(result.head.active_bytes, batch.encoded_bytes());
     assert_eq!(
         result.head.lifetime_bytes,
-        current.lifetime_bytes + batch.encoded_bytes
+        current.lifetime_bytes + batch.encoded_bytes()
     );
     assert_eq!(batch.rows()[0].get_i64("seq").unwrap(), 10_001);
 }
@@ -106,8 +107,8 @@ fn normal_count_boundary_rolls_the_whole_batch_without_a_new_event_number() {
 #[test]
 fn complete_bson_bytes_trigger_an_early_roll_at_the_exact_normal_ceiling() {
     let mut current = head(5, 1000);
-    let batch = EncodedBatch::new(&current, &[entry(6, "unicode Ω and quotes \"".into())]).unwrap();
-    current.active_bytes = NORMAL_BYTES - batch.encoded_bytes;
+    let batch = encode_batch(&current, &[entry(6, "unicode Ω and quotes \"".into())]).unwrap();
+    current.active_bytes = NORMAL_BYTES - batch.encoded_bytes();
     current.lifetime_bytes = current.active_bytes;
     let exact = publication(
         &current,
@@ -151,8 +152,8 @@ fn terminal_classes_keep_their_exact_reserves_without_cleanup_only_rollover() {
     ] {
         let mut current = head(count - 1, 1000);
         let batch =
-            EncodedBatch::new(&current, &[entry(count as u64, "terminal fixture".into())]).unwrap();
-        current.active_bytes = bytes - batch.encoded_bytes;
+            encode_batch(&current, &[entry(count as u64, "terminal fixture".into())]).unwrap();
+        current.active_bytes = bytes - batch.encoded_bytes();
         current.lifetime_bytes = current.active_bytes;
         let result = publication(
             &current,
@@ -178,7 +179,7 @@ fn terminal_classes_keep_their_exact_reserves_without_cleanup_only_rollover() {
             Err(SandboxStoreError::AgentLogCapacityExceeded)
         ));
         let full = result.head;
-        let batch = EncodedBatch::new(&full, &[entry(count as u64 + 1, "another".into())]).unwrap();
+        let batch = encode_batch(&full, &[entry(count as u64 + 1, "another".into())]).unwrap();
         assert!(publication(
             &full,
             &batch,
@@ -187,7 +188,7 @@ fn terminal_classes_keep_their_exact_reserves_without_cleanup_only_rollover() {
             SourceFormat::Segmented
         )
         .is_err());
-        let empty = EncodedBatch::new(&full, &[]).unwrap();
+        let empty = encode_batch(&full, &[]).unwrap();
         let metadata = publication(
             &full,
             &empty,
@@ -204,7 +205,7 @@ fn terminal_classes_keep_their_exact_reserves_without_cleanup_only_rollover() {
 #[test]
 fn valid_legacy_physical_capacity_can_be_sealed_without_a_spare_event_slot() {
     let current = head(super::super::MAX_ENTRIES, MAX_BYTES);
-    let batch = EncodedBatch::new(&current, &[]).unwrap();
+    let batch = encode_batch(&current, &[]).unwrap();
     for permission in [
         RolloverPermission::Normal,
         RolloverPermission::LegacyRecovery,
@@ -233,7 +234,7 @@ fn valid_legacy_physical_capacity_can_be_sealed_without_a_spare_event_slot() {
     )
     .is_err());
     let empty_head = head(0, 0);
-    let empty = EncodedBatch::new(&empty_head, &[]).unwrap();
+    let empty = encode_batch(&empty_head, &[]).unwrap();
     assert!(publication(
         &empty_head,
         &empty,
@@ -251,25 +252,25 @@ fn event_and_batch_limits_measure_complete_bson_before_any_rollover() {
         .unwrap()
         .len();
     let exact = entry(101, "x".repeat(DOCUMENT_BYTES - overhead));
-    let batch = EncodedBatch::new(&current, &[exact]).unwrap();
+    let batch = encode_batch(&current, &[exact]).unwrap();
     assert_eq!(batch.rows()[0].as_bytes().len(), DOCUMENT_BYTES);
     assert!(matches!(
-        EncodedBatch::new(
+        encode_batch(
             &current,
             &[entry(101, "x".repeat(DOCUMENT_BYTES - overhead + 1))]
         ),
         Err(SandboxStoreError::AgentLogCapacityExceeded)
     ));
     let entries: Vec<_> = (101..=164).map(|seq| entry(seq, "x".into())).collect();
-    assert_eq!(EncodedBatch::new(&current, &entries).unwrap().count(), 64);
+    assert_eq!(encode_batch(&current, &entries).unwrap().count(), 64);
     let mut too_many = entries;
     too_many.push(entry(165, "x".into()));
-    assert!(EncodedBatch::new(&current, &too_many).is_err());
+    assert!(encode_batch(&current, &too_many).is_err());
     let entries: Vec<_> = (101..106)
         .map(|seq| entry(seq, "x".repeat(13 * 1024 * 1024 - 1024)))
         .collect();
-    let batch = EncodedBatch::new(&current, &entries).unwrap();
-    assert!(batch.encoded_bytes > NORMAL_BYTES && batch.encoded_bytes < MAX_BYTES);
+    let batch = encode_batch(&current, &entries).unwrap();
+    assert!(batch.encoded_bytes() > NORMAL_BYTES && batch.encoded_bytes() < MAX_BYTES);
     assert!(matches!(
         publication(
             &current,
@@ -292,8 +293,7 @@ fn lifetime_growth_preserves_global_sequence_but_checks_cursor_and_counter_overf
     current.projection_through = current.last_seq;
     current.lifetime_bytes = 1_000 * NORMAL_BYTES + current.active_bytes;
     current.previous_seal = Some(digest::binary(vec![3; 32]));
-    let batch =
-        EncodedBatch::new(&current, &[entry(current.last_seq as u64 + 1, "x".into())]).unwrap();
+    let batch = encode_batch(&current, &[entry(current.last_seq as u64 + 1, "x".into())]).unwrap();
     let result = publication(
         &current,
         &batch,
@@ -320,7 +320,7 @@ fn lifetime_growth_preserves_global_sequence_but_checks_cursor_and_counter_overf
     current.projection_through = MAX_SEQUENCE;
     current.active_start_seq = MAX_SEQUENCE - 1;
     assert!(matches!(
-        EncodedBatch::new(&current, &[entry(MAX_SEQUENCE as u64 + 1, "x".into())]),
+        encode_batch(&current, &[entry(MAX_SEQUENCE as u64 + 1, "x".into())]),
         Err(SandboxStoreError::SequenceConflict)
     ));
 }
@@ -328,7 +328,7 @@ fn lifetime_growth_preserves_global_sequence_but_checks_cursor_and_counter_overf
 #[test]
 fn stale_batch_and_missing_source_digests_cannot_create_a_successor() {
     let current = head(10_000, 1_000_000);
-    let batch = EncodedBatch::new(&current, &[entry(10_001, "x".into())]).unwrap();
+    let batch = encode_batch(&current, &[entry(10_001, "x".into())]).unwrap();
     let mut newer = current.clone();
     newer.last_seq += 1;
     newer.lifetime_count += 1;
@@ -359,7 +359,7 @@ fn stale_batch_and_missing_source_digests_cannot_create_a_successor() {
 #[test]
 fn segmented_recovery_permission_forces_a_storage_only_successor() {
     let current = head(10_000, 1_000_000);
-    let batch = EncodedBatch::new(&current, &[]).unwrap();
+    let batch = encode_batch(&current, &[]).unwrap();
     let result = publication(
         &current,
         &batch,
@@ -396,7 +396,7 @@ fn segmented_recovery_refuses_empty_source_event_replay_and_terminal_reserves() 
         (10, vec![], AppendCapacity::Delete),
     ] {
         let current = head(count, if count == 0 { 0 } else { 1000 });
-        let batch = EncodedBatch::new(&current, &logs).unwrap();
+        let batch = encode_batch(&current, &logs).unwrap();
         assert!(publication(
             &current,
             &batch,
@@ -411,7 +411,7 @@ fn segmented_recovery_refuses_empty_source_event_replay_and_terminal_reserves() 
 #[test]
 fn active_proof_rollover_keeps_only_the_new_source_bytes() {
     let current = head(10_000, 1_000_000);
-    let batch = EncodedBatch::new(
+    let batch = encode_batch(
         &current,
         &[
             entry(10_001, "new one".into()),

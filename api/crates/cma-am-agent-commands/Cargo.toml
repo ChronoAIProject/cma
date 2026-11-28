@@ -1,0 +1,11 @@
+[package]
+name = "cma-am-agent-commands"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
+futures-util = { workspace = true }
+layer2-core = { workspace = true }
+mongodb = { workspace = true }

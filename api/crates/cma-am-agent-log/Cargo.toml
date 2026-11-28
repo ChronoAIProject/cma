@@ -1,0 +1,14 @@
+[package]
+name = "cma-am-agent-log"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
+layer2-core = { workspace = true }
+mongodb = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }

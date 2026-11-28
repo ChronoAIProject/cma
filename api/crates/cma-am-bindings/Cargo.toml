@@ -1,0 +1,10 @@
+[package]
+name = "cma-am-bindings"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
+layer2-core = { workspace = true }
+mongodb = { workspace = true }
