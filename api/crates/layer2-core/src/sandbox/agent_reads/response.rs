@@ -29,6 +29,17 @@ impl AgentResponseObservationError {
             Self::SourceAndRelease { release, .. } => release,
         }
     }
+
+    fn fence<T>(
+        source: Result<T, AgentReadError>,
+        release: Result<(), AgentReadError>,
+    ) -> Result<T, Self> {
+        match (source, release) {
+            (source, Ok(())) => source.map_err(Self::Source),
+            (Ok(_), Err(error)) => Err(Self::Release(error)),
+            (Err(source), Err(release)) => Err(Self::SourceAndRelease { source, release }),
+        }
+    }
 }
 
 impl AgentReadService {
@@ -92,32 +103,29 @@ impl AgentReadService {
         &self,
         authorization: &AgentEventStreamAuthorization,
     ) -> Result<AgentEventStreamSnapshot, AgentResponseObservationError> {
-        use AgentResponseObservationError::{Authorization, Release, SourceAndRelease};
-        let result = authorization
+        authorization
             .bounded(async {
                 let snapshot = self.current_event_stream_snapshot(authorization).await?;
-                let agent = snapshot
+                let result = snapshot
                     .lineage
                     .agent
-                    .ok_or_else(|| corrupt("authorized response has no Agent"))?;
-                Ok(AgentEventStreamSnapshot {
-                    source_generation: None,
-                    model: agent.selected_model(),
-                    id: agent.id,
-                    created_at: agent.created_at,
-                    initial_model: agent.profile.content.model,
-                    runtime_generation: agent.conversation.runtime_generation,
-                    active_turn: agent.conversation.active_turn,
-                    head: agent.conversation.last_seq,
-                    history: vec![],
-                })
+                    .ok_or_else(|| corrupt("authorized response has no Agent"))
+                    .map(|agent| AgentEventStreamSnapshot {
+                        source_generation: None,
+                        model: agent.selected_model(),
+                        id: agent.id,
+                        created_at: agent.created_at,
+                        initial_model: agent.profile.content.model,
+                        runtime_generation: agent.conversation.runtime_generation,
+                        active_turn: agent.conversation.active_turn,
+                        head: agent.conversation.last_seq,
+                        history: vec![],
+                    });
+                let release = self.validate_event_stream(authorization).await;
+                Ok(AgentResponseObservationError::fence(result, release))
             })
-            .await;
-        match (result, self.validate_event_stream(authorization).await) {
-            (result, Ok(())) => result.map_err(Authorization),
-            (Ok(_), Err(error)) => Err(Release(error)),
-            (Err(source), Err(release)) => Err(SourceAndRelease { source, release }),
-        }
+            .await
+            .map_err(AgentResponseObservationError::Authorization)?
     }
 
     /// Select one command-bound source under a single nonrenewing IO budget.
@@ -152,7 +160,6 @@ impl AgentReadService {
                 &'a mut indexed::AgentOutputObservation<'b>,
             ) -> indexed::OutputReadFuture<'a, T>,
     {
-        use AgentResponseObservationError::{Authorization, Release, Source, SourceAndRelease};
         authorization
             .bounded(async {
                 let current = self.current_event_stream_snapshot(authorization).await?;
@@ -184,15 +191,14 @@ impl AgentReadService {
                     Ok(AgentResponseObservation::Legacy(snapshot))
                 }
                 .await;
-                let release = self.current_event_stream_snapshot(authorization).await;
-                Ok(match (result, release) {
-                    (result, Ok(_)) => result.map_err(Source),
-                    (Ok(_), Err(error)) => Err(Release(error)),
-                    (Err(source), Err(release)) => Err(SourceAndRelease { source, release }),
-                })
+                let release = self
+                    .current_event_stream_snapshot(authorization)
+                    .await
+                    .map(|_| ());
+                Ok(AgentResponseObservationError::fence(result, release))
             })
             .await
-            .map_err(Authorization)?
+            .map_err(AgentResponseObservationError::Authorization)?
     }
 
     async fn read_response_window(

@@ -350,6 +350,15 @@ async fn cached_projection_never_shares_metadata_or_survives_revocation_under_ba
 
 #[tokio::test]
 async fn queued_snapshot_final_custody_fence_keeps_existing_durable_recovery() {
+    queued_snapshot_custody_loss(3).await;
+}
+
+#[tokio::test]
+async fn queued_snapshot_initial_authorization_keeps_existing_durable_recovery() {
+    queued_snapshot_custody_loss(2).await;
+}
+
+async fn queued_snapshot_custody_loss(fresh_call: usize) {
     let (f, observer) = fixture_with_events_and_standing(
         None,
         true,
@@ -361,7 +370,7 @@ async fn queued_snapshot_final_custody_fence_keeps_existing_durable_recovery() {
     assert_eq!(response.status(), StatusCode::OK);
     let (custody, facts) = observer.unwrap();
     // First refresh: command/header, unbound snapshot, snapshot release fence.
-    *facts.revoke_on_fresh.lock().unwrap() = Some((3, custody));
+    *facts.revoke_on_fresh.lock().unwrap() = Some((fresh_call, custody));
     let mut body = response.into_body().into_data_stream();
     let frame = tokio::time::timeout(Duration::from_secs(4), body.next())
         .await
@@ -370,7 +379,7 @@ async fn queued_snapshot_final_custody_fence_keeps_existing_durable_recovery() {
         .unwrap();
     assert!(
         facts.revoke_on_fresh.lock().unwrap().is_none(),
-        "release fence injected"
+        "custody loss injected at fresh call {fresh_call}"
     );
     let observed = events(&frame);
     assert_eq!(
