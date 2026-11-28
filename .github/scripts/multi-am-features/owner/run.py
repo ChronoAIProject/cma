@@ -219,11 +219,10 @@ class Fixture:
             raise ValueError('prepared_forward_manager_required')
         name = 'am-' + am + '-0'
         child, origin = self.client.forwards[(name, 8080)]
-        if child.poll() is None:
-            return {'outcome': 'running'}
+        was_running = child.poll() is None
         if self.client.forward(name, 8080, renew=True) != origin:
             raise RuntimeError('prepared_forward_origin_changed')
-        return {'outcome': 'reopened'}
+        return {'outcome': 'renewed_running' if was_running else 'reopened'}
 
     def ownerOf(self, agentId=None, agent_id=None, **_):
         identity=agentId or agent_id
