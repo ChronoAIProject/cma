@@ -39,7 +39,7 @@ use tracing::Instrument;
 use utoipa::ToSchema;
 
 #[path = "callback_media_refusals.rs"]
-mod media_refusals;
+pub(super) mod media_refusals;
 
 const SOURCE: &str = "nyxid_relay";
 
@@ -246,7 +246,41 @@ async fn admit_callback(
     .unwrap_or_else(|| observe(source, &verified.payload, state.media_enabled));
     let mut facts = match observation {
         Ok(Observation::Message(facts)) => facts,
-        Ok(Observation::Refused(reason)) => return Err(refuse_media(reason).await),
+        Ok(Observation::Refused(reason)) => {
+            let response = refuse_media(reason).await;
+            if response.status() == StatusCode::ACCEPTED
+                && receipt.is_some()
+                && !state.media_enabled
+                && reason == Refusal::AttachmentUnsupported
+                && verified.callback_deadline > time::OffsetDateTime::now_utc().unix_timestamp()
+                && media_refusals::eligible_disabled_photo(
+                    source,
+                    channel.definition.partition.key,
+                    &verified,
+                )
+            {
+                if let Some(event) = &media_event_id {
+                    let address = cmaeg_core::seal::ReplyAddress::NyxidRelay {
+                        platform,
+                        message_id: verified.payload.message_id.clone(),
+                        route_id: verified.payload.conversation.id.clone(),
+                        reply_token: verified.reply_token.clone(),
+                        reply_token_expires_at: verified.reply_expires_at,
+                        thread_reply: false,
+                    };
+                    super::telegram_refusal_notice::send(
+                        state,
+                        &channel,
+                        event,
+                        &verified.payload.timestamp,
+                        &address,
+                        "Attachments are unavailable. Please send your message as text.",
+                    )
+                    .await;
+                }
+            }
+            return Err(response);
+        }
         Err(error) => return Err(reject(error)),
     };
     if crate::interactions::lark::supported(platform) {
