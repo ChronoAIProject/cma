@@ -244,6 +244,18 @@ impl Fixture {
             .unwrap();
     }
 
+    fn original_receipt(&self) -> CommandReceiptView {
+        let receipt = &self.source.receipt;
+        CommandReceiptView {
+            command_id: receipt.envelope.command_id.clone(),
+            agent_id: receipt.envelope.agent_id.clone(),
+            response_id: receipt.response_id.clone(),
+            admitted_at: receipt.admitted_at.clone(),
+            agent_order: receipt.agent_order,
+            event_cursor: receipt.event_cursor,
+        }
+    }
+
     async fn observe(&self) -> ResponseControlObservation {
         self.service
             .observe_response_controls(
@@ -295,10 +307,7 @@ async fn onboarding_first_message_completes_with_its_original_receipt() {
         )
         .await;
         let observed = f.observe().await;
-        assert_eq!(
-            observed.response.receipt,
-            CommandStatusView::from_record(&f.source).receipt
-        );
+        assert_eq!(observed.response.receipt, f.original_receipt());
         assert_eq!(observed.response.status, AgentResponseStatus::Completed);
         assert!(!observed.target_active);
         let agent = f.store.get_agent(&f.agent.id).await.unwrap().unwrap();
@@ -477,10 +486,7 @@ async fn onboarding_first_message_survives_slow_startup() {
     )
     .await;
     let observed = f.observe().await;
-    assert_eq!(
-        observed.response.receipt,
-        CommandStatusView::from_record(&f.source).receipt
-    );
+    assert_eq!(observed.response.receipt, f.original_receipt());
     assert_eq!(observed.response.status, AgentResponseStatus::Completed);
     assert_eq!(
         f.store
