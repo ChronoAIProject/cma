@@ -170,6 +170,22 @@ Coverage grows page by page and currently includes Event Gateway
 logged in the terminal; writes are refused with `501` and nothing is persisted.
 Fixture mode never reaches production and is absent from builds and tests.
 
+### Message Task Audit
+
+Agent Manager audits newly admitted message tasks from `2026-11-24T16:00:00Z`
+by default. The default has no admission end time and flags unresolved tasks
+for review after 3,600 seconds. Restarts use the same cutoff.
+
+Set `CHRONO_TASK_AUDIT_SELECTION` to a JSON object with `from`, optional `to`,
+and `overdue_seconds` to select a different cohort. Use canonical UTC timestamps.
+The start is inclusive and the end is exclusive. Set the variable to JSON
+`null` to disable background sampling. Invalid values fail startup validation.
+
+Run the `am-command-cohort-index-v1` migration before sampling. The sampler
+reads the existing index and reports a sample failure if the index is missing
+or the query exceeds its 10,000-task, 16 MiB of receipt data, or 10-second limit.
+The task audit CLI takes an explicit selection.
+
 ### Local Checks
 
 After installing frontend dependencies, run the core frontend checks from the
