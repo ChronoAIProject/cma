@@ -135,6 +135,7 @@ export function ConsoleContent({
     },
   });
   const ready = agent.state.status === 'ready' ? agent.state : undefined;
+  const historyReady = ready && !ready.historyLoading && !ready.historyUnavailable;
   const deleted = ready?.detail.id === selectedAgent && ready?.detail.status === 'deleted';
   useDraftAccess(user.id, selectedAgent, agentAccess.state, deleted);
   useEffect(() => {
@@ -439,11 +440,7 @@ export function ConsoleContent({
                 navigation={navigation}
                 currentAgent={ready?.detail}
                 currentActivity={ready?.activityStatus}
-                currentTurnId={
-                  ready?.historyLoading || ready?.historyUnavailable
-                    ? undefined
-                    : ready?.conversation.latestTurnId
-                }
+                currentTurnId={historyReady ? ready.conversation.latestTurnId : undefined}
                 permissions={permissions}
                 pending={actions.pending}
                 busySandboxIds={actions.busySandboxIds}
