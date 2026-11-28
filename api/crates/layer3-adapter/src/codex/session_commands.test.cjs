@@ -8,11 +8,13 @@ const { join } = require("node:path");
 const { test } = require("node:test");
 const { bridgePath } = require("./persist_conversations.cjs");
 const { sessionCommands } = require("./session_commands.cjs");
+const { sessionCommands: candidateSessionCommands } = require("./session_commands_2_12_1.cjs");
 const { stop } = require("./native_tools_fixture.cjs");
 const { controlledBinary, control } = require("./native_control_fixture.cjs");
 
 test("session catalogue patch refuses unknown provider source", () => {
   assert.throws(() => sessionCommands("unknown"), /Unexpected ACP source/);
+  assert.throws(() => candidateSessionCommands("unknown"), /Unexpected codex-acp 2\.12\.1 source/);
 });
 
 function connect(program, directory, home, binary) {
@@ -53,10 +55,22 @@ function connect(program, directory, home, binary) {
   };
 }
 
-test("pinned session advertises real commands, refreshes skills and executes native goal and skill semantics", { timeout: 120000 }, async () => {
+const candidateSource = process.env.CMA_ACP_2_12_1_SOURCE;
+test("pinned session advertises real commands, refreshes skills and executes native goal and skill semantics", { timeout: 120000 }, async (t) => {
   const binary = process.env.CMA_CODEX_TEST_BINARY ?? "/usr/local/bin/codex";
-  assert.match(execFileSync(binary, ["--version"], { encoding: "utf8" }).trim(), /^codex-cli 0\.(147|165)\.0$/);
+  const binaryVersion = execFileSync(binary, ["--version"], { encoding: "utf8" }).trim();
+  if (candidateSource) assert.equal(binaryVersion, "codex-cli 0.172.0");
+  else assert.match(binaryVersion, /^codex-cli 0\.(147|165)\.0$/);
   const directory = mkdtempSync(join(tmpdir(), "cma-session-commands-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  let program = process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath;
+  if (candidateSource) {
+    const source = readFileSync(candidateSource, "utf8");
+    const patched = candidateSessionCommands(source);
+    assert.throws(() => candidateSessionCommands(patched), /Unexpected codex-acp 2\.12\.1 source/);
+    program = join(directory, "codex-acp-candidate.mjs");
+    writeFileSync(program, patched);
+  }
   const home = join(directory, "agent-home"); mkdirSync(home); mkdirSync(join(home, "skills"));
   const calls = []; let error, sessionId, pauseGoal = false;
   const server = createServer(async (request, response) => {
@@ -92,12 +106,13 @@ test("pinned session advertises real commands, refreshes skills and executes nat
     'base_url = "http://127.0.0.1:' + server.address().port + '/v1"',
     'wire_api = "responses"', 'requires_openai_auth = false',
   ].join("\n"));
-  const bridge = connect(process.env.CMA_ACP_TEST_BRIDGE ?? bridgePath, directory, home, controlledBinary(directory, binary));
+  const bridge = connect(program, directory, home, controlledBinary(directory, binary));
   const catalogue = frame => frame.params?.update?.sessionUpdate === "available_commands_update";
   const names = frame => frame.params.update.availableCommands.map(command => command.name);
   const prompt = text => bridge.call("session/prompt", { sessionId, prompt: [{ type: "text", text }] });
   try {
-    await bridge.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+    const initialization = await bridge.call("initialize", { protocolVersion: 1, clientCapabilities: {} });
+    assert.equal(initialization.protocolVersion, 1);
     sessionId = (await bridge.call("session/new", { cwd: directory, mcpServers: [] })).sessionId;
     await bridge.waitFor(catalogue);
     const reported = names(bridge.frames.find(catalogue));
@@ -121,8 +136,15 @@ test("pinned session advertises real commands, refreshes skills and executes nat
     await control(directory, "skills/config/write", {
       path: join(home, "skills", "command-proof", "SKILL.md"), enabled: false,
     });
+    const beforeSkills = bridge.frames.length;
+    const beforeSkillsCalls = calls.length;
     await prompt("/skills");
     await bridge.waitFor(frame => bridge.frames.indexOf(frame) >= beforeDisable && catalogue(frame) && !names(frame).includes("$command-proof"));
+    const skillReport = bridge.frames.slice(beforeSkills).find(frame =>
+      /^(Available skills:|No skills configured\.)/.test(frame.params?.update?.content?.text ?? ""));
+    assert(skillReport, "the native /skills command must return the inventory");
+    assert(!skillReport.params.update.content.text.includes("command-proof"), "disabled skills stay out of /skills");
+    assert.equal(calls.length, beforeSkillsCalls, "/skills must not start a model turn");
     pauseGoal = true;
     await prompt("/goal Verify native goal dispatch");
     if (error) throw error;
@@ -139,6 +161,5 @@ test("pinned session advertises real commands, refreshes skills and executes nat
     if (error) throw error;
   } finally {
     await bridge.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
-    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
