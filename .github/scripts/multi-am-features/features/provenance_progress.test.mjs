@@ -105,6 +105,22 @@ test('provenance requires a held progress claim before submitting the peer write
   assert.deepEqual(state.read(), {active: false, prompt: null});
 });
 
+test('provenance adapter failures identify the control and still restore the original state', async t => {
+  const state = fixture();
+  const control = state.adapter.provenanceBackfill;
+  const cause = new Error('private control failure');
+  t.mock.method(state.adapter, 'provenanceBackfill', async request => {
+    if (request.action === 'sample') throw cause;
+    return control(request);
+  });
+  await assert.rejects(provenanceKnownAbort(state), {
+    message: 'provenance_progress_control_sample_failed', cause,
+  });
+  assert.deepEqual(state.actions, ['arm', 'restore']);
+  assert.deepEqual(state.writes, []);
+  assert.deepEqual(state.read(), {active: false, prompt: null});
+});
+
 function uncertainFixture({reusedSweep = false, lost = 5, confirmed = false} = {}) {
   const record = {agentId: 'agent', sandboxId: 'sandbox', operationId: 'operation'};
   const transaction = 'a'.repeat(64), previousSweep = 'b'.repeat(64);
@@ -167,7 +183,7 @@ test('provenance commit acknowledgement loss qualifies one new durable sweep', a
 test('provenance commit acknowledgement loss refuses reused sweeps, extra fault hits and a confirmed send', async () => {
   for (const [options, error] of [[{reusedSweep: true}, /provenance_progress_commit_sweep_reused/],
     [{lost: 10}, /provenance_progress_commit_receipt_unbound/],
-    [{confirmed: true}, /provenance_progress_commit_attribution_failed/]]) {
+    [{confirmed: true}, /provenance_progress_control_observe_commit_failed/]]) {
     const fixture = uncertainFixture(options);
     await assert.rejects(provenanceUnknownCommit(fixture), error);
     assert.equal(fixture.actions.at(-1), 'restore');

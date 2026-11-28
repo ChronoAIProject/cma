@@ -12,7 +12,7 @@ import {pollLifecycleOperation} from './lifecycle_operation.mjs';
 import {drainOwnerCase, neverReadyManagerCase, scaleManagerCase} from '../features/readiness.mjs';
 import {retainedLifecycle} from '../features/lifecycle_atomicity.mjs';
 import {runtimeLoss} from '../features/runtime_loss.mjs';
-import {lifecycleFailureSummary, lifecyclePollFailure} from '../failure.mjs';
+import {lifecycleFailureSummary, lifecyclePollFailure, provenanceRequestFailure} from '../failure.mjs';
 
 export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, queuedTurnHook,
   preparedHook, triggerHook, retirementHook, navigationHook, firstAgentHook} = {}) {
@@ -53,7 +53,13 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
   async function step(name, operation) {
     const started = performance.now(); const at = new Date().toISOString();
     try { const value = await operation(); result.steps.push({name, verdict: 'PASS', at, elapsed_ms: performance.now() - started, ...value}); await save(); return value; }
-    catch (error) {result.steps.push({name, verdict: 'FAIL', at, elapsed_ms: performance.now() - started, error: safeError(error)}); await save(); throw error;}
+    catch (error) {
+      const requestFailure = name.startsWith('provenance_progress_') && provenanceRequestFailure(error?.response);
+      result.steps.push({name, verdict: 'FAIL', at, elapsed_ms: performance.now() - started, error: safeError(error),
+        ...(requestFailure && {provenance_request_failure: requestFailure})});
+      await save();
+      throw error;
+    }
   }
   async function detail(am, record) {
     const r = await api.request(am, 'GET', `/api/v1/agents/${record.agentId}`);
@@ -98,7 +104,7 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
           if (raw.fixture !== 'prepared' || typeof adapter.repairPreparedForward !== 'function') return;
           try {
             const forward = await adapter.repairPreparedForward({am: peer});
-            if (['running', 'reopened'].includes(forward?.outcome)) {
+            if (['renewed_running', 'reopened'].includes(forward?.outcome)) {
               transientPollFailure.forward = forward.outcome;
             }
           } catch {
