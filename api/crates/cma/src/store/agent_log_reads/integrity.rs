@@ -78,7 +78,9 @@ impl LogReadIntegrity for PreparedIntegrity {
         agent_id: &AgentId,
         session: &mut ClientSession,
     ) -> Result<Option<ReadHead>, SandboxStoreError> {
-        read_head(store, agent_id, session, None).await
+        read_head(store, agent_id, session, None)
+            .await
+            .map(|view| view.map(|(head, _)| head))
     }
 }
 
@@ -92,8 +94,20 @@ impl LogReadIntegrity for CapturedIntegrity<'_> {
         agent_id: &AgentId,
         session: &mut ClientSession,
     ) -> Result<Option<ReadHead>, SandboxStoreError> {
-        read_head(store, agent_id, session, Some(self.0)).await
+        read_head(store, agent_id, session, Some(self.0))
+            .await
+            .map(|view| view.map(|(head, _)| head))
     }
+}
+
+pub(in crate::store) async fn read_response_head(
+    store: &MongoSandboxStore,
+    agent_id: &AgentId,
+    session: &mut ClientSession,
+) -> Result<(ReadHead, Agent), SandboxStoreError> {
+    read_head(store, agent_id, session, None)
+        .await?
+        .ok_or(SandboxStoreError::NotFound)
 }
 
 async fn read_head(
@@ -101,7 +115,7 @@ async fn read_head(
     agent_id: &AgentId,
     session: &mut ClientSession,
     expected: Option<&Agent>,
-) -> Result<Option<ReadHead>, SandboxStoreError> {
+) -> Result<Option<(ReadHead, Agent)>, SandboxStoreError> {
     use mongodb::{bson::doc, options::ReadConcern};
     let row = store
         .agents
@@ -139,13 +153,13 @@ async fn read_head(
             .map_err(super::transaction_error)?;
         let mut head = ReadHead::from_agent(&agent, false);
         head.segmented = Some(segmented);
-        return Ok(Some(head));
+        return Ok(Some((head, agent)));
     }
     // Keep the current trusted legacy proof authoritative. Its queries use
     // this same snapshot and cannot initiate preparation or quarantine writes.
     let trusted =
         super::super::agent_log_integrity::read::legacy_proof(store, &agent, &row, session).await?;
-    Ok(Some(ReadHead::from_agent(&agent, trusted)))
+    Ok(Some((ReadHead::from_agent(&agent, trusted), agent)))
 }
 
 /// Baseline for paired fixtures; production always validates shared metadata.

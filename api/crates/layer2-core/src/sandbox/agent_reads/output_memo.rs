@@ -8,7 +8,7 @@ use crate::sandbox::{
         AgentResponseLogStore,
     },
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, serde::Serialize)]
 struct Memo {
@@ -16,6 +16,9 @@ struct Memo {
     changes: BTreeMap<String, Vec<AgentOutputChange>>,
     tools: BTreeMap<String, AgentToolOutputState>,
     points: BTreeMap<u64, AgentLogEntry>,
+    covered_reads: BTreeSet<[u8; 32]>,
+    #[serde(skip)]
+    cacheable: bool,
 }
 impl Memo {
     fn bytes(&self) -> usize {
@@ -26,6 +29,8 @@ impl Memo {
             self.changes.clear();
             self.tools.clear();
             self.points.clear();
+            self.covered_reads.clear();
+            self.cacheable = false;
         }
     }
 }
@@ -37,6 +42,7 @@ pub(super) struct MemoReader<'a> {
     reader: Option<Box<dyn AgentOutputReader + 'a>>,
     memo: Arc<std::sync::Mutex<Memo>>,
     metadata: AgentOutputMetadata,
+    operation_key: Option<[u8; 32]>,
 }
 
 impl<'a> MemoReader<'a> {
@@ -45,21 +51,29 @@ impl<'a> MemoReader<'a> {
         agent: &'a Agent,
         turn: Option<u64>,
         flight: &OutputFlight<'_>,
+        operation_key: Option<[u8; 32]>,
     ) -> Result<Option<Self>, AgentReadError> {
         if let Some(memo) = flight.get::<Memo>(b"indexed") {
-            return Ok(Some(Self {
+            let mut current = (*memo).clone();
+            current.cacheable = true;
+            let mut reader = Self {
                 store,
                 agent,
                 turn,
                 reader: None,
                 metadata: memo.metadata.clone(),
-                memo: Arc::new(std::sync::Mutex::new((*memo).clone())),
-            }));
+                memo: Arc::new(std::sync::Mutex::new(current)),
+                operation_key,
+            };
+            if operation_key.is_some_and(|key| !memo.covered_reads.contains(&key)) {
+                reader.open_source().await.map_err(capture_open_error)?;
+            }
+            return Ok(Some(reader));
         }
         let Some(reader) = store
             .agent_output_reader(agent, turn)
             .await
-            .map_err(log_store_error)?
+            .map_err(capture_open_error)?
         else {
             return Ok(None);
         };
@@ -75,33 +89,45 @@ impl<'a> MemoReader<'a> {
                 changes: BTreeMap::new(),
                 tools: BTreeMap::new(),
                 points: BTreeMap::new(),
+                covered_reads: BTreeSet::new(),
+                cacheable: true,
             })),
+            operation_key,
         }))
     }
     pub(super) fn commit(&self) -> impl FnOnce(&OutputFlight<'_>) + use<> {
         let memo = self.memo.clone();
+        let key = self.operation_key;
         move |flight| {
-            let memo = memo.lock().unwrap().clone();
+            let mut memo = memo.lock().unwrap().clone();
+            if let Some(key) = key.filter(|_| memo.cacheable && memo.covered_reads.len() < 64) {
+                memo.covered_reads.insert(key);
+            }
             if memo.bytes() <= crate::sandbox::agent_observation::MAX_PAGE_BYTES {
                 flight.insert(b"indexed", memo);
             }
         }
     }
+    async fn open_source(&mut self) -> Result<(), SandboxStoreError> {
+        let reader = self
+            .store
+            .agent_output_reader(self.agent, self.turn)
+            .await?
+            .ok_or_else(|| SandboxStoreError::Corrupt("indexed source disappeared".into()))?;
+        if serde_json::to_vec(reader.metadata()).ok() != serde_json::to_vec(&self.metadata).ok() {
+            return Err(SandboxStoreError::SequenceConflict);
+        }
+        self.reader = Some(reader);
+        Ok(())
+    }
     async fn reader(&mut self) -> Result<&mut Box<dyn AgentOutputReader + 'a>, SandboxStoreError> {
         if self.reader.is_none() {
-            self.reader = Some(
-                self.store
-                    .agent_output_reader(self.agent, self.turn)
-                    .await?
-                    .ok_or_else(|| {
-                        SandboxStoreError::Corrupt("indexed source disappeared".into())
-                    })?,
-            );
-            if serde_json::to_vec(self.reader.as_ref().unwrap().metadata()).ok()
-                != serde_json::to_vec(&self.metadata).ok()
-            {
-                return Err(SandboxStoreError::SequenceConflict);
+            if self.operation_key.is_some() {
+                return Err(SandboxStoreError::Corrupt(
+                    "indexed cache did not cover its verified read".into(),
+                ));
             }
+            self.open_source().await?;
         }
         Ok(self.reader.as_mut().unwrap())
     }
@@ -172,9 +198,11 @@ impl AgentOutputReader for MemoReader<'_> {
         after: u64,
         limit: u16,
     ) -> Result<Vec<AgentLogEntry>, SandboxStoreError> {
+        self.memo.lock().unwrap().cacheable = false;
         self.reader().await?.source_page(after, limit).await
     }
     async fn open_message(&mut self) -> Result<String, SandboxStoreError> {
+        self.memo.lock().unwrap().cacheable = false;
         self.reader().await?.open_message().await
     }
 }

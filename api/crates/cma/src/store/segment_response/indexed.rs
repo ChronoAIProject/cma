@@ -54,30 +54,54 @@ pub(super) async fn open<'a>(
         // format decision; indexed reads require an exact captured Agent.
         return Ok(None);
     }
-    if snapshot_agent != *agent {
+    let advanced = snapshot_agent != *agent;
+    if advanced && !advance::may_have_advanced(agent, &snapshot_agent, turn) {
         return Err(SandboxStoreError::SequenceConflict);
     }
-    let captured = capture::capture(store, agent, &mut session, capture::CaptureMode::Snapshot)
-        .await
-        .map_err(transaction)?;
+    let captured = capture::capture(
+        store,
+        &snapshot_agent,
+        &mut session,
+        capture::CaptureMode::Snapshot,
+    )
+    .await
+    .map_err(transaction)?;
     let mut reader = Reader {
         store,
         session,
         captured,
         message_checkpoint: row.remove(crate::store::agent_conversation_store::checkpoint::FIELD),
         metadata: AgentOutputMetadata {
-            agent_id: agent.id.clone(),
-            through: agent.conversation.last_seq,
-            created_at: agent.created_at.clone(),
-            runtime_generation: agent.conversation.runtime_generation,
-            active_turn: agent.conversation.active_turn,
-            initial_model: agent.profile.content.model.clone(),
+            agent_id: snapshot_agent.id.clone(),
+            through: snapshot_agent.conversation.last_seq,
+            created_at: snapshot_agent.created_at.clone(),
+            runtime_generation: snapshot_agent.conversation.runtime_generation,
+            active_turn: snapshot_agent.conversation.active_turn,
+            initial_model: snapshot_agent.profile.content.model.clone(),
             turn: None,
             index: None,
         },
     };
     if let Some(turn) = turn {
         reader.load_turn(turn).await?;
+    }
+    if advanced {
+        let sequences: Vec<_> =
+            (agent.conversation.last_seq + 1..=snapshot_agent.conversation.last_seq).collect();
+        let rows = reader.source_points(&sequences).await?;
+        if let Some(open_bytes) = reader
+            .metadata
+            .index
+            .as_ref()
+            .map(|index| &index.totals.text)
+            .filter(|text| text.is_open())
+            .map(|text| text.open_bytes as usize)
+        {
+            if reader.open_message().await?.len() != open_bytes {
+                return Err(corrupt());
+            }
+        }
+        return Err(advance::classify(agent, &snapshot_agent, turn, &rows));
     }
     Ok(Some(Box::new(reader)))
 }

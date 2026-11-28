@@ -212,7 +212,8 @@ async fn semantic_stream(
         .unwrap()
         .command
         .receipt;
-    let response = super::super::stream::open(state, authorization, receipt, None, None).await;
+    let response =
+        super::super::stream::open(state, authorization, receipt, None, None, false).await;
     (f, response)
 }
 

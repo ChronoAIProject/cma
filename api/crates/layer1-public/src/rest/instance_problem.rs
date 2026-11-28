@@ -144,7 +144,9 @@ impl From<AgentReadError> for InstanceProblem {
                 Self::HistoryExport(super::AgentHistoryExportError::Unavailable)
             }
             AgentReadError::RuntimeCapacity(capacity) => Self::RuntimeCapacity(capacity),
-            AgentReadError::Corrupt(_) | AgentReadError::Unavailable(_) => Self::Unavailable,
+            AgentReadError::Corrupt(_)
+            | AgentReadError::Unavailable(_)
+            | AgentReadError::CaptureAdvanced => Self::Unavailable,
         }
     }
 }

@@ -307,15 +307,24 @@ async fn unbound_submit_can_bind_before_first_snapshot_without_source_probe() {
 
 #[tokio::test]
 async fn replay_rebuilds_indexed_output_when_custody_expires_during_a_page() {
-    check_indexed_handoff("answer".into(), false).await;
+    check_indexed_handoff("answer".into(), None).await;
 }
 
 #[tokio::test]
 async fn replay_pagination_error_releases_recovery_before_eof() {
-    check_indexed_handoff("\\".repeat(OUTPUT_PAGE_BYTES / 2 + 1), true).await;
+    check_indexed_handoff(
+        "\\".repeat(OUTPUT_PAGE_BYTES / 2 + 1),
+        Some("response_pagination_required"),
+    )
+    .await;
 }
 
-async fn check_indexed_handoff(answer: String, expects_pagination: bool) {
+#[tokio::test]
+async fn replay_projection_failure_during_custody_loss_does_not_read_again() {
+    check_indexed_handoff("answer".into(), Some("response_observation_unavailable")).await;
+}
+
+async fn check_indexed_handoff(answer: String, expected_error: Option<&'static str>) {
     use layer2_core::sandbox::agent_observation::observation_scope;
 
     let data = make({
@@ -387,20 +396,24 @@ async fn check_indexed_handoff(answer: String, expects_pagination: bool) {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["x-cma-response-id"], id);
 
+    let fail_projection = expected_error == Some("response_observation_unavailable");
     data.source.counts.stall.store(true, Ordering::SeqCst);
+    data.source
+        .counts
+        .fail_points
+        .store(fail_projection, Ordering::SeqCst);
     let collected = tokio::spawn(async move {
         let mut body = response.into_body().into_data_stream();
         let mut released = Vec::new();
         while let Some(frame) = body.next().await {
             let frame = frame.unwrap();
             let events = events(&frame);
-            if events
-                .iter()
-                .any(|event| event["code"] == "response_pagination_required")
-            {
-                assert!(expects_pagination);
+            if events.iter().any(|event| event["type"] == "error") {
                 assert_eq!(events.len(), 1);
-                assert_eq!(events[0]["type"], "error");
+                assert_eq!(events[0]["code"].as_str(), expected_error);
+                assert!(!frame
+                    .windows(b"private output fixture".len())
+                    .any(|part| part == b"private output fixture"));
                 assert!(!std::str::from_utf8(&frame)
                     .unwrap()
                     .lines()
@@ -411,7 +424,7 @@ async fn check_indexed_handoff(answer: String, expects_pagination: bool) {
             }
             released.extend(events);
         }
-        assert!(!expects_pagination, "pagination refusal must be explicit");
+        assert!(expected_error.is_none(), "expected a connection error");
         assert!(released.iter().all(|event| event["type"] != "error"));
         for (index, event) in released.iter().enumerate() {
             assert_eq!(event["sequence_number"], (index + 1) as u64);
@@ -426,6 +439,7 @@ async fn check_indexed_handoff(answer: String, expects_pagination: bool) {
     )
     .await
     .expect("indexed page entered before closure");
+    let opens = data.source.counts.opens.load(Ordering::SeqCst);
     custody.revoke();
     data.source.counts.stall.store(false, Ordering::SeqCst);
     data.source.counts.release.notify_one();
@@ -433,6 +447,9 @@ async fn check_indexed_handoff(answer: String, expects_pagination: bool) {
         .await
         .unwrap()
         .unwrap();
+    if fail_projection {
+        assert_eq!(data.source.counts.opens.load(Ordering::SeqCst), opens);
+    }
 }
 
 #[tokio::test]

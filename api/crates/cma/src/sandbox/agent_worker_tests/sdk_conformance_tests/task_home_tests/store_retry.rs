@@ -148,6 +148,7 @@ fn error_class(error: &SandboxStoreError) -> &'static str {
         CheckpointInProgress => "CheckpointInProgress",
         LifecycleBusy { .. } => "LifecycleBusy",
         SequenceConflict => "SequenceConflict",
+        CaptureAdvanced => "CaptureAdvanced",
         AgentLogCapacityExceeded => "AgentLogCapacityExceeded",
         LimitReached { .. } => "LimitReached",
         GlobalCapacityReached => "GlobalCapacityReached",

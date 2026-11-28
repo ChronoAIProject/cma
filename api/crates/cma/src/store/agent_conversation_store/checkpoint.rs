@@ -72,6 +72,16 @@ pub(in crate::store) fn finish_published_text(
     if !checkpoint.matches(current) {
         return Err(SandboxStoreError::Conflict);
     }
+    // The recorder already flushes the active message in its terminal batch.
+    if let Some(AgentLogKind::AgentMessage { content }) = logs.first().map(|entry| &entry.kind) {
+        return if content == text {
+            Ok(())
+        } else {
+            Err(SandboxStoreError::Corrupt(
+                "terminal message differs from its published checkpoint".into(),
+            ))
+        };
+    }
     let position = logs
         .iter()
         .position(|entry| {

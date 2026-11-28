@@ -1,10 +1,14 @@
 //! Response observation defers source work until after the HTTP headers.
-use super::{error, projection, stream, ResponsesV2State};
+use super::{
+    error, projection,
+    read_cycle::{indexed_read_key, read_category, read_cycle, FirstFailure, ReadFailure},
+    stream, ResponsesV2State,
+};
 use crate::stream_telemetry::{CloseReason, Contract, ContractKind, Kind, Poll};
 use axum::response::{sse::Event, Response};
 use futures_util::stream::unfold;
 use layer2_core::sandbox::{
-    agent_io::{AgentResponseReading, CommandReceiptView, ObservedResponseReadError},
+    agent_io::{AgentResponseReading, CommandReceiptView},
     agent_observation::{durable_read_scope, AgentObservationSubscription, OBSERVATION_INTERVAL},
     AgentEventStreamAuthorization, AgentEventStreamHeader, AgentReadError,
     AgentResponseObservation,
@@ -21,7 +25,9 @@ pub(super) async fn open(
     mut authorization: AgentEventStreamAuthorization,
     receipt: CommandReceiptView,
     after: Option<u64>,
+    post: bool,
 ) -> Response {
+    let mut first_failure = FirstFailure::new(&receipt, post);
     let Some(response_id) = receipt.response_id.as_ref().map(ToString::to_string) else {
         return error::unavailable();
     };
@@ -34,7 +40,16 @@ pub(super) async fn open(
     };
     let mut observation = match state.reads.observe_output_stream(&mut authorization) {
         Ok(value) => value,
-        Err(err) => return error::read(err),
+        Err(err) => {
+            first_failure.record(
+                "paged",
+                next,
+                ("subscription_open", read_category(&err)),
+                false,
+                "none",
+            );
+            return error::read(err);
+        }
     };
     let mut durable_recovery = None;
     if let Err(err) = state.reads.validate_event_stream(&authorization).await {
@@ -43,6 +58,17 @@ pub(super) async fn open(
             &mut authorization,
             observation.as_ref(),
             &err,
+        );
+        first_failure.record(
+            "paged",
+            next,
+            ("header_read", read_category(&err)),
+            observation.is_some(),
+            if durable_recovery.is_some() {
+                "durable"
+            } else {
+                "none"
+            },
         );
         if durable_recovery.is_none() {
             return error::read(err);
@@ -56,6 +82,7 @@ pub(super) async fn open(
     let evidence = Contract::new(ContractKind::ResponsesV2);
     let open = Open {
         evidence: evidence.clone(),
+        first_failure,
         observation,
         durable_recovery,
         state,
@@ -92,7 +119,7 @@ pub(super) async fn open(
                         .validate_event_stream(&open.authorization)
                         .await
                     {
-                        if open.resume_from_durable_history(&error) {
+                        if open.recover_after("frame_authorization", &error) {
                             continue;
                         }
                         open.evidence.record(CloseReason::read(&error));
@@ -125,7 +152,7 @@ pub(super) async fn open(
                         // Every notice checks current command state even if its
                         // durable log coordinate is unchanged.
                         if let Err(error) = observation.changed().await {
-                            if open.resume_from_durable_history(&error) {
+                            if open.recover_after("subscription_notice", &error) {
                                 continue;
                             }
                             open.evidence.record(CloseReason::read(&error));
@@ -176,6 +203,7 @@ struct Seen {
 
 struct Open {
     evidence: Contract,
+    first_failure: FirstFailure,
     observation: Option<AgentObservationSubscription>,
     durable_recovery: Option<OwnedSemaphorePermit>,
     state: ResponsesV2State,
@@ -215,41 +243,87 @@ impl Open {
         true
     }
 
-    async fn refresh(&mut self) -> Result<bool, &'static str> {
-        let result = if self.durable_recovery.is_some() {
-            durable_read_scope(self.refresh_once()).await
-        } else {
-            match self.refresh_once().await {
-                Err(RefreshError::Read(ObservedResponseReadError::Header(ref error)))
-                    if self.resume_from_durable_history(error) =>
-                {
-                    durable_read_scope(self.refresh_once()).await
-                }
-                result => result,
-            }
-        };
-        result.map_err(|error| match error {
-            RefreshError::Read(ObservedResponseReadError::Command(error)) => {
-                self.evidence.record(CloseReason::command(&error));
-                "response_observation_unavailable"
-            }
-            RefreshError::Read(ObservedResponseReadError::Header(error)) => {
-                self.evidence.record(CloseReason::read(&error));
-                match error {
-                    AgentReadError::InvalidPage => "invalid_replay_cursor",
-                    _ => "response_observation_unavailable",
-                }
-            }
-            RefreshError::Unavailable => "response_observation_unavailable",
-        })
+    fn recover_after(&mut self, stage: &'static str, error: &AgentReadError) -> bool {
+        let custody = self.observation.is_some();
+        let recovery = self.resume_from_durable_history(error);
+        self.first_failure.record(
+            "paged",
+            self.next,
+            (stage, read_category(error)),
+            custody,
+            if recovery { "durable" } else { "none" },
+        );
+        recovery
     }
 
-    async fn refresh_once(&mut self) -> Result<bool, RefreshError> {
+    async fn refresh(&mut self) -> Result<bool, &'static str> {
+        let deadline = self.authorization.read_deadline();
+        let grant_deadline = self.authorization.revalidation_deadline();
+        let page = read_cycle(
+            self,
+            deadline,
+            grant_deadline,
+            |open| {
+                Box::pin(async {
+                    if open.durable_recovery.is_some() {
+                        durable_read_scope(open.refresh_once()).await
+                    } else {
+                        open.refresh_once().await
+                    }
+                })
+            },
+            |open, failure, available| {
+                let custody = open.observation.is_some();
+                let retry = available
+                    && match failure {
+                        ReadFailure::Header(error) | ReadFailure::Release(error) => {
+                            open.resume_from_durable_history(error)
+                        }
+                        _ => failure.advanced(),
+                    };
+                open.first_failure.record(
+                    "paged",
+                    open.next,
+                    failure.diagnostic(),
+                    custody,
+                    match (retry, failure.advanced()) {
+                        (true, true) => "recapture",
+                        (true, false) => "durable",
+                        _ => "none",
+                    },
+                );
+                retry
+            },
+        )
+        .await
+        .map_err(|failure| {
+            self.evidence.record(failure.close_reason());
+            if matches!(
+                failure,
+                ReadFailure::Header(AgentReadError::InvalidPage)
+                    | ReadFailure::Source(AgentReadError::InvalidPage)
+            ) {
+                "invalid_replay_cursor"
+            } else {
+                "response_observation_unavailable"
+            }
+        })?;
+        let Some(page) = page else { return Ok(false) };
+        self.pending = page.pending;
+        self.terminal = page.terminal;
+        self.more = page.more;
+        self.last = page.last;
+        self.pagination_required = page.pagination_required;
+        self.seen = page.seen;
+        Ok(true)
+    }
+
+    async fn refresh_once(&self) -> Result<Option<PreparedRefresh>, ReadFailure> {
         let id = self
             .receipt
             .response_id
             .as_ref()
-            .ok_or(RefreshError::Unavailable)?;
+            .ok_or(ReadFailure::Receipt)?;
         // Always re-read current command state and authority, including on quiet
         // heads: queued rejection and revocation need not append Agent events.
         let (command, header) = if self.observation.is_some() {
@@ -257,101 +331,113 @@ impl Open {
                 .commands
                 .response_for_observed_stream(&self.state.reads, &self.authorization, id)
                 .await
-                .map_err(RefreshError::Read)?
+                .map_err(ReadFailure::from)?
         } else {
             let command = self
                 .state
                 .commands
                 .response_for_stream(&self.authorization, id)
                 .await
-                .map_err(ObservedResponseReadError::Command)
-                .map_err(RefreshError::Read)?;
+                .map_err(ReadFailure::Command)?;
             let header = self
                 .state
                 .reads
                 .event_stream_header(&self.authorization)
-                .await?;
+                .await
+                .map_err(ReadFailure::Header)?;
             (command, header)
         };
         if command.command.receipt != self.receipt {
-            return Err(RefreshError::Unavailable);
+            return Err(ReadFailure::Receipt);
         }
         let current = Seen { command, header };
         if self.seen.as_ref() == Some(&current) {
-            return Ok(false);
+            return Ok(None);
         }
         let history = if let Some(turn) = current.command.command.turn_sequence {
             let origin = self.state.agent_page_origin.clone();
             let reading = current.command.clone();
             let next = self.next;
+            let key =
+                indexed_read_key(&reading, Some(next), self.authorization.is_personal_owner())?;
             let observation = self
                 .state
                 .reads
-                .with_response_observation(&self.authorization, turn, move |source| {
+                .read_response_observation(&self.authorization, turn, Some(key), move |source| {
                     Box::pin(async move { indexed::read(source, &origin, reading, next).await })
                 })
-                .await?;
+                .await
+                .map_err(ReadFailure::from)?;
             match observation {
                 AgentResponseObservation::Indexed(page) => {
-                    self.terminal = page.terminal;
-                    self.more = page.more;
-                    self.last = Some(page.last);
-                    self.pagination_required = page.pagination_required;
-                    self.pending = page.events.into();
-                    self.seen =
-                        (!page.more && page.through == current.header.head).then_some(current);
-                    return Ok(true);
+                    return Ok(Some(PreparedRefresh {
+                        terminal: page.terminal,
+                        more: page.more,
+                        last: Some(page.last),
+                        pagination_required: page.pagination_required,
+                        pending: page.events.into(),
+                        seen: (!page.more && page.through == current.header.head)
+                            .then_some(current),
+                    }));
                 }
                 AgentResponseObservation::Legacy(history) => history,
             }
         } else {
             self.state
                 .reads
-                .response_event_stream_snapshot(&self.authorization, None)
-                .await?
+                .read_unbound_response_snapshot(&self.authorization)
+                .await
+                .map_err(ReadFailure::from)?
         };
         let bound = current.command.command.turn_sequence.is_some();
         let response =
             super::shared_projection::project(&self.state, current.command.clone(), &history)
-                .ok_or(RefreshError::Unavailable)?;
-        self.terminal = response.terminal();
-        self.pending = projection::events(&response, bound).into();
-        self.last = self
-            .pending
-            .back()
-            .and_then(|v| v["sequence_number"].as_u64());
-        self.more = false;
+                .ok_or(ReadFailure::Projection)?;
+        let events = projection::events(&response, bound);
+        let last = events.last().and_then(|v| v["sequence_number"].as_u64());
+        let mut prepared = PreparedRefresh {
+            pending: VecDeque::new(),
+            terminal: response.terminal(),
+            more: false,
+            last,
+            pagination_required: false,
+            seen: None,
+        };
         if self.observation.is_some() || self.durable_recovery.is_some() {
-            let all = std::mem::take(&mut self.pending);
             let mut bytes = 0;
-            for event in all.into_iter().filter(|event| {
+            for event in events.into_iter().filter(|event| {
                 event["sequence_number"]
                     .as_u64()
                     .is_some_and(|seq| seq >= self.next)
             }) {
                 let size = serde_json::to_vec(&event)
-                    .map_err(|_| RefreshError::Unavailable)?
+                    .map_err(|_| ReadFailure::Projection)?
                     .len();
                 if size > layer2_core::sandbox::agent_observation::MAX_PAGE_BYTES {
-                    self.pagination_required = true;
-                    self.terminal = false;
+                    prepared.pagination_required = true;
+                    prepared.terminal = false;
                     break;
                 }
-                if self.pending.len() == 200
+                if prepared.pending.len() == 200
                     || bytes + size > layer2_core::sandbox::agent_observation::MAX_PAGE_BYTES
                 {
-                    self.more = true;
-                    self.terminal = false;
+                    prepared.more = true;
+                    prepared.terminal = false;
                     break;
                 }
                 bytes += size;
-                self.pending.push_back(event);
+                prepared.pending.push_back(event);
             }
+        } else {
+            prepared.pending = events.into();
         }
-        // An append between the cheap head read and the source read forces one
-        // fresh observation; it cannot cache a mismatched source coordinate.
-        self.seen = (!self.more && history.head == current.header.head).then_some(current);
-        Ok(true)
+        self.state
+            .reads
+            .validate_event_stream(&self.authorization)
+            .await
+            .map_err(ReadFailure::Release)?;
+        prepared.seen = (!prepared.more && history.head == current.header.head).then_some(current);
+        Ok(Some(prepared))
     }
 
     fn fail(mut self, code: &'static str) -> Option<(Result<Event, Infallible>, Self)> {
@@ -372,15 +458,13 @@ impl Open {
     }
 }
 
-enum RefreshError {
-    Read(ObservedResponseReadError),
-    Unavailable,
-}
-
-impl From<AgentReadError> for RefreshError {
-    fn from(error: AgentReadError) -> Self {
-        Self::Read(ObservedResponseReadError::Header(error))
-    }
+struct PreparedRefresh {
+    pending: VecDeque<Value>,
+    terminal: bool,
+    more: bool,
+    last: Option<u64>,
+    pagination_required: bool,
+    seen: Option<Seen>,
 }
 
 fn acquire_durable_recovery(

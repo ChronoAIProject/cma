@@ -7,16 +7,14 @@ use layer2_core::sandbox::{
 };
 
 use super::{
-    agent_log_reads::{
-        integrity::{LogReadIntegrity, PreparedIntegrity},
-        read_bounded,
-    },
+    agent_log_reads::{integrity::read_response_head, read_bounded},
     sandbox_mongo::MongoSandboxStore,
 };
 
 const MAX_ENTRIES: u64 = 200;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
 
+mod advance;
 mod boundary;
 mod indexed;
 mod suffix;
@@ -82,12 +80,21 @@ impl AgentResponseLogStore for MongoSandboxStore {
             .snapshot(true)
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-        let head = PreparedIntegrity
-            .read_head(self, &agent.id, &mut session)
-            .await?
-            .ok_or(SandboxStoreError::NotFound)?;
-        if head.last_seq != agent.conversation.last_seq {
+        let (head, captured) = read_response_head(self, &agent.id, &mut session).await?;
+        if captured.revision == agent.revision && captured != *agent {
             return Err(SandboxStoreError::SequenceConflict);
+        }
+        if head.last_seq != agent.conversation.last_seq {
+            return Err(advance::legacy(
+                self,
+                agent,
+                &captured,
+                &head,
+                turn_sequence,
+                None,
+                &mut session,
+            )
+            .await?);
         }
         if !head.trusted {
             attempt.finish(Outcome::Untrusted);

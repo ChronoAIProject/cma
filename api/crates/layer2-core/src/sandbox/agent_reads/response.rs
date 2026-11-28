@@ -12,6 +12,36 @@ pub enum AgentResponseObservation<T> {
     Legacy(AgentEventStreamSnapshot),
 }
 
+pub enum AgentResponseObservationError {
+    Authorization(AgentReadError),
+    Source(AgentReadError),
+    Release(AgentReadError),
+    SourceAndRelease {
+        source: AgentReadError,
+        release: AgentReadError,
+    },
+}
+
+impl AgentResponseObservationError {
+    fn public_error(self) -> AgentReadError {
+        match self {
+            Self::Authorization(error) | Self::Source(error) | Self::Release(error) => error,
+            Self::SourceAndRelease { release, .. } => release,
+        }
+    }
+
+    fn fence<T>(
+        source: Result<T, AgentReadError>,
+        release: Result<(), AgentReadError>,
+    ) -> Result<T, Self> {
+        match (source, release) {
+            (source, Ok(())) => source.map_err(Self::Source),
+            (Ok(_), Err(error)) => Err(Self::Release(error)),
+            (Err(source), Err(release)) => Err(Self::SourceAndRelease { source, release }),
+        }
+    }
+}
+
 impl AgentReadService {
     pub fn with_response_logs(
         self: &Arc<Self>,
@@ -41,28 +71,10 @@ impl AgentReadService {
         // evidence. Keep the same current snapshot and release fence used by
         // every other response observation.
         if turn_sequence.is_none() {
-            let result = authorization
-                .bounded(async {
-                    let snapshot = self.current_event_stream_snapshot(authorization).await?;
-                    let agent = snapshot
-                        .lineage
-                        .agent
-                        .ok_or_else(|| corrupt("authorized response has no Agent"))?;
-                    Ok(AgentEventStreamSnapshot {
-                        source_generation: None,
-                        model: agent.selected_model(),
-                        id: agent.id,
-                        created_at: agent.created_at,
-                        initial_model: agent.profile.content.model,
-                        runtime_generation: agent.conversation.runtime_generation,
-                        active_turn: agent.conversation.active_turn,
-                        head: agent.conversation.last_seq,
-                        history: vec![],
-                    })
-                })
-                .await;
-            self.validate_event_stream(authorization).await?;
-            return result;
+            return self
+                .read_unbound_response_snapshot(authorization)
+                .await
+                .map_err(AgentResponseObservationError::public_error);
         }
         if self.response_logs.is_none() {
             return self.event_stream_snapshot(authorization).await;
@@ -87,6 +99,35 @@ impl AgentReadService {
         }
     }
 
+    pub async fn read_unbound_response_snapshot(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+    ) -> Result<AgentEventStreamSnapshot, AgentResponseObservationError> {
+        authorization
+            .bounded(async {
+                let snapshot = self.current_event_stream_snapshot(authorization).await?;
+                let result = snapshot
+                    .lineage
+                    .agent
+                    .ok_or_else(|| corrupt("authorized response has no Agent"))
+                    .map(|agent| AgentEventStreamSnapshot {
+                        source_generation: None,
+                        model: agent.selected_model(),
+                        id: agent.id,
+                        created_at: agent.created_at,
+                        initial_model: agent.profile.content.model,
+                        runtime_generation: agent.conversation.runtime_generation,
+                        active_turn: agent.conversation.active_turn,
+                        head: agent.conversation.last_seq,
+                        history: vec![],
+                    });
+                let release = self.validate_event_stream(authorization).await;
+                Ok(AgentResponseObservationError::fence(result, release))
+            })
+            .await
+            .map_err(AgentResponseObservationError::Authorization)?
+    }
+
     /// Select one command-bound source under a single nonrenewing IO budget.
     /// The final authority check also gates private source/projection errors.
     pub async fn with_response_observation<T: Send, F>(
@@ -101,17 +142,41 @@ impl AgentReadService {
                 &'a mut indexed::AgentOutputObservation<'b>,
             ) -> indexed::OutputReadFuture<'a, T>,
     {
+        self.read_response_observation(authorization, turn, None, operation)
+            .await
+            .map_err(AgentResponseObservationError::public_error)
+    }
+
+    pub async fn read_response_observation<T: Send, F>(
+        &self,
+        authorization: &AgentEventStreamAuthorization,
+        turn: u64,
+        operation_key: Option<[u8; 32]>,
+        operation: F,
+    ) -> Result<AgentResponseObservation<T>, AgentResponseObservationError>
+    where
+        F: Send
+            + for<'a, 'b> FnOnce(
+                &'a mut indexed::AgentOutputObservation<'b>,
+            ) -> indexed::OutputReadFuture<'a, T>,
+    {
         authorization
             .bounded(async {
+                let current = self.current_event_stream_snapshot(authorization).await?;
+                let agent = current
+                    .lineage
+                    .agent
+                    .ok_or_else(|| corrupt("authorized response has no Agent"))?;
                 let result = async {
-                    let current = self.current_event_stream_snapshot(authorization).await?;
-                    let agent = current
-                        .lineage
-                        .agent
-                        .ok_or_else(|| corrupt("authorized response has no Agent"))?;
                     let personal = authorization.resource().2;
                     if let Some(result) = self
-                        .read_output_observation(&agent, Some(turn), personal, operation)
+                        .read_output_observation(
+                            &agent,
+                            Some(turn),
+                            personal,
+                            operation_key,
+                            operation,
+                        )
                         .await?
                     {
                         return Ok(AgentResponseObservation::Indexed(result));
@@ -126,10 +191,14 @@ impl AgentReadService {
                     Ok(AgentResponseObservation::Legacy(snapshot))
                 }
                 .await;
-                self.current_event_stream_snapshot(authorization).await?;
-                result
+                let release = self
+                    .current_event_stream_snapshot(authorization)
+                    .await
+                    .map(|_| ());
+                Ok(AgentResponseObservationError::fence(result, release))
             })
             .await
+            .map_err(AgentResponseObservationError::Authorization)?
     }
 
     async fn read_response_window(
@@ -161,7 +230,7 @@ impl AgentReadService {
             Some(previous) if previous.through < agent.conversation.last_seq => reader
                 .agent_response_log_suffix(agent, previous)
                 .await
-                .map_err(log_store_error)?,
+                .map_err(capture_open_error)?,
             _ => None,
         };
         let window = match suffix {
@@ -169,7 +238,7 @@ impl AgentReadService {
             None => reader
                 .agent_response_log_window(agent, turn_sequence)
                 .await
-                .map_err(log_store_error)?,
+                .map_err(capture_open_error)?,
         };
         window
             .map(|window| {

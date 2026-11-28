@@ -69,15 +69,18 @@ impl AgentEventStreamAuthorization {
             .map_err(|error| authorized::access_error(error.into()))
     }
 
+    pub fn read_deadline(&self) -> tokio::time::Instant {
+        let deadline = tokio::time::Instant::now() + IO_BOUND;
+        self.revalidation_deadline()
+            .map_or(deadline, |expires| expires.min(deadline))
+    }
+
     pub(in crate::sandbox) async fn bounded<T>(
         &self,
         operation: impl Future<Output = Result<T, AgentReadError>>,
     ) -> Result<T, AgentReadError> {
         self.require()?;
-        let deadline = tokio::time::Instant::now() + IO_BOUND;
-        let deadline = self
-            .revalidation_deadline()
-            .map_or(deadline, |expires| expires.min(deadline));
+        let deadline = self.read_deadline();
         let result = tokio::time::timeout_at(deadline, operation).await;
         self.require()?;
         result.map_err(|_| AgentReadError::Unavailable("event read timed out".into()))?
