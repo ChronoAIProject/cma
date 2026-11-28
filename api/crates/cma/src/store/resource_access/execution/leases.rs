@@ -33,7 +33,7 @@ impl MongoResourceExecutionStore {
     ) -> TxnResult<()> {
         if let Some(mut control) = self.admission(authority, session).await? {
             control.revision = control.revision.successor()?;
-            self.write_grant(&control, session).await?;
+            self.write_grant(&control, None, session).await?;
         }
         Ok(())
     }
@@ -68,7 +68,7 @@ impl MongoResourceExecutionStore {
             }
             if let Some(control) = &mut control {
                 control.revision = control.revision.successor()?;
-                self.write_grant(control, session).await?;
+                self.write_grant(control, None, session).await?;
             }
             return Ok(previous);
         }
@@ -91,13 +91,22 @@ impl MongoResourceExecutionStore {
             completion: None,
             effect_count: 0,
         };
+        let mut document = records::member_document(&record)?;
+        let family = authority.basis().family();
+        let write_keys = self.writes_erasure_keys(family, session).await?;
+        if write_keys {
+            document.insert(records::ERASURE_KEYS, erasure::admission(authority, true)?);
+        }
         self.collections
             .members
-            .insert_one(records::member_document(&record)?)
+            .insert_one(document)
             .session(&mut *session)
             .await?;
         if let Some(control) = control {
-            self.write_grant(&control, session).await?;
+            let keys = write_keys
+                .then(|| erasure::admission(authority, false))
+                .transpose()?;
+            self.write_grant(&control, keys, session).await?;
         }
         Ok(record)
     }

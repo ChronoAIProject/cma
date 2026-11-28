@@ -1,4 +1,5 @@
 use super::*;
+mod direct_erasure;
 mod fixture;
 mod races;
 mod standing;

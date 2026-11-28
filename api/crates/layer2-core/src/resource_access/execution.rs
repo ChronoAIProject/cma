@@ -167,6 +167,10 @@ impl ExecutionAuthority {
     pub fn target(&self) -> &ResourceTarget {
         &self.target
     }
+    /// The authenticated principal survives digest-only protocol attribution.
+    pub fn erasure_subject(&self) -> &crate::SubjectId {
+        &self.authorized.caller.subject
+    }
     pub fn basis(&self) -> &wire::ExecutionBasisV1 {
         &self.basis
     }

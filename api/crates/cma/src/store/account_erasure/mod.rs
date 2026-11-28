@@ -23,6 +23,7 @@ mod profile_refs;
 mod progress;
 mod records;
 mod references;
+mod resource_execution;
 mod scan;
 mod selectors;
 pub(crate) use drain_qualification::TransactionDrainQualification;
@@ -194,6 +195,7 @@ pub(crate) struct Cursor {
     allocation_absent: Option<bool>,
     observer_absent: Option<bool>,
     usage_projections_absent: Option<bool>,
+    execution_namespaces: BTreeSet<String>,
     drain_until: Option<mongodb::bson::DateTime>,
     drain_complete: bool,
     #[cfg(test)]
@@ -267,3 +269,5 @@ mod round4_query_tests;
 mod scan_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(in crate::store) use tests::drain as test_drain;
