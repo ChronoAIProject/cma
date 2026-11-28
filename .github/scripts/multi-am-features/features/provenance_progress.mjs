@@ -22,6 +22,7 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
   const read = async (am, path) => (await api.rawRequest(am, 'GET', agent + path)).body;
   const patch = (am, revision, system_prompt) => api.rawRequest(am, 'PATCH', agent + '/preferences', {
     key: randomUUID(), body: {expected_revision: revision, system_prompt}, timeout: 8000,
+    prefer: 'cma-settings-reasons',
   });
   const control = progressControl(adapter, {agentId, sandboxId, operationId});
   const original = await read(owner.am, '/provenance');

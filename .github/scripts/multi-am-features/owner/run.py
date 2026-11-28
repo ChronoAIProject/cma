@@ -191,7 +191,7 @@ class Fixture:
         self.client.wait(lambda:all(v['ready'] for v in self.topology()['ams'].values()),60,'two_members_not_ready')
         self.record('two_am_shared_database_ready',topology=self.topology())
 
-    def wait_am(self, am, renew=False):
+    def wait_am(self, am, renew=False, timeout=150):
         name='am-'+am+'-0'
         def pod_ready():
             raw=self.client.k(['get','pod',name,'-o','json','--ignore-not-found'])
@@ -199,7 +199,7 @@ class Fixture:
             p=json.loads(raw)
             if p.get('status',{}).get('phase')=='Failed':raise RuntimeError('am_failed_'+am)
             return p if any(c.get('type')=='Ready' and c.get('status')=='True' for c in p.get('status',{}).get('conditions',[])) else None
-        self.client.wait(pod_ready,150,'am_pod_not_ready_'+am)
+        self.client.wait(pod_ready,timeout,'am_pod_not_ready_'+am)
         self.origins[am]=self.client.forward(name,8080,renew=renew)
         def ready():
             try:
@@ -208,7 +208,7 @@ class Fixture:
             pod=self.client.kjson(['get','pod',name,'-o','json'])
             if pod.get('status',{}).get('phase')=='Failed':raise RuntimeError('am_exited_before_ready_'+am)
             return False
-        self.client.wait(ready,150,'am_not_ready_'+am)
+        self.client.wait(ready,timeout,'am_not_ready_'+am)
 
     def topology(self, **_):
         raise NotImplementedError('fixture topology must verify ConfigMap bindings')
@@ -220,7 +220,8 @@ class Fixture:
         name = 'am-' + am + '-0'
         child, origin = self.client.forwards[(name, 8080)]
         was_running = child.poll() is None
-        if self.client.forward(name, 8080, renew=True) != origin:
+        self.wait_am(am, renew=True, timeout=35)
+        if self.origins[am] != origin:
             raise RuntimeError('prepared_forward_origin_changed')
         return {'outcome': 'renewed_running' if was_running else 'reopened'}
 

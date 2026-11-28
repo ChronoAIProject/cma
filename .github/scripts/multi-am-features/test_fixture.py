@@ -36,16 +36,24 @@ class OwnershipTests(unittest.TestCase):
         origin = 'http://127.0.0.1:12345'
         child = Mock()
         fixture = Fixture.__new__(Fixture)
+        fixture.origins = {'a': origin}
         fixture.client = Mock(namespace='cma-native-am', forwards={('am-a-0', 8080): (child, origin)})
+        fixture.client.k.return_value = json.dumps({
+            'status': {'conditions': [{'type': 'Ready', 'status': 'True'}]},
+        })
+        fixture.client.wait.side_effect = lambda predicate, *_: self.assertTrue(predicate())
+        fixture.client.http.return_value = (200, None)
         fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
                          'server': origin}
         fixture.client.forward.return_value = origin
         for exit_status, outcome in ((None, 'renewed_running'), (1, 'reopened')):
             with self.subTest(exit_status=exit_status):
                 fixture.client.forward.reset_mock()
+                fixture.client.http.reset_mock()
                 child.poll.return_value = exit_status
                 self.assertEqual(fixture.repairPreparedForward('a'), {'outcome': outcome})
                 fixture.client.forward.assert_called_once_with('am-a-0', 8080, renew=True)
+                fixture.client.http.assert_called_once_with(origin, 'GET', '/ready')
         fixture.client.forward.return_value = 'http://127.0.0.1:12346'
         with self.assertRaisesRegex(RuntimeError, 'prepared_forward_origin_changed'):
             fixture.repairPreparedForward('a')

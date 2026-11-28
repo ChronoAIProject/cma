@@ -64,9 +64,13 @@ export function provenanceRequestFailure(response) {
   if ((!read && !preferences) || !['a', 'b'].includes(am)
     || !Number.isInteger(status) || status < 400 || status > 599) return undefined;
   const code = body?.code;
+  const reason = body?.settings_update_reason;
   return {manager: am, method, route, status,
-    ...(['agent_owner_unavailable', 'resource_access_unavailable', 'instance_service_unavailable'].includes(code)
-      ? {problem_code: code} : {})};
+    ...(['agent_owner_unavailable', 'resource_access_unavailable', 'instance_service_unavailable',
+      'agent_delivery_ambiguous'].includes(code) ? {problem_code: code} : {}),
+    ...(method === 'PATCH' && ['dispatch_in_progress', 'dispatch_recovery_required',
+      'stale_revision', 'admission_conflict', 'agent_not_idle', 'outcome_unconfirmed'].includes(reason)
+      ? {settings_update_reason: reason} : {})};
 }
 
 export function journeyFailureSummary(journey) {

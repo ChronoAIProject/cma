@@ -59,6 +59,15 @@ test('provenance failure retains only the known request metadata and problem cod
   assert.equal(provenanceRequestFailure({...response, timing: {...response.timing,
     route: '/api/v1/agents/private/preferences'}}), undefined);
   assert.equal(provenanceRequestFailure({...response, status: 200}), undefined);
+  assert.deepEqual(provenanceRequestFailure({...response, body: {
+    code: 'agent_delivery_ambiguous', settings_update_reason: 'outcome_unconfirmed',
+  }}), {
+    manager: 'b', method: 'PATCH', route: '/api/v1/agents/{id}/preferences', status: 503,
+    problem_code: 'agent_delivery_ambiguous', settings_update_reason: 'outcome_unconfirmed',
+  });
+  assert.equal(provenanceRequestFailure({...response, body: {
+    settings_update_reason: 'private',
+  }}).settings_update_reason, undefined);
 });
 
 test('the two-Manager read summary identifies the transcript transport failure', () => {
