@@ -12,6 +12,8 @@ pub const MAX_DURABLE_AGENT_MESSAGE_BYTES: usize = 1024 * 1024;
 pub struct AgentMessageAssembly {
     pub(crate) message_id: Option<String>,
     pub(crate) content: String,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) text_published: bool,
     pub(crate) prompt_evidence: bool,
     pub(crate) live_message: Option<super::conversation_recorder::live::AgentLiveMessageIdentity>,
     pub(crate) live_thought: Option<super::conversation_recorder::live::AgentLiveMessageIdentity>,
@@ -33,6 +35,10 @@ pub(crate) struct PendingAgentUpdate {
 impl AgentMessageAssembly {
     pub fn is_empty(&self) -> bool {
         self.content.is_empty()
+    }
+
+    pub fn published_text(&self) -> Option<&str> {
+        self.text_published.then_some(&self.content)
     }
 }
 

@@ -5,6 +5,7 @@ use super::flag;
 pub(super) struct TailFlags {
     pub(super) segment_adoption_enabled: bool,
     pub(super) paged_response_events: bool,
+    pub(super) incremental_text: bool,
     pub(super) v2_ui_transport: bool,
     pub(super) trigger_command_admission: bool,
     pub(super) github_repository_preflight: bool,
@@ -24,6 +25,7 @@ pub(super) fn read(
     Ok(TailFlags {
         segment_adoption_enabled: flag(lookup, "CHRONO_AGENT_LOG_SEGMENT_ADOPTION_ENABLED")?,
         paged_response_events: flag(lookup, "CHRONO_RESPONSE_PAGED_EVENTS_ENABLED")?,
+        incremental_text: flag(lookup, "CHRONO_AGENT_INCREMENTAL_TEXT_ENABLED")?,
         v2_ui_transport: flag(lookup, "CHRONO_V2_UI_TRANSPORT_ENABLED")?,
         trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
         github_repository_preflight: flag(lookup, "CHRONO_GITHUB_REPOSITORY_PREFLIGHT_ENABLED")?,

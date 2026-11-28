@@ -49,6 +49,7 @@ pub struct DurableAgentUpdateRecorder {
     writer_policy: Arc<super::task_experience::TaskExperiencePolicy>,
     spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
     coalesce_policy: Option<AgentOutputCoalescePolicy>,
+    incremental_text: bool,
 }
 
 mod configuration;

@@ -21,9 +21,11 @@ from staging_cd_web_overlay import (
 )
 
 
-def fixture_archive(directory, source, version, *, stylesheet=b"unchanged", extra=None, history=None):
+def fixture_archive(directory, source, version, *, stylesheet=b"unchanged", extra=None, history=None,
+                    extra_assets=None):
     key = source[0]
     assets = {"index-" + key + ".js": ("release-" + key).encode(), "common.css": stylesheet}
+    assets.update(extra_assets or {})
     html = ('<script type="module" src="/assets/index-' + key + '.js"></script>').encode()
     info = encoded({"local": False, "revision": source, "version": version})
     payloads = list((CURRENT + name, payload) for name, payload in assets.items())

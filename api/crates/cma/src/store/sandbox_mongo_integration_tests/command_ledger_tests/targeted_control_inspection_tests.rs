@@ -125,7 +125,7 @@ async fn targeted_committed_refusal_conflicts_with_an_older_inflight_admission()
     let (admin, client, name, app) = failpoint_fixture().await;
     let (store, mut agent, mut request, _) = composed(&name, &admin).await;
     let old_store = MongoSandboxStore::open(&client, &name).await.unwrap();
-    let old_request = request.clone();
+    let stale_request = request.clone();
     // First update is the source fence, after reading the absent key, current
     // resources and bound source in the old admission transaction's snapshot.
     let configured = admin
@@ -141,8 +141,10 @@ async fn targeted_committed_refusal_conflicts_with_an_older_inflight_admission()
         .get_i64("count")
         .or_else(|_| configured.get_i32("count").map(i64::from))
         .unwrap();
-    let admission =
-        tokio::spawn(async move { old_store.reserve_targeted_control(old_request).await });
+    let admission = tokio::spawn({
+        let request = stale_request.clone();
+        async move { old_store.reserve_targeted_control(request).await }
+    });
     let reached = admin
         .database("admin")
         .run_command(doc! {
@@ -159,7 +161,16 @@ async fn targeted_committed_refusal_conflicts_with_an_older_inflight_admission()
     reached.unwrap();
     saved.unwrap();
     assert_eq!(inspection.unwrap(), TargetedControlInspection::NotAdmitted);
-    assert_eq!(admission.unwrap_err(), CommandLedgerError::Conflict);
+    assert_eq!(admission.unwrap_err(), CommandLedgerError::ControlBusy);
+    // The delayed attempt exhausted its retry budget. A fresh attempt using
+    // the same request must read the newer revision and refuse admission.
+    assert_eq!(
+        store
+            .reserve_targeted_control(stale_request)
+            .await
+            .unwrap_err(),
+        CommandLedgerError::Conflict
+    );
     assert_eq!(store.lookup_targeted_control(request).await.unwrap(), None);
     assert_eq!(
         store

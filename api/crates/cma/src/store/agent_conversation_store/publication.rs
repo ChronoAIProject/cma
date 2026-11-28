@@ -129,7 +129,20 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
         validate_mutation(&current, actual_last_seq, mutation).map_err(ApplyError::Domain)?;
     }
     cleanup_admission::require(&current_row, &current, mutation).map_err(ApplyError::Domain)?;
-    let logs = conversation_logs(mutation).map_err(ApplyError::Domain)?;
+    let mut logs = conversation_logs(mutation).map_err(ApplyError::Domain)?;
+    let mut derived = None;
+    if exact_checkpoint.is_none()
+        && current.conversation.active_turn != mutation.agent.conversation.active_turn
+    {
+        let mut output = mutation.clone();
+        let count = logs.len();
+        checkpoint::finish_published_text(&current_row, &current, &mut output.agent, &mut logs)
+            .map_err(ApplyError::Domain)?;
+        if logs.len() > count {
+            derived = Some(output);
+        }
+    }
+    let mutation = derived.as_ref().unwrap_or(mutation);
 
     let semantic = semantic
         .after_append(&logs, &mutation.agent)
@@ -140,7 +153,7 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
         &logs,
         mutation.agent.revision,
         semantic,
-        if capacity.is_some() {
+        if capacity.is_some() || derived.is_some() {
             AppendCapacity::StopOrFailure
         } else {
             AppendCapacity::Normal

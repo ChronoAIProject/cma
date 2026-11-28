@@ -4,22 +4,7 @@ use crate::store::ledger_census::files;
 use mongodb::{options::ClientOptions, Client};
 use std::path::Path;
 
-pub(crate) async fn run_if_requested(arguments: &[String]) -> bool {
-    if arguments.first().map(String::as_str) != Some("--task-audit") {
-        return false;
-    }
-    let [_, request, output] = arguments else {
-        eprintln!("usage: cma --task-audit PRIVATE_SELECTION PRIVATE_NEW_FILE");
-        std::process::exit(2);
-    };
-    if let Err(error) = command(Path::new(request), Path::new(output)).await {
-        eprintln!("task audit refused: {error}");
-        std::process::exit(2);
-    }
-    true
-}
-
-async fn command(request: &Path, output: &Path) -> Result<()> {
+pub(crate) async fn command(request: &Path, output: &Path) -> Result<()> {
     let input = files::read(request)?;
     let selection: Selection = serde_json::from_slice(&input).map_err(|_| "invalid_selection")?;
     files::require_parent(output)?;

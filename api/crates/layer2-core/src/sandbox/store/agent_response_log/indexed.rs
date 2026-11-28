@@ -43,6 +43,11 @@ pub trait AgentOutputReader: Send {
         call: &str,
     ) -> Result<agent_output_index::AgentToolOutputState, SandboxStoreError>;
     async fn points(&mut self, sequences: &[u64]) -> Result<Vec<AgentLogEntry>, SandboxStoreError>;
+    async fn open_message(&mut self) -> Result<String, SandboxStoreError> {
+        Err(SandboxStoreError::Corrupt(
+            "indexed open message is missing its checkpoint".into(),
+        ))
+    }
     /// A bounded consecutive source page for consumers of every durable update.
     async fn source_page(
         &mut self,

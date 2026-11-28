@@ -28,7 +28,12 @@ pub(super) async fn publish(
         {
             continue;
         }
-        let logs = materialize_logs(current, change, &mutation.appended_at)?;
+        let mut logs = materialize_logs(current, change, &mutation.appended_at)?;
+        let mut next = change.agent.clone();
+        crate::store::agent_conversation_store::checkpoint::finish_published_text(
+            &row, current, &mut next, &mut logs,
+        )
+        .map_err(ApplyError::Domain)?;
         let operation = publication::PublicationIdentity {
             key: format!(
                 "lifecycle:{}:{}",
@@ -44,18 +49,18 @@ pub(super) async fn publish(
             .map_err(ApplyError::Domain)?,
             appended_at: mutation.appended_at.clone(),
         };
-        let mut fields = agent_replacement_fields(&change.agent).map_err(ApplyError::Domain)?;
+        let mut fields = agent_replacement_fields(&next).map_err(ApplyError::Domain)?;
         crate::store::agent_conversation_store::carry_checkpoint_fields(
             &row,
             current,
-            &change.agent,
+            &next,
             &mut fields,
         )
         .map_err(ApplyError::Domain)?;
         let recorded = writer_commit::publish_existing(store, scope, PublicationInput {
-            operation: &operation, current, next: &change.agent, logs: &logs,
+            operation: &operation, current, next: &next, logs: &logs,
             capacity: AppendCapacity::StopOrFailure,
-            result_digest: publication::result_digest(&change.agent).map_err(ApplyError::Domain)?,
+            result_digest: publication::result_digest(&next).map_err(ApplyError::Domain)?,
         }, AggregateUpdate { filter: doc! {
             "_id":current.id.as_str(),"sandbox_id":current.sandbox_id.as_str(),
             "owner":current.owner.as_str(),

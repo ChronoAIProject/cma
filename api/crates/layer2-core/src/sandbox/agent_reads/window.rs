@@ -227,14 +227,15 @@ impl AgentReadService {
                 _ => None,
             };
             let visible = AgentVisibleLogEntry::from_entry(entry, authorization.resource().2);
-            let kind = visible.kind.map(|kind| {
-                AgentEvent::from(AgentLogEntry {
+            let kind = visible.kind.and_then(|kind| {
+                AgentEvent::try_from(AgentLogEntry {
                     agent_id: agent.id.clone(),
                     seq: visible.seq,
                     appended_at: visible.appended_at.clone(),
                     kind,
                 })
-                .kind
+                .ok()
+                .map(|event| event.kind)
             });
             let size = serde_json::to_vec(&(visible.seq, &visible.appended_at, &kind))
                 .map_err(|_| {
