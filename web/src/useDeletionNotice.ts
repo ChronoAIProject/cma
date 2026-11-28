@@ -4,6 +4,7 @@ import type { DeletionRequest } from './deletion';
 export interface DeletionNoticeContext {
   readonly view: string;
   readonly environment: boolean;
+  readonly agentId?: string;
 }
 
 const fallback = new Map<string, readonly string[]>();

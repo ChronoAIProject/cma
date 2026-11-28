@@ -18,12 +18,28 @@ function Actions({
   client,
   changed = vi.fn(),
   viewerId = 'owner',
+  selectedAgentId,
 }: {
   readonly client: CmaWebClient;
   readonly viewerId?: string;
+  readonly selectedAgentId?: string;
   readonly changed?: (target: import('./agent/resourceChange').ResourceChange) => void;
 }) {
-  const actions = useResourceActions(client, changed, undefined, viewerId);
+  const actions = useResourceActions(
+    client,
+    changed,
+    undefined,
+    viewerId,
+    undefined,
+    true,
+    undefined,
+    undefined,
+    {
+      view: selectedAgentId ?? '',
+      environment: selectedAgentId === undefined,
+      agentId: selectedAgentId,
+    },
+  );
   return (
     <>
       {['first', 'second'].map((agentId) => (
@@ -67,6 +83,23 @@ async function remove(name: string, target = 'Agent') {
   fireEvent.click(screen.getByRole('checkbox'));
   await act(async () => fireEvent.click(screen.getByRole('button', { name: `Delete ${target}` })));
 }
+
+it('shows the selected Agent’s accepted deletion after its confirmation closes', async () => {
+  const deleteAgent = vi.fn().mockResolvedValue(undefined);
+  const api = client({ deleteAgent, readAgentEvents: async () => ({ items: [] }) });
+  const view = render(<Actions client={api} selectedAgentId="first" />);
+  await remove('Delete first');
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('region', { name: 'Agent deletion' })).toHaveTextContent(
+    'Deleting Agent',
+  );
+  expect(restoreDeletions('owner')[0]?.acceptedAt).toBeTruthy();
+  view.rerender(<Actions client={api} selectedAgentId="second" />);
+  expect(screen.queryByRole('region', { name: 'Agent deletion' })).not.toBeInTheDocument();
+  view.rerender(<Actions client={api} selectedAgentId="first" />);
+  expect(screen.getByRole('region', { name: 'Agent deletion' })).toBeVisible();
+  expect(deleteAgent).toHaveBeenCalledTimes(1);
+});
 
 it('backgrounds Agent and Workspace acceptance, preserving every status across reload without replay', async () => {
   const deleteAgent = vi.fn().mockResolvedValue(undefined);

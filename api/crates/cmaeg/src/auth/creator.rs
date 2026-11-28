@@ -161,24 +161,6 @@ impl CreatorAuthenticator {
             organization: false,
         })
     }
-    pub async fn authenticate(&self, headers: &HeaderMap) -> Result<Creator, CreatorAuthError> {
-        if bearer(headers).is_some_and(cma_service_auth::is_service_key) {
-            return self
-                .authenticate_owner_key(headers, "cma-eg:channels:read")
-                .await;
-        }
-        if let Some(service) = &self.service {
-            let principal = service.authenticate(headers).await.map_err(service_error)?;
-            principal
-                .require("cma-eg:channels:read")
-                .map_err(service_error)?;
-            return self.service_creator(principal.subject, headers).await;
-        }
-        let token = bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?;
-        let owner = selected_owner(headers)?;
-        self.authenticate_token(token, owner).await
-    }
-
     /// Identify a NyxID bearer and, when `owner` is given, verify the bearer may act
     /// for that organization, through the shared 60 s cache. REST calls it after parsing
     /// headers; the console calls it with a session's token on every request.

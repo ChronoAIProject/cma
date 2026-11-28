@@ -9,6 +9,7 @@ function options(overrides: Partial<ShellCommandOptions> = {}): ShellCommandOpti
   return {
     items: navigationFixture(),
     onNavigate: vi.fn(),
+    onOpenEnvironments: vi.fn(),
     canOpenTriggers: false,
     canOpenOperations: false,
     onAppearance: vi.fn(),
@@ -32,6 +33,38 @@ describe('shellCommands', () => {
       ]);
       await user.keyboard('{Enter}');
       expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'artifacts' });
+    },
+  );
+
+  it.each(['environment', 'environments'])(
+    'selects the Environments destination for %s among 60 matching Sandboxes',
+    async (query) => {
+      const onOpenEnvironments = vi.fn();
+      const onNavigate = vi.fn();
+      const commands = shellCommands(
+        options({
+          onOpenEnvironments,
+          onNavigate,
+          items: Array.from({ length: 60 }, (_, index) => ({
+            sandbox: {
+              ...sandboxFixture(),
+              id: `sbx_${index}`,
+              name: `Research environments ${index}`,
+            },
+            workspaces: [],
+          })),
+        }),
+      );
+      expect(filterCommands(commands, '')[0]?.id).toBe('sandbox:sbx_0');
+      expect(filterCommands(commands, 'research environments')[0]?.id).toBe('sandbox:sbx_0');
+      const user = userEvent.setup();
+      render(<CommandMenu open onClose={vi.fn()} commands={commands} />);
+      await user.type(screen.getByRole('combobox', { name: 'Search commands' }), query);
+      expect(screen.getAllByRole('option')).toHaveLength(60);
+      expect(screen.getByRole('option', { name: 'Environments', selected: true })).toBeVisible();
+      await user.keyboard('{Enter}');
+      expect(onOpenEnvironments).toHaveBeenCalledOnce();
+      expect(onNavigate).not.toHaveBeenCalled();
     },
   );
 

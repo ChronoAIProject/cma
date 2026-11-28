@@ -17,7 +17,6 @@ impl ReportingStore {
     ) -> Result<Option<ReportLease>> {
         let at = now();
         self.check_circuit(at)?;
-        self.prune_cache(at).await?;
         if !self.lease(slot, holder, 70).await? {
             return Ok(None);
         }
@@ -70,7 +69,7 @@ impl ReportingStore {
             Box::pin(async move {
         if store
             .collection(JOBS)
-            .update_one(lease.fence(), doc! {"$set":{"bytes":0_i64,"row_count":0_i64,"chart_count":0_i64,"record":encode(&lease.report)?,"logical_expires_at":lease.report.expires_at as i64,"expires_at":if lease.view.is_some() { mongodb::bson::Bson::Null } else { expires(lease.report.expires_at+86_400).into() }},
+            .update_one(lease.fence(), doc! {"$set":{"bytes":0_i64,"row_count":0_i64,"chart_count":0_i64,"record":encode(&lease.report)?,"logical_expires_at":lease.report.expires_at as i64,"expires_at":mongodb::bson::Bson::Null},
                 "$unset":{aggregate_projections::GENERATION_FIELD:"",aggregate_projections::MANIFEST_FIELD:""}})
             .session(&mut *session)
             .await
@@ -93,94 +92,6 @@ impl ReportingStore {
         }).await?;
         Ok(Some(lease))
     }
-    pub(super) async fn prune_cache(&self, at: u64) -> Result<()> {
-        use futures_util::TryStreamExt;
-        let mut cursor = self
-            .collection(JOBS)
-            .find(doc! {"reserved":true,"$or":[{"logical_expires_at":{"$lte":at as i64}},{"kind":views::VIEW_KIND,"retire_after":{"$lte":at as i64}}]})
-            .limit(8)
-            .max_time(DB_DEADLINE)
-            .await
-            .map_err(unavailable)?;
-        while let Some(d) = cursor.try_next().await.map_err(unavailable)? {
-            let id = d.get_str("_id").map_err(unavailable)?;
-            if !self.retire_expired_report(&d).await? {
-                continue;
-            }
-            let projected = d.contains_key(aggregate_projections::GENERATION_FIELD);
-            for collection in [ROWS, CHARTS] {
-                self.delete_report_cache(collection, doc! {"report_id":id})
-                    .await?;
-            }
-            if projected {
-                // Maintain contributor discovery until all derived pages are gone.
-                self.delete_report_cache(
-                    aggregate_projections::COLLECTION,
-                    doc! {"report_id":id,"kind":{"$ne":"contributor"}},
-                )
-                .await?;
-                self.delete_report_cache(
-                    aggregate_projections::COLLECTION,
-                    doc! {"report_id":id,"kind":"contributor"},
-                )
-                .await?;
-            }
-            let mut released = doc! {"reserved":false,"bytes":0_i64};
-            if projected || d.get_str("kind").ok() == Some(views::VIEW_KIND) {
-                released.insert("expires_at", expires(at + 60));
-            }
-            self.collection(JOBS)
-                .update_one(
-                    doc! {"_id":id,"generation":d.get_i64("generation").map_err(unavailable)?,
-                    "state":retired_state(&d)},
-                    doc! {"$set":released},
-                )
-                .await
-                .map_err(unavailable)?;
-        }
-        Ok(())
-    }
-
-    async fn delete_report_cache(&self, collection: &str, filter: Document) -> Result<()> {
-        let result = self
-            .db
-            .run_command(doc! {"delete":collection,
-            "deletes":[{"q":filter,"limit":0}],"maxTimeMS":2000_i64})
-            .await
-            .map_err(unavailable)?;
-        if result
-            .get_array("writeErrors")
-            .is_ok_and(|errors| !errors.is_empty())
-            || result.contains_key("writeConcernError")
-        {
-            return Err(MetricsError::Unavailable);
-        }
-        Ok(())
-    }
-
-    pub(super) async fn retire_expired_report(&self, candidate: &Document) -> Result<bool> {
-        // A scan is only a candidate: claiming or completing can advance its
-        // generation/deadline before deletion. Retire the exact live record
-        // first, conflicting with chunk transactions and excluding new claims.
-        let projection = candidate
-            .get(aggregate_projections::GENERATION_FIELD)
-            .cloned()
-            .unwrap_or_else(|| doc! {"$exists":false}.into());
-        let filter = doc! {"_id":candidate.get_str("_id").map_err(unavailable)?,
-        aggregate_projections::GENERATION_FIELD:projection,
-        "reserved":true,"generation":candidate.get_i64("generation").map_err(unavailable)?,
-        "state":candidate.get_str("state").map_err(unavailable)?,
-        "$expr":{"$or":[{"$lte":["$logical_expires_at",server_seconds()]},
-            {"$and":[{"$eq":["$kind",views::VIEW_KIND]},
-                {"$lte":[{"$ifNull":["$retire_after",i64::MAX]},server_seconds()]}]}]}};
-        let updated = self
-            .collection(JOBS)
-            .update_one(filter, doc! {"$set":{"state":retired_state(candidate)}})
-            .await
-            .map_err(unavailable)?;
-        Ok(updated.matched_count == 1)
-    }
-
     #[cfg(test)]
     pub(crate) async fn write_report_chunk(
         &self,
@@ -290,7 +201,7 @@ impl ReportingStore {
                 lease.fence(),
                 // A terminal report cannot grow: retain its actual cache bytes,
                 // not its maximum work reservation, throughout the cache TTL.
-                vec![doc! {"$set":{"record":{"$literal":encode(&report)?},"state":state,"lease_until":0_i64,"reserved_bytes":"$bytes","logical_expires_at":report.expires_at as i64,"expires_at":{"$cond":[{"$ne":[{"$type":"$projection_generation"},"missing"]},mongodb::bson::Bson::Null,expires(report.expires_at+86_400)]}}}],
+                vec![doc! {"$set":{"record":{"$literal":encode(&report)?},"state":state,"lease_until":0_i64,"reserved_bytes":"$bytes","logical_expires_at":report.expires_at as i64,"expires_at":mongodb::bson::Bson::Null}}],
             )
             .await
             .map_err(unavailable)?;
@@ -310,15 +221,8 @@ impl ReportLease {
             {"$gt":["$logical_expires_at",server_seconds()]}]}}
     }
 }
-fn server_seconds() -> Document {
+pub(super) fn server_seconds() -> Document {
     doc! {"$toLong":{"$divide":[{"$toLong":"$$NOW"},1000_i64]}}
-}
-fn retired_state(job: &Document) -> &'static str {
-    if job.get_str("kind").ok() == Some(views::VIEW_KIND) {
-        "view_retired"
-    } else {
-        "retired"
-    }
 }
 pub(super) fn row_document(report: &Report, row: &Row) -> Result<Document> {
     let (sorts, nulls) = row_sort_keys(row);

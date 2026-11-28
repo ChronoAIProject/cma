@@ -101,26 +101,7 @@ async fn read_proof(
             require_ready(store, command, &current, session).await?;
         }
     }
-    let database = store.client.database(&store.agents.namespace().db);
-    let launch_row =
-        super::super::durability::majority_collection::<Document>(&database, "trigger_launches")
-            .find_one(doc! {"_id":binding.launch_id().as_str()})
-            .session(&mut *session)
-            .await
-            .map_err(unavailable)?
-            .ok_or(SandboxStoreError::Conflict)?;
-    let launch = super::super::trigger_definitions::decode_launch_aggregate(&launch_row)
-        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-    let receipt = super::super::durability::majority_collection::<Document>(
-        &database,
-        "trigger_launch_input_protocols",
-    )
-    .find_one(doc! {"_id":binding.launch_id().as_str()})
-    .session(&mut *session)
-    .await
-    .map_err(unavailable)?;
-    super::super::trigger_definitions::require_input_protocol_document(&launch, receipt)
-        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+    let launch = super::replay::require_source(store, &agent, &binding, session, false).await?;
     let parent = store
         .sandboxes
         .find_one(doc! {"_id":agent.sandbox_id.as_str()})
@@ -214,8 +195,16 @@ async fn read_proof(
         sandbox_created_at: parent.created_at.clone(),
         policy_revision: policy.as_ref().map_or(0, |policy| policy.revision),
     };
-    TriggerExecutionProof::checked(binding, &launch, &current, agent, parent, owner, fence)
-        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
+    TriggerExecutionProof::checked(
+        binding,
+        launch.as_ref(),
+        &current,
+        agent,
+        parent,
+        owner,
+        fence,
+    )
+    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
 }
 
 pub(in crate::store) async fn require_mutation(

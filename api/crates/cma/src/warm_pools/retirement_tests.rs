@@ -22,7 +22,7 @@ fn fixture(blocks: &[bool]) -> (Memory, Provider) {
 
 async fn reconcile(store: &Memory, provider: &Provider) {
     let original = store.target.lock().unwrap().clone();
-    super::super::retirement::retire_claimed(store, provider, "current", original)
+    super::super::retirement::retire_claimed(store, provider, "current", original, None)
         .await
         .unwrap();
 }

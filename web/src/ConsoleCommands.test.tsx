@@ -52,6 +52,37 @@ it('opens the same menu from the Search button', async () => {
   expect(screen.getByRole('group', { name: 'Go to' })).toBeInTheDocument();
 });
 
+it.each(['environment', 'environments'])(
+  'opens the sidebar Environments view from %s search',
+  async (query) => {
+    const actor = userEvent.setup();
+    render(
+      <CmaClientProvider client={agentClient()}>
+        <Console
+          user={OWNER}
+          route={{ kind: 'agent_manager' }}
+          onNavigate={vi.fn()}
+          onSignOut={vi.fn()}
+        />
+      </CmaClientProvider>,
+    );
+    await screen.findByRole('tree', { name: 'Personal Agents' });
+    expect(screen.getByRole('button', { name: 'Environments', pressed: false })).toBeVisible();
+    await actor.click(screen.getByRole('button', { name: 'Search' }));
+    await actor.type(screen.getByRole('combobox', { name: 'Search commands' }), query);
+    expect(
+      within(screen.getByRole('group', { name: 'Go to' })).getByRole('option', {
+        name: 'Environments',
+        selected: true,
+      }),
+    ).toBeVisible();
+    await actor.keyboard('{Enter}');
+    expect(screen.queryByRole('dialog', { name: 'Command menu' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Environments', pressed: true })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Options for Atlas' })).toBeVisible();
+  },
+);
+
 it('gives visitors no search and no shortcut', async () => {
   render(
     <CmaClientProvider client={agentClient()}>

@@ -131,6 +131,7 @@ impl Sandbox {
                             *phase = SandboxImageRotationPhase::CheckpointVerification;
                             *checkpoint_epoch = Some(epoch);
                         }
+                        next.sync_rotation_request_start(&at, target_runtime_version);
                         next.lifecycle.paused_notice = Some(notice);
                     }
                     _ => {
@@ -191,6 +192,7 @@ impl Sandbox {
                         .as_ref()
                         .map(|checkpoint| checkpoint.epoch);
                 }
+                self.sync_rotation_request_start(at, target_runtime_version);
                 if let Some(source) = &mut self.lifecycle.home_recovery {
                     source.resume_pause = resume_pause;
                 }
@@ -229,6 +231,18 @@ impl Sandbox {
             "Your sandbox runtime was interrupted. Your saved environment and original conversations are being reconnected.".into(),
         );
         Ok(())
+    }
+
+    fn sync_rotation_request_start(&mut self, at: &str, target: &str) {
+        if let Some(request) = self
+            .lifecycle
+            .runtime_update
+            .as_mut()
+            .and_then(|state| state.request.as_mut())
+            .filter(|request| request.completed_at.is_none() && request.target_version == target)
+        {
+            request.started_at = Some(at.into());
+        }
     }
 }
 

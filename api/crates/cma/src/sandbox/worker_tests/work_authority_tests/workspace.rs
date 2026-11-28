@@ -1,7 +1,9 @@
 use super::*;
 use crate::sandbox::workspace_worker::{WorkspaceWorker, WorkspaceWorkerDependencies};
-use layer2_core::sandbox::store::{WorkspaceStore, WorkspaceWorkerStore};
-use layer2_core::sandbox::{CreateWorkspace, WorkspaceService, WorkspaceWorkStep};
+use layer2_core::sandbox::store::{SandboxEventStore, WorkspaceStore, WorkspaceWorkerStore};
+use layer2_core::sandbox::{
+    CreateWorkspace, SandboxEventKind, WorkspaceService, WorkspaceStatus, WorkspaceWorkStep,
+};
 use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;
 use layer3_adapter::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame};
@@ -247,15 +249,37 @@ async fn two_instance_workspace_owner_abort_is_taken_over_after_fifteen_seconds_
         .unwrap());
     let takeover_at = tokio::time::Instant::now();
     assert!(takeover_at - fault_at <= Duration::from_secs(WORK_LEASE_SECONDS));
-    let finished = h.store.get_workspace(&workspace.id).await.unwrap().unwrap();
-    assert_eq!(finished.work.step, WorkspaceWorkStep::Setup);
-    assert!(finished.work.lease.is_none());
+    let ready = successor
+        .run_until_ready(&workspace.id, now + Duration::from_secs(WORK_LEASE_SECONDS))
+        .await
+        .unwrap()
+        .workspace;
+    assert_eq!(ready.id, workspace.id);
+    assert_eq!(ready.status, WorkspaceStatus::Ready);
+    assert!(ready.work.lease.is_none());
+    assert!(!successor
+        .run_one(&workspace.id, now + Duration::from_secs(WORK_LEASE_SECONDS))
+        .await
+        .unwrap());
     assert_eq!(
         h.backend
             .requests()
             .await
             .iter()
             .filter(|(_, frame)| matches!(frame, RequestFrame::PrepareWorkspace(_)))
+            .count(),
+        1
+    );
+    let events = h
+        .store
+        .sandbox_events(&workspace.sandbox_id, 0, 50)
+        .await
+        .unwrap();
+    assert_eq!(
+        events
+            .iter()
+            .filter(|event| matches!(&event.kind,
+        SandboxEventKind::WorkspaceReady { workspace_id, .. } if workspace_id == &workspace.id))
             .count(),
         1
     );

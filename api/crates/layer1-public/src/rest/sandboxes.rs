@@ -156,8 +156,16 @@ pub(super) async fn list(
             )
             .await
             .map_err(HierarchyProblem::sandbox_read)?;
-        let mut items: Vec<AccessibleSandboxSummaryView> =
-            stored.items.into_iter().map(Into::into).collect();
+        let mut items: Vec<_> = stored
+            .items
+            .into_iter()
+            .map(|row| match row {
+                layer2_core::sandbox::SandboxInventoryReading::Personal(value) => {
+                    personal_summary(&state, &caller, *value)
+                }
+                shared => shared.into(),
+            })
+            .collect();
         for item in &mut items {
             if let AccessibleSandboxSummaryView::Personal(value) = item {
                 value.sandbox.owner_name = names.get(&value.sandbox.owner).cloned();
@@ -193,14 +201,31 @@ pub(super) async fn list(
             .items
             .into_iter()
             .map(|row| {
-                let mut view = OwnerSandboxSummaryView::from(row);
-                view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
-                view.sandbox.color = colors.get(&view.sandbox.id).cloned();
-                AccessibleSandboxSummaryView::Personal(Box::new(view))
+                let mut summary = personal_summary(&state, &caller, row);
+                if let AccessibleSandboxSummaryView::Personal(view) = &mut summary {
+                    view.sandbox.owner_name = names.get(&view.sandbox.owner).cloned();
+                    view.sandbox.color = colors.get(&view.sandbox.id).cloned();
+                }
+                summary
             })
             .collect(),
         next: page.next,
     }))
+}
+
+fn personal_summary(
+    state: &HierarchyState,
+    caller: &layer2_core::Caller,
+    row: layer2_core::sandbox::SandboxHierarchySummary,
+) -> AccessibleSandboxSummaryView {
+    let result = state
+        .sandboxes
+        .rotation_lifecycle_result(caller, &row.sandbox);
+    let mut view = OwnerSandboxSummaryView::from(row);
+    if let Some(result) = result {
+        view.sandbox.lifecycle.result = Some(result.into());
+    }
+    AccessibleSandboxSummaryView::Personal(Box::new(view))
 }
 
 #[utoipa::path(get, path = "/api/v1/sandboxes/{id}", tag = "sandboxes", params(("id" = String, Path)), responses((status = 200, body = AccessibleSandboxDetailView), (status = 404, body = crate::rest::ProblemDocument)))]

@@ -5,7 +5,8 @@ use super::*;
 
 const DEFAULT_DESKTOP_STARTUP_BUDGET: Duration = Duration::from_secs(30);
 const EXTENDED_DESKTOP_STARTUP_BUDGET: Duration = Duration::from_secs(90);
-const DESKTOP_PROBE_INTERVAL: Duration = Duration::from_millis(100);
+#[cfg(test)]
+use crate::desktop_process::legacy::DESKTOP_PROBE_INTERVAL;
 
 struct Prepared {
     boot_id: String,
@@ -74,55 +75,36 @@ impl Supervisor {
         .await
     }
 
-    async fn finish_startup_with_probe<Fut: Future<Output = bool>>(
+    async fn finish_startup_with_probe<Fut>(
         supervisor: Arc<Self>,
-        mut connect: impl FnMut() -> Fut,
-    ) -> Result<Arc<Self>> {
+        connect: impl FnMut() -> Fut + Send + 'static,
+    ) -> Result<Arc<Self>>
+    where
+        Fut: Future<Output = bool> + Send + 'static,
+    {
+        if let Err(error) = supervisor.recover_journals().await {
+            supervisor.shutdown_desktop().await;
+            return Err(error);
+        }
         if supervisor.config.machine_included {
             let budget = if supervisor.config.extended_desktop_startup {
                 EXTENDED_DESKTOP_STARTUP_BUDGET
             } else {
                 DEFAULT_DESKTOP_STARTUP_BUDGET
             };
-            let started = tokio::time::Instant::now();
-            let ready = match &supervisor.desktop_process {
-                #[cfg(target_os = "linux")]
-                Some(crate::desktop_process::DesktopSession::Supervised(desktop)) => {
-                    desktop.ready(budget).await
-                }
-                _ => {
-                    let ready = async {
-                        while !connect().await {
-                            tokio::time::sleep(DESKTOP_PROBE_INTERVAL).await;
-                        }
-                    };
-                    tokio::select! {
-                        biased;
-                        _ = tokio::time::sleep(budget) => false,
-                        _ = ready => true,
-                    }
-                }
-            };
-            if !ready {
-                tracing::error!(
-                    elapsed_ms = started.elapsed().as_millis(),
-                    "initial desktop did not become ready"
-                );
-                if let Some(desktop) = &supervisor.desktop_process {
-                    desktop.shutdown().await;
-                }
-                return Err(RuntimeError::unavailable(
-                    "desktop_start_failed",
-                    "desktop did not become ready",
-                ));
+            if let Some(desktop) = &supervisor.desktop_process {
+                desktop.start_background_with_probe(budget, connect).await;
             }
-            tracing::info!(
-                elapsed_ms = started.elapsed().as_millis(),
-                "initial desktop ready"
-            );
         }
-        supervisor.recover_journals().await?;
         Ok(supervisor)
+    }
+
+    #[cfg(test)]
+    pub(super) async fn wait_for_desktop_ready(&self) -> bool {
+        match &self.desktop_process {
+            Some(desktop) => desktop.wait_initial_ready().await,
+            None => true,
+        }
     }
 
     // Existing V1 fixtures deliberately keep their original format.

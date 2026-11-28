@@ -38,12 +38,13 @@ where
             .authenticate(&parts.headers)
             .await
             .map_err(service_error)?;
-        principal.require("cma-eg:admin").map_err(service_error)?;
+        super::request::require_permission(&principal, "cma-eg:admin").await?;
+        let creator = auth
+            .service_creator(&principal.subject, &parts.headers)
+            .await?;
         Ok(Self {
-            actor: principal.subject.clone(),
-            creator: auth
-                .service_creator(principal.subject, &parts.headers)
-                .await?,
+            actor: principal.subject,
+            creator,
         })
     }
 }
@@ -51,7 +52,27 @@ where
 impl CreatorAuthenticator {
     pub(super) async fn service_creator(
         &self,
-        subject: String,
+        subject: &str,
+        headers: &HeaderMap,
+    ) -> Result<Creator, CreatorAuthError> {
+        let result = self.resolve_service_creator(subject, headers).await;
+        let organization = result
+            .as_ref()
+            .ok()
+            .filter(|creator| creator.organization)
+            .map(|creator| creator.subject.as_str());
+        crate::request_audit::bind(
+            subject,
+            organization,
+            cma_service_auth::request_audit::Credential::Bearer,
+        )
+        .await?;
+        result
+    }
+
+    async fn resolve_service_creator(
+        &self,
+        subject: &str,
         headers: &HeaderMap,
     ) -> Result<Creator, CreatorAuthError> {
         let token = bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?;
@@ -75,7 +96,7 @@ impl CreatorAuthenticator {
             .map_err(|_| CreatorAuthError::ProviderUnavailable)??;
         }
         Ok(Creator {
-            subject: owner.unwrap_or(&subject).to_owned(),
+            subject: owner.unwrap_or(subject).to_owned(),
             organization: owner.is_some(),
             token_hash: token_hash(token),
         })

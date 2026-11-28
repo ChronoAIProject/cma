@@ -4,7 +4,8 @@ use std::time::Duration;
 
 use futures_util::TryStreamExt as _;
 use layer2_core::{
-    ActivityAction, ActivityQuery, ActivityRecord, ActivityStore, ActivitySummary, Page, StoreError,
+    ActivityAction, ActivityChannel, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord,
+    ActivityStore, ActivitySummary, Page, StoreError, ACTIVITY_OUTCOME_UNCONFIRMED,
 };
 use mongodb::{
     bson::{doc, Bson, DateTime, Document},
@@ -103,6 +104,54 @@ impl ActivityStore for MongoActivityStore {
         Ok(())
     }
 
+    async fn attempt(&self, id: &ActivityId) -> Result<Option<ActivityRecord>, StoreError> {
+        self.entries
+            .find_one(doc! {"_id": &id.0})
+            .await
+            .map(|document| document.map(|entry| entry.record))
+            .map_err(|_| StoreError::Unavailable("activity lookup unavailable".into()))
+    }
+
+    async fn identify_attempt(&self, record: &ActivityRecord) -> Result<(), StoreError> {
+        let mut filter = open_attempt(&record.id);
+        filter.insert("record.actor", Bson::Null);
+        let metadata = mongodb::bson::serialize_to_bson(&record.detail)
+            .map_err(|error| StoreError::Malformed(error.to_string()))?;
+        let target = mongodb::bson::serialize_to_bson(&record.target)
+            .map_err(|error| StoreError::Malformed(error.to_string()))?;
+        let actor = record
+            .actor
+            .as_ref()
+            .ok_or_else(|| StoreError::Malformed("missing audit actor".into()))?;
+        self.update_attempt(
+            filter,
+            doc! {
+                "record.actor": actor.as_str(),
+                "record.detail": metadata,
+                "record.target": target,
+            },
+        )
+        .await
+    }
+
+    async fn finish_attempt(
+        &self,
+        id: &ActivityId,
+        outcome: &ActivityOutcome,
+        status: u16,
+    ) -> Result<(), StoreError> {
+        let outcome = mongodb::bson::serialize_to_bson(outcome)
+            .map_err(|error| StoreError::Malformed(error.to_string()))?;
+        self.update_attempt(
+            open_attempt(id),
+            doc! {
+                "record.outcome": outcome,
+                "record.detail.http_status": status.to_string(),
+            },
+        )
+        .await
+    }
+
     async fn append_many(&self, records: &[ActivityRecord]) -> Result<(), StoreError> {
         if records.is_empty() {
             return Ok(());
@@ -133,13 +182,37 @@ impl ActivityStore for MongoActivityStore {
     }
 }
 
+fn open_attempt(id: &ActivityId) -> Document {
+    doc! {"_id": &id.0, "record.outcome.status": "failed",
+    "record.outcome.code": ACTIVITY_OUTCOME_UNCONFIRMED}
+}
+
 fn summary_projection() -> Document {
     doc! {"_id":1,"document_schema_version":1,"recorded_at":1,
     "record.id":1,"record.at":1,"record.actor":1,"record.action":1,
-    "record.target":1,"record.outcome":1}
+    "record.target":1,"record.outcome":1,"record.detail.activity_channel":1,
+    "record.detail.request_id":1,"record.detail.request_method":1,"record.detail.request_route":1,
+    "record.detail.credential_kind":1,"record.detail.actor_scope":1,"record.detail.http_status":1}
 }
 
 impl MongoActivityStore {
+    async fn update_attempt(&self, filter: Document, update: Document) -> Result<(), StoreError> {
+        let result = self
+            .entries
+            .update_one(filter, doc! {"$set": update})
+            .await
+            .map_err(|error| {
+                StoreError::Unavailable(format!("update activity attempt: {error}"))
+            })?;
+        if result.matched_count == 1 {
+            Ok(())
+        } else {
+            Err(StoreError::Unavailable(
+                "activity attempt is absent or settled".into(),
+            ))
+        }
+    }
+
     async fn read_page<T: serde::de::DeserializeOwned + Send + Sync + Unpin>(
         &self,
         query: &ActivityQuery,
@@ -176,6 +249,31 @@ impl MongoActivityStore {
         }
         if let Some(action) = query.action {
             clauses.push(doc! { "record.action": action_bson(action)? });
+        }
+        if let Some(result) = query.result {
+            clauses.push(doc! { "record.outcome.status": result.as_str() });
+        }
+        if let Some(channel) = query.channel {
+            if channel == ActivityChannel::Unknown {
+                clauses.push(
+                    doc! { "record.detail.activity_channel": { "$in": ["unknown", Bson::Null] } },
+                );
+            } else {
+                clauses.push(doc! { "record.detail.activity_channel": channel.as_str() });
+            }
+        }
+        let (from, before) = query
+            .recorded_bounds_ms()
+            .map_err(|error| StoreError::Malformed(error.to_string()))?;
+        if from.is_some() || before.is_some() {
+            let mut range = Document::new();
+            if let Some(from) = from {
+                range.insert("$gte", DateTime::from_millis(from));
+            }
+            if let Some(before) = before {
+                range.insert("$lt", DateTime::from_millis(before));
+            }
+            clauses.push(doc! { "recorded_at": range });
         }
         if use_audit_index {
             clauses.push(activity_audit_index::filter());

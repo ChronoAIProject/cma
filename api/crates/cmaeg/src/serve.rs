@@ -41,6 +41,7 @@ pub(crate) async fn serve(
     let discord_media_replacements =
         config.native_discord_media_card_replacements_enabled && discord_media_edits;
     let service_auth = service_auth::ServiceAuth::from_config(&config)?;
+    let request_audit = crate::request_audit::Writer::configured(&config, &service_auth)?;
     // Prove the renewable credential before advertising gateway readiness.
     service_auth.bearer().await?;
     let (records, creator_auth, browser) =
@@ -420,7 +421,7 @@ pub(crate) async fn serve(
     tracing::info!(bind = %config.listen, "CMAEG listening");
     let (shutdown_started, shutdown_signal) = oneshot::channel();
     let side_messages = delivery_engine.side_messages_if(config.event_side_messages_enabled);
-    let mut router = router_with_state(state)
+    let router = router_with_state(state)
         .merge(drain_control.router(replicas.enabled))
         .merge(replica_routes)
         .merge(http::events::router(http::events::CustomIngressState {
@@ -439,12 +440,7 @@ pub(crate) async fn serve(
         .merge(http::tools::gateway_router(tools_state, side_messages))
         .layer(RequestBodyLimitLayer::new(REQUEST_BODY_LIMIT_BYTES))
         .layer(CatchPanicLayer::custom(http::problems::panic_response));
-    if let Some(browser) = browser {
-        router = router.merge(cma_service_auth::session::router(browser));
-    }
-    // The retained console has its own OAuth session, CSRF and owner checks.
-    // Portal cookie middleware must not change that independent authority.
-    router = router.merge(console.unwrap_or_default());
+    let router = public_routes::mount(router, browser, console, request_audit);
     let server = axum::serve(
         listener,
         router.into_make_service_with_connect_info::<SocketAddr>(),
@@ -498,3 +494,6 @@ pub(crate) use record_client_impl::record_client;
 
 #[path = "serve_source_settings.rs"]
 mod source_settings;
+
+#[path = "serve_public_routes.rs"]
+mod public_routes;

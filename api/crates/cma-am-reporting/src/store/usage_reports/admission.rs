@@ -1,5 +1,5 @@
 //! Persist report admission under the supplied transaction and budget.
-use super::{decode, encode, expires};
+use super::{decode, encode};
 use crate::{pool::DB_DEADLINE, transaction_scope as tx, ReportingStore};
 use layer2_core::sandbox_metrics::{
     MetricsError, Report, ReportQuery, ReportStatus, Scope, FINALIZATION_DELAY_SECONDS,
@@ -69,7 +69,9 @@ impl ReportingStore {
                 if report.status == ReportStatus::Failed {
                     return Err(MetricsError::Unavailable.into());
                 }
-                if report.expires_at <= at {
+                if report.expires_at <= at
+                    || matches!(existing.get_str("state"), Ok("retired" | "view_retired"))
+                {
                     return Err(MetricsError::Expired.into());
                 }
                 return Ok(Admission {
@@ -191,7 +193,7 @@ impl ReportingStore {
         let d = doc! {"_id":&id,"document_schema_version":1_i64,"query_hash":hash,"principal":&scope.principal,"admin":scope.admin,
         "state":"pending","created_at":at as i64,"lease_until":0_i64,"lease_holder":"","generation":0_i64,
         "logical_expires_at":report.expires_at as i64,"reserved":true,"reserved_bytes":request.budget.report_bytes,
-        "expires_at":expires(report.expires_at+86_400),"bytes":0_i64,"record":encode(&report).map_err(tx::domain)?};
+        "expires_at":mongodb::bson::Bson::Null,"bytes":0_i64,"record":encode(&report).map_err(tx::domain)?};
         self.collection(JOBS)
             .insert_one(d)
             .session(&mut *session)

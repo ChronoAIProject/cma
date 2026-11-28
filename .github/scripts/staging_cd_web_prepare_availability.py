@@ -161,9 +161,9 @@ def main():
     parser.add_argument("--ready-file", type=Path, required=True,
                         help="Created by this check when overlap sampling starts. Submit prepare after it appears.")
     parser.add_argument("--submit-file", type=Path, required=True,
-                        help="Create immediately before submitting the prepare mutation.")
+                        help="Write the Unix nanosecond timestamp immediately before the prepare mutation.")
     parser.add_argument("--settled-file", type=Path, required=True,
-                        help="Atomically write 'prepared' after verifying prepare is serving and stock has withdrawn. "
+                        help="Atomically write 'prepared <Unix nanoseconds>' after verifying prepare is serving and stock has withdrawn. "
                              "Write 'rollback' when the rollout is recovered instead.")
     parser.add_argument("--evidence", type=Path, required=True, help="New first-attempt JSONL journal")
     parser.add_argument("--seconds", type=int, required=True, help="Total stock, overlap and prepare time budget")
@@ -174,9 +174,15 @@ def main():
         args.ready_file.touch(exist_ok=False)
         while not args.settled_file.is_file():
             time.sleep(min(0.1, remaining(deadline)))
+        # Filesystem timestamps can precede these operations on filesystems
+        # with a coarse timestamp clock. Use the operator's recorded boundaries.
         with args.settled_file.open("r", encoding="utf-8") as status:
-            require(status.read(16).strip() == "prepared", "Web prepare rollout did not settle")
-        return args.submit_file.stat().st_mtime_ns, args.settled_file.stat().st_mtime_ns
+            settled = status.read(64).strip()
+        require(matches(r"prepared [0-9]{1,20}", settled), "Web prepare rollout did not settle")
+        with args.submit_file.open("r", encoding="utf-8") as submit:
+            submitted = submit.read(64).strip()
+        require(matches(r"[0-9]{1,20}", submitted), "Web prepare submit timestamp is malformed")
+        return int(submitted), int(settled.split()[1])
 
     try:
         handoffs = (args.ready_file, args.submit_file, args.settled_file)

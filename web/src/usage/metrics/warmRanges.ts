@@ -13,6 +13,7 @@ export function useWarmUsageRanges(
   admin: boolean,
   owner: UsageReportOwner,
   active: boolean,
+  dailyPreviewOnly = false,
 ) {
   useEffect(() => {
     if (!active || !(api as LatestMetricsClient).latest || selection.range === 'custom') return;
@@ -23,8 +24,9 @@ export function useWarmUsageRanges(
     void (async () => {
       // A direct long-range entry can use the server's already warmed daily
       // snapshot even when this browser has no committed local report yet.
-      const ranges =
-        selection.range === '7d' || selection.range === '30d'
+      const ranges = dailyPreviewOnly
+        ? (['24h'] as const)
+        : selection.range === '7d' || selection.range === '30d'
           ? (['24h', '7d', '30d'] as const)
           : (['7d', '30d'] as const);
       for (const range of ranges) {
@@ -75,5 +77,5 @@ export function useWarmUsageRanges(
       cancelled = true;
       release?.();
     };
-  }, [api, selection, admin, owner, active]);
+  }, [api, selection, admin, owner, active, dailyPreviewOnly]);
 }

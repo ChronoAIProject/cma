@@ -3,8 +3,8 @@ use std::{sync::Arc, time::Duration};
 
 use async_trait::async_trait;
 use layer1_public::rest::admin::warm_pools::{
-    ConfigureWarmPoolBody, ResizeWarmPoolBody, WarmPoolAdministration, WarmPoolError, WarmPoolList,
-    WarmPoolView,
+    ConfigureWarmPoolBody, ResizeWarmPoolBody, WarmPoolAdministration, WarmPoolError,
+    WarmPoolFailure, WarmPoolList, WarmPoolView,
 };
 use layer2_core::{Caller, Capability};
 use layer3_adapter::{
@@ -14,9 +14,15 @@ use layer3_adapter::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+mod apply;
+use apply::{reconcile_claimed, PoolApply};
 mod candidate;
 mod current;
 mod defaults;
+mod failure;
+pub(crate) use failure::PoolFailure;
+mod fixed_prewarm;
+pub(crate) use fixed_prewarm::observe_fixed_spare;
 mod holds;
 mod inventory;
 pub(crate) use holds::DefaultPoolHolds;
@@ -54,6 +60,8 @@ pub(crate) struct PoolTarget {
     pub target_replicas: u32,
     pub applied_revision: i64,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciliation_failure: Option<WarmPoolFailure>,
     pub lease: Option<String>,
     pub lease_until: mongodb::bson::DateTime,
     pub reconcile_after: mongodb::bson::DateTime,
@@ -125,8 +133,56 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     async fn list(&self) -> Result<Vec<PoolTarget>, WarmPoolError>;
     async fn find(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError>;
     async fn insert(&self, target: PoolTarget) -> Result<PoolTarget, WarmPoolError>;
-    /// `operator_choice` also records the count as the operator's desired
-    /// machine count, in the same fenced write.
+    async fn insert_with_create_fence(
+        &self,
+        target: PoolTarget,
+    ) -> Result<PoolTarget, WarmPoolError> {
+        self.insert(target).await
+    }
+    async fn authorize_provider_create(&self, _target: &PoolTarget) -> Result<(), WarmPoolError> {
+        Ok(())
+    }
+    async fn prepare_fixed_pool(
+        &self,
+        _active: &PoolTarget,
+        _target: Option<PoolTarget>,
+        _generation: i64,
+    ) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn activate_fixed_pools(
+        &self,
+        _targets: &[PoolTarget],
+        _provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
+        _target_fencing: bool,
+        _generation: i64,
+    ) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn fixed_preparation(&self, _target: &PoolTarget) -> Result<Option<bool>, WarmPoolError> {
+        Ok(None)
+    }
+    async fn begin_fixed_preparation(
+        &self,
+        _target: &PoolTarget,
+        _active: &PoolTarget,
+        _generation: i64,
+    ) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn withdraw_fixed_preparation(&self, _target: &PoolTarget) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
+    async fn pool_creates_fenced(&self, _epoch: uuid::Uuid) -> Result<bool, WarmPoolError> {
+        Ok(false)
+    }
+    async fn remove_unbound_retired(
+        &self,
+        _target: &PoolTarget,
+        _epoch: uuid::Uuid,
+    ) -> Result<(), WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn resize(
         &self,
         id: &str,
@@ -154,6 +210,13 @@ pub(crate) trait PoolTargetStore: Send + Sync {
         binding: &NativePoolBinding,
     ) -> Result<(), WarmPoolError>;
     async fn finish(&self, target: &PoolTarget, success: bool) -> Result<(), WarmPoolError>;
+    async fn finish_with_failure(
+        &self,
+        target: &PoolTarget,
+        _failure: PoolFailure,
+    ) -> Result<(), WarmPoolError> {
+        self.finish(target, false).await
+    }
 }
 
 /// Build metadata for the deployment-owned pinned CMA runtime, never a user image.
@@ -180,6 +243,9 @@ pub(crate) struct NativeWarmPools {
     machine_target: u32,
     target_fencing: bool,
     allow_empty_startup: bool,
+    pool_create_cutover_epoch: Option<uuid::Uuid>,
+    fixed_pool_prewarm: [Option<String>; 2],
+    fixed_prewarm_generation: Option<i64>,
     default_holds: Arc<DefaultPoolHolds>,
     versions: Option<Arc<versions::RuntimeVersions>>,
 }
@@ -205,6 +271,9 @@ impl NativeWarmPools {
             machine_target,
             target_fencing: false,
             allow_empty_startup: false,
+            pool_create_cutover_epoch: None,
+            fixed_pool_prewarm: Default::default(),
+            fixed_prewarm_generation: None,
             default_holds: Arc::default(),
             versions: None,
         })
@@ -300,12 +369,13 @@ impl WarmPoolAdministration for NativeWarmPools {
             binding: None,
             applied_revision: 0,
             error: None,
+            reconciliation_failure: None,
             lease: None,
             lease_until: mongodb::bson::DateTime::from_millis(0),
             reconcile_after: mongodb::bson::DateTime::from_millis(0),
             operator_replicas: None,
         };
-        let target = replay(self.store.insert(target).await?, &body)?;
+        let target = replay(self.insert_target(target).await?, &body)?;
         Ok(target.view(None, true))
     }
 
@@ -365,6 +435,7 @@ fn default_target(plan: NativePoolConfiguration, requested: ConfigureWarmPoolBod
         binding: None,
         applied_revision: 0,
         error: None,
+        reconciliation_failure: None,
         lease: None,
         lease_until: mongodb::bson::DateTime::from_millis(0),
         reconcile_after: mongodb::bson::DateTime::from_millis(0),
@@ -399,72 +470,4 @@ async fn reconcile_one(
     reconcile_claimed(store, provider, target, false)
         .await
         .map(|_| true)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum PoolApply {
-    Settled,
-    ConfigurationDrift,
-    Failed,
-}
-
-fn provider_apply_error(error: layer3_adapter::AdapterError) -> WarmPoolError {
-    match error {
-        layer3_adapter::AdapterError::NativePoolConfigurationDrift => {
-            WarmPoolError::ProviderConfigurationDrift
-        }
-        _ => WarmPoolError::Unavailable,
-    }
-}
-
-async fn reconcile_claimed(
-    store: &dyn PoolTargetStore,
-    provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
-    mut target: PoolTarget,
-    target_fencing: bool,
-) -> Result<PoolApply, WarmPoolError> {
-    if target.retiring {
-        return Err(WarmPoolError::Conflict);
-    }
-    let result = async {
-        if target.binding.is_none() {
-            // Zero capacity until the original pool/template UIDs have durable acknowledgement.
-            let status = provider
-                .configure_planned(&target.plan, 0)
-                .await
-                .map_err(|_| WarmPoolError::Unavailable)?;
-            store.bind(&target, &status.binding).await?;
-            target.binding = Some(status.binding);
-        }
-        let binding = target.binding.as_ref().ok_or(WarmPoolError::Conflict)?;
-        if target_fencing {
-            provider
-                .resize_fenced(
-                    binding,
-                    &layer3_adapter::agent_sandbox::NativePoolTarget {
-                        target_id: target.id.clone(),
-                        revision: target.revision,
-                        replicas: target.target_replicas,
-                    },
-                )
-                .await
-        } else {
-            provider.resize(binding, target.target_replicas).await
-        }
-        .map_err(provider_apply_error)?;
-        Ok::<(), WarmPoolError>(())
-    };
-    let result = tokio::time::timeout(Duration::from_secs(30), result).await;
-    let success = matches!(result, Ok(Ok(())));
-    store.finish(&target, success).await?;
-    telemetry::applied(&target, success);
-    Ok(
-        if matches!(result, Ok(Err(WarmPoolError::ProviderConfigurationDrift))) {
-            PoolApply::ConfigurationDrift
-        } else if success {
-            PoolApply::Settled
-        } else {
-            PoolApply::Failed
-        },
-    )
 }

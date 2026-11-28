@@ -63,6 +63,7 @@ export function TriggerWizard({
   const [profileReload, setProfileReload] = useState(0);
   const activeProfile = useRef<AbortController | undefined>(undefined);
   const heading = useRef<HTMLHeadingElement>(null);
+  const titleInput = useRef<HTMLInputElement>(null);
   const command = usePublisherCommand<CommandResult>(
     (result) => {
       onChange(result.document);
@@ -141,6 +142,15 @@ export function TriggerWizard({
   useEffect(() => {
     heading.current?.focus();
   }, [step]);
+  const titleValidation =
+    errors['presentation.title'] !== undefined
+      ? errors
+      : command.failure?.field === 'presentation.title'
+        ? command.failure
+        : undefined;
+  useEffect(() => {
+    if (step === 2 && titleValidation !== undefined) titleInput.current?.focus();
+  }, [step, titleValidation]);
   const update = (next: SetStateAction<TriggerContent>) => {
     setContent(next);
     setConfirmed(false);
@@ -288,6 +298,7 @@ export function TriggerWizard({
         <PresentationStep
           value={content}
           errors={fieldErrors}
+          titleInput={titleInput}
           disabled={locked || unavailable}
           onChange={update}
         />

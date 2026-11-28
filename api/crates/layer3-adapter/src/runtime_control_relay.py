@@ -2,12 +2,33 @@
 import os
 import select
 import socket
+import time
 
 LIMIT = 65536
+CONNECT_RETRY_SECONDS = 2.5
+
+
+def connect():
+    deadline = time.monotonic() + CONNECT_RETRY_SECONDS
+    delay = 0.05
+    while True:
+        try:
+            return socket.create_connection(("127.0.0.1", 9090), timeout=5)
+        except ConnectionRefusedError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            poller = select.poll()
+            poller.register(0, select.POLLHUP | select.POLLERR)
+            poller.register(1, select.POLLHUP | select.POLLERR)
+            events = dict(poller.poll(max(1, int(min(delay, remaining) * 1000))))
+            if any(events.get(fd, 0) & (select.POLLHUP | select.POLLERR) for fd in (0, 1)):
+                raise OSError("relay caller closed")
+            delay = min(0.1, delay * 2)
 
 
 def relay():
-    with socket.create_connection(("127.0.0.1", 9090), timeout=5) as peer:
+    with connect() as peer:
         # This marker is consumed by CMA before any HTTP bytes or credentials.
         marker = memoryview(b"CMA-EXEC-1\n")
         while marker:

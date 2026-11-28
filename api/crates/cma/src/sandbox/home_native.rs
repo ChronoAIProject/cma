@@ -75,6 +75,26 @@ pub(super) async fn next(
     }
     next.validate(&layer2_core::SandboxId(current.request.sandbox_id.clone()))
         .map_err(|error| rejected(&error.to_string()))?;
+    if let Some(claim) = next
+        .native_pool
+        .as_ref()
+        .and_then(|pool| pool.claim.as_ref())
+        .filter(|claim| {
+            claim.sandbox_name.is_some()
+                && claim.request.home.policy.is_native_vct()
+                && native
+                    .claim
+                    .as_ref()
+                    .is_none_or(|prior| prior.sandbox_name.is_none())
+        })
+    {
+        tracing::info!(
+            sandbox_id = %claim.request.home.sandbox_id,
+            claim_uid = %claim.uid,
+            runtime_generation = claim.request.runtime_generation,
+            "Native Claim assignment observed"
+        );
+    }
     Ok(Some(next))
 }
 

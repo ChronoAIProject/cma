@@ -400,7 +400,7 @@ async fn retained_warmer_is_off_by_default_and_enforces_explicit_owned_canary_sc
         .unwrap()
         .unwrap();
     assert!(!ordinary.contains_key("kind"));
-    assert!(ordinary.get_datetime("expires_at").is_ok());
+    assert_eq!(ordinary.get("expires_at"), Some(&mongodb::bson::Bson::Null));
     assert_eq!(
         store
             .collection(JOBS)

@@ -168,12 +168,18 @@ impl AgentOperationService {
                 metadata,
             });
         }
-        logs.extend(
-            next.conversation
-                .observations
-                .metadata
-                .record_task_preview(&text),
-        );
+        let onboarding_setup = self
+            .trigger_authority
+            .as_ref()
+            .is_some_and(|authority| authority.fence().binding().is_onboarding_setup());
+        if !onboarding_setup {
+            logs.extend(
+                next.conversation
+                    .observations
+                    .metadata
+                    .record_task_preview(&text),
+            );
+        }
         if let Some(authority) = &self.trigger_authority {
             super::agent_io::trigger::fence_first(
                 authority,

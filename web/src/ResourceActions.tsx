@@ -19,6 +19,7 @@ import {
   type DeletionSettlements,
 } from './useDeletionNoticeReconciliation';
 import { DeletionNotice, DeletionProgress } from './DeletionNotice';
+import { AgentDeletionNotice } from './AgentDeletionNotice';
 import { useDeletionNotice, type DeletionNoticeContext } from './useDeletionNotice';
 import { useHistoryExport } from './agent/useHistoryExport';
 import type { AppRoute } from './routing/routes';
@@ -231,9 +232,18 @@ export function useResourceActions(
   };
   const retained = deletionRequests.find((request) => !request.accepted) ?? deletionRequests.at(-1);
   const noticeDisabled = !enabled || pending || deletion !== undefined || stopping !== undefined;
+  const agentDeletion =
+    enabled && noticeContext.agentId
+      ? deletionRequests.find(
+          (request) =>
+            request.accepted &&
+            request.action.kind === 'delete_agent' &&
+            request.action.agentId === noticeContext.agentId,
+        )
+      : undefined;
   const summary = (
     <DeletionNotice
-      requests={deletionRequests}
+      requests={deletionRequests.filter((request) => request !== agentDeletion)}
       disabled={noticeDisabled}
       onViewStatus={notice.openList}
       onDismiss={notice.dismiss}
@@ -263,13 +273,28 @@ export function useResourceActions(
       stopping !== undefined ||
       connections.pending,
     error: history.error ?? error ?? connections.error,
-    viewDeletionStatus: retained === undefined || noticeDisabled ? undefined : notice.openList,
+    viewDeletionStatus: noticeDisabled
+      ? undefined
+      : agentDeletion
+        ? () => reopenDeletion(agentDeletion)
+        : retained === undefined
+          ? undefined
+          : notice.openList,
     notice: (
       <>
         {history.notice ? (
           <p role="status" className="console__navigation-status">
             {history.notice}
           </p>
+        ) : null}
+        {agentDeletion ? (
+          <AgentDeletionNotice
+            key={agentDeletion.key}
+            client={client}
+            request={agentDeletion}
+            onViewStatus={() => reopenDeletion(agentDeletion)}
+            disabled={noticeDisabled}
+          />
         ) : null}
         {notice.central ? summary : null}
         {notice.open && !noticeDisabled && deletionRequests.length > 0 ? (

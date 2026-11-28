@@ -22,12 +22,17 @@ import {
 import {
   forgetDeletion,
   persistDeletion,
+  acceptedDeletion,
   acknowledgeRetainedDeletion,
   sameDeletionRequest,
 } from './deletionRecovery';
 import { Modal } from './ui/Modal';
 import { DeletionConfirmation } from './DeletionConfirmation';
-import { DeletionStatusActions, DeletionStatusPanel } from './DeletionStatusPanel';
+import {
+  DeletionStatusActions,
+  DeletionStatusPanel,
+  deletionStatusTitle,
+} from './DeletionStatusPanel';
 import { transitionRefreshDelay } from './sandbox/lifecycle';
 import { readableError } from './vocabulary/errors';
 export function DeletionDialog({
@@ -200,7 +205,8 @@ export function DeletionDialog({
           events = next.events;
           agentEvents = next.agentEvents;
           setObservation(next);
-          retirementFailed = next.retirementFailed === true;
+          retirementFailed =
+            next.retirementFailed === true || next.agentDeletionFailure !== undefined;
           setReadError(undefined);
           if ((next.inProgress || retirementFailed) && !request.accepted && !settled()) {
             const accepted = { ...request, accepted: true };
@@ -357,7 +363,7 @@ export function DeletionDialog({
           acknowledgeRetainedDeletion(identity.viewerId, submitted);
           return;
         }
-        const accepted = { ...submitted, accepted: true };
+        const accepted = acceptedDeletion(submitted);
         persist(accepted);
         backgrounded.current = backgroundOnAcceptance;
         changed.current();
@@ -460,13 +466,7 @@ export function DeletionDialog({
   return (
     <Modal
       open
-      title={
-        complete
-          ? `${target} deleted`
-          : observation?.retirementFailed
-            ? `${target} deletion stopped`
-            : `Deleting ${target}`
-      }
+      title={deletionStatusTitle(target, complete, observation)}
       description={name}
       dismissible={!sending}
       onClose={close}

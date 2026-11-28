@@ -6,7 +6,7 @@ use tokio::time::Instant;
 
 use super::restart_budget::RestartBudget;
 use super::transport::authenticate;
-use super::{DesktopGeneration, DesktopProcess, DesktopUnavailable};
+use super::{DesktopGeneration, DesktopProcess, DesktopState, DesktopUnavailable};
 use crate::config::RuntimeConfig;
 
 enum State {
@@ -39,6 +39,15 @@ impl Supervision {
         }
     }
 
+    pub(super) fn status(&self) -> DesktopState {
+        match &*self.state.borrow() {
+            State::Starting => DesktopState::Starting,
+            State::Ready(generation) if generation.active() => DesktopState::Ready,
+            State::Ready(_) | State::Restarting => DesktopState::Restarting,
+            State::Failed => DesktopState::Failed,
+        }
+    }
+
     pub(super) fn generation(&self) -> Result<DesktopGeneration, DesktopUnavailable> {
         match &*self.state.borrow() {
             State::Ready(generation) if generation.active() => Ok(generation.clone()),
@@ -47,10 +56,10 @@ impl Supervision {
         }
     }
 
-    pub(crate) async fn ready(&self, startup_limit: Duration) -> bool {
+    pub(crate) async fn start_background(&self, startup_limit: Duration) {
         let mut owner = self.owner.lock().await;
         if !matches!(*owner, ProcessOwner::Starting(_)) {
-            return self.generation().is_ok();
+            return;
         }
         let ProcessOwner::Starting(initial) = std::mem::replace(&mut *owner, ProcessOwner::Stopped)
         else {
@@ -63,17 +72,24 @@ impl Supervision {
             budget: RestartBudget::new(),
             startup_limit,
         };
-        let (first_ready, confirmed) = oneshot::channel();
         *owner = ProcessOwner::Running(tokio::spawn(async move {
             driver
-                .run(
-                    *initial,
-                    || DesktopProcess::start(&config),
-                    Some(first_ready),
-                )
+                .run(*initial, || DesktopProcess::start(&config), None)
                 .await;
         }));
-        confirmed.await.is_ok()
+    }
+
+    #[cfg(test)]
+    pub(super) async fn wait_initial_ready(&self) -> bool {
+        let mut state = self.state.subscribe();
+        let shutdown = self.shutdown.subscribe();
+        tokio::select! {
+            biased;
+            () = stopped(shutdown) => false,
+            result = state.wait_for(|state| !matches!(state, State::Starting)) => {
+                result.is_ok_and(|state| matches!(*state, State::Ready(_)))
+            }
+        }
     }
 
     pub(super) async fn shutdown(&self) {
@@ -123,6 +139,7 @@ impl Recovery {
         mut launch: impl FnMut() -> crate::failure::Result<DesktopProcess>,
         mut first_ready: Option<oneshot::Sender<()>>,
     ) {
+        let initial_started = Instant::now();
         let mut next = Ok(initial);
         let mut attempt = 0_u64;
         loop {
@@ -135,6 +152,10 @@ impl Recovery {
                         End::Exit | End::StartupTimeout
                             if attempt == 0 && ready_since.is_none() =>
                         {
+                            tracing::error!(
+                                elapsed_ms = initial_started.elapsed().as_millis(),
+                                "initial desktop did not become ready"
+                            );
                             self.state.send_replace(State::Failed);
                             None
                         }
@@ -248,7 +269,12 @@ impl Recovery {
             Ok(listener) => listener,
             Err(end) => return (end, None),
         };
-        if attempt != 0 {
+        if attempt == 0 {
+            tracing::info!(
+                elapsed_ms = start.elapsed().as_millis(),
+                "initial desktop ready"
+            );
+        } else {
             tracing::info!(
                 attempt,
                 elapsed_ms = start.elapsed().as_millis(),

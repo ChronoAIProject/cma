@@ -205,6 +205,17 @@ async fn complete_callback(
         Ok(true) => return crate::auth::account_standing::deletion_problem(),
         Err(_) => return store_failure(),
     }
+    if crate::request_audit::bind(crate::request_audit::VerifiedActor {
+        subject: subject.clone(),
+        channel: layer2_core::ActivityChannel::Web,
+        credential: crate::request_audit::Credential::WebSession,
+        scope: "personal",
+    })
+    .await
+    .is_err()
+    {
+        return store_failure();
+    }
     if let Err(error) = auth
         .store_sign_in(
             subject.clone(),

@@ -22,8 +22,10 @@ const run = (command, extra = []) => docker(['exec', '--env', 'DISPLAY=:99',
 async function ready() {
   for (let i = 0; i < 90; i++) {
     if (JSON.parse(docker(['inspect', name]))[0].State.Running !== true) throw new Error('runtime exited during startup');
-    const port = run(['python', '-c', 'import socket; s=socket.socket(); print(s.connect_ex(("127.0.0.1",9090)))']).trim();
-    if (port === '0') return;
+    const state = run(['python', '-c',
+      'import json,urllib.request\ntry:\n print(json.loads(urllib.request.urlopen("http://127.0.0.1:9090/readyz",timeout=2).read()).get("desktop","ready"))\nexcept Exception: print("unreachable")']).trim();
+    if (state === 'ready') return;
+    if (state === 'failed') throw new Error('runtime desktop startup failed');
     await delay(1000);
   }
   throw new Error('runtime desktop startup exceeded 90 seconds');

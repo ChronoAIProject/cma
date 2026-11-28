@@ -25,6 +25,13 @@ async fn only_terminal_desktop_unavailability_has_a_failed_state_header() {
                 .map(|value| value.to_str().unwrap()),
             (!retryable).then_some(DESKTOP_STATE_FAILED),
         );
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::RETRY_AFTER)
+                .map(|value| value.to_str().unwrap()),
+            retryable.then_some("1"),
+        );
         let bytes = axum::body::to_bytes(response.into_body(), 1024)
             .await
             .unwrap();

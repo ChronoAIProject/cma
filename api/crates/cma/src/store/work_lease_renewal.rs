@@ -4,13 +4,26 @@ use layer2_core::sandbox::store::{SandboxStoreError, WorkLeaseGrant, WORK_LEASE_
 use mongodb::bson::{doc, DateTime, Document};
 use mongodb::options::ReturnDocument;
 
+use super::work_publication::FenceError;
+
 pub(super) async fn grant(
     rows: &mongodb::Collection<Document>,
     identity: Document,
     requested_until: &str,
     session: Option<&mut mongodb::ClientSession>,
 ) -> Result<Option<WorkLeaseGrant>, SandboxStoreError> {
-    extend(rows, identity, requested_until, session, true).await
+    extend(rows, identity, requested_until, session, true)
+        .await
+        .map_err(renewal_error)
+}
+
+pub(super) async fn grant_in_transaction(
+    rows: &mongodb::Collection<Document>,
+    identity: Document,
+    requested_until: &str,
+    session: &mut mongodb::ClientSession,
+) -> Result<Option<WorkLeaseGrant>, FenceError> {
+    extend(rows, identity, requested_until, Some(session), true).await
 }
 
 async fn extend(
@@ -19,7 +32,7 @@ async fn extend(
     requested_until: &str,
     session: Option<&mut mongodb::ClientSession>,
     short: bool,
-) -> Result<Option<WorkLeaseGrant>, SandboxStoreError> {
+) -> Result<Option<WorkLeaseGrant>, FenceError> {
     let requested_until = layer2_core::seconds_from_rfc3339(requested_until)
         .and_then(|value| value.checked_mul(1000))
         .and_then(|value| i64::try_from(value).ok())
@@ -57,9 +70,8 @@ async fn extend(
     let result = match session {
         Some(session) => update.session(session).await,
         None => update.await,
-    }
-    .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-    result
+    }?;
+    Ok(result
         .map(|row| {
             let until = row
                 .get_str("work_lease_expires_at")
@@ -76,7 +88,7 @@ async fn extend(
                 })
             }
         })
-        .transpose()
+        .transpose()?)
 }
 
 // Legacy callers retain their expiry-only receipt and long-lease semantics.
@@ -88,5 +100,13 @@ pub(super) async fn renew(
 ) -> Result<Option<String>, SandboxStoreError> {
     extend(rows, identity, requested_until, session, false)
         .await
+        .map_err(renewal_error)
         .map(|grant| grant.map(|grant| grant.expires_at))
+}
+
+fn renewal_error(error: FenceError) -> SandboxStoreError {
+    match error {
+        FenceError::Domain(error) => error,
+        FenceError::Driver(error) => SandboxStoreError::Unavailable(error.to_string()),
+    }
 }

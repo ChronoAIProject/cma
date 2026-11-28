@@ -29,7 +29,11 @@ LAUNCHER_NATIVES = {
     },
 }
 BRIDGE_PATH = "/usr/local/lib/node_modules/@agentclientprotocol/codex-acp/dist/index.js"
-RELAY_SOURCE = "e595835b6314ff0770fdf97817d6920295ea384a5ac3bfdd0476b90c81b79a4f"
+RELAY_SOURCE = "50b1c236010050ec957ecec7ce6b52cc79edb58e2eaafefd3da7b9043b213032"
+RELAY_SOURCES = {
+    RELAY_SOURCE,
+    "e595835b6314ff0770fdf97817d6920295ea384a5ac3bfdd0476b90c81b79a4f",
+}
 DESKTOP_SOURCE = "e7eab92f35acef315b47e8cddec219006e3dda409834836a5bcf2eab3ab0aa00"
 # Retained Openbox/XFCE/Omarchy homes coexist with newly admitted desktop Machines.
 OMARCHY_DESKTOP_SOURCE = "4544b0e5e66adfebc4da6d13a42e79c51133c72488fc8be5d41bf4e64e8948a3"
@@ -48,7 +52,7 @@ DESKTOP_GUARDIAN = b"--desktop-generation-guardian"
 
 def relay_command(command):
     argv = command.rstrip(b"\0").split(b"\0")
-    return len(argv) == 5 and argv[:4] == [b"/usr/bin/python3", b"-I", b"-u", b"-c"] and sha(argv[4]) == RELAY_SOURCE
+    return len(argv) == 5 and argv[:4] == [b"/usr/bin/python3", b"-I", b"-u", b"-c"] and sha(argv[4]) in RELAY_SOURCES
 
 
 def services(processes):

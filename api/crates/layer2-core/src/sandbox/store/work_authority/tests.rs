@@ -150,6 +150,31 @@ async fn renewal_uncertainty_drops_pending_work_within_bounded_call() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn renewal_can_wait_for_a_lock_held_by_the_work() {
+    let row = tokio::sync::Mutex::new(());
+    let calls = AtomicUsize::new(0);
+    let start = Instant::now();
+    let result = authority()
+        .run(
+            async {
+                let _locked = row.lock().await;
+                tokio::time::sleep(Duration::from_secs(4)).await;
+                Ok(42)
+            },
+            || async {
+                if calls.fetch_add(1, Ordering::SeqCst) != 0 {
+                    let _locked = row.lock().await;
+                }
+                grant()
+            },
+        )
+        .await;
+    assert_eq!(result, Ok(42));
+    assert_eq!(start.elapsed(), Duration::from_secs(4));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test(start_paused = true)]
 async fn request_start_bounds_even_a_successful_delayed_receipt() {
     let authority = authority();
     let start = Instant::now();

@@ -14,6 +14,8 @@ use layer2_core::{
     ActivityAction, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget, SubjectId,
 };
 
+pub(crate) mod gateway;
+pub(crate) mod ingress;
 mod policy;
 pub(crate) mod queue;
 
@@ -111,6 +113,14 @@ pub async fn record(
     request: Request,
     next: Next,
 ) -> Response {
+    if cma_am_auth::request_audit::active()
+        || request
+            .extensions()
+            .get::<ingress::AuditedPeerHop>()
+            .is_some()
+    {
+        return next.run(request).await;
+    }
     if request
         .extensions()
         .get::<ChargedQueuedCancellation>()
@@ -189,7 +199,7 @@ fn classify(method: &Method, path: &str) -> ActivityAction {
 }
 
 fn outcome(status: StatusCode) -> ActivityOutcome {
-    if status.is_success() || status.is_redirection() {
+    if status.is_success() || status.is_redirection() || status == StatusCode::SWITCHING_PROTOCOLS {
         ActivityOutcome::Succeeded
     } else if status.is_client_error() {
         ActivityOutcome::Refused(status.as_u16().to_string())

@@ -151,6 +151,24 @@ fn is_visitor(authorization: &Authorization) -> bool {
 }
 
 pub(super) async fn logout(State(auth): State<Arc<AuthState>>, headers: HeaderMap) -> Response {
+    if crate::request_audit::active() {
+        if let Some(cookie) = request_cookie(&headers, AUTH_COOKIE) {
+            let id = super::persistence::SecretDigest::identify(super::AUTH_COOKIE_DOMAIN, cookie);
+            if let Ok(Some((login, _))) = auth.read_browser_session(&id).await {
+                if crate::request_audit::bind(crate::request_audit::VerifiedActor {
+                    subject: login.subject,
+                    channel: layer2_core::ActivityChannel::Web,
+                    credential: crate::request_audit::Credential::WebSession,
+                    scope: "personal",
+                })
+                .await
+                .is_err()
+                {
+                    return super::middleware::store_failure();
+                }
+            }
+        }
+    }
     auth.identity_store.clear();
     // Every pending callback carries its binding cookie even after consuming
     // its one-use state. Revoking the same custody row fences session issuance.

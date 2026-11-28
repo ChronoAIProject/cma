@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { ApiError, type ActivitySummary } from '@cma/client';
@@ -26,12 +26,55 @@ function pending() {
 }
 
 describe('Activity summary pages', () => {
+  it('shows authenticated channel and request ID and reapplies filters from the first page', async () => {
+    const client = operatorClient();
+    client.admin.listActivitySummary.mockResolvedValue({
+      items: [
+        {
+          ...row('agent-target'),
+          actor: 'verified-user',
+          channel: 'api',
+          method: 'POST',
+          route: '/api/v1/agents/{id}/input',
+          request_id: '00000000-0000-4000-8000-000000000022',
+          http_status: 202,
+        },
+      ],
+      next: null,
+    });
+    const user = userEvent.setup();
+    render(<Activity client={client} />);
+    expect(await screen.findByText('API · client unknown')).toBeVisible();
+    expect(screen.getByText('00000000-0000-4000-8000-000000000022')).toBeVisible();
+    expect(screen.getByText('POST /api/v1/agents/{id}/input')).toBeVisible();
+    await chooseOptionValue(user, screen.getByLabelText('Activity channel'), 'api');
+    await chooseOptionValue(user, screen.getByLabelText('Activity result'), 'succeeded');
+    fireEvent.change(screen.getByLabelText('Recorded from (SGT)'), {
+      target: { value: '2026-11-28T16:00' },
+    });
+    fireEvent.change(screen.getByLabelText('Recorded before (SGT)'), {
+      target: { value: '2026-11-28T17:00' },
+    });
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await waitFor(() =>
+      expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          cursor: undefined,
+          channel: 'api',
+          result: 'succeeded',
+          recordedFrom: '2026-11-28T16:00:00+08:00',
+          recordedBefore: '2026-11-28T17:00:00+08:00',
+        }),
+      ),
+    );
+  });
+
   it('announces the cursor position and actual record range through navigation and refresh', async () => {
     const client = operatorClient();
+    const firstForward = pending();
     client.admin.listActivitySummary.mockImplementation(async (options) => {
       if (options?.action === 'delete') return { items: [row('filtered')], next: null };
-      if (options?.cursor === 'middle')
-        return { items: [row('third'), row('fourth'), row('fifth')], next: 'terminal' };
+      if (options?.cursor === 'middle') return firstForward.promise;
       if (options?.cursor === 'terminal') return { items: [row('sixth')], next: null };
       return { items: [row('first'), row('second')], next: 'middle' };
     });
@@ -43,15 +86,41 @@ describe('Activity summary pages', () => {
       waitFor(() => expect(screen.getByRole('status')).toHaveTextContent(text));
 
     await position('Page 1 · Records 1–2 · More records available');
-    expect(previous).toBeDisabled();
-    await user.click(next);
-    await position('Page 2 · Records 3–5 · More records available');
-    expect(previous).toBeEnabled();
-    await user.click(next);
-    await position('Page 3 · Records 6–6 · Last page');
-    expect(next).toBeDisabled();
+    expect(previous).toHaveAttribute('aria-disabled', 'true');
+    screen.getByRole('button', { name: 'Refresh records' }).focus();
+    await user.tab();
+    expect(next).toHaveFocus();
 
-    await user.click(previous);
+    await user.keyboard('{Enter}');
+    expect(next).toHaveFocus();
+    expect(next).toHaveAttribute('aria-disabled', 'true');
+    await user.keyboard('{Enter}');
+    expect(client.admin.listActivitySummary).toHaveBeenCalledTimes(2);
+    await act(async () =>
+      firstForward.resolve({
+        items: [row('third'), row('fourth'), row('fifth')],
+        next: 'terminal',
+      }),
+    );
+    await position('Page 2 · Records 3–5 · More records available');
+    expect(next).toHaveFocus();
+    await user.keyboard('{Enter}');
+    await position('Page 3 · Records 6–6 · Last page');
+    expect(next).toHaveFocus();
+    expect(next).toHaveAttribute('aria-disabled', 'true');
+
+    await user.tab({ shift: true });
+    expect(previous).toHaveFocus();
+    await user.keyboard(' ');
+    await position('Page 2 · Records 3–5 · More records available');
+    expect(previous).toHaveFocus();
+    await user.keyboard('{Enter}');
+    await position('Page 1 · Records 1–2 · More records available');
+    expect(previous).toHaveFocus();
+    expect(previous).toHaveAttribute('aria-disabled', 'true');
+    await user.tab();
+    expect(next).toHaveFocus();
+    await user.keyboard('{Enter}');
     await position('Page 2 · Records 3–5 · More records available');
     await user.click(screen.getByRole('button', { name: 'Refresh records' }));
     await position('Page 2 · Records 3–5 · More records available');
@@ -62,8 +131,14 @@ describe('Activity summary pages', () => {
     await chooseOptionValue(user, screen.getByLabelText('Activity action'), 'delete');
     await user.click(screen.getByRole('button', { name: 'Apply filters' }));
     await position('Page 1 · Records 1–1 · Last page');
-    expect(screen.getByRole('button', { name: 'Previous page' })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Previous page' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: 'Next page' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
   });
 
   it('finds an older actor on the server before paging and keeps the selection on refresh', async () => {
@@ -220,7 +295,10 @@ describe('Activity summary pages', () => {
     );
     await act(async () => held.resolve({ items: [row('stale')], next: '123:act_stale' }));
     expect(screen.queryByText('stale')).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Next page' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Next page' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
     await user.click(screen.getByRole('button', { name: 'Refresh records' }));
     const signal = client.admin.listActivitySummary.mock.calls[3]![0]!.signal!;
     mounted.unmount();
