@@ -6,6 +6,9 @@ use layer2_core::sandbox::store::{
 use layer3_adapter::{ContentBlock, ContentChunk, MessageId};
 use tokio::sync::{oneshot, Mutex};
 
+#[path = "capture_shared_tests.rs"]
+mod shared;
+
 struct CaptureBarrier {
     store: Arc<MongoSandboxStore>,
     indexed: bool,
@@ -114,7 +117,7 @@ fn frame(bytes: &[u8]) -> Option<(u64, serde_json::Value)> {
 #[ignore = "requires a disposable Mongo replica set"]
 async fn original_post_recaptures_first_text_completion_and_cancellation() {
     for reason in [TurnStopReason::EndTurn, TurnStopReason::Cancelled] {
-        tokio::time::timeout(Duration::from_secs(25), exercise(reason, false))
+        tokio::time::timeout(Duration::from_secs(25), exercise(reason, false, false))
             .await
             .unwrap();
     }
@@ -125,13 +128,13 @@ async fn original_post_recaptures_first_text_completion_and_cancellation() {
 async fn indexed_original_post_recaptures_normal_writer_commits() {
     tokio::time::timeout(
         Duration::from_secs(25),
-        exercise(TurnStopReason::EndTurn, true),
+        exercise(TurnStopReason::EndTurn, true, false),
     )
     .await
     .unwrap();
 }
 
-async fn exercise(reason: TurnStopReason, indexed: bool) {
+async fn exercise(reason: TurnStopReason, indexed: bool, shared: bool) {
     use axum::http::Method;
     use serde_json::json;
     let (client, name) = database("response_capture_advance").await;
@@ -156,6 +159,12 @@ async fn exercise(reason: TurnStopReason, indexed: bool) {
     let reads = AgentReadService::new(reader, Arc::new(NoResources))
         .with_resource_access(access)
         .with_response_logs(Some(source.clone()));
+    let (reads, custody) = if shared {
+        let (reads, custody) = shared::observe(reads, &store, &agent, &client, &name).await;
+        (reads, Some(custody))
+    } else {
+        (reads, None)
+    };
     let app = layer1_public::responses::v2::router(
         layer1_public::responses::v2::ResponsesV2State::new(
             layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
@@ -164,16 +173,13 @@ async fn exercise(reason: TurnStopReason, indexed: bool) {
         )
         .with_paged_events(true),
     );
-    let post = app
-        .clone()
-        .oneshot(request(
-            &agent,
-            Method::POST,
-            "/api/v2/responses",
-            Some(json!({"conversation":agent.id, "input":"question", "stream":true})),
-        ))
-        .await
-        .unwrap();
+    let post = app.clone().oneshot(request(
+        &agent,
+        Method::POST,
+        "/api/v2/responses",
+        Some(json!({"conversation":agent.id, "input":"question", "stream":true})),
+    ));
+    let post = shared::route(custody.as_ref(), post).await.unwrap();
     assert_eq!(post.status(), StatusCode::OK);
     let response_id = post.headers()["x-cma-response-id"]
         .to_str()
@@ -214,10 +220,31 @@ async fn exercise(reason: TurnStopReason, indexed: bool) {
         true,
     );
     let mut assembly = AgentMessageAssembly::default();
-    let (captured, resume) = source.arm().await;
     let mut body = post.into_body().into_data_stream();
+    let mut frames = Vec::new();
+    if shared {
+        let active = writer.get_agent(&agent.id).await.unwrap().unwrap();
+        recorder
+            .record_update(
+                &agent.id,
+                active.conversation.runtime_generation.unwrap(),
+                &mut assembly,
+                ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(
+                    ContentChunk::new(ContentBlock::from("first "))
+                        .message_id(MessageId::new("reply")),
+                )),
+                layer2_core::now_rfc3339(),
+            )
+            .await
+            .unwrap();
+        for marker in ["response.created", "response.in_progress"] {
+            let event = frame(&body.next().await.unwrap().unwrap()).expect("opening frame");
+            assert_eq!(event.1["type"], marker);
+            frames.push(event);
+        }
+    }
+    let (captured, resume) = source.arm().await;
     let reader = tokio::spawn(async move {
-        let mut frames = Vec::new();
         loop {
             let bytes = body
                 .next()
@@ -225,7 +252,8 @@ async fn exercise(reason: TurnStopReason, indexed: bool) {
                 .expect("POST closed before the first text")
                 .unwrap();
             let Some(event) = frame(&bytes) else { continue };
-            let is_text = event.1["type"] == "response.output_text.delta";
+            let is_text = event.1["type"] == "response.output_text.delta"
+                && event.1["delta"] == "committed answer";
             frames.push(event);
             if is_text {
                 return (body, frames);
@@ -399,7 +427,9 @@ async fn exercise(reason: TurnStopReason, indexed: bool) {
                 .headers_mut()
                 .insert("last-event-id", first_delta_id.to_string().parse().unwrap());
         }
-        let reply = app.clone().oneshot(replay).await.unwrap();
+        let reply = shared::route(custody.as_ref(), app.clone().oneshot(replay))
+            .await
+            .unwrap();
         assert_eq!(reply.status(), StatusCode::OK);
         let mut stream = reply.into_body().into_data_stream();
         let mut replay_frames = Vec::new();
@@ -408,9 +438,23 @@ async fn exercise(reason: TurnStopReason, indexed: bool) {
         }
         assert_eq!(replay_frames, frames[first_delta_id as usize + 1..]);
     }
-    assert_eq!(writer.agent_log(&agent.id, before.conversation.last_seq, 32).await.unwrap().iter().filter(|row| {
-        matches!(&row.kind, AgentLogKind::AgentMessage { content } if content == "committed answer continued")
-    }).count(), 1);
+    let expected = if shared {
+        "first committed answer continued"
+    } else {
+        "committed answer continued"
+    };
+    assert_eq!(
+        writer
+            .agent_log(&agent.id, before.conversation.last_seq, 32)
+            .await
+            .unwrap()
+            .iter()
+            .filter(|row| {
+                matches!(&row.kind, AgentLogKind::AgentMessage { content } if content == expected)
+            })
+            .count(),
+        1
+    );
     client.database(&name).drop().await.unwrap();
 }
 

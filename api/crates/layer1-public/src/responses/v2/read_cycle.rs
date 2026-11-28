@@ -1,6 +1,8 @@
 use crate::stream_telemetry::CloseReason;
 use layer2_core::sandbox::{
-    agent_io::{CommandAdmissionError, CommandReceiptView, ObservedResponseReadError},
+    agent_io::{
+        AgentResponseReading, CommandAdmissionError, CommandReceiptView, ObservedResponseReadError,
+    },
     AgentReadError, AgentResponseObservationError,
 };
 use sha2::{Digest, Sha256};
@@ -8,6 +10,16 @@ use std::{future::Future, pin::Pin};
 use tokio::time::Instant;
 
 type ReadAttempt<'a, T> = Pin<Box<dyn Future<Output = Result<T, ReadFailure>> + Send + 'a>>;
+
+pub(super) fn indexed_read_key(
+    reading: &AgentResponseReading,
+    next: Option<u64>,
+    personal: bool,
+) -> Result<[u8; 32], ReadFailure> {
+    let input =
+        serde_json::to_vec(&(reading, next, personal)).map_err(|_| ReadFailure::Projection)?;
+    Ok(Sha256::digest(input).into())
+}
 
 pub(super) async fn read_cycle<C, T>(
     context: &mut C,

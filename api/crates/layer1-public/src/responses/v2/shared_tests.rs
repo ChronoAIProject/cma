@@ -7,6 +7,7 @@ pub(super) struct Facts {
     commands: Arc<dyn AgentCommandStore>,
     pub generation: AtomicUsize,
     ready: AtomicBool,
+    revoke_on_fresh: std::sync::Mutex<Option<(usize, Arc<AgentObservationAuthority>)>>,
 }
 #[async_trait]
 impl AgentObservationStore for Facts {
@@ -51,6 +52,22 @@ impl AgentObservationStore for Facts {
                     .await
                     .map_err(|error| AgentReadError::Access(error.into())),
             );
+        }
+        let revoke = {
+            let mut armed = self.revoke_on_fresh.lock().unwrap();
+            if let Some((remaining, _)) = armed.as_mut() {
+                *remaining -= 1;
+                if *remaining == 0 {
+                    armed.take().map(|(_, authority)| authority)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(authority) = revoke {
+            authority.revoke();
         }
         Ok(rows)
     }
@@ -97,6 +114,7 @@ pub(super) fn install_with_commands(
         commands,
         generation: AtomicUsize::new(1),
         ready: AtomicBool::new(true),
+        revoke_on_fresh: std::sync::Mutex::new(None),
     });
     let service = AgentObservationService::new(reads.clone(), facts.clone());
     let custody = AgentObservationAuthority::new(
@@ -328,4 +346,37 @@ async fn cached_projection_never_shares_metadata_or_survives_revocation_under_ba
             .0,
         StatusCode::NOT_FOUND
     );
+}
+
+#[tokio::test]
+async fn queued_snapshot_final_custody_fence_keeps_existing_durable_recovery() {
+    let (f, observer) = fixture_with_events_and_standing(
+        None,
+        true,
+        true,
+        Arc::new(layer2_core::account_deletion::AvailableAccounts),
+    )
+    .await;
+    let response = create(&f, false).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let (custody, facts) = observer.unwrap();
+    // First refresh: command/header, unbound snapshot, snapshot release fence.
+    *facts.revoke_on_fresh.lock().unwrap() = Some((3, custody));
+    let mut body = response.into_body().into_data_stream();
+    let frame = tokio::time::timeout(Duration::from_secs(4), body.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(
+        facts.revoke_on_fresh.lock().unwrap().is_none(),
+        "release fence injected"
+    );
+    let observed = events(&frame);
+    assert_eq!(
+        observed[0]["type"], "response.created",
+        "unbound capture custody loss must rebuild: {observed:?}"
+    );
+    assert_eq!(observed[0]["sequence_number"], 0);
+    assert!(observed.iter().all(|event| event["type"] != "error"));
 }

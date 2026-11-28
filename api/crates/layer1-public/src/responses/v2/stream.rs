@@ -1,6 +1,6 @@
 use super::{
     error, projection,
-    read_cycle::{read_category, read_cycle, FirstFailure, ReadFailure},
+    read_cycle::{indexed_read_key, read_category, read_cycle, FirstFailure, ReadFailure},
     ResponsesV2State, V2ResponseObject,
 };
 use crate::stream_telemetry::{self, CloseReason, Contract, ContractKind, Kind, Poll};
@@ -48,9 +48,10 @@ async fn snapshot_mode(
     let history = if let Some(turn) = reading.command.turn_sequence {
         let origin = state.agent_page_origin.clone();
         let indexed_reading = reading.clone();
+        let key = indexed_read_key(&reading, None, authorization.is_personal_owner())?;
         let observation = state
             .reads
-            .read_response_observation(authorization, turn, move |source| {
+            .read_response_observation(authorization, turn, Some(key), move |source| {
                 Box::pin(async move {
                     if !indexed_allowed {
                         return Err(layer2_core::sandbox::AgentReadError::Unavailable(
@@ -73,9 +74,9 @@ async fn snapshot_mode(
     } else {
         state
             .reads
-            .response_event_stream_snapshot(authorization, None)
+            .read_unbound_response_snapshot(authorization)
             .await
-            .map_err(ReadFailure::Source)?
+            .map_err(ReadFailure::from)?
     };
     let bound = reading.command.turn_sequence.is_some();
     let response = super::shared_projection::project(state, reading, &history)

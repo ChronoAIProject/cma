@@ -1,7 +1,7 @@
 //! Response observation defers source work until after the HTTP headers.
 use super::{
     error, projection,
-    read_cycle::{read_category, read_cycle, FirstFailure, ReadFailure},
+    read_cycle::{indexed_read_key, read_category, read_cycle, FirstFailure, ReadFailure},
     stream, ResponsesV2State,
 };
 use crate::stream_telemetry::{CloseReason, Contract, ContractKind, Kind, Poll};
@@ -358,10 +358,12 @@ impl Open {
             let origin = self.state.agent_page_origin.clone();
             let reading = current.command.clone();
             let next = self.next;
+            let key =
+                indexed_read_key(&reading, Some(next), self.authorization.is_personal_owner())?;
             let observation = self
                 .state
                 .reads
-                .read_response_observation(&self.authorization, turn, move |source| {
+                .read_response_observation(&self.authorization, turn, Some(key), move |source| {
                     Box::pin(async move { indexed::read(source, &origin, reading, next).await })
                 })
                 .await
@@ -383,9 +385,9 @@ impl Open {
         } else {
             self.state
                 .reads
-                .response_event_stream_snapshot(&self.authorization, None)
+                .read_unbound_response_snapshot(&self.authorization)
                 .await
-                .map_err(ReadFailure::Source)?
+                .map_err(ReadFailure::from)?
         };
         let bound = current.command.command.turn_sequence.is_some();
         let response =

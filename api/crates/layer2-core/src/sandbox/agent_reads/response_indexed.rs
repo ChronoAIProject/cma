@@ -255,8 +255,14 @@ impl AgentReadService {
                     .lineage
                     .agent
                     .ok_or_else(|| corrupt("authorized output has no Agent"))?;
-                self.read_output_observation(&agent, turn, authorization.resource().2, operation)
-                    .await
+                self.read_output_observation(
+                    &agent,
+                    turn,
+                    authorization.resource().2,
+                    None,
+                    operation,
+                )
+                .await
             })
             .await;
         // Fence failures too: a private dependency outcome never bypasses a
@@ -270,6 +276,7 @@ impl AgentReadService {
         agent: &Agent,
         turn: Option<u64>,
         personal: bool,
+        operation_key: Option<[u8; 32]>,
         operation: F,
     ) -> Result<Option<T>, AgentReadError>
     where
@@ -286,9 +293,14 @@ impl AgentReadService {
             None => None,
         };
         if let Some(flight) = &flight {
-            let Some(reader) =
-                super::super::output_memo::MemoReader::open(store.as_ref(), agent, turn, flight)
-                    .await?
+            let Some(reader) = super::super::output_memo::MemoReader::open(
+                store.as_ref(),
+                agent,
+                turn,
+                flight,
+                operation_key,
+            )
+            .await?
             else {
                 return Ok(None);
             };
