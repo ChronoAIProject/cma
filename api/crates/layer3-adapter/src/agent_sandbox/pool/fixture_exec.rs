@@ -15,6 +15,7 @@ pub(super) enum RelayOutcome {
     EarlyExit,
     ReplacedPod,
     InvalidMarker,
+    InvalidPrefix,
     Status,
     DisconnectAfterWrite,
     ListenerReadyAt(tokio::time::Instant),
@@ -82,13 +83,21 @@ pub(super) async fn serve_relay(
         }
         return;
     }
-    let marker = if matches!(outcome, RelayOutcome::InvalidMarker) {
-        b"\x01BAD-EXEC-1\n"
-    } else {
-        b"\x01CMA-EXEC-1\n"
+    let marker: &[u8] = match outcome {
+        RelayOutcome::InvalidPrefix => b"\x01B",
+        RelayOutcome::InvalidMarker => b"\x01BAD-EXEC-1\n",
+        _ => b"\x01CMA-EXEC-1\n",
     };
     ws.send(Message::Binary(marker.to_vec())).await.unwrap();
-    if matches!(outcome, RelayOutcome::InvalidMarker) {
+    if matches!(outcome, RelayOutcome::InvalidPrefix) {
+        ws.send(Message::Binary(b"\x03{\"status\":\"Success\"}".to_vec()))
+            .await
+            .unwrap();
+    }
+    if matches!(
+        outcome,
+        RelayOutcome::InvalidMarker | RelayOutcome::InvalidPrefix
+    ) {
         while let Some(Ok(Message::Binary(bytes))) = ws.next().await {
             assert!(
                 !bytes.starts_with(&[0]),

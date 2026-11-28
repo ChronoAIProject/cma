@@ -88,7 +88,11 @@ async fn relay_readiness_retry_recovers_same_binding_with_one_status_request() {
 
 #[tokio::test]
 async fn relay_readiness_retry_refuses_changed_binding_and_invalid_marker() {
-    for outcome in [RelayOutcome::ReplacedPod, RelayOutcome::InvalidMarker] {
+    for outcome in [
+        RelayOutcome::ReplacedPod,
+        RelayOutcome::InvalidMarker,
+        RelayOutcome::InvalidPrefix,
+    ] {
         let (result, opens, requests) = status(vec![outcome], true).await;
         assert!(
             matches!(result, Err(AdapterError::Rejected(_))),

@@ -18,12 +18,19 @@ async fn read_ready(
     stream: &mut (impl AsyncRead + Unpin),
 ) -> std::result::Result<(), RelayReadinessFailure> {
     let mut bytes = [0; READY.len()];
-    stream
-        .read_exact(&mut bytes)
-        .await
-        .map_err(|_| RelayReadinessFailure::Unreadable)?;
-    if bytes != READY {
-        return Err(RelayReadinessFailure::Invalid);
+    let mut received = 0;
+    while received < bytes.len() {
+        let count = stream
+            .read(&mut bytes[received..])
+            .await
+            .map_err(|_| RelayReadinessFailure::Unreadable)?;
+        if count == 0 {
+            return Err(RelayReadinessFailure::Unreadable);
+        }
+        received += count;
+        if bytes[..received] != READY[..received] {
+            return Err(RelayReadinessFailure::Invalid);
+        }
     }
     Ok(())
 }

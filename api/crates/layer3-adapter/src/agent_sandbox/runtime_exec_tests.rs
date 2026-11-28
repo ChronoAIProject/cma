@@ -17,6 +17,14 @@ async fn relay_readiness_distinguishes_an_early_close_from_protocol_rejection() 
         read_ready(&mut &b"BAD-EXEC-1\n"[..]).await,
         Err(RelayReadinessFailure::Invalid)
     );
+    assert_eq!(
+        read_ready(&mut &b"B"[..]).await,
+        Err(RelayReadinessFailure::Invalid)
+    );
+    assert_eq!(
+        read_ready(&mut &b"CMA"[..]).await,
+        Err(RelayReadinessFailure::Unreadable)
+    );
     assert_eq!(read_ready(&mut &READY[..]).await, Ok(()));
 }
 
