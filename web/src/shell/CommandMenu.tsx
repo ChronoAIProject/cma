@@ -15,6 +15,8 @@ export interface Command {
   readonly hint?: string;
   /** Explicit lookup terms, such as canonical resource IDs, that are not displayed. */
   readonly searchTerms?: readonly string[];
+  /** Lowercase queries that select this command first when they match in full. */
+  readonly preferredQueries?: readonly string[];
   readonly icon?: ReactNode;
   readonly run: () => void;
 }
@@ -24,22 +26,24 @@ const RESULT_LIMIT = 60;
 
 export function filterCommands(commands: readonly Command[], query: string): Command[] {
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const matched =
-    words.length === 0
-      ? commands
-      : commands.filter((command) => {
-          const text = [
-            command.label,
-            command.meta,
-            command.hint,
-            command.group,
-            ...(command.searchTerms ?? []),
-          ]
-            .filter(Boolean)
-            .join(' ')
-            .toLowerCase();
-          return words.every((word) => text.includes(word));
-        });
+  if (words.length === 0) return commands.slice(0, RESULT_LIMIT);
+  const phrase = words.join(' ');
+  const preferred = commands.find((command) => command.preferredQueries?.includes(phrase));
+  const matched = commands.filter((command) => {
+    if (command === preferred) return false;
+    const text = [
+      command.label,
+      command.meta,
+      command.hint,
+      command.group,
+      ...(command.searchTerms ?? []),
+    ]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase();
+    return words.every((word) => text.includes(word));
+  });
+  if (preferred) matched.unshift(preferred);
   return matched.slice(0, RESULT_LIMIT);
 }
 
