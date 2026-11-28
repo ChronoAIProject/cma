@@ -1,4 +1,5 @@
 use super::*;
+use crate::sandbox::live_agent_stopper;
 use crate::store::native_retirement_action::RetirementObservation;
 use layer2_core::sandbox::Agent;
 use layer3_adapter::owner_protocol::{TransportOwner, OWNER_PROTOCOL_VERSION};
@@ -82,7 +83,7 @@ impl NativeRetirementFinalizer {
         else {
             return Ok(());
         };
-        let children = super::live_agent_stopper::retirement_agents(self.store.as_ref(), parent)
+        let children = live_agent_stopper::retirement_agents(self.store.as_ref(), parent)
             .await
             .map_err(|_| SandboxStoreError::Conflict)?;
         for child in children.iter().filter(|child| {
@@ -125,7 +126,7 @@ impl NativeRetirementFinalizer {
         if capture.is_none() && legacy.is_none() && !self.probe_unreachable {
             return Ok(None);
         }
-        let children = super::live_agent_stopper::retirement_agents(self.store.as_ref(), sandbox)
+        let children = live_agent_stopper::retirement_agents(self.store.as_ref(), sandbox)
             .await
             .map_err(|_| SandboxStoreError::Conflict)?;
         if self.probe_unreachable {
