@@ -68,6 +68,9 @@ pub(super) fn relay(
     relay.install_public_access(crate::agent_manager::relay::PublicAccess::new(
         auth, reads, access, adapter,
     ))?;
+    if config.observation_open_trace {
+        relay.enable_observation_open_trace();
+    }
     if config.features.agent_settings_owner_relay {
         relay.enable_settings_owner_routing();
     }

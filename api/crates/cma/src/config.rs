@@ -97,6 +97,7 @@ const DEFAULT_PUBLIC_URL: &str = "http://localhost:8080";
 const DEFAULT_CORS_ORIGIN: &str = "http://localhost:5173";
 const DEFAULT_DATABASE: &str = "chrono_bot";
 pub(crate) const MONGO_DIAGNOSTICS_ENABLED: &str = "CHRONO_MONGO_DIAGNOSTICS_ENABLED";
+pub(crate) const OBSERVATION_OPEN_TRACE_ENABLED: &str = "CHRONO_OBSERVATION_OPEN_TRACE_ENABLED";
 const DEFAULT_ACTIVITY_RETENTION_DAYS: u64 = 90;
 pub(crate) const REQUIRED_BASELINE_SERVICES: &[&str] = &["chrono-llm-public", "ornn-api"];
 const DEFAULT_BASELINE_SERVICES: &str = "chrono-llm-public,ornn-api";
@@ -194,6 +195,7 @@ pub struct Config {
     pub(crate) control_admission: ControlAdmissionConfig,
     pub(crate) public_stream_limit: usize,
     pub(crate) relay_capacity: RelayCapacityConfig,
+    pub(crate) observation_open_trace: bool,
     pub trusted_proxies: TrustedProxyConfig,
     pub mongodb_uri: String,
     pub mongodb_database: String,
@@ -393,6 +395,7 @@ impl Config {
             task_audit: task_audit::Selection::from_lookup(&mut lookup)?,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             relay_capacity: RelayCapacityConfig::from_lookup(&mut lookup)?,
+            observation_open_trace: features::flag(&mut lookup, OBSERVATION_OPEN_TRACE_ENABLED)?,
             public_url,
             agent_access_retained_origins,
             agent_access_transport_migration,
