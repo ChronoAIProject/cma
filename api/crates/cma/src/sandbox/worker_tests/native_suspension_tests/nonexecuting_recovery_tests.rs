@@ -64,7 +64,8 @@ async fn refused_quiescence_parks_same_runtime_update_and_owner_retry_reuses_its
     let (fixture, admitted, _, mut now) = admitted().await;
     fixture.backend.nonexecuting.store(false, Ordering::SeqCst);
     for attempt in 0..=WORK_RETRY_EXTERNAL_BUDGET {
-        now += Duration::from_secs(6);
+        let scheduled = fixture.harness.stored(&admitted.id).await;
+        now = now.max(stamp_time(&scheduled.work.ready_at));
         fixture.step(&admitted.id, now, TARGET).await;
         let current = fixture.harness.stored(&admitted.id).await;
         assert_eq!(current.lifecycle.home, admitted.lifecycle.home);
