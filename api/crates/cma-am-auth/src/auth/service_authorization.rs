@@ -61,6 +61,11 @@ pub struct ConsentIdentity {
     pub missing: BTreeSet<ServiceId>,
 }
 
+#[async_trait::async_trait]
+pub trait RetirementWake: Send + Sync {
+    async fn wake_retirement(&self, owner: &SubjectId) -> Result<(), StoreError>;
+}
+
 /// Only a reviewed provider integration may implement a grant read or issue consent.
 /// None means the provider could not attest to the requested scope. It carries
 /// no information about the presence or absence of a grant.
@@ -88,6 +93,7 @@ pub trait GrantAuthority: Send + Sync {
         &self,
         _auth: &AuthState,
         _token: &SecretValue,
+        _required: &BTreeSet<ServiceId>,
     ) -> Result<Option<RetirementAuthorityVersion>, StoreError> {
         Ok(None)
     }
@@ -164,6 +170,25 @@ impl GrantAuthority for Unsupported {
 }
 
 impl AuthState {
+    pub fn with_retirement_wake(mut self: Arc<Self>, wake: Arc<dyn RetirementWake>) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("configure before sharing")
+            .retirement_wake = Some(wake);
+        self
+    }
+
+    pub(super) async fn wake_retirement(&self, owner: &SubjectId) {
+        let Some(wake) = &self.retirement_wake else {
+            return;
+        };
+        if !matches!(
+            tokio::time::timeout(Duration::from_secs(3), wake.wake_retirement(owner)).await,
+            Ok(Ok(()))
+        ) {
+            tracing::warn!("Could not wake parked retirement after an owner authorization update");
+        }
+    }
+
     pub fn with_service_authorization(
         mut self: Arc<Self>,
         enabled: bool,
@@ -186,6 +211,7 @@ impl AuthState {
         &self,
         owner: &SubjectId,
         token: &SecretValue,
+        required: &BTreeSet<ServiceId>,
     ) -> Result<Option<RetirementAuthorityVersion>, StoreError> {
         let Some(provider) = self.service_authorization.as_ref() else {
             return Ok(None);
@@ -201,26 +227,40 @@ impl AuthState {
             .authoritative(owner)
             .await
             .map_err(|_| StoreError::Unavailable("owner account standing is unavailable".into()))?
-            || !self
-                .store
-                .subject(owner)
-                .await?
-                .as_ref()
-                .is_some_and(matches)
         {
             return Ok(None);
         }
-        let observed = provider.retirement_authority_version(self, token).await?;
+        let Some(before) = self.store.subject(owner).await?.filter(matches) else {
+            return Ok(None);
+        };
+        let observed = provider
+            .retirement_authority_version(self, token, required)
+            .await?;
         if !self
             .store
             .subject(owner)
             .await?
             .as_ref()
-            .is_some_and(matches)
+            .is_some_and(|after| {
+                matches(after)
+                    && after.incarnation == before.incarnation
+                    && after.token_generation == before.token_generation
+            })
         {
             return Ok(None);
         }
-        Ok(observed)
+        Ok(observed.map(|version| RetirementAuthorityVersion {
+            token_generation: Some(before.token_generation),
+            ..version
+        }))
+    }
+
+    pub async fn retirement_token_generation(&self, owner: &SubjectId) -> Result<u64, StoreError> {
+        Ok(self
+            .store
+            .subject(owner)
+            .await?
+            .map_or(0, |state| state.token_generation))
     }
 
     pub fn service_authorization_enabled(&self) -> bool {

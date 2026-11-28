@@ -164,11 +164,28 @@ impl GrantAuthority for Nyxid {
         &self,
         auth: &AuthState,
         token: &SecretValue,
+        required: &BTreeSet<ServiceId>,
     ) -> Result<Option<RetirementAuthorityVersion>, StoreError> {
-        match self.consent(auth, token).await? {
-            ConsentRead::Available(Some(consent)) => consent.retirement_authority_version(),
-            ConsentRead::Available(None) | ConsentRead::UnsupportedCredential => Ok(None),
+        let ConsentRead::Available(Some(consent)) = self.consent(auth, token).await? else {
+            return Ok(None);
+        };
+        let Some(version) = consent.retirement_authority_version()? else {
+            return Ok(None);
+        };
+        if required.is_empty() {
+            return Ok(Some(version));
         }
+        let (base, _, _) = self.client(auth)?;
+        let services: protocol::Services = protocol::read(
+            auth.http
+                .get(format!("{base}/api/v1/user-services"))
+                .bearer_auth(token.expose()),
+        )
+        .await?;
+        let services = protocol::resolve(required, services.services, &self.api_origin)?;
+        Ok(protocol::missing(Some(&consent), &services)?
+            .is_empty()
+            .then_some(version))
     }
 
     async fn missing(

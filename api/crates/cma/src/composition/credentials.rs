@@ -115,12 +115,14 @@ pub(super) fn sandbox_credentials(
     };
     let ordinary: Arc<dyn SandboxCredentialController> = match key_issuer(config) {
         Some(issuer) => {
+            let retirement_reauthorization = config.features.retirement_reauthorization
+                && auth.service_authorization_recovery_available();
             let tokens =
                 crate::sandbox::ServiceAccessOwnerTokens::new(auth, stores.sandbox_model.clone());
             ManagedSandboxCredentials::new(issuer, tokens, stores.sandbox_credentials.clone())
                 .with_exact_connections(broker)
                 .with_retirement_receipts(config.features.credential_retirement_receipts)
-                .with_retirement_reauthorization(config.features.retirement_reauthorization)
+                .with_retirement_reauthorization(retirement_reauthorization)
         }
         None => Arc::new(UnavailableSandboxCredentials),
     };
@@ -171,6 +173,13 @@ pub(super) fn authentication(
             .as_ref()
             .map(|father| father.username.clone()),
     )?;
+    let auth = if config.features.retirement_reauthorization
+        && auth.service_authorization_recovery_available()
+    {
+        auth.with_retirement_wake(stores.sandbox_model.clone())
+    } else {
+        auth
+    };
     Ok(auth)
 }
 

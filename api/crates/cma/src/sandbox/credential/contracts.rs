@@ -216,6 +216,15 @@ pub(crate) enum CredentialError {
 
 #[async_trait::async_trait]
 pub(crate) trait OwnerTokenSource: Send + Sync {
+    async fn retirement_baseline(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Option<layer2_core::sandbox::RetirementAuthorityVersion>, CredentialError> {
+        Ok(None)
+    }
+    async fn retirement_token(&self, sandbox: &Sandbox) -> Result<Option<SecretValue>, String> {
+        self.token_for_sandbox(sandbox).await
+    }
     async fn retirement_authority_version(
         &self,
         _sandbox: &Sandbox,

@@ -15,7 +15,7 @@ impl ManagedSandboxCredentials {
         sandbox: &Sandbox,
         token: &SecretValue,
     ) -> Option<RetirementAuthorityVersion> {
-        if !self.retirement_reauthorization_enabled || !sandbox.has_ordinary_credential_scope() {
+        if !self.retirement_reauthorization_enabled || !sandbox.credential.source.is_managed() {
             return None;
         }
         match self
@@ -36,35 +36,124 @@ impl ManagedSandboxCredentials {
         sandbox: &Sandbox,
         key_id: &str,
     ) -> Result<Option<RetirementAuthorityVersion>, CredentialError> {
-        let Some(intent) = self
+        let intent = self
             .custody
             .issuance(sandbox)
             .await
-            .map_err(custody_error)?
-        else {
-            return Ok(None);
-        };
-        let Some(version) = intent.owner_authority else {
-            return Ok(None);
-        };
-        if intent.sandbox_id != sandbox.id || intent.owner != sandbox.owner {
+            .map_err(custody_error)?;
+        if let Some(intent) = intent {
+            if intent.sandbox_id != sandbox.id || intent.owner != sandbox.owner {
+                return Err(CredentialError::Security(
+                    "credential issuance crossed its sandbox boundary".into(),
+                ));
+            }
+            if matches!(&intent.identity, IssuanceIdentity::Prepared { provider_identity, .. }
+                if *provider_identity != self.issuer.provider_identity())
+            {
+                return Err(CredentialError::Security(
+                    "credential issuance belongs to a different provider".into(),
+                ));
+            }
+            if intent.state == IssuanceState::Accepted
+                && matches!(intent.identity, IssuanceIdentity::Prepared { .. })
+            {
+                if let Some(material) = self.material(&sandbox.id, intent.generation).await? {
+                    Self::check_retirement_material(sandbox, &material)?;
+                    if material.authority.generation == intent.generation
+                        && material.authority.provider_key_id == key_id
+                    {
+                        return Ok(intent.owner_authority);
+                    }
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn check_retirement_material(
+        sandbox: &Sandbox,
+        material: &CredentialMaterial,
+    ) -> Result<(), CredentialError> {
+        if material.sandbox_id != sandbox.id
+            || material.owner != sandbox.owner
+            || material.source != sandbox.credential.source
+            || !material.matches_source()
+        {
             return Err(CredentialError::Security(
-                "credential issuance crossed its sandbox boundary".into(),
+                "credential custody crossed its sandbox boundary".into(),
             ));
         }
-        if intent.state != IssuanceState::Accepted
-            || !matches!(intent.identity, IssuanceIdentity::Prepared { provider_identity, .. }
-                if provider_identity == self.issuer.provider_identity())
+        Ok(())
+    }
+
+    async fn proves_retirement_key(
+        &self,
+        sandbox: &Sandbox,
+        id: &str,
+    ) -> Result<bool, CredentialError> {
+        if sandbox
+            .credential
+            .current
+            .iter()
+            .chain(&sandbox.credential.pending)
+            .any(|key| key.provider_key_id == id)
+            || sandbox
+                .credential
+                .revoke_debt
+                .iter()
+                .any(|debt| debt.provider_key_id == id)
         {
+            return Ok(true);
+        }
+        for material in self
+            .custody
+            .list(&sandbox.id)
+            .await
+            .map_err(custody_error)?
+        {
+            Self::check_retirement_material(sandbox, &material)?;
+            if material.authority.provider_key_id == id {
+                return Ok(true);
+            }
+        }
+        for debt in self
+            .custody
+            .revocations(&sandbox.id)
+            .await
+            .map_err(custody_error)?
+        {
+            if debt.owner != sandbox.owner || debt.sandbox_id != sandbox.id {
+                return Err(CredentialError::Security(
+                    "credential revocation crossed its sandbox boundary".into(),
+                ));
+            }
+            if debt.provider_key_id == id {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    async fn retirement_key_baseline(
+        &self,
+        sandbox: &Sandbox,
+        id: &str,
+    ) -> Result<Option<RetirementAuthorityVersion>, CredentialError> {
+        let historical = self.custody_owner_authority(sandbox, id).await?;
+        if historical.is_none() && !self.proves_retirement_key(sandbox, id).await? {
             return Ok(None);
         }
-        let Some(material) = self.material(&sandbox.id, intent.generation).await? else {
-            return Ok(None);
-        };
-        let material = owned_material(material, sandbox)?;
-        Ok((material.authority.generation == intent.generation
-            && material.authority.provider_key_id == key_id)
-            .then_some(version))
+        match self.tokens.retirement_baseline(sandbox).await? {
+            Some(mut baseline) => {
+                if let Some(previous) =
+                    historical.filter(|previous| previous.scope == baseline.scope)
+                {
+                    baseline.granted_at_ms = previous.granted_at_ms;
+                }
+                Ok(Some(baseline))
+            }
+            None => Ok(historical),
+        }
     }
 
     async fn retirement_owner_token(
@@ -72,7 +161,7 @@ impl ManagedSandboxCredentials {
         sandbox: &Sandbox,
     ) -> Result<Option<SecretValue>, CredentialError> {
         self.tokens
-            .token_for_sandbox(sandbox)
+            .retirement_token(sandbox)
             .await
             .map_err(CredentialError::Unavailable)
     }
@@ -111,9 +200,18 @@ impl ManagedSandboxCredentials {
                 .await
                 .map_err(classify_issuer);
         }
-        let token = self.retirement_owner_token(sandbox).await?;
-        let issued_under = if token.is_none() || recovery.is_some() {
-            self.custody_owner_authority(sandbox, id).await?
+        let original = if recovery.is_none() {
+            self.tokens.token_for_sandbox(sandbox).await.ok().flatten()
+        } else {
+            None
+        };
+        let uses_original = original.is_some();
+        let token = match original {
+            Some(token) => Some(token),
+            None => self.retirement_owner_token(sandbox).await?,
+        };
+        let issued_under = if !uses_original {
+            self.retirement_key_baseline(sandbox, id).await?
         } else {
             None
         };
@@ -132,10 +230,10 @@ impl ManagedSandboxCredentials {
             .tokens
             .retirement_authority_version(sandbox, &token)
             .await;
-        let observed = if recovery.is_some() {
-            observed?
-        } else {
+        let observed = if uses_original {
             observed.ok().flatten()
+        } else {
+            observed?
         };
         if let Some(recovery) = recovery {
             let Some(admitted) = recovery.admitted.filter(|admitted| {
@@ -151,17 +249,32 @@ impl ManagedSandboxCredentials {
                     missing: false,
                 });
             }
+        } else if !uses_original {
+            let Some(previous) = issued_under else {
+                return Err(CredentialError::Security(
+                    "retirement key custody could not be verified".into(),
+                ));
+            };
+            if observed.is_none_or(|proof| proof.scope != previous.scope) {
+                return Err(CredentialError::OwnerReauthorization {
+                    previous,
+                    missing: true,
+                });
+            }
         }
         WorkAuthority::current()
             .map_err(|_| CredentialError::Unavailable("retirement work claim expired".into()))?;
         match self.issuer.revoke(id, token.expose()).await {
             Err(KeyIssuerError::Refused(401)) => {
-                if let Some(previous) = observed {
-                    let issued_under = match issued_under {
-                        Some(version) => Some(version),
-                        None => self.custody_owner_authority(sandbox, id).await?,
-                    };
-                    if issued_under.is_some_and(|issued| issued.scope == previous.scope) {
+                let baseline = match issued_under {
+                    Some(version) => Some(version),
+                    None => self.retirement_key_baseline(sandbox, id).await?,
+                };
+                if let Some(baseline) = baseline {
+                    if let Some(previous) = observed
+                        .filter(|proof| proof.scope == baseline.scope)
+                        .or_else(|| baseline.token_generation.map(|_| baseline))
+                    {
                         return Err(CredentialError::OwnerReauthorization {
                             previous,
                             missing: false,
@@ -228,6 +341,7 @@ mod tests {
                 grant: [1; 16],
                 scope: [2; 32],
                 granted_at_ms: 1,
+                token_generation: None,
             },
             missing: true,
         };

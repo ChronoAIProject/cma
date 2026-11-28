@@ -153,7 +153,7 @@ impl SandboxWorker {
                 && sandbox.work.attempts >= failure.retry_kind().retry_budget());
         let recovery = super::retirement_credentials::park_reauthorization(
             &mut sandbox,
-            failure.reauthorization,
+            failure.reauthorization.as_deref().copied(),
             exhausted,
             now,
         );
@@ -274,7 +274,7 @@ pub(super) struct WorkerFailure {
     detail: String,
     retryable: bool,
     retry_kind: WorkRetryFailure,
-    reauthorization: Option<OwnerReauthorization>,
+    reauthorization: Option<Box<OwnerReauthorization>>,
     pub(super) native_claim_pending: bool,
     pub(super) startup_hold: bool,
     pub(super) credential_issuance_pending: bool,
@@ -414,7 +414,7 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
                 "verified owner reauthorization is required",
                 false,
             );
-            failure.reauthorization = Some(OwnerReauthorization { previous, missing });
+            failure.reauthorization = Some(Box::new(OwnerReauthorization { previous, missing }));
             failure
         }
         CredentialError::Uncertain => {

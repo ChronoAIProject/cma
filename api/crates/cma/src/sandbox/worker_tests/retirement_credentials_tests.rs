@@ -289,6 +289,7 @@ async fn verified_reauthorization_requeues_parked_retirement_once_across_workers
             grant: [1; 16],
             scope: [3; 32],
             granted_at_ms: recovery.newer_than_ms,
+            token_generation: None,
         };
         *h.credentials.retirement_authority.lock().unwrap() = Some(old);
         h.run(id, stamp_time(&parked.work.ready_at)).await;
@@ -302,6 +303,7 @@ async fn verified_reauthorization_requeues_parked_retirement_once_across_workers
             grant: [2; 16],
             scope: [4; 32],
             granted_at_ms: recovery.newer_than_ms + 1,
+            token_generation: None,
         };
         *h.credentials.retirement_authority.lock().unwrap() = Some(different);
         h.run(id, stamp_time(&waiting.work.ready_at)).await;
@@ -323,6 +325,7 @@ async fn verified_reauthorization_requeues_parked_retirement_once_across_workers
             grant: [3; 16],
             scope: [3; 32],
             granted_at_ms: different.granted_at_ms + 1,
+            token_generation: None,
         };
         *h.credentials.retirement_authority.lock().unwrap() = Some(fresh);
         let due = stamp_time(&still_waiting.work.ready_at);
@@ -446,6 +449,7 @@ async fn missing_owner_credential_without_issuance_scope_stays_parked_for_operat
         grant: [2; 16],
         scope: [3; 32],
         granted_at_ms: u64::MAX,
+        token_generation: None,
     });
     assert!(!h
         .worker
@@ -472,6 +476,7 @@ async fn park_for_owner_reauthorization(h: &Harness, issued_scope_known: bool) -
             grant: [1; 16],
             scope: [3; 32],
             granted_at_ms: 1,
+            token_generation: None,
         });
     h.credentials
         .require_retirement_authority

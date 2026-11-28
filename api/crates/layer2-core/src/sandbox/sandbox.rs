@@ -172,17 +172,11 @@ impl Sandbox {
         Ok(())
     }
 
-    /// Automatic recovery uses the same ordinary owner credential source that admitted the Sandbox.
+    /// The owner can restore revocation authority at any credential-bearing retirement step.
     pub fn allows_retirement_credential_recovery(&self) -> bool {
         self.status == SandboxStatus::Retiring
-            && self.work.step == SandboxWorkStep::RevokeRetirementCredentials
-            && self.has_ordinary_credential_scope()
-    }
-
-    pub fn has_ordinary_credential_scope(&self) -> bool {
-        self.credential.source.is_default_managed()
-            && self.credential.service_scope.is_none()
-            && self.credential.service_grants.is_empty()
+            && self.work.step.is_retirement()
+            && self.credential.source.is_managed()
     }
 
     /// Exhausted retirements keep their deletion intent and outstanding custody.

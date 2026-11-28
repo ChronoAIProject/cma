@@ -270,6 +270,7 @@ async fn complete_callback(
     {
         return login_failure(StatusCode::FORBIDDEN, "actor_login_intent_expired", None);
     }
+    auth.wake_retirement(&subject).await;
     let mut response = Redirect::to(attempt.return_to.as_deref().unwrap_or("/")).into_response();
     response.headers_mut().append(
         header::SET_COOKIE,

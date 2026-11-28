@@ -3,6 +3,56 @@ use crate::store::admission_wake_test_support::CommitGate;
 use futures_util::FutureExt;
 use std::time::Duration;
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn retirement_reauthorization_wakes_only_the_owners_parked_retirement() {
+    use layer2_core::sandbox::RetirementCredentialRecovery;
+
+    let (client, name) = database("retirement_wake").await;
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let mut parked = sandbox("sbx_retirement_wake_parked");
+    parked.status = SandboxStatus::Paused;
+    parked.begin_retirement(NOW.into()).unwrap();
+    parked.work.ready_at = "2026-10-06T00:00:00Z".into();
+    parked.work.retirement_credential_recovery = Some(RetirementCredentialRecovery {
+        newer_than_ms: 40,
+        expected_scope: [1; 32],
+        previous_token_generation: Some(5),
+        authorization_updated: false,
+        admitted: None,
+    });
+    let mut other = parked.clone();
+    other.id = SandboxId("sbx_retirement_wake_other".into());
+    other.owner = SubjectId::new("other");
+    let mut ordinary = parked.clone();
+    ordinary.id = SandboxId("sbx_retirement_wake_ordinary".into());
+    ordinary.work.retirement_credential_recovery = None;
+    for sandbox in [&parked, &other, &ordinary] {
+        store.create_sandbox(sandbox.clone()).await.unwrap();
+    }
+    store
+        .wake_retiring_sandboxes(&parked.owner, MINUTE)
+        .await
+        .unwrap();
+    let mut expected = parked.clone();
+    expected.revision += 1;
+    expected.work.ready_at = MINUTE.into();
+    expected
+        .work
+        .retirement_credential_recovery
+        .as_mut()
+        .unwrap()
+        .authorization_updated = true;
+    assert_eq!(store.get_sandbox(&parked.id).await.unwrap(), Some(expected));
+    assert_eq!(store.get_sandbox(&other.id).await.unwrap(), Some(other));
+    assert_eq!(
+        store.get_sandbox(&ordinary.id).await.unwrap(),
+        Some(ordinary)
+    );
+    assert!(store.sandbox_admitted.notified().now_or_never().is_some());
+    client.database(&name).drop().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn lifecycle_admission_wake_follows_committed_pause_resume_and_delete_only() {

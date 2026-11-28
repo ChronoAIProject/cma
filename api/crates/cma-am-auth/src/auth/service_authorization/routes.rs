@@ -144,6 +144,9 @@ async fn callback(
         None => Outcome::Unknown,
     };
     live_session(&auth, &key, &intent.subject).await?;
+    if matches!(outcome, Outcome::ConsentConfirmed) {
+        auth.wake_retirement(&intent.subject).await;
+    }
     Ok(outcome.page(&return_to))
 }
 

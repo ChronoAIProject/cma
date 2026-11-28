@@ -1,6 +1,9 @@
 //! Renewal and revocation use the exact owner consent for this scope revision.
 use super::*;
 use crate::{auth::AuthState, store::MongoSandboxStore};
+use layer2_core::{sandbox::RetirementAuthorityVersion, ServiceId};
+use sha2::{Digest, Sha256};
+use std::collections::BTreeSet;
 
 pub(crate) struct ServiceAccessOwnerTokens {
     auth: Arc<AuthState>,
@@ -15,17 +18,45 @@ impl ServiceAccessOwnerTokens {
 
 #[async_trait::async_trait]
 impl OwnerTokenSource for ServiceAccessOwnerTokens {
+    async fn retirement_baseline(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<Option<RetirementAuthorityVersion>, CredentialError> {
+        if !self.auth.service_authorization_recovery_available() {
+            return Ok(None);
+        }
+        let generation = self
+            .auth
+            .retirement_token_generation(&sandbox.owner)
+            .await
+            .map_err(|_| evidence_unavailable())?;
+        Ok(Some(RetirementAuthorityVersion {
+            grant: [0; 16],
+            scope: retirement_scope(&retirement_services(sandbox)),
+            granted_at_ms: 0,
+            token_generation: Some(generation),
+        }))
+    }
+
+    async fn retirement_token(&self, sandbox: &Sandbox) -> Result<Option<SecretValue>, String> {
+        self.token_for(&sandbox.owner).await
+    }
+
     async fn retirement_authority_version(
         &self,
         sandbox: &Sandbox,
         token: &SecretValue,
-    ) -> Result<Option<layer2_core::sandbox::RetirementAuthorityVersion>, CredentialError> {
-        self.auth
-            .retirement_authority_version(&sandbox.owner, token)
+    ) -> Result<Option<RetirementAuthorityVersion>, CredentialError> {
+        let required = retirement_services(sandbox);
+        let observed = self
+            .auth
+            .retirement_authority_version(&sandbox.owner, token, &required)
             .await
-            .map_err(|_| {
-                CredentialError::Unavailable("owner reauthorization evidence is unavailable".into())
-            })
+            .map_err(|_| evidence_unavailable())?;
+        Ok(observed.map(|version| RetirementAuthorityVersion {
+            scope: retirement_scope(&required),
+            ..version
+        }))
     }
 
     async fn token_for(&self, owner: &SubjectId) -> Result<Option<SecretValue>, String> {
@@ -47,4 +78,35 @@ impl OwnerTokenSource for ServiceAccessOwnerTokens {
         }
         self.token_for(&sandbox.owner).await
     }
+}
+
+fn retirement_services(sandbox: &Sandbox) -> BTreeSet<ServiceId> {
+    let selected = sandbox.credential.selected_connection();
+    sandbox
+        .credential
+        .effective_reaches()
+        .into_iter()
+        .map(|service| {
+            selected
+                .filter(|connection| connection.service == service)
+                .map_or(service, |connection| {
+                    ServiceId::new(connection.connection_id.clone())
+                })
+        })
+        .collect()
+}
+
+fn retirement_scope(required: &BTreeSet<ServiceId>) -> [u8; 32] {
+    let mut digest = Sha256::new();
+    digest.update(b"cma-retirement-service-scope-v1");
+    for service in required {
+        let value = service.as_str().as_bytes();
+        digest.update((value.len() as u64).to_be_bytes());
+        digest.update(value);
+    }
+    digest.finalize().into()
+}
+
+fn evidence_unavailable() -> CredentialError {
+    CredentialError::Unavailable("owner reauthorization evidence is unavailable".into())
 }

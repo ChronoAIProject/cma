@@ -45,6 +45,19 @@ impl SandboxWorker {
                 return Err(SandboxStoreError::Conflict);
             }
         }
+        if let Some(recovery) = sandbox.work.retirement_credential_recovery {
+            if self.retirement_reauthorization_disabled(&sandbox) {
+                let failure = support::WorkerFailure::new(
+                    "owner_reauthorization_disabled",
+                    "revision-fenced Operations resume is required",
+                    false,
+                );
+                return self.retry_failure(sandbox, failure, now).await;
+            }
+            if recovery.admitted.is_none() {
+                return self.probe_retirement_reauthorization(sandbox, now).await;
+            }
+        }
         // A replacement is funded only after its exact generation and home
         // are durably reserved. Cleanup must remain available without credit.
         if sandbox.runtime.is_some()
