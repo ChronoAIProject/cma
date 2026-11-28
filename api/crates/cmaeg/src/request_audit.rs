@@ -285,7 +285,7 @@ mod tests {
                     &origin,
                     cma_service_auth::Service::EventGateway,
                     "fixture",
-                    "fixture",
+                    "fixture".to_owned(),
                 )
                 .unwrap(),
             ),
