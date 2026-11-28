@@ -13,6 +13,7 @@ pub(super) struct TailFlags {
     pub(super) github_connection_recovery: bool,
     pub(super) nyxid_resource_request: bool,
     pub(super) nyxid_proxy: bool,
+    pub(super) nyxid_proxy_require_request_proof: bool,
     pub(super) nyxid_proxy_replay_principal: bool,
     pub(super) service_authorization: bool,
     pub(super) silent_sign_in: bool,
@@ -33,6 +34,10 @@ pub(super) fn read(
         github_connection_recovery: flag(lookup, "CHRONO_GITHUB_CONNECTION_RECOVERY_ENABLED")?,
         nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
         nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+        nyxid_proxy_require_request_proof: flag(
+            lookup,
+            "CHRONO_NYXID_PROXY_REQUIRE_REQUEST_PROOF",
+        )?,
         nyxid_proxy_replay_principal: flag(lookup, "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED")?,
         service_authorization: flag(lookup, "CHRONO_SERVICE_AUTHORIZATION_ENABLED")?,
         silent_sign_in: flag(lookup, "CHRONO_SILENT_SIGN_IN_ENABLED")?,

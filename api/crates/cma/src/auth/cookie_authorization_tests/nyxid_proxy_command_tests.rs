@@ -865,7 +865,8 @@ async fn signed_identity_header_resolves_into_real_write_and_restarted_worker_au
         .unwrap()
         .unwrap();
     assert_eq!(saved.authorization, request.authorization);
-    let restarted = proxy_auth(&fixture);
+    let restarted = proxy_auth(&fixture).with_proxy_require_request_proof(true);
+    assert!(restarted.resolve_request(&headers).await.unwrap().is_none());
     let proof = restarted
         .authorize_resource_command(&fixture.access, &command.receipt.envelope)
         .await

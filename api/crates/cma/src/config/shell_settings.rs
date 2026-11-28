@@ -128,6 +128,7 @@ pub(crate) struct BackendFreeConfig {
     pub nyxid_proxy_audience: Option<String>,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    pub nyxid_proxy_require_request_proof: bool,
     pub silent_sign_in: bool,
     pub browser_session_join: bool,
     pub model_budget_writes: bool,
@@ -167,6 +168,10 @@ impl BackendFreeConfig {
             nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
             nyxid_resource_request: flag(&mut lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(&mut lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+            nyxid_proxy_require_request_proof: flag(
+                &mut lookup,
+                "CHRONO_NYXID_PROXY_REQUIRE_REQUEST_PROOF",
+            )?,
             silent_sign_in: flag(&mut lookup, "CHRONO_SILENT_SIGN_IN_ENABLED")?,
             browser_session_join: browser_session::from_lookup(&mut lookup)?,
             model_budget_writes: flag(&mut lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,

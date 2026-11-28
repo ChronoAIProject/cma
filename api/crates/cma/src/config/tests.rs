@@ -208,6 +208,19 @@ fn proxy_replay_principal_writer_requires_explicit_activation() {
     }
 }
 
+#[test]
+fn proxy_request_proof_enforcement_requires_explicit_activation() {
+    const KEY: &str = "CHRONO_NYXID_PROXY_REQUIRE_REQUEST_PROOF";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok(value.filter(|_| key == KEY).map(str::to_owned))
+        })
+        .unwrap();
+        assert_eq!(flags.nyxid_proxy_require_request_proof, expected);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "1".into()))).is_err());
+}
+
 #[cfg(test)]
 mod silent_sign_in_tests {
     use super::*;
