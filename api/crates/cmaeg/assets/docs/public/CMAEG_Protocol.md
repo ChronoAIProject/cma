@@ -1275,7 +1275,11 @@ A Telegram relay callback with an unknown explicit `/to` target receives
 the `target_unknown` refusal and creates no Consumer turn. If
 `addressing.unknown_target_notice` is enabled, the gateway attempts a short
 notice in the originating conversation using the callback's single-use reply
-token. Channel Activity records the refusal against the original event.
+token after confirming the durable, redacted Channel Activity refusal. The
+receipt contains no Consumer turns, including when explanations are disabled.
+A shared expiring claim limits notice delivery to one attempt per event during
+the receipt retention period. A lost or unconfirmed notice outcome is not
+retried with another reply credential.
 
 | Limit | Value |
 | --- | --- |
@@ -1586,6 +1590,11 @@ trusted platforms still refuse attachments.
 - A message whose envelope lists attachments while its raw message has no media
   field, or whose media fields yield no usable attachment, is refused as
   `attachment_unsupported`.
+- While inbound media is disabled, an authenticated captioned photo that would
+  otherwise pass Telegram relay admission receives a best-effort notice asking
+  the sender to send text. The gateway first confirms the redacted refusal
+  receipt with no Consumer turns, then claims one reply attempt for the event.
+  The callback retains its 202 refusal. An unconfirmed receipt returns 503.
 
 #### Lark and Feishu interactive cards
 

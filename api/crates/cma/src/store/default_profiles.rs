@@ -14,9 +14,10 @@ use layer2_core::{
 };
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::Collection;
+use serde::de::DeserializeOwned;
 
 use super::profile_documents::revision_document;
-use super::sandbox_mongo::MongoProfileStore;
+use super::sandbox_mongo::{read_record, require_version, MongoProfileStore};
 use super::{agent_profiles, sandbox_profiles, workspace_profiles};
 
 pub(super) const SYSTEM_OWNER: &str = "system";
@@ -209,16 +210,17 @@ impl MongoProfileStore {
         for (collection, document) in documents {
             insert_if_absent(collection, &document).await?;
         }
-        self.verify_default_profiles(&records).await?;
-        tracing::info!("deployment-owned default profiles are ready");
+        if self.verify_default_profiles(&records).await? {
+            tracing::info!("deployment-owned default profiles are ready");
+        }
         Ok(())
     }
 
     async fn verify_default_profiles(
         &self,
         expected: &DefaultProfileRecords,
-    ) -> Result<(), StoreError> {
-        verify_profile(
+    ) -> Result<bool, StoreError> {
+        let mut healthy = verify_profile(
             &self.agent_profiles,
             expected.agent.id.as_str(),
             &expected.agent,
@@ -226,14 +228,14 @@ impl MongoProfileStore {
             |profile| &mut profile.uses_count,
         )
         .await?;
-        verify_revision(
+        healthy &= verify_revision(
             &self.agent_revisions,
             expected.agent.id.as_str(),
             &expected.agent_revision,
             agent_profiles::read_revision,
         )
         .await?;
-        verify_profile(
+        healthy &= verify_profile(
             &self.workspace_profiles,
             expected.workspace.id.as_str(),
             &expected.workspace,
@@ -241,14 +243,14 @@ impl MongoProfileStore {
             |profile| &mut profile.uses_count,
         )
         .await?;
-        verify_revision(
+        healthy &= verify_revision(
             &self.workspace_revisions,
             expected.workspace.id.as_str(),
             &expected.workspace_revision,
             workspace_profiles::read_revision,
         )
         .await?;
-        verify_profile(
+        healthy &= verify_profile(
             &self.sandbox_profiles,
             expected.sandbox.id.as_str(),
             &expected.sandbox,
@@ -256,13 +258,14 @@ impl MongoProfileStore {
             |profile| &mut profile.uses_count,
         )
         .await?;
-        verify_revision(
+        healthy &= verify_revision(
             &self.sandbox_revisions,
             expected.sandbox.id.as_str(),
             &expected.sandbox_revision,
             sandbox_profiles::read_revision,
         )
-        .await
+        .await?;
+        Ok(healthy)
     }
 }
 
@@ -304,26 +307,32 @@ async fn insert_if_absent(
         })
 }
 
-async fn verify_profile<T: PartialEq>(
+async fn verify_profile<T: PartialEq + DeserializeOwned>(
     collection: &Collection<Document>,
     id: &str,
     expected: &T,
     decode: fn(&Document) -> Result<T, ProfileStoreError>,
     usage: fn(&mut T) -> &mut u64,
-) -> Result<(), StoreError> {
+) -> Result<bool, StoreError> {
     let document = required_document(collection, id).await?;
-    let actual = decode(&document).map_err(profile_store_error)?;
     let publication_matches = document
         .get_i64("last_revision")
         .is_ok_and(|revision| revision == i64::from(DEFAULT_PROFILE_REVISION))
         && document.get("latest_published_at") == Some(&Bson::String(SEEDED_AT.into()));
-    if default_profile_matches(actual, expected, usage) && publication_matches {
-        Ok(())
-    } else {
-        Err(StoreError::Malformed(format!(
+    if !publication_matches {
+        return Err(StoreError::Malformed(format!(
             "deployment default {id} disagrees with this process configuration"
-        )))
+        )));
     }
+    let Some(actual) = decode_default(collection, id, &document, decode)? else {
+        return Ok(false);
+    };
+    if default_profile_matches(actual, expected, usage) {
+        return Ok(true);
+    }
+    Err(StoreError::Malformed(format!(
+        "deployment default {id} disagrees with this process configuration"
+    )))
 }
 
 fn default_profile_matches<T: PartialEq>(
@@ -336,20 +345,58 @@ fn default_profile_matches<T: PartialEq>(
     &actual == expected
 }
 
-async fn verify_revision<T: PartialEq>(
+async fn verify_revision<T: PartialEq + DeserializeOwned>(
     collection: &Collection<Document>,
     profile_id: &str,
     expected: &T,
     decode: fn(&Document) -> Result<T, ProfileStoreError>,
-) -> Result<(), StoreError> {
+) -> Result<bool, StoreError> {
     let id = format!("{profile_id}:{DEFAULT_PROFILE_REVISION:010}");
-    let actual = decode(&required_document(collection, &id).await?).map_err(profile_store_error)?;
-    if &actual == expected {
-        Ok(())
-    } else {
-        Err(StoreError::Malformed(format!(
+    let document = required_document(collection, &id).await?;
+    if document.get_str("profile_id").ok() != Some(profile_id)
+        || !super::sandbox_mongo::i64_field_matches(
+            &document,
+            "revision",
+            i64::from(DEFAULT_PROFILE_REVISION),
+        )
+    {
+        return Err(StoreError::Malformed(format!(
             "deployment default revision {id} disagrees with this process configuration"
-        )))
+        )));
+    }
+    let Some(actual) = decode_default(collection, &id, &document, decode)? else {
+        return Ok(false);
+    };
+    if &actual == expected {
+        return Ok(true);
+    }
+    Err(StoreError::Malformed(format!(
+        "deployment default revision {id} disagrees with this process configuration"
+    )))
+}
+
+fn decode_default<T: DeserializeOwned>(
+    collection: &Collection<Document>,
+    id: &str,
+    document: &Document,
+    decode: fn(&Document) -> Result<T, ProfileStoreError>,
+) -> Result<Option<T>, StoreError> {
+    require_version(document).map_err(StoreError::Malformed)?;
+    match decode(document) {
+        Ok(record) => Ok(Some(record)),
+        Err(ProfileStoreError::Corrupt(_))
+            if !document.contains_key("account_erasure_retained")
+                && read_record::<T>(document).is_err() =>
+        {
+            tracing::error!(
+                collection = collection.name(),
+                document_id = id,
+                failure = "malformed_profile_payload",
+                "Deployment default Profile quarantined in place"
+            );
+            Ok(None)
+        }
+        Err(error) => Err(profile_store_error(error)),
     }
 }
 
@@ -365,122 +412,5 @@ async fn required_document(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn bounds() -> ProfileCapacityBounds {
-        ProfileCapacityBounds {
-            min_cpu_millis: 100,
-            max_cpu_millis: 8_000,
-            min_memory_mib: 128,
-            max_memory_mib: 16_384,
-        }
-    }
-
-    #[tokio::test]
-    async fn records_are_public_deterministic_and_reference_each_other() {
-        let spec = DefaultProfileSpec {
-            cpu_millis: 1_000,
-            memory_mib: 1_024,
-            agent_model: "model-a".into(),
-            agent_effort: ThinkingEffort::High,
-        };
-        let first = spec.records(bounds(), &[]).await.unwrap();
-        let second = spec.records(bounds(), &[]).await.unwrap();
-        assert_eq!(first.agent, second.agent);
-        assert_eq!(first.agent_revision, second.agent_revision);
-        assert_eq!(first.workspace_revision, second.workspace_revision);
-        assert_eq!(first.sandbox_revision, second.sandbox_revision);
-        assert_eq!(first.agent.owner.as_str(), SYSTEM_OWNER);
-        assert_eq!(first.agent.visibility, ProfileVisibility::Public);
-        assert_eq!(
-            first.agent.draft.permission_level,
-            PermissionLevel::Autonomous
-        );
-        assert_eq!(first.agent.draft.thinking_effort, ThinkingEffort::High);
-        assert_eq!(
-            first
-                .sandbox
-                .draft
-                .nyxid_services
-                .iter()
-                .map(layer2_core::ServiceId::as_str)
-                .collect::<Vec<_>>(),
-            ["chrono-llm-public", "ornn-api"]
-        );
-        assert_eq!(
-            first.workspace.draft.agent_profiles,
-            vec![AgentProfileRef::new(
-                first.agent.id,
-                DEFAULT_PROFILE_REVISION
-            )]
-        );
-        assert_eq!(
-            first.sandbox.draft.workspace_profiles,
-            vec![WorkspaceProfileRef::new(
-                first.workspace.id,
-                DEFAULT_PROFILE_REVISION
-            )]
-        );
-    }
-
-    #[tokio::test]
-    async fn used_default_profiles_remain_valid_without_accepting_configuration_drift() {
-        let spec = DefaultProfileSpec {
-            cpu_millis: 1_000,
-            memory_mib: 1_024,
-            agent_model: "model-a".into(),
-            agent_effort: ThinkingEffort::High,
-        };
-        let expected = spec.records(bounds(), &[]).await.unwrap();
-        for count in [1, 10, i64::MAX as u64] {
-            let mut agent = expected.agent.clone();
-            agent.uses_count = count;
-            assert!(default_profile_matches(
-                agent.clone(),
-                &expected.agent,
-                |p| &mut p.uses_count
-            ));
-            assert_eq!(agent.uses_count, count);
-            agent.draft.model = Some("different-model".into());
-            assert!(!default_profile_matches(agent, &expected.agent, |p| &mut p.uses_count));
-
-            let mut workspace = expected.workspace.clone();
-            workspace.uses_count = count;
-            assert!(default_profile_matches(
-                workspace.clone(),
-                &expected.workspace,
-                |p| &mut p.uses_count
-            ));
-            workspace.draft_version += 1;
-            assert!(!default_profile_matches(
-                workspace,
-                &expected.workspace,
-                |p| &mut p.uses_count
-            ));
-
-            let mut sandbox = expected.sandbox.clone();
-            sandbox.uses_count = count;
-            assert!(default_profile_matches(
-                sandbox.clone(),
-                &expected.sandbox,
-                |p| &mut p.uses_count
-            ));
-            sandbox.draft.cpu_millis += 100;
-            assert!(!default_profile_matches(sandbox, &expected.sandbox, |p| {
-                &mut p.uses_count
-            }));
-        }
-    }
-
-    #[tokio::test]
-    async fn deployment_reservation_must_fit_publication_bounds() {
-        let spec = DefaultProfileSpec {
-            cpu_millis: 99,
-            memory_mib: 1_024,
-            agent_model: "model-a".into(),
-            agent_effort: ThinkingEffort::High,
-        };
-        assert!(spec.records(bounds(), &[]).await.is_err());
-    }
-}
+#[path = "default_profiles_tests.rs"]
+mod tests;
