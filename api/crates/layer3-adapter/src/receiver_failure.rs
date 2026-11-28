@@ -59,18 +59,40 @@ pub fn capture_attempt<F: Future>(
 pub enum ChallengeRefusal {
     NotFound,
     ServerError,
+    Authentication,
+    MethodNotAllowed,
 }
 
 impl ChallengeRefusal {
     pub(crate) fn from_status(status: http::StatusCode) -> Option<Self> {
-        if status == http::StatusCode::NOT_FOUND {
-            Some(Self::NotFound)
-        } else if status.is_server_error() {
-            Some(Self::ServerError)
-        } else {
-            None
+        match status {
+            http::StatusCode::NOT_FOUND => Some(Self::NotFound),
+            http::StatusCode::UNAUTHORIZED | http::StatusCode::FORBIDDEN => {
+                Some(Self::Authentication)
+            }
+            http::StatusCode::METHOD_NOT_ALLOWED => Some(Self::MethodNotAllowed),
+            status if status.is_server_error() => Some(Self::ServerError),
+            _ => None,
         }
     }
+}
+
+pub(crate) fn connection_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(cause) = current {
+        if cause.downcast_ref::<std::io::Error>().is_some_and(|error| {
+            matches!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionRefused
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::TimedOut
+            )
+        }) {
+            return true;
+        }
+        current = cause.source();
+    }
+    false
 }
 
 /// Sealed only by an owned challenge exchange with an exact native receiver.
@@ -131,7 +153,10 @@ impl ObservedFailure {
 }
 
 pub(crate) fn unavailable_status(status: http::StatusCode) -> bool {
-    ChallengeRefusal::from_status(status).is_some()
+    matches!(
+        ChallengeRefusal::from_status(status),
+        Some(ChallengeRefusal::NotFound | ChallengeRefusal::ServerError)
+    )
 }
 
 pub(crate) fn record_status(status: http::StatusCode) {

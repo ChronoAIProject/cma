@@ -1,5 +1,19 @@
 use super::*;
 impl NativeBackend {
+    pub async fn lose_object(&self) {
+        self.row.lock().await.take();
+    }
+    pub async fn set_lifecycle(&self, state: &str) {
+        self.row
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .observation
+            .lifecycle
+            .state = state.into();
+    }
+
     pub async fn stage_reserved_request(&self, request: ProviderSandboxRequest) {
         let mut rows = self.row.lock().await;
         let row = rows.as_mut().unwrap();

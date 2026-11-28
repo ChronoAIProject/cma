@@ -311,3 +311,15 @@ impl AgentSandboxBackend {
 #[cfg(test)]
 #[path = "startup_headroom_tests.rs"]
 mod startup_headroom_tests;
+
+impl AgentSandboxBackend {
+    pub fn new(client: AgentSandboxClient, transport: Arc<dyn HostedControlTransport>) -> Self {
+        Self {
+            client,
+            transport,
+            assignments: Default::default(),
+            single_exchange_file_reads: false,
+            startup_breaker: Default::default(),
+        }
+    }
+}

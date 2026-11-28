@@ -29,11 +29,34 @@ impl NativeBackend {
         }
     }
 
+    pub(super) async fn probe_retirement_fixture(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        owner: &layer3_adapter::owner_protocol::TransportOwner,
+    ) -> layer3_adapter::Result<Option<layer3_adapter::RetirementPod>> {
+        let receiver = layer3_adapter::receiver_failure::RetirementReceiver {
+            runtime: handle.clone(),
+            owner: owner.clone(),
+            pod: layer3_adapter::RetirementPod {
+                uid: super::super::retirement_case6::records::pod().uid,
+                container_id: None,
+                restart_count: None,
+            },
+        };
+        Ok(self
+            .challenge_retirement_fixture(handle, request, &receiver)
+            .await?
+            .then_some(receiver.pod))
+    }
+
     pub(super) fn check_retirement_fixture_pod(
         &self,
         pod: &layer3_adapter::RetirementPod,
     ) -> layer3_adapter::Result<()> {
-        if *pod != super::super::retirement_case6::records::pod()
+        let expected = super::super::retirement_case6::records::pod();
+        if pod.uid != expected.uid
+            || (!pod.is_uid_only() && *pod != expected)
             || self.retirement_incarnation.load(Ordering::SeqCst) != 0
         {
             return Err(layer3_adapter::AdapterError::Rejected(

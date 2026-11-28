@@ -91,15 +91,15 @@ async fn retirement_probe_rechecks_failure_without_confirmation_or_owner_renewal
             )
             .unwrap();
             assert!(acting
-                .challenge_only(&endpoint, &receiver.owner)
+                .challenge_only(&endpoint, &receiver.owner, false)
                 .await
                 .unwrap());
             assert!(acting
-                .challenge_only(&endpoint, &receiver.owner)
+                .challenge_only(&endpoint, &receiver.owner, false)
                 .await
                 .is_err());
             let (compatible, probe) =
-                receiver_failure::capture(acting.challenge_only(&endpoint, &receiver.owner));
+                receiver_failure::capture(acting.challenge_only(&endpoint, &receiver.owner, false));
             assert!(!probe.await.unwrap());
             assert!(compatible.sealed().is_none());
         } else {
@@ -165,4 +165,59 @@ async fn retirement_status_failure_is_typed_and_scoped_to_an_actual_read_attempt
         .await;
         assert!(absent.is_none());
     }
+}
+
+#[tokio::test]
+async fn expanded_retirement_challenge_accepts_only_eligible_runtime_failures() {
+    let transport = ProviderHostedControlTransport::for_retained_opensandbox(SandboxClient::new(
+        "http://unused.invalid",
+        "fixture-key",
+    ))
+    .unwrap();
+    let owner = TestAuthority::new(3).owner();
+    for (status, eligible) in [
+        ("401 Unauthorized", true),
+        ("403 Forbidden", true),
+        ("405 Method Not Allowed", true),
+        ("429 Too Many Requests", false),
+        ("409 Conflict", false),
+    ] {
+        let listener = listener().await;
+        let endpoint = RuntimeEndpoint::parse(
+            "http://fixture.invalid",
+            &format!("http://{}", listener.local_addr().unwrap()),
+        )
+        .unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            assert!(request_text(read_request(&mut stream).await)
+                .contains("/manager-ownership/challenge"));
+            stream
+                .write_all(&http_response(
+                    status,
+                    &[("Content-Length", "0".into())],
+                    &[],
+                ))
+                .await
+                .unwrap();
+        });
+        let result = transport.challenge_only(&endpoint, &owner, true).await;
+        assert_eq!(matches!(result, Ok(true)), eligible, "{status}");
+        server.await.unwrap();
+    }
+    let bound = listener().await;
+    let endpoint = RuntimeEndpoint::parse(
+        "http://fixture.invalid",
+        &format!("http://{}", bound.local_addr().unwrap()),
+    )
+    .unwrap();
+    drop(bound);
+    assert!(transport
+        .challenge_only(&endpoint, &owner, true)
+        .await
+        .unwrap());
+    assert!(transport
+        .challenge_only(&endpoint, &owner, false)
+        .await
+        .is_err());
 }

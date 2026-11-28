@@ -79,6 +79,22 @@ pub(super) async fn retirement_case6_retained_claim_survives_proof_failure_then_
         let clock = Arc::new(Mutex::new(now + Duration::from_secs(1)));
         let worker = finalizing_parent_worker(&f, clock.clone());
         worker.run_one(&active.id, now).await.unwrap();
+        if !lost_delete {
+            // An acknowledged provider delete can leave Pods or PVCs present
+            // longer than the ordinary retry budget. Dispatch custody must keep
+            // the same StopAgents work due until exact finality is available.
+            use layer2_core::sandbox::work_retry::WORK_RETRY_BUDGET;
+            for _ in 0..=WORK_RETRY_BUDGET {
+                now += Duration::from_secs(6);
+                *clock.lock().unwrap() = now + Duration::from_secs(1);
+                worker.run_one(&active.id, now).await.unwrap();
+            }
+            let pending = f.harness.stored(&active.id).await;
+            assert!(pending.work.attempts > WORK_RETRY_BUDGET);
+            assert!(pending
+                .work
+                .is_due(&rfc3339_at(now + Duration::from_secs(6))));
+        }
         let pending = f.harness.stored(&active.id).await;
         assert_eq!(pending.status, SandboxStatus::Retiring);
         assert_eq!(pending.runtime, active.runtime);

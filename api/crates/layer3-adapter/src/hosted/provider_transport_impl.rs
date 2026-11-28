@@ -20,7 +20,20 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         binding: &crate::agent_sandbox::PodBinding,
         owner: &crate::owner_protocol::TransportOwner,
     ) -> crate::Result<bool> {
-        self.challenge_native_receiver(handle, binding, owner).await
+        self.challenge_native_receiver(handle, binding, owner, false)
+            .await
+    }
+
+    async fn probe_unreachable_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::provider::ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        owner: &crate::owner_protocol::TransportOwner,
+        expected_uid: Option<&str>,
+    ) -> crate::Result<Option<crate::RetirementPod>> {
+        self.probe_retirement_receiver(handle, request, home, owner, expected_uid)
+            .await
     }
 
     fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {

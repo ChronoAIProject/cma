@@ -12,12 +12,14 @@ mod preclose;
 pub(super) use preclose::mongo::composed::{
     parent_worker as mongo_parent_worker, run_due as run_mongo_parent_due,
 };
+mod receiver_tests;
 pub(super) mod records;
 mod support;
 use support::*;
 
 pub(crate) async fn exercise_native_retirement_finality() {
     retirement_case6_healthy_siblings_complete().await;
+    receiver_tests::single_manager_admits_retirement_without_child_receiver_capture().await;
     retirement_case6_permanent_404_completes_after_native_finality().await;
     negatives::retirement_case6_negative_boundaries_retain_debt().await;
     negatives::retirement_case6_retained_provider_denial_blocks_paused_siblings().await;

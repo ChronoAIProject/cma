@@ -327,3 +327,39 @@ pub(super) fn pod_binding(object: &DynamicObject, pod: &Pod) -> Result<PodBindin
         runtime_restart_count: container.map(|container| container.restart_count),
     })
 }
+
+/// Retirement may observe an owned Pod before it has a reachable endpoint.
+pub(super) fn retirement_pod_binding(
+    object: &DynamicObject,
+    pod: &Pod,
+) -> Result<Option<PodBinding>> {
+    let status = pod
+        .status
+        .as_ref()
+        .ok_or_else(|| unavailable("Pod status missing"))?;
+    if pod.metadata.deletion_timestamp.is_some() {
+        return Err(unavailable("retirement Pod is being replaced or deleted"));
+    }
+    match status.phase.as_deref() {
+        Some("Pending") => return Ok(None),
+        Some("Running") => {}
+        _ => return Err(unavailable("retirement Pod phase is unknown")),
+    }
+    let ready = status
+        .conditions
+        .as_ref()
+        .is_some_and(|cs| cs.iter().any(|c| c.type_ == "Ready" && c.status == "True"));
+    let crash_loop = status.container_statuses.iter().flatten().any(|container| {
+        container.name == "runtime"
+            && container
+                .state
+                .as_ref()
+                .and_then(|state| state.waiting.as_ref())
+                .and_then(|waiting| waiting.reason.as_deref())
+                == Some("CrashLoopBackOff")
+    });
+    if !ready || crash_loop || status.pod_ip.as_deref().is_none_or(str::is_empty) {
+        return Ok(None);
+    }
+    pod_binding(object, pod).map(Some)
+}

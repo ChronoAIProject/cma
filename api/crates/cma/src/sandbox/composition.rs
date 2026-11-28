@@ -292,6 +292,10 @@ impl SandboxLifecycleComposition {
                 config.deployment_id.clone(),
                 dependencies.store.clone(),
                 config.native_retirement_finality_enabled,
+            )
+            .with_unreachable_probe(
+                config.native_retirement_finality_enabled
+                    && config.native_retirement_capture_enabled,
             );
         if config.native_retirement_finality_enabled {
             retirement_finalizer = retirement_finalizer

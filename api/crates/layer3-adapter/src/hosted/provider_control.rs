@@ -1,6 +1,65 @@
 use super::*;
 
 impl ProviderHostedControlTransport {
+    pub(super) async fn probe_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &crate::provider::ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        owner: &crate::owner_protocol::TransportOwner,
+        expected_uid: Option<&str>,
+    ) -> crate::Result<Option<crate::RetirementPod>> {
+        let RuntimeDiscovery::AgentSandbox(client) = &self.client else {
+            return Ok(None);
+        };
+        owner.validate()?;
+        let first = client.retirement_probe_pod(handle, request, home).await?;
+        if expected_uid.is_some_and(|uid| uid != first.0) {
+            return Err(AdapterError::Rejected(
+                "retirement receiver UID changed".into(),
+            ));
+        }
+        let mut current = first.clone();
+        for attempt in 0..3 {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                current = client.retirement_probe_pod(handle, request, home).await?;
+                if current.0 != first.0 {
+                    return Err(AdapterError::Rejected(
+                        "retirement receiver UID changed".into(),
+                    ));
+                }
+            }
+            let unreachable = if let Some(binding) = &current.1 {
+                match self
+                    .challenge_native_receiver(handle, binding, owner, true)
+                    .await
+                {
+                    Err(error @ AdapterError::Unavailable(_))
+                        if self.native_transport != NativeRuntimeTransport::Direct =>
+                    {
+                        if !client.retirement_loopback_unavailable(binding).await? {
+                            return Err(error);
+                        }
+                        true
+                    }
+                    result => result?,
+                }
+            } else {
+                true
+            };
+            if client.retirement_probe_pod(handle, request, home).await? != current {
+                return Err(AdapterError::Rejected(
+                    "retirement receiver changed during probe".into(),
+                ));
+            }
+            if !unreachable {
+                return Ok(None);
+            }
+        }
+        Ok(Some(crate::RetirementPod::by_uid(first.0)))
+    }
+
     /// Read the negotiated policy on the same native Pod and boot that supplied
     /// the ordinary runtime status. A valid legacy reply supplies no policy.
     pub async fn observe_native_startup_policy(

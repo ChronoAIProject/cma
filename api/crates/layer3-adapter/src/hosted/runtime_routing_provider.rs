@@ -11,6 +11,33 @@ pub trait RuntimeRoutingStore: Send + Sync {
 }
 
 impl RuntimeBackends {
+    pub(super) fn retirement_backend(
+        &self,
+        handle: &RuntimeHandle,
+        home: &HomeVolumeAttachment,
+    ) -> Result<&dyn HostedBackend> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)
+    }
+
+    pub(super) fn check_retained_home_route(
+        &self,
+        handle: &RuntimeHandle,
+        home: &crate::HomeVolumeRequest,
+    ) -> Result<()> {
+        self.require_home_routes(home)?;
+        if let Some(routes) = &self.home_routes {
+            if routes.is_native(home)? != handle.0.starts_with("agent-sandbox:")
+                && !(home.scope.is_none() && routes.shares_legacy_authority())
+            {
+                return Err(AdapterError::Rejected(
+                    "retained runtime conflicts with its recorded home authority".into(),
+                ));
+            }
+        }
+        self.for_handle(handle)?;
+        Ok(())
+    }
     pub(super) fn require_home_routes(&self, home: &crate::HomeVolumeRequest) -> Result<()> {
         if self.home_routes.is_none() && home.scope.is_some() {
             return Err(AdapterError::Rejected(

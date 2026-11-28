@@ -63,6 +63,21 @@ impl HostedAdapter {
 
 #[async_trait::async_trait]
 impl crate::RuntimeRetirement for HostedAdapter {
+    async fn probe_unreachable_receiver(
+        &self,
+        request: &crate::RuntimeAdoptionRequest,
+        owner: &crate::owner_protocol::TransportOwner,
+    ) -> crate::Result<Option<crate::RetirementPod>> {
+        self.verify_adoption_home_route(request)?;
+        let rendered = self.retained_request(request, request.generation)?;
+        let home = request.spec.home_volume.as_ref().ok_or_else(|| {
+            AdapterError::Rejected("retirement requires the original home".into())
+        })?;
+        self.backend
+            .probe_unreachable_receiver(&request.handle, &rendered, home, owner)
+            .await
+    }
+
     async fn challenge_retirement_receiver(
         &self,
         request: &crate::RuntimeAdoptionRequest,
