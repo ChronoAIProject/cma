@@ -31,6 +31,14 @@ impl WorkspaceWorker {
                 && child.work.ready_at <= rfc3339_at(at);
             let remaining = Duration::from_secs(10).saturating_sub(started.elapsed());
             if !observing_bootstrap || remaining.is_zero() {
+                tracing::debug!(
+                    workspace_id = %id,
+                    sandbox_id = %sandbox.id,
+                    child_status = ?child.status,
+                    child_step = ?child.work.step,
+                    parent_wait_ms = started.elapsed().as_millis() as u64,
+                    "Sandbox finished observing its Workspace bootstrap"
+                );
                 return Ok(drained);
             }
             // An independent scheduler may own this exact child's Prepare or
@@ -103,10 +111,20 @@ impl WorkspaceWorker {
             let expected = workspace.revision;
             workspace.work.execution = Some(self.config.execution);
             workspace.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
-            self.dependencies
+            let result = self
+                .dependencies
                 .store
                 .save_workspace(expected, workspace.clone())
-                .await?;
+                .await;
+            tracing::debug!(
+                workspace_id = %workspace.id,
+                sandbox_id = %workspace.sandbox_id,
+                step = ?workspace.work.step,
+                claim_fence = workspace.work.lease.as_ref().map(|lease| lease.fence),
+                store_result = super::authority::workspace_store_result(result.as_ref().err()),
+                "Workspace execution policy publication ended"
+            );
+            result?;
         }
         Ok(workspace)
     }

@@ -332,15 +332,27 @@ impl WorkspaceWorker {
     ) -> Result<(), SandboxStoreError> {
         let expected = workspace.revision;
         let fence = claimed_fence(&workspace, &self.config.holder)?;
+        let from = workspace.work.step;
         workspace
             .work
             .advance(&self.config.holder, fence, step, rfc3339_at(now))
             .map_err(|_| SandboxStoreError::Conflict)?;
         workspace.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
-        self.dependencies
+        let id = workspace.id.clone();
+        let result = self
+            .dependencies
             .store
             .save_workspace(expected, workspace)
-            .await
+            .await;
+        tracing::debug!(
+            workspace_id = %id,
+            step = ?from,
+            next_step = ?step,
+            claim_fence = fence,
+            store_result = authority::workspace_store_result(result.as_ref().err()),
+            "Workspace step publication ended"
+        );
+        result
     }
 
     async fn mark_ready(
@@ -368,16 +380,24 @@ impl WorkspaceWorker {
             .transition(WorkspaceStatus::Ready, stamp.clone(), None)
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
         let id = workspace.id.clone();
-        self.commit(
-            expected,
-            workspace,
-            stamp,
-            SandboxEventKind::WorkspaceReady {
-                workspace_id: id,
-                resolved_commit: commit,
-            },
-        )
-        .await
+        let result = self
+            .commit(
+                expected,
+                workspace,
+                stamp,
+                SandboxEventKind::WorkspaceReady {
+                    workspace_id: id.clone(),
+                    resolved_commit: commit,
+                },
+            )
+            .await;
+        tracing::debug!(
+            workspace_id = %id,
+            claim_fence = fence,
+            store_result = authority::workspace_store_result(result.as_ref().err()),
+            "Workspace Ready publication ended"
+        );
+        result
     }
 
     async fn mark_removed(

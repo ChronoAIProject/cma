@@ -35,6 +35,7 @@ pub(crate) struct FeatureFlags {
     pub credential_retirement_receipts: bool,
     pub retirement_reauthorization: bool,
     pub workspace_prepare_observations: bool,
+    pub workspace_authority_retry: bool,
     pub reviewed_sandbox_retirement_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub command_cancel_wake: bool,
