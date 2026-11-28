@@ -582,22 +582,23 @@ async fn unreachable_retirement_tracks_three_probes_and_rejects_replacement_uid(
                 "ready":false,"restartCount":4,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]
         }),
     ] {
-        let mut state = fixture.state.lock().unwrap();
-        state.rows.insert(pod_path.clone(), json!({
-            "apiVersion":"v1","kind":"Pod",
-            "metadata":{
-                "name":"retiring-original","namespace":"cma-test","uid":"original-pod",
-                "labels":{
-                    OWNER_LABEL:"cma-test",
-                    super::super::super::pods::TRACKING_LABEL:super::super::super::pods::name_hash("warm-member")
+        {
+            let mut state = fixture.state.lock().unwrap();
+            state.rows.insert(pod_path.clone(), json!({
+                "apiVersion":"v1","kind":"Pod",
+                "metadata":{
+                    "name":"retiring-original","namespace":"cma-test","uid":"original-pod",
+                    "labels":{
+                        OWNER_LABEL:"cma-test",
+                        super::super::super::pods::TRACKING_LABEL:super::super::super::pods::name_hash("warm-member")
+                    },
+                    "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
+                        "name":"warm-member","uid":"member-uid","controller":true}]
                 },
-                "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
-                    "name":"warm-member","uid":"member-uid","controller":true}]
-            },
-            "status":status
-        }));
-        state.calls.clear();
-        drop(state);
+                "status":status
+            }));
+            state.calls.clear();
+        }
         let pod = transport
             .probe_unreachable_receiver(&handle, &request, &home, &owner, None)
             .await
