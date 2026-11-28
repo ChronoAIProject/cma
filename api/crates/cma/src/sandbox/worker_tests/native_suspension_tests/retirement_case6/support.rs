@@ -105,6 +105,21 @@ pub(super) fn parent_worker_with_capture(
     }
     parent_worker_inner(f, Some(Arc::new(service)))
 }
+pub(super) fn parent_worker_with_unreachable_probe(
+    f: &Fixture,
+    clock: Arc<Mutex<SystemTime>>,
+) -> Arc<SandboxWorker> {
+    let service = crate::sandbox::native_retirement_finalizer::NativeRetirementFinalizer::new(
+        f.harness.store.clone(),
+        f.harness.adapter.clone(),
+        "test".into(),
+        f.backend.retirement_records.clone(),
+        true,
+    )
+    .with_clock(Arc::new(move || *clock.lock().unwrap()))
+    .with_unreachable_probe(true);
+    parent_worker_inner(f, Some(Arc::new(service)))
+}
 fn parent_worker_inner(
     f: &Fixture,
     finalizer: Option<Arc<crate::sandbox::native_retirement_finalizer::NativeRetirementFinalizer>>,

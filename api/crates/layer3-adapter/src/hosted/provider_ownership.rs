@@ -303,6 +303,7 @@ impl ProviderHostedControlTransport {
             )
         } else {
             let (name, token) = self.auth_header(endpoint);
+            observed_status.record_request_started();
             let mut reply = self
                 .http
                 .post(url)
@@ -311,6 +312,9 @@ impl ProviderHostedControlTransport {
                 .send()
                 .await
                 .map_err(|error| {
+                    if error.is_timeout() || crate::receiver_failure::connection_error(&error) {
+                        observed_status.record_connection_failure();
+                    }
                     let origin = if error.is_connect() || error.is_timeout() {
                         crate::owner_protocol::ReceiverSettlementFailure::Unavailable
                     } else {

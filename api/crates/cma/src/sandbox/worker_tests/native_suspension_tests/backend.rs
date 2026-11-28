@@ -86,19 +86,6 @@ impl NativeBackend {
     pub async fn request(&self) -> ProviderSandboxRequest {
         self.row.lock().await.as_ref().unwrap().request.clone()
     }
-    pub async fn lose_object(&self) {
-        self.row.lock().await.take();
-    }
-    pub async fn set_lifecycle(&self, state: &str) {
-        self.row
-            .lock()
-            .await
-            .as_mut()
-            .unwrap()
-            .observation
-            .lifecycle
-            .state = state.into();
-    }
     async fn pod(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<RuntimeHandle> {
         let rows = self.row.lock().await;
         let row = rows.as_ref().ok_or_else(absent)?;
@@ -421,6 +408,15 @@ impl HostedBackend for NativeBackend {
             async move { original.send(input).await }
         });
         Ok((channel, receipt))
+    }
+    async fn probe_unreachable_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        _: &layer3_adapter::HomeVolumeAttachment,
+        owner: &layer3_adapter::owner_protocol::TransportOwner,
+    ) -> layer3_adapter::Result<Option<layer3_adapter::RetirementPod>> {
+        self.probe_retirement_fixture(handle, request, owner).await
     }
     async fn challenge_retirement_receiver(
         &self,

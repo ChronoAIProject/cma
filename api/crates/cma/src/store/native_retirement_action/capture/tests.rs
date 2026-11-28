@@ -174,8 +174,8 @@ fn retirement_capture_round_trips_bound_and_observed_slots_and_refuses_malformed
             runtime: RuntimeHandle::new(&record.parent.runtime.runtime_id),
             pod: RetirementPod {
                 uid: "original-pod".into(),
-                container_id: "original".into(),
-                restart_count: 0,
+                container_id: Some("original".into()),
+                restart_count: Some(0),
             },
             owner: attempt.owner.clone(),
         },

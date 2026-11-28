@@ -174,18 +174,7 @@ impl HostedBackend for RuntimeBackends {
         handle: &RuntimeHandle,
         home: &crate::HomeVolumeRequest,
     ) -> Result<()> {
-        self.require_home_routes(home)?;
-        if let Some(routes) = &self.home_routes {
-            if routes.is_native(home)? != handle.0.starts_with("agent-sandbox:")
-                && !(home.scope.is_none() && routes.shares_legacy_authority())
-            {
-                return Err(AdapterError::Rejected(
-                    "retained runtime conflicts with its recorded home authority".into(),
-                ));
-            }
-        }
-        self.for_handle(handle)?;
-        Ok(())
+        self.check_retained_home_route(handle, home)
     }
     fn native_pools_for_home(
         &self,
@@ -272,6 +261,17 @@ impl HostedBackend for RuntimeBackends {
             .provision_with_home(request, home)
             .await
     }
+    async fn probe_unreachable_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        owner: &crate::owner_protocol::TransportOwner,
+    ) -> Result<Option<crate::RetirementPod>> {
+        self.retirement_backend(handle, home)?
+            .probe_unreachable_receiver(handle, request, home, owner)
+            .await
+    }
     async fn challenge_retirement_receiver(
         &self,
         handle: &RuntimeHandle,
@@ -279,8 +279,7 @@ impl HostedBackend for RuntimeBackends {
         home: &crate::HomeVolumeAttachment,
         receiver: &crate::receiver_failure::RetirementReceiver,
     ) -> Result<bool> {
-        self.verify_retained_home_route(handle, &home.request)?;
-        self.for_handle(handle)?
+        self.retirement_backend(handle, home)?
             .challenge_retirement_receiver(handle, request, home, receiver)
             .await
     }
@@ -291,8 +290,7 @@ impl HostedBackend for RuntimeBackends {
         home: &crate::HomeVolumeAttachment,
         receiver: Option<&crate::RetirementPod>,
     ) -> Result<()> {
-        self.verify_retained_home_route(handle, &home.request)?;
-        self.for_handle(handle)?
+        self.retirement_backend(handle, home)?
             .retire_verified(handle, request, home, receiver)
             .await
     }
@@ -301,8 +299,9 @@ impl HostedBackend for RuntimeBackends {
         handle: &RuntimeHandle,
         home: &crate::HomeVolumeAttachment,
     ) -> Result<()> {
-        self.verify_retained_home_route(handle, &home.request)?;
-        self.for_handle(handle)?.verify_retired(handle, home).await
+        self.retirement_backend(handle, home)?
+            .verify_retired(handle, home)
+            .await
     }
     async fn teardown_retained(&self, handle: &RuntimeHandle) -> Result<()> {
         self.for_handle(handle)?.teardown_retained(handle).await

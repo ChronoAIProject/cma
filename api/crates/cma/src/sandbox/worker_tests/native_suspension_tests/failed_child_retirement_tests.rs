@@ -107,8 +107,8 @@ async fn exercise(boundary: Boundary) {
                 runtime: RuntimeHandle::new(&binding.runtime_id),
                 pod: layer3_adapter::RetirementPod {
                     uid: "original-pod".into(),
-                    container_id: "containerd://original".into(),
-                    restart_count: 0,
+                    container_id: Some("containerd://original".into()),
+                    restart_count: Some(0),
                 },
                 owner: TransportOwner {
                     protocol: OWNER_PROTOCOL_VERSION,

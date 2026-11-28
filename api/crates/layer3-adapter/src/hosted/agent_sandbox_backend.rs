@@ -31,22 +31,12 @@ mod binding;
 mod context;
 #[path = "agent_sandbox_file_read.rs"]
 mod file_read;
+#[path = "agent_sandbox_retirement.rs"]
+mod retirement;
 #[path = "agent_sandbox_status.rs"]
 mod status;
 use context::observation;
 pub use context::NativeStatusInspection;
-
-impl AgentSandboxBackend {
-    pub fn new(client: AgentSandboxClient, transport: Arc<dyn HostedControlTransport>) -> Self {
-        Self {
-            client,
-            transport,
-            assignments: Default::default(),
-            single_exchange_file_reads: false,
-            startup_breaker: Default::default(),
-        }
-    }
-}
 
 #[async_trait::async_trait]
 impl HostedBackend for AgentSandboxBackend {
@@ -162,6 +152,17 @@ impl HostedBackend for AgentSandboxBackend {
         timing.completed("runtime_binding");
         Ok(handle)
     }
+    async fn probe_unreachable_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        owner: &crate::owner_protocol::TransportOwner,
+    ) -> Result<Option<crate::RetirementPod>> {
+        self.transport
+            .probe_unreachable_receiver(handle, request, home, owner, None)
+            .await
+    }
     async fn challenge_retirement_receiver(
         &self,
         handle: &RuntimeHandle,
@@ -169,26 +170,8 @@ impl HostedBackend for AgentSandboxBackend {
         home: &HomeVolumeAttachment,
         receiver: &crate::receiver_failure::RetirementReceiver,
     ) -> Result<bool> {
-        let binding = self
-            .client
-            .retirement_receiver(handle, request, home)
-            .await?;
-        if RetirementPod::try_from(&binding)? != receiver.pod {
-            return Err(AdapterError::Rejected("retirement receiver changed".into()));
-        }
-        let unavailable = self
-            .transport
-            .challenge_retirement_receiver(handle, &binding, &receiver.owner)
-            .await?;
-        if self
-            .client
-            .retirement_receiver(handle, request, home)
-            .await?
-            != binding
-        {
-            return Err(AdapterError::Rejected("retirement receiver changed".into()));
-        }
-        Ok(unavailable)
+        self.challenge_receiver(handle, request, home, receiver)
+            .await
     }
     async fn retire_verified(
         &self,
@@ -197,15 +180,8 @@ impl HostedBackend for AgentSandboxBackend {
         home: &HomeVolumeAttachment,
         receiver: Option<&RetirementPod>,
     ) -> Result<()> {
-        if let Some(receiver) = receiver {
-            self.client
-                .retire_verified(handle, request, home, Some(receiver))
-                .await?;
-        } else {
-            self.client.retire_suspended(handle, request, home).await?;
-        }
-        self.forget_assignment(handle);
-        self.transport.retire(handle).await
+        self.retire_with_proof(handle, request, home, receiver)
+            .await
     }
     async fn verify_retired(
         &self,

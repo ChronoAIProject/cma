@@ -6,8 +6,24 @@ use crate::{AdapterError, Result, RuntimeAdoptionRequest};
 #[serde(deny_unknown_fields)]
 pub struct RetirementPod {
     pub uid: String,
-    pub container_id: String,
-    pub restart_count: i32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub container_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restart_count: Option<i32>,
+}
+
+impl RetirementPod {
+    pub(crate) fn by_uid(uid: String) -> Self {
+        Self {
+            uid,
+            container_id: None,
+            restart_count: None,
+        }
+    }
+
+    pub fn is_uid_only(&self) -> bool {
+        self.container_id.is_none() && self.restart_count.is_none()
+    }
 }
 
 impl TryFrom<&crate::agent_sandbox::PodBinding> for RetirementPod {
@@ -31,14 +47,24 @@ impl TryFrom<&crate::agent_sandbox::PodBinding> for RetirementPod {
         }
         Ok(Self {
             uid: binding.pod_uid.clone(),
-            container_id: container_id.clone(),
-            restart_count,
+            container_id: Some(container_id.clone()),
+            restart_count: Some(restart_count),
         })
     }
 }
 
 #[async_trait::async_trait]
 pub trait RuntimeRetirement: Send + Sync {
+    /// Observe three consecutive failures against an unchanged owned Pod.
+    /// This probe grants no authority to confirm or renew a runtime lease.
+    async fn probe_unreachable_receiver(
+        &self,
+        _request: &RuntimeAdoptionRequest,
+        _owner: &crate::owner_protocol::TransportOwner,
+    ) -> Result<Option<RetirementPod>> {
+        Ok(None)
+    }
+
     /// Repeat one ownership challenge without confirming or renewing it.
     /// A correlated failure for the exact native receiver returns true.
     async fn challenge_retirement_receiver(

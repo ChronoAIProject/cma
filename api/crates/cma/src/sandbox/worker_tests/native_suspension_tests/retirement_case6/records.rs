@@ -98,8 +98,8 @@ impl RetirementRecords for FixtureRecords {
 pub(in super::super) fn pod() -> layer3_adapter::RetirementPod {
     layer3_adapter::RetirementPod {
         uid: "fixture-original-pod".into(),
-        container_id: "fixture-runtime-container".into(),
-        restart_count: 0,
+        container_id: Some("fixture-runtime-container".into()),
+        restart_count: Some(0),
     }
 }
 

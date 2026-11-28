@@ -554,3 +554,158 @@ async fn finality_reads_every_pvc_page_and_refuses_a_label_less_owned_survivor()
         .all(|query| query.contains("continue=next")));
     assert!(state.calls.iter().all(|(call, _)| call.starts_with("GET ")));
 }
+
+#[tokio::test]
+async fn unreachable_retirement_tracks_three_probes_and_rejects_replacement_uid() {
+    use crate::hosted::{HostedControlTransport, ProviderHostedControlTransport};
+    use crate::owner_protocol::{TransportOwner, OWNER_PROTOCOL_VERSION};
+
+    let (fixture, home, request, handle) = bound(true).await;
+    let runtime = client(&fixture, true);
+    let transport = ProviderHostedControlTransport::for_agent_sandbox(runtime.clone()).unwrap();
+    let pods_path = "/api/v1/namespaces/cma-test/pods";
+    let pod_path = format!("{pods_path}/retiring-original");
+    let owner = TransportOwner {
+        protocol: OWNER_PROTOCOL_VERSION,
+        agent_id: "fixture-agent".into(),
+        instance_id: "fixture-manager".into(),
+        epoch: 1,
+    };
+    for status in [
+        json!({"phase":"Pending"}),
+        json!({"phase":"Running","conditions":[{"type":"Ready","status":"False"}]}),
+        json!({"phase":"Running","conditions":[{"type":"Ready","status":"True"}]}),
+        json!({
+            "phase":"Running", "podIP":"192.0.2.1",
+            "conditions":[{"type":"Ready","status":"True"}],
+            "containerStatuses":[{"name":"runtime","image":"fixture","imageID":"fixture",
+                "ready":false,"restartCount":4,"state":{"waiting":{"reason":"CrashLoopBackOff"}}}]
+        }),
+    ] {
+        {
+            let mut state = fixture.state.lock().unwrap();
+            state.rows.insert(pod_path.clone(), json!({
+                "apiVersion":"v1","kind":"Pod",
+                "metadata":{
+                    "name":"retiring-original","namespace":"cma-test","uid":"original-pod",
+                    "labels":{
+                        OWNER_LABEL:"cma-test",
+                        super::super::super::pods::TRACKING_LABEL:super::super::super::pods::name_hash("warm-member")
+                    },
+                    "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1","kind":"Sandbox",
+                        "name":"warm-member","uid":"member-uid","controller":true}]
+                },
+                "status":status
+            }));
+            state.calls.clear();
+        }
+        let pod = transport
+            .probe_unreachable_receiver(&handle, &request, &home, &owner, None)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(pod, crate::RetirementPod::by_uid("original-pod".into()));
+        let state = fixture.state.lock().unwrap();
+        assert_eq!(
+            state
+                .calls
+                .iter()
+                .filter(|(call, _)| call == &format!("GET {pods_path}"))
+                .count(),
+            6
+        );
+        assert!(state.calls.iter().all(|(call, _)| call.starts_with("GET ")));
+    }
+
+    fixture.state.lock().unwrap().rows.get_mut(MEMBER).unwrap()["spec"]["podTemplate"]["spec"]
+        ["serviceAccountName"] = json!("older-runtime-account");
+    let original = fixture.state.lock().unwrap().rows[&pod_path].clone();
+    let mut replacement = original.clone();
+    replacement["metadata"]["uid"] = json!("replacement");
+    let list = |pod| json!({"apiVersion":"v1","kind":"PodList","metadata":{},"items":[pod]});
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.read_replies.extend([
+            (pods_path.into(), 200, list(original.clone())),
+            (pods_path.into(), 200, list(original)),
+            (pods_path.into(), 200, list(replacement.clone())),
+        ]);
+    }
+    assert!(transport
+        .probe_unreachable_receiver(&handle, &request, &home, &owner, None)
+        .await
+        .is_err());
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .rows
+        .insert(pod_path.clone(), replacement);
+    assert!(runtime
+        .retire_verified(
+            &handle,
+            &request,
+            &home,
+            Some(&crate::RetirementPod::by_uid("original-pod".into())),
+        )
+        .await
+        .is_err());
+    assert!(fixture
+        .state
+        .lock()
+        .unwrap()
+        .calls
+        .iter()
+        .all(|(call, _)| call.starts_with("GET ")));
+
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .rows
+        .get_mut(&pod_path)
+        .unwrap()["metadata"]["uid"] = json!("original-pod");
+    let proved = transport
+        .probe_unreachable_receiver(&handle, &request, &home, &owner, None)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(runtime.validate_request(&handle, &request).await.is_err());
+    let deleted = fixture.gate(format!("GET {pods_path}"), Some(format!("DELETE {MEMBER}")));
+    let retirement = runtime.retire_verified(&handle, &request, &home, Some(&proved));
+    tokio::pin!(retirement);
+    let deadline = Duration::from_secs(5);
+    tokio::select! {
+        result = &mut retirement => panic!("provider completed before Pod inventory: {result:?}"),
+        result = tokio::time::timeout(deadline, deleted.entered.notified()) => result.unwrap(),
+    }
+    assert!(tokio::time::timeout(
+        Duration::from_millis(80),
+        runtime.verify_retired(&handle, &home)
+    )
+    .await
+    .is_err());
+    fixture
+        .state
+        .lock()
+        .unwrap()
+        .rows
+        .remove(&pod_path)
+        .unwrap();
+    deleted.release.notify_one();
+    tokio::time::timeout(deadline, retirement)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(runtime.verify_retired(&handle, &home).await.is_err());
+    fixture.state.lock().unwrap().rows.remove(VOLUME).unwrap();
+    runtime.verify_retired(&handle, &home).await.unwrap();
+    let state = fixture.state.lock().unwrap();
+    let (_, deletion) = state
+        .calls
+        .iter()
+        .find(|(call, _)| call == &format!("DELETE {MEMBER}"))
+        .unwrap();
+    assert_eq!(deletion["preconditions"]["uid"], "member-uid");
+    assert!(deletion["preconditions"]["resourceVersion"].is_string());
+}

@@ -286,9 +286,12 @@ impl Slot {
                     || receiver.runtime.as_str().len() > MAX_RECEIVER_ID_BYTES
                     || receiver.pod.uid.is_empty()
                     || receiver.pod.uid.len() > MAX_RECEIVER_ID_BYTES
-                    || receiver.pod.container_id.is_empty()
-                    || receiver.pod.container_id.len() > MAX_RECEIVER_ID_BYTES
-                    || receiver.pod.restart_count < 0
+                    || receiver
+                        .pod
+                        .container_id
+                        .as_deref()
+                        .is_none_or(|id| id.is_empty() || id.len() > MAX_RECEIVER_ID_BYTES)
+                    || receiver.pod.restart_count.is_none_or(|count| count < 0)
                 {
                     return false;
                 }

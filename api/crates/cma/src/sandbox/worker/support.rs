@@ -147,10 +147,7 @@ impl SandboxWorker {
         let step = sandbox.work.step;
         let fence = self.claimed_fence(&sandbox)?;
         let event_at = rfc3339_at(now);
-        let exhausted = self.retirement_reauthorization_disabled(&sandbox)
-            || (sandbox.status == SandboxStatus::Retiring
-                && step.is_retirement()
-                && sandbox.work.attempts >= failure.retry_kind().retry_budget());
+        let exhausted = self.retirement_retry_exhausted(&sandbox, &failure).await?;
         let recovery = super::retirement_credentials::park_reauthorization(
             &mut sandbox,
             failure.reauthorization,

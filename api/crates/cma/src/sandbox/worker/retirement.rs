@@ -13,6 +13,26 @@ use super::support::{
 use super::{retirement_credentials::custody_provider_ids, SandboxWorker};
 
 impl SandboxWorker {
+    pub(super) async fn retirement_retry_exhausted(
+        &self,
+        sandbox: &Sandbox,
+        failure: &WorkerFailure,
+    ) -> Result<bool, SandboxStoreError> {
+        let exhausted = self.retirement_reauthorization_disabled(sandbox)
+            || (sandbox.status == SandboxStatus::Retiring
+                && sandbox.work.step.is_retirement()
+                && sandbox.work.attempts >= failure.retry_kind().retry_budget());
+        if let Some(finalizer) = self
+            .config
+            .retirement_finalizer
+            .as_ref()
+            .filter(|_| exhausted)
+        {
+            return Ok(!finalizer.has_dispatched(sandbox).await?);
+        }
+        Ok(exhausted)
+    }
+
     pub(super) async fn stop_agents(
         &self,
         mut sandbox: Sandbox,

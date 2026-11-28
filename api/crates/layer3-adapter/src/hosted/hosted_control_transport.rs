@@ -7,6 +7,17 @@ use tokio::sync::mpsc;
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    async fn probe_unreachable_receiver(
+        &self,
+        _handle: &RuntimeHandle,
+        _request: &crate::provider::ProviderSandboxRequest,
+        _home: &crate::HomeVolumeAttachment,
+        _owner: &crate::owner_protocol::TransportOwner,
+        _expected_uid: Option<&str>,
+    ) -> crate::Result<Option<crate::RetirementPod>> {
+        Ok(None)
+    }
+
     fn stale_turn_producer(&self) -> Option<&dyn crate::stale_turn::StaleTurnProducer> {
         None
     }

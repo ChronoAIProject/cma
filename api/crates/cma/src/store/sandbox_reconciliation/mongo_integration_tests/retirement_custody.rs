@@ -55,8 +55,8 @@ async fn candidate(
             runtime: RuntimeHandle::new(&binding.runtime_id),
             pod: RetirementPod {
                 uid: "original-pod".into(),
-                container_id: "original-container".into(),
-                restart_count: 0,
+                container_id: Some("original-container".into()),
+                restart_count: Some(0),
             },
             owner: TransportOwner {
                 protocol: OWNER_PROTOCOL_VERSION,
@@ -97,7 +97,8 @@ async fn maintenance_preserves_the_native_retirement_receiver_observation() {
     let (parent, _, _) = candidate(&store, false).await;
     let (original, _) = store.observation(&parent.id).await.unwrap().unwrap();
     let mut replacement = original.clone();
-    replacement.receiver.pod.restart_count += 1;
+    replacement.receiver.pod.restart_count =
+        Some(replacement.receiver.pod.restart_count.unwrap() + 1);
     let replica = mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();

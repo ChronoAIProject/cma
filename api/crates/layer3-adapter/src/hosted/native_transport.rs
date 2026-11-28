@@ -15,6 +15,8 @@ use super::native_pool::{AbortOnDrop, NativeConnection, NativeLease};
 pub(super) struct NativeHttpObservation {
     status: std::sync::atomic::AtomicU16,
     oversized: std::sync::atomic::AtomicBool,
+    connection_failure: std::sync::atomic::AtomicBool,
+    request_started: std::sync::atomic::AtomicBool,
     settlement_origin: std::sync::Mutex<Option<SettlementFailure>>,
 }
 
@@ -38,6 +40,30 @@ impl NativeHttpObservation {
         *self.settlement_origin.lock().unwrap() = None;
         self.oversized
             .store(false, std::sync::atomic::Ordering::Release);
+        self.connection_failure
+            .store(false, std::sync::atomic::Ordering::Release);
+        self.request_started
+            .store(false, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(super) fn record_request_started(&self) {
+        self.request_started
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(super) fn request_started(&self) -> bool {
+        self.request_started
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    pub(super) fn record_connection_failure(&self) {
+        self.connection_failure
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    pub(super) fn connection_failed(&self) -> bool {
+        self.connection_failure
+            .load(std::sync::atomic::Ordering::Acquire)
     }
 
     pub(super) fn oversized(&self) -> bool {
@@ -62,6 +88,10 @@ impl NativeHttpObservation {
     }
 
     fn record_http_failure(error: &hyper::Error) {
+        if crate::receiver_failure::connection_error(error) || error.is_timeout() {
+            let _ =
+                HTTP_OBSERVATION.try_with(|observation| observation.record_connection_failure());
+        }
         Self::record_origin(if error.is_parse() || error.is_user() {
             SettlementFailure::Invalid
         } else if error.is_closed() || error.is_incomplete_message() || error.is_timeout() {
@@ -355,6 +385,7 @@ impl ProviderHostedControlTransport {
         })?;
         // One attempt to this fenced Pod. An ambiguous response must never cause
         // an implicit second mutation, or rediscovery/replay on a replacement Pod.
+        let _ = HTTP_OBSERVATION.try_with(|observation| observation.record_request_started());
         let response = lease
             .connection
             .as_mut()
