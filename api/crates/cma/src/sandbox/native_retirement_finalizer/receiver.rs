@@ -75,7 +75,10 @@ impl NativeRetirementFinalizer {
         Ok(Some(action))
     }
 
-    pub(super) async fn offer_capture(&self, parent: &Sandbox) -> Result<(), SandboxStoreError> {
+    pub(in crate::sandbox) async fn offer_capture(
+        &self,
+        parent: &Sandbox,
+    ) -> Result<(), SandboxStoreError> {
         let Some(capture) = self
             .capture
             .as_ref()
