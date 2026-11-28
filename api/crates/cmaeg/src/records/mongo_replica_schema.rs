@@ -1,5 +1,5 @@
 //! Additive discovery indexes; installation does not enable replica writers.
-use super::{failure, migration_validator, RecordError, CONNECTIONS, INTERACTIONS, MIGRATIONS};
+use super::{failure, migration_validator_for, RecordError, CONNECTIONS, INTERACTIONS, MIGRATIONS};
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{doc, Document},
@@ -51,7 +51,7 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
     cma_service_migrations::collection_with_predecessors(
         db,
         MIGRATIONS,
-        migration_validator(),
+        migration_validator_for(db).await.map_err(failure)?,
         false,
         crate::records::mongo::migration_predecessors(),
     )

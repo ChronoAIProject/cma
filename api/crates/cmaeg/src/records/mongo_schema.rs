@@ -1,6 +1,6 @@
 #[path = "mongo_schema_predecessors.rs"]
 mod predecessors;
-use super::{create_fences::CREATE_FENCES, create_fences_floor};
+use super::{create_fences::CREATE_FENCES, create_fences_floor, sender_stop};
 use super::{
     failure, COLLECTIONS, CONNECTIONS, INTERACTIONS, MEDIA_CONTINUATIONS, MIGRATIONS, RECORDS,
     SESSIONS, THREAD_FENCES, WHATSAPP_FLOWS,
@@ -81,6 +81,7 @@ pub async fn verify_with_authority(
                     && ![
                         CREATE_FENCES,
                         THREAD_FENCES,
+                        sender_stop::COLLECTION,
                         WHATSAPP_FLOWS,
                         "eg_automation_records",
                         MEDIA_CONTINUATIONS,
@@ -105,12 +106,13 @@ pub async fn verify_with_authority(
                 } else if [
                     CREATE_FENCES,
                     THREAD_FENCES,
+                    sender_stop::COLLECTION,
                     WHATSAPP_FLOWS,
                     "eg_automation_records",
                 ]
                 .contains(&collection)
                 {
-                    &["find", "insert", "update", "listIndexes"][..]
+                    sender_stop::RUNTIME_ACTIONS
                 } else if collection != MIGRATIONS {
                     &["find", "insert", "update", "remove", "listIndexes"][..]
                 } else {
@@ -200,6 +202,14 @@ pub(crate) fn migration_validator() -> Document {
             {"_id":"github_integrations","version":{"$in":[1,2,3,4,5,6]}}]
     }
 }
+// Retain the original validator in immutable migration descriptions.
+pub(crate) async fn migration_validator_for(db: &Database) -> mongodb::error::Result<Document> {
+    if !cma_service_migrations::describing() && sender_stop::marker_installed(db).await? {
+        return Ok(sender_stop::marker_validator());
+    }
+    Ok(migration_validator())
+}
+
 pub(super) fn record_validator(protected: bool) -> Document {
     let mut record_validator = doc! {"$jsonSchema":{"bsonType":"object","additionalProperties":false,"required":["_id","owner","blob","version","schema_version"],"properties":{
     "_id":{"bsonType":"string"},"owner":{"bsonType":"string","minLength":1,"maxLength":512},"blob":{"bsonType":"binData"},"version":{"bsonType":"long","minimum":1},"schema_version":{"enum":[1]},"guard_revision":{"bsonType":"long","minimum":0}}}};
@@ -253,8 +263,9 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
         .get_document_mut("properties")
         .unwrap()
         .insert("expires_at", doc! {"bsonType":"date"});
+    let catalog = migration_validator_for(db).await.map_err(failure)?;
     for (name, validator) in [
-        (MIGRATIONS, migration_validator()),
+        (MIGRATIONS, catalog),
         (CONNECTIONS, ordinary.clone()),
         (INTERACTIONS, interaction_validator),
     ] {
