@@ -307,6 +307,34 @@ test('prepared Ready requires the collision owner and precedes its observed work
   }
 });
 
+test('prepared creation transport failure keeps admitted custody and releases its collision controls', async t => {
+  const context = fixture();
+  const create = context.create;
+  const cause = new TypeError('fetch failed', {cause: {code: 'UND_ERR_SOCKET'}});
+  const failures = [];
+  t.mock.method(context, 'create', async (...args) => {
+    const admitted = await create(...args);
+    if (args[0] === 'b' && args[3]) throw cause;
+    return admitted;
+  });
+  await assert.rejects(preparedJourney({...context,
+    recordFailure: (stage, error) => failures.push({stage, error})}), error => {
+    assert.equal(error.message, 'prepared_publication_create_failed');
+    assert.equal(error.cause, cause);
+    assert.equal(failures[0].stage, 'primary');
+    assert.equal(failures[0].error, error);
+    return true;
+  });
+  assert.equal(context.create.mock.callCount(), 4);
+  assert.equal(context.records.filter(row => row.sandboxId === 'candidate-b').length, 1);
+  assert.equal(context.records.at(-1).operationId, 'fixture-operation');
+  assert.deepEqual(context.results.map(row => row.name),
+    ['cold_comparison_on_a', 'prepared_create_on_a', 'cold_comparison_on_b']);
+  assert.deepEqual(context.actions.slice(-2), ['disarm-worktree-hold', 'restore-reservation-marker']);
+  assert.equal(context.actions.includes('reply-b'), false);
+  assert.equal(context.actions.includes('arm-owner-fence-hold'), false);
+});
+
 test('prepared publication retry must preserve the Runtime receipts present before the claim', async () => {
   await assert.rejects(preparedJourney(fixture({changedNativeReceipt: true})), /prepared_native_mutation_receipts_changed/);
 });

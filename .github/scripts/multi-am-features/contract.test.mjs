@@ -278,6 +278,19 @@ test('missing mapping and not-run cases cannot reduce the denominator', () => {
   assert.equal(result.total, 2); assert.equal(result.verdict, 'FAIL');
   assert.deepEqual(result.counts, {PASS: 0, FAIL: 0, BLOCKED: 1, NOT_RUN: 1});
 });
+test('passing a partial case cannot complete its blocked feature or its missing permission check', () => {
+  const selected = features.slice(0, 1);
+  const mapping = {'user.send': {cases: ['send'], blocked: 'permission fixture incomplete'}};
+  const rows = [{case: 'send', iteration: 1, verdict: 'PASS'}];
+  assert.deepEqual(coverage(selected, mapping, rows).counts,
+    {PASS: 0, FAIL: 0, BLOCKED: 1, NOT_RUN: 0});
+  delete mapping['user.send'].blocked;
+  mapping['user.send'].cases.push('denied');
+  assert.deepEqual(coverage(selected, mapping, rows).counts,
+    {PASS: 0, FAIL: 0, BLOCKED: 0, NOT_RUN: 1});
+  rows.push({case: 'denied', iteration: 1, verdict: 'PASS'});
+  assert.equal(coverage(selected, mapping, rows).verdict, 'PASS');
+});
 test('passing HTTP is insufficient without non-owner evidence and all cases', () => {
   const mappings = {'user.send': {cases: ['send'], routing: 'non_owner'},
     'admin.settings': {cases: ['cas', 'stale'], routing: 'both'}};
