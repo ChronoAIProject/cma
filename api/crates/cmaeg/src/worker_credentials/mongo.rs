@@ -256,7 +256,9 @@ pub async fn migrate(db: &Database) -> Result<(), RecordError> {
     cma_service_migrations::collection_with_predecessors(
         db,
         MIGRATIONS,
-        crate::records::mongo::migration_validator(),
+        crate::records::mongo::migration_validator_for(db)
+            .await
+            .map_err(failure)?,
         false,
         crate::records::mongo::migration_predecessors(),
     )

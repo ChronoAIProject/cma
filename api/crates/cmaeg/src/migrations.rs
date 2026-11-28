@@ -61,13 +61,19 @@ async fn converge_with_issuer(
         manifest.id,
         "gateway-activity-history-v1" | "gateway-console-sessions-v1"
     ) {
-        cma_service_migrations::marker_history(db,mongo::MIGRATIONS,vec![
+        let mut allowed = vec![
             doc! {"_id":"schema","version":{"$in":[1,2]}},
             doc! {"_id":{"$in":["replicas","thread_fences","whatsapp_forms","media_continuations","worker_credentials","worker_tracking_cutover","github_channel_guard"]},"version":1},
             doc! {"_id":"github_integrations","version":{"$in":[1,2,3,4,5,6]}},
             doc! {"_id":"channel_create_fences","version":1},
             doc! {"_id":"channel_validator_change","version":{"$in":[1,2,3]}},
-        ]).await.map_err(|_|"Gateway legacy migration history unavailable or unsupported")?;
+        ];
+        if !cma_service_migrations::describing() {
+            allowed.push(doc! {"_id":mongo::sender_stop::MARKER,"version":1});
+        }
+        cma_service_migrations::marker_history(db, mongo::MIGRATIONS, allowed)
+            .await
+            .map_err(|_| "Gateway legacy migration history unavailable or unsupported")?;
     }
     match manifest.id {
         BASE => mongo::migrate(db).await.map_err(unavailable),

@@ -279,7 +279,7 @@ async fn marker_catalog(db: &Database) -> Result<(), RecordError> {
     cma_service_migrations::collection_with_predecessors(
         db,
         MIGRATIONS,
-        schema::migration_validator(),
+        schema::migration_validator_for(db).await.map_err(failure)?,
         false,
         schema::migration_predecessors(),
     )
