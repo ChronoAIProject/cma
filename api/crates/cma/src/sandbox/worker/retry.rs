@@ -39,9 +39,8 @@ impl SandboxWorker {
         .await
     }
 
-    pub(super) fn rotation_recovery_enabled(&self, sandbox: &Sandbox) -> bool {
-        self.dependencies.store.runtime_rotation_recovery_enabled()
-            && sandbox.status == SandboxStatus::Rotating
+    pub(super) fn is_image_rotation(sandbox: &Sandbox) -> bool {
+        sandbox.status == SandboxStatus::Rotating
             && matches!(
                 sandbox.lifecycle.operation,
                 Some(SandboxLifecycleOperation::ImageRotation { .. })
@@ -65,7 +64,7 @@ impl SandboxWorker {
         } else {
             base
         };
-        if !self.config.work_retry_policy_enabled && !self.rotation_recovery_enabled(sandbox) {
+        if !self.config.work_retry_policy_enabled && !Self::is_image_rotation(sandbox) {
             return WorkRetryDecision {
                 delay: floor,
                 parked: false,
@@ -90,16 +89,14 @@ impl SandboxWorker {
         decision: WorkRetryDecision,
         now: SystemTime,
     ) -> Option<RetryTelemetry> {
-        (self.config.work_retry_policy_enabled || self.rotation_recovery_enabled(sandbox)).then(
-            || {
-                RetryTelemetry::sandbox(
-                    sandbox,
-                    failure.retry_kind(),
-                    decision,
-                    now + decision.delay,
-                )
-            },
-        )
+        (self.config.work_retry_policy_enabled || Self::is_image_rotation(sandbox)).then(|| {
+            RetryTelemetry::sandbox(
+                sandbox,
+                failure.retry_kind(),
+                decision,
+                now + decision.delay,
+            )
+        })
     }
 }
 

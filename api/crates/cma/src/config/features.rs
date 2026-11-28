@@ -176,10 +176,6 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_RUNTIME_UPDATE_REOPEN_OUTPUT_REFUSAL_ENABLED",
             )?,
-            runtime_rotation_recovery_enabled: flag(
-                lookup,
-                "CHRONO_RUNTIME_ROTATION_RECOVERY_ENABLED",
-            )?,
             cleanup_continuation_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_CLEANUP_CONTINUATION_ENABLED",

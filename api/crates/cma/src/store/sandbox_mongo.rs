@@ -95,7 +95,6 @@ pub struct MongoSandboxStore {
     pub(super) segment_adoption_enabled: bool,
     pub(super) bounded_approval_reads: bool,
     pub(super) runtime_loss_bounded_proof_enabled: bool,
-    pub(crate) runtime_rotation_recovery_enabled: bool,
     pub(super) bounded_close_retries: bool,
     pub(super) retry_single_marker_enabled: bool,
     pub(super) retry_audits:

@@ -16,19 +16,15 @@ impl super::SandboxService {
         caller: &crate::Caller,
         sandbox: &Sandbox,
     ) -> Option<SandboxLifecycleResult> {
-        if sandbox.owner != caller.subject
-            || sandbox.status != SandboxStatus::Rotating
-            || !self.store.runtime_rotation_recovery_enabled()
-        {
+        if sandbox.owner != caller.subject || sandbox.status != SandboxStatus::Rotating {
             return None;
         }
-        SandboxLifecycleResult::observe_with_policy(
+        SandboxLifecycleResult::observe_with_admission(
             sandbox,
             None,
             None,
             SystemTime::now(),
             caller.require(crate::Capability::DeleteOwnSandbox).is_ok(),
-            true,
         )
     }
 
@@ -64,13 +60,12 @@ impl super::SandboxService {
         } else {
             None
         };
-        Ok(SandboxLifecycleResult::observe_with_policy(
+        Ok(SandboxLifecycleResult::observe_with_admission(
             sandbox,
             retirement.as_deref(),
             failed_admission.as_ref(),
             SystemTime::now(),
             caller.require(crate::Capability::DeleteOwnSandbox).is_ok(),
-            self.store.runtime_rotation_recovery_enabled(),
         ))
     }
 }
@@ -131,24 +126,6 @@ impl SandboxLifecycleResult {
         now: SystemTime,
         owner_can_retire: bool,
     ) -> Option<Self> {
-        Self::observe_with_policy(
-            sandbox,
-            retirement_admitted_at,
-            failed_admission,
-            now,
-            owner_can_retire,
-            false,
-        )
-    }
-
-    fn observe_with_policy(
-        sandbox: &Sandbox,
-        retirement_admitted_at: Option<&str>,
-        failed_admission: Option<&SandboxLifecycleAdmission>,
-        now: SystemTime,
-        owner_can_retire: bool,
-        rotation_recovery: bool,
-    ) -> Option<Self> {
         if sandbox.status == SandboxStatus::Retiring {
             let exhausted = sandbox.retirement_retry_exhausted();
             let mut result = retirement_admitted_at
@@ -205,12 +182,11 @@ impl SandboxLifecycleResult {
             } else {
                 return None;
             };
-            let parked = runtime_update_parked(sandbox, rotation_recovery);
+            let parked = runtime_update_parked(sandbox);
             let mut result = Self::from_admission(operation_id, started_at, now, parked)?;
             if parked {
                 result.code = Some("runtime_update_parked");
-            } else if rotation_recovery
-                && result.state == SandboxLifecycleResultState::RecoverablePending
+            } else if result.state == SandboxLifecycleResultState::RecoverablePending
                 && stalled_runtime_rotation(sandbox)
             {
                 result.code = Some("runtime_update_stalled");
@@ -325,7 +301,7 @@ fn stalled_runtime_rotation(sandbox: &Sandbox) -> bool {
             })
 }
 
-pub(super) fn runtime_update_parked(sandbox: &Sandbox, rotation_recovery: bool) -> bool {
+pub(super) fn runtime_update_parked(sandbox: &Sandbox) -> bool {
     let Some(request) = sandbox.runtime_update_request() else {
         return false;
     };
@@ -346,14 +322,11 @@ pub(super) fn runtime_update_parked(sandbox: &Sandbox, rotation_recovery: bool) 
             Some(SandboxLifecycleOperation::ImageRotation { authority, .. }),
         ) => {
             started_at == authority.requested_at
-                || (rotation_recovery
-                    && sandbox
-                        .lifecycle
-                        .interruption
-                        .as_ref()
-                        .is_some_and(|interruption| {
-                            interruption.detected_at == authority.requested_at
-                        })
+                || (sandbox
+                    .lifecycle
+                    .interruption
+                    .as_ref()
+                    .is_some_and(|interruption| interruption.detected_at == authority.requested_at)
                     && matches!(
                         (
                             crate::seconds_from_rfc3339(&request.requested_at),

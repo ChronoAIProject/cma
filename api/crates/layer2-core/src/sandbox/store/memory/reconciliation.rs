@@ -1,9 +1,8 @@
 use super::*;
 
 use crate::sandbox::store::{
-    apply_sandbox_runtime_loss_with_policy, validate_sandbox_runtime_loss_request,
-    SandboxReconciliationStore, SandboxRuntimeLossApplication, SandboxRuntimeLossOutcome,
-    SandboxRuntimeLossRequest,
+    apply_sandbox_runtime_loss, validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
+    SandboxRuntimeLossApplication, SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
 
 #[async_trait]
@@ -57,12 +56,7 @@ impl SandboxReconciliationStore for InMemorySandboxStore {
             })
             .collect::<Result<Vec<_>, _>>()?;
         agents.sort_by(|(left, _), (right, _)| left.id.cmp(&right.id));
-        let mutation = match apply_sandbox_runtime_loss_with_policy(
-            current,
-            &agents,
-            &request,
-            self.runtime_rotation_recovery_enabled,
-        )? {
+        let mutation = match apply_sandbox_runtime_loss(current, &agents, &request)? {
             SandboxRuntimeLossApplication::Complete(outcome) => return Ok(outcome),
             SandboxRuntimeLossApplication::Persist(mutation) => mutation,
         };

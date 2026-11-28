@@ -430,9 +430,7 @@ impl SandboxUnpublishedRecoveryProof {
 }
 
 mod admission;
-pub use admission::{
-    apply_unpublished_runtime_recovery, apply_unpublished_runtime_recovery_with_policy,
-};
+pub use admission::apply_unpublished_runtime_recovery;
 
 fn hex(value: &str, size: usize) -> bool {
     value.len() == size

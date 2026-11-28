@@ -352,52 +352,45 @@ async fn runtime_update_worker_resume_uses_admitted_target_on_original_home() {
 }
 
 #[tokio::test]
-async fn rotation_recovery_parks_exhausted_credential_delivery_with_flag_enabled() {
+async fn rotation_recovery_parks_exhausted_credential_delivery() {
     use layer2_core::sandbox::work_retry::WORK_RETRY_BUDGET;
     const TARGET: &str = "registry.example/runtime@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
-    for enabled in [false, true] {
-        let (mut fixture, active, mut now) = active().await;
-        fixture.harness.store = Arc::new(
-            (*fixture.harness.store)
-                .clone()
-                .with_runtime_rotation_recovery(enabled),
-        );
-        update(&fixture, &active, TARGET, now).await;
-        fixture
-            .backend
-            .fail_credential_transiently
-            .store(true, Ordering::SeqCst);
-        let mut before = None;
-        for _ in 0..16 {
-            now += Duration::from_secs(6);
-            let current = fixture.harness.stored(&active.id).await;
-            if matches!(
-                current.lifecycle.operation,
-                Some(SandboxLifecycleOperation::ImageRotation {
-                    phase: layer2_core::sandbox::SandboxImageRotationPhase::CredentialDelivery,
-                    ..
-                })
-            ) {
-                before = Some(current);
-                break;
-            }
-            fixture.step(&active.id, now, TARGET).await;
+    let (fixture, active, mut now) = active().await;
+    update(&fixture, &active, TARGET, now).await;
+    fixture
+        .backend
+        .fail_credential_transiently
+        .store(true, Ordering::SeqCst);
+    let mut before = None;
+    for _ in 0..16 {
+        now += Duration::from_secs(6);
+        let current = fixture.harness.stored(&active.id).await;
+        if matches!(
+            current.lifecycle.operation,
+            Some(SandboxLifecycleOperation::ImageRotation {
+                phase: layer2_core::sandbox::SandboxImageRotationPhase::CredentialDelivery,
+                ..
+            })
+        ) {
+            before = Some(current);
+            break;
         }
-        let before = before.expect("rotation must reach credential delivery");
-        for attempt in 0..=WORK_RETRY_BUDGET {
-            fixture.step(&active.id, now, TARGET).await;
-            let row = fixture.harness.stored(&active.id).await;
-            assert_eq!(row.lifecycle.operation, before.lifecycle.operation);
-            assert_eq!(row.lifecycle.home, before.lifecycle.home);
-            assert!(row.work.lease.is_none());
-            if enabled && attempt == WORK_RETRY_BUDGET {
-                assert_eq!(row.work.step, SandboxWorkStep::None);
-                assert!(row.runtime_update_request().unwrap().failure.is_some());
-            } else {
-                assert_eq!(row.work.step, SandboxWorkStep::RunLifecycleOperation);
-                assert!(row.runtime_update_request().unwrap().failure.is_none());
-            }
-            now = stamp_time(&row.work.ready_at);
+        fixture.step(&active.id, now, TARGET).await;
+    }
+    let before = before.expect("rotation must reach credential delivery");
+    for attempt in 0..=WORK_RETRY_BUDGET {
+        fixture.step(&active.id, now, TARGET).await;
+        let row = fixture.harness.stored(&active.id).await;
+        assert_eq!(row.lifecycle.operation, before.lifecycle.operation);
+        assert_eq!(row.lifecycle.home, before.lifecycle.home);
+        assert!(row.work.lease.is_none());
+        if attempt == WORK_RETRY_BUDGET {
+            assert_eq!(row.work.step, SandboxWorkStep::None);
+            assert!(row.runtime_update_request().unwrap().failure.is_some());
+        } else {
+            assert_eq!(row.work.step, SandboxWorkStep::RunLifecycleOperation);
+            assert!(row.runtime_update_request().unwrap().failure.is_none());
         }
+        now = stamp_time(&row.work.ready_at);
     }
 }

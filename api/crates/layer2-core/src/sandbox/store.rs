@@ -57,11 +57,10 @@ mod agent_reads;
 pub use agent_reads::AgentReadQueryStore;
 mod reconciliation;
 pub use reconciliation::{
-    apply_sandbox_runtime_loss, apply_sandbox_runtime_loss_with_policy,
-    precheck_runtime_loss_agents, precheck_sandbox_runtime_loss, retirement_debt_is_local,
-    validate_sandbox_runtime_loss_request, ReconciliationSandbox, SandboxReconciliationStore,
-    SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
-    SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
+    apply_sandbox_runtime_loss, precheck_runtime_loss_agents, precheck_sandbox_runtime_loss,
+    retirement_debt_is_local, validate_sandbox_runtime_loss_request, ReconciliationSandbox,
+    SandboxReconciliationStore, SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication,
+    SandboxRuntimeLossMutation, SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
 mod channel_usage;
 pub use channel_usage::{
@@ -408,7 +407,6 @@ pub struct InMemorySandboxStore {
     #[cfg(test)]
     artifact_body_reads: Arc<std::sync::atomic::AtomicUsize>,
     managed_runtime_version: Option<String>,
-    runtime_rotation_recovery_enabled: bool,
     #[cfg(test)]
     managed_machine_runtime_version: Option<String>,
     #[cfg(test)]

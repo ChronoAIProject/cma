@@ -103,9 +103,8 @@ impl SandboxRuntimeUpdateService {
                     .explicit_recovery_target(sandbox, pinned, latest)
                     .is_some();
         }
-        let parked_rotation = self.store.runtime_rotation_recovery_enabled()
-            && sandbox.status == SandboxStatus::Rotating
-            && super::lifecycle_result::runtime_update_parked(sandbox, true);
+        let parked_rotation = sandbox.status == SandboxStatus::Rotating
+            && super::lifecycle_result::runtime_update_parked(sandbox);
         if !sandbox.supports_retained_runtime_update() && !parked_rotation {
             return false;
         }
@@ -148,7 +147,7 @@ impl SandboxRuntimeUpdateService {
         latest: &'a str,
     ) -> Option<&'a str> {
         // Reopen recovery uses the current qualified release for the retained lane.
-        if sandbox.managed_reopen(self.store.runtime_rotation_recovery_enabled()) {
+        if sandbox.managed_reopen() {
             return self.store.managed_runtime_target(sandbox, latest);
         }
         requested.or_else(|| self.store.managed_runtime_target(sandbox, latest))
@@ -211,10 +210,7 @@ impl SandboxRuntimeUpdateService {
         sandbox: &'a Sandbox,
         latest: &'a str,
     ) -> Option<&'a str> {
-        let target = sandbox.automatic_unpublished_recovery_target_for_release(
-            latest,
-            self.store.runtime_rotation_recovery_enabled(),
-        )?;
+        let target = sandbox.automatic_unpublished_recovery_target_for_release(latest)?;
         (!sandbox.has_managed_runtime_image() || self.target_is_qualified(sandbox, target))
             .then_some(target)
     }
@@ -300,9 +296,8 @@ impl SandboxRuntimeUpdateService {
             if !pinned && target_version != latest {
                 return Err(SandboxRuntimeUpdateError::TargetChanged);
             }
-            let managed_recovery = self.store.runtime_rotation_recovery_enabled()
-                && sandbox.managed_reopen(true)
-                && sandbox.unpublished_recovery_candidate();
+            let managed_recovery =
+                sandbox.managed_reopen() && sandbox.unpublished_recovery_candidate();
             if !pinned
                 && (!self.target_is_qualified(&sandbox, latest)
                     || (!managed_recovery && !sandbox.managed_desktop_runtime_confirmed()))
@@ -377,7 +372,6 @@ impl Sandbox {
     pub(super) fn automatic_unpublished_recovery_target_for_release<'a>(
         &'a self,
         latest: &'a str,
-        rotation_recovery: bool,
     ) -> Option<&'a str> {
         if self.lifecycle.unpublished_recovery_attempted
             || self.lifecycle.unpublished_recovery.is_some()
@@ -391,14 +385,14 @@ impl Sandbox {
                 .is_ok()
                 .then_some(target);
         }
-        if rotation_recovery && self.can_advance_unpublished_reopen() && !latest.is_empty() {
+        if self.can_advance_unpublished_reopen() && !latest.is_empty() {
             return Some(latest);
         }
         (target == latest).then_some(target)
     }
 
     pub(super) fn can_advance_unpublished_reopen(&self) -> bool {
-        self.managed_reopen(true)
+        self.managed_reopen()
             && !self.requires_retained_runtime_transition()
             && self.lifecycle.runtime_migration_admission.is_none()
             && self.runtime_update_request().is_none_or(|request| {
@@ -406,9 +400,8 @@ impl Sandbox {
             })
     }
 
-    fn managed_reopen(&self, all_managed_lanes: bool) -> bool {
-        self.managed_runtime_lane()
-            .is_some_and(|lane| all_managed_lanes || lane == ReleasedLane::Agent)
+    fn managed_reopen(&self) -> bool {
+        self.managed_runtime_lane().is_some()
             && matches!(
                 self.lifecycle.operation,
                 Some(SandboxLifecycleOperation::ImageRotation {

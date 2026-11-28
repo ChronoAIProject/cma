@@ -2,7 +2,7 @@ use crate::store::agent_log_telemetry::ScanCaller;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::{SandboxStore, SandboxStoreError};
 use layer2_core::sandbox::{
-    apply_unpublished_runtime_recovery_with_policy, AgentLogKind, Sandbox, SandboxEvent,
+    apply_unpublished_runtime_recovery, AgentLogKind, Sandbox, SandboxEvent,
     SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoverySnapshot,
 };
 use layer2_core::SandboxId;
@@ -369,12 +369,8 @@ async fn apply_with_sources(
             ApplyError::Driver(error)
         }
     })?;
-    let mutation = apply_unpublished_runtime_recovery_with_policy(
-        &current,
-        request,
-        store.runtime_rotation_recovery_enabled,
-    )
-    .map_err(ApplyError::Domain)?;
+    let mutation =
+        apply_unpublished_runtime_recovery(&current, request).map_err(ApplyError::Domain)?;
     if let Some(release) = &request.released_runtime {
         let (lane, _) = store
             .managed_runtime_for_release(&current.sandbox, release)

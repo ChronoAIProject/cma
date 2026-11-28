@@ -9,20 +9,11 @@ pub fn apply_unpublished_runtime_recovery(
     current: &SandboxUnpublishedRecoverySnapshot,
     request: &SandboxUnpublishedRecoveryRequest,
 ) -> Result<SandboxUnpublishedRecoveryMutation, SandboxStoreError> {
-    apply_unpublished_runtime_recovery_with_policy(current, request, false)
-}
-
-pub fn apply_unpublished_runtime_recovery_with_policy(
-    current: &SandboxUnpublishedRecoverySnapshot,
-    request: &SandboxUnpublishedRecoveryRequest,
-    rotation_recovery: bool,
-) -> Result<SandboxUnpublishedRecoveryMutation, SandboxStoreError> {
     if current != &request.snapshot {
         return Err(SandboxStoreError::Conflict);
     }
     request.proof.validate_for(current)?;
-    let advances_managed_release = rotation_recovery
-        && current.sandbox.can_advance_unpublished_reopen()
+    let advances_managed_release = current.sandbox.can_advance_unpublished_reopen()
         && current
             .sandbox
             .managed_runtime_lane()

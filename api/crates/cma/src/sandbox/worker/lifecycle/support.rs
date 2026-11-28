@@ -240,7 +240,7 @@ impl SandboxWorker {
         decision: layer2_core::sandbox::work_retry::WorkRetryDecision,
     ) -> bool {
         decision.parked
-            && self.rotation_recovery_enabled(sandbox)
+            && Self::is_image_rotation(sandbox)
             && sandbox.runtime_update_request().is_some_and(|request| {
                 request.completed_at.is_none()
                     && sandbox.admitted_runtime_update_target()

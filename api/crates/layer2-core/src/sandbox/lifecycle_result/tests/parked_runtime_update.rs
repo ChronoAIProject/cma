@@ -266,40 +266,45 @@ fn runtime_loss_rotation_syncs_start_and_recognizes_legacy_parked_rows() {
             value
         };
         before.validate().unwrap();
-        for enabled in [false, true] {
-            let mut recovered = before.clone();
-            recovered
-                .recover_runtime_loss_with_policy(&[], retained_home, lost_at.clone(), enabled)
-                .unwrap();
-            assert_eq!(
-                recovered
-                    .runtime_update_request()
-                    .unwrap()
-                    .started_at
-                    .as_deref(),
-                Some(if enabled { lost_at.as_str() } else { NOW })
-            );
-            assert_eq!(recovered.lifecycle.home, before.lifecycle.home);
-            assert_eq!(
-                recovered.lifecycle.checkpoints,
-                before.lifecycle.checkpoints
-            );
-            assert_eq!(
-                recovered
-                    .lifecycle
-                    .operation
-                    .as_ref()
-                    .unwrap()
-                    .authority()
-                    .requested_at,
-                lost_at
-            );
-        }
-
-        // Simulate a pre-flag row recovered by the store from the old start timestamp.
-        before
-            .recover_runtime_loss_with_policy(&[], retained_home, lost_at.clone(), false)
+        let mut recovered = before.clone();
+        recovered
+            .recover_runtime_loss(&[], retained_home, lost_at.clone())
             .unwrap();
+        assert_eq!(
+            recovered
+                .runtime_update_request()
+                .unwrap()
+                .started_at
+                .as_deref(),
+            Some(lost_at.as_str())
+        );
+        assert_eq!(recovered.lifecycle.home, before.lifecycle.home);
+        assert_eq!(
+            recovered.lifecycle.checkpoints,
+            before.lifecycle.checkpoints
+        );
+        assert_eq!(
+            recovered
+                .lifecycle
+                .operation
+                .as_ref()
+                .unwrap()
+                .authority()
+                .requested_at,
+            lost_at
+        );
+
+        // Persist the timestamp shape written before runtime loss reset the start.
+        before = recovered;
+        before
+            .lifecycle
+            .runtime_update
+            .as_mut()
+            .unwrap()
+            .request
+            .as_mut()
+            .unwrap()
+            .started_at = Some(NOW.into());
         before.lifecycle.interruption = Some(crate::sandbox::SandboxInterruption {
             cause: crate::sandbox::SandboxInterruptionCause::RuntimeUnavailable,
             detected_at: lost_at.clone(),
@@ -320,17 +325,11 @@ fn runtime_loss_rotation_syncs_start_and_recognizes_legacy_parked_rows() {
                 lost_at.clone(),
             )
             .unwrap();
-        let prior = SandboxLifecycleResult::observe(&before, None, at(960), true).unwrap();
-        assert!(prior.continuing);
-        let enabled =
-            SandboxLifecycleResult::observe_with_policy(&before, None, None, at(960), true, true)
-                .unwrap();
+        let enabled = SandboxLifecycleResult::observe(&before, None, at(960), true).unwrap();
         assert_eq!(enabled.code, Some("runtime_update_parked"));
         assert!(enabled.actions.contains(&SandboxLifecycleAction::Retire));
         before.lifecycle.interruption = None;
-        let unrelated =
-            SandboxLifecycleResult::observe_with_policy(&before, None, None, at(960), true, true)
-                .unwrap();
+        let unrelated = SandboxLifecycleResult::observe(&before, None, at(960), true).unwrap();
         assert_eq!(unrelated.code, Some("lifecycle_wait_exceeded"));
     }
 }
@@ -347,18 +346,12 @@ fn only_a_stalled_rotation_reports_the_new_owner_retirement_projection() {
     admit(&mut value);
     value.work.attempts = 3;
     value.work.ready_at = crate::rfc3339_at(at(1800));
-    let project = |row: &Sandbox, owner, enabled| {
-        SandboxLifecycleResult::observe_with_policy(row, None, None, at(960), owner, enabled)
-            .unwrap()
-    };
-    assert_eq!(
-        project(&value, true, false).code,
-        Some("lifecycle_wait_exceeded")
-    );
-    let result = project(&value, true, true);
+    let project =
+        |row: &Sandbox, owner| SandboxLifecycleResult::observe(row, None, at(960), owner).unwrap();
+    let result = project(&value, true);
     assert_eq!(result.code, Some("runtime_update_stalled"));
     assert!(result.actions.contains(&SandboxLifecycleAction::Retire));
-    assert!(!project(&value, false, true)
+    assert!(!project(&value, false)
         .actions
         .contains(&SandboxLifecycleAction::Retire));
 
@@ -367,8 +360,5 @@ fn only_a_stalled_rotation_reports_the_new_owner_retirement_projection() {
         .work
         .claim(HOLDER.into(), &due_at, crate::rfc3339_at(at(1900)))
         .unwrap();
-    assert_eq!(
-        project(&value, true, true).code,
-        Some("lifecycle_wait_exceeded")
-    );
+    assert_eq!(project(&value, true).code, Some("lifecycle_wait_exceeded"));
 }

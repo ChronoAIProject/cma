@@ -132,10 +132,6 @@ pub trait SandboxStore: Send + Sync {
         false
     }
 
-    fn runtime_rotation_recovery_enabled(&self) -> bool {
-        false
-    }
-
     fn managed_runtime_target_is_held(&self, _target: &str) -> bool {
         false
     }

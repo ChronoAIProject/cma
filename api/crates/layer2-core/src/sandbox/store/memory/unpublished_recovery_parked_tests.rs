@@ -336,31 +336,6 @@ async fn retrying_a_reopen_parked_on_a_superseded_target_recovers_onto_the_lates
 }
 
 #[tokio::test]
-async fn retrying_a_machine_reopen_keeps_the_admitted_target_after_a_release() {
-    let (store, id) = parked(Some(SandboxRuntimeImageOrigin::ManagedMachine));
-    let before = store.get_sandbox(&id).await.unwrap().unwrap();
-    let released = Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
-        "unrelated-agent-release",
-        Some("image-v3".into()),
-    ));
-    let service = SandboxRuntimeUpdateService::with_released(store.clone(), released)
-        .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
-    assert!(service.target_is_qualified(&before, "image-v3"));
-    assert!(!service.retry_uses_latest(&before, "image-v2", "image-v3"));
-    let caller = crate::Caller {
-        subject: before.owner.clone(),
-        authorization: crate::Authorization::new([crate::Capability::UseOwnSandboxes]),
-    };
-    let after = service.request(&caller, &id, "image-v2").await.unwrap();
-    assert_eq!(after.admitted_runtime_update_target(), Some("image-v2"));
-    assert_eq!(
-        after.runtime_update_request().unwrap().target_version,
-        "image-v2"
-    );
-    assert_eq!(after.lifecycle.home, before.lifecycle.home);
-}
-
-#[tokio::test]
 async fn retrying_a_parked_update_before_reopen_keeps_its_pinned_target() {
     // Only a stalled reopen moves off a superseded target; other parked phases retry as pinned.
     let (store, id) = parked(None);
@@ -401,7 +376,7 @@ async fn rotation_recovery_uses_qualified_managed_lane_for_retry_and_automatic_r
     ] {
         for automatic in [false, true] {
             let (store, id) = parked(Some(origin));
-            let mut store = Arc::unwrap_or_clone(store).with_runtime_rotation_recovery(true);
+            let mut store = Arc::unwrap_or_clone(store);
             if origin == SandboxRuntimeImageOrigin::ManagedDesktop {
                 store.desktop_runtime_version = Some("image-v3".into());
             }

@@ -127,10 +127,6 @@ impl SandboxStore for MongoSandboxStore {
             && crate::agent_lifecycle::valid_immutable_image(target)
     }
 
-    fn runtime_rotation_recovery_enabled(&self) -> bool {
-        self.runtime_rotation_recovery_enabled
-    }
-
     fn managed_runtime_target_is_held(&self, target: &str) -> bool {
         self.default_pool_holds.image(target)
     }
