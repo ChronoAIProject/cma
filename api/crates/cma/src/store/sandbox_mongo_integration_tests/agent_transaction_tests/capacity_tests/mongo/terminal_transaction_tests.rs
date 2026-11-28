@@ -1,4 +1,8 @@
 use super::*;
+use crate::store::agent_log_integrity::NORMAL_AGENT_LOG_BYTES;
+use crate::store::sandbox_mongo_integration_tests::capacity_fixtures::{
+    fill_to, PRIVATE_PREFIX_HISTORY_BYTES,
+};
 use layer2_core::sandbox::{
     AgentConversationError, AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder,
 };
@@ -72,9 +76,9 @@ async fn exhausted_terminal_reserve_preserves_prefix_and_never_acknowledges() {
 }
 impl Fixture {
     async fn new() -> Self {
-        Self::with_bytes(false).await
+        Self::with_byte_limit(None).await
     }
-    async fn with_bytes(bytes: bool) -> Self {
+    async fn with_byte_limit(byte_limit: Option<usize>) -> Self {
         let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
         let app = format!("capacity-terminal-{}", uuid::Uuid::new_v4());
         let mut options = ClientOptions::parse(&uri).await.unwrap();
@@ -86,7 +90,10 @@ impl Fixture {
         let ready = ready_conversation_fixture(&store, "terminal_transaction").await;
         let turn = begin_stored_conversation_turn(&store, ready).await;
         store.commit_agent_conversation(turn.clone()).await.unwrap();
-        let full = fill_normal_capacity(&store, turn.agent, bytes).await;
+        let full = match byte_limit {
+            Some(limit) => fill_to(&store, turn.agent, None, Some(limit)).await,
+            None => fill_normal_capacity(&store, turn.agent, false).await,
+        };
         Self {
             store,
             client,
@@ -304,7 +311,12 @@ async fn visible_capacity_failure_replays_prefix_once_through_both_unknown_commi
 }
 
 async fn prefix_failure_unknown(committed: bool, retained: bool) {
-    let f = Fixture::with_bytes(true).await;
+    let byte_limit = if retained {
+        PRIVATE_PREFIX_HISTORY_BYTES
+    } else {
+        NORMAL_AGENT_LOG_BYTES
+    };
+    let f = Fixture::with_byte_limit(Some(byte_limit)).await;
     let recorder = DurableAgentUpdateRecorder::new(f.store.clone());
     let mut assembly = AgentMessageAssembly::default();
     let text = if retained {

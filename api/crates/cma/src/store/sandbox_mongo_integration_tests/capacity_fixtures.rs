@@ -1,8 +1,14 @@
 //! Exact cumulative BSON and entry budgets shared by capacity contracts.
 use super::*;
-use crate::store::agent_log_integrity::{NORMAL_AGENT_LOG_BYTES, NORMAL_AGENT_LOG_ENTRIES};
+use crate::store::agent_log_integrity::{
+    NORMAL_AGENT_LOG_BYTES, NORMAL_AGENT_LOG_ENTRIES, STOP_AGENT_LOG_BYTES,
+};
 use futures_util::TryStreamExt;
 use sha2::{Digest, Sha256};
+
+// Earlier terminal writes spent part of the reserve. A compact failure fits
+// in the remaining room, while its full one-MiB message does not.
+pub(crate) const PRIVATE_PREFIX_HISTORY_BYTES: usize = STOP_AGENT_LOG_BYTES - 512 * 1024;
 
 pub(crate) async fn fill_normal_capacity(
     store: &MongoSandboxStore,

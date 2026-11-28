@@ -1,5 +1,7 @@
 use super::*;
-use crate::store::sandbox_mongo_integration_tests::capacity_fixtures::fill_to;
+use crate::store::sandbox_mongo_integration_tests::capacity_fixtures::{
+    fill_to, PRIVATE_PREFIX_HISTORY_BYTES,
+};
 use layer2_core::sandbox::{
     AgentConversationError, AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder,
 };
@@ -39,7 +41,7 @@ async fn overflow(bytes: bool, refused: bool) {
         &store,
         start.agent,
         (!bytes).then_some(10_062),
-        bytes.then_some(64 * 1024 * 1024),
+        bytes.then_some(PRIVATE_PREFIX_HISTORY_BYTES),
     )
     .await;
     let before_hash = fingerprint(&store, &full.id, full.conversation.last_seq).await;

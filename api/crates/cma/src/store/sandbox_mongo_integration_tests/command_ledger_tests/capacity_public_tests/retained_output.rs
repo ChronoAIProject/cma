@@ -1,7 +1,9 @@
 use super::*;
 #[path = "retained_output/measurement.rs"]
 mod measurement;
-use crate::store::sandbox_mongo_integration_tests::capacity_fixtures::fill_to;
+use crate::store::sandbox_mongo_integration_tests::capacity_fixtures::{
+    fill_to, PRIVATE_PREFIX_HISTORY_BYTES,
+};
 use crate::store::sandbox_mongo_integration_tests::native_home_fixture::native_home;
 use layer2_core::sandbox::{AgentConversationError, AgentOperationService, AgentService};
 use measurement::{Counts, Meter};
@@ -136,7 +138,7 @@ async fn retained_output_maximum_prefix_survives_reload_old_reader_and_home_loss
         .await
         .unwrap();
     let current = store.get_agent(&agent.id).await.unwrap().unwrap();
-    let full = fill_to(&store, current, None, Some(64 * 1024 * 1024)).await;
+    let full = fill_to(&store, current, None, Some(PRIVATE_PREFIX_HISTORY_BYTES)).await;
     let store = Arc::new(
         MongoSandboxStore::open(&client, &name)
             .await
