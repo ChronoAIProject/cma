@@ -31,6 +31,7 @@ def artifact_name(release):
 
 def verify_source(root, push_head, release, runner=command):
     """Bind the release tree to the exact triggering push's local checkout."""
+    require(release["component"] in COMPONENTS, "Native image component differs")
     source = release["source"]
     require(matches(r"[0-9a-f]{40}", push_head) and matches(r"[0-9a-f]{40}", source),
             "Native image source is invalid")
@@ -39,7 +40,6 @@ def verify_source(root, push_head, release, runner=command):
     require((head, tree) == (push_head, release["tree"]),
             "Native image checkout or reserved tree differs")
     if source != push_head:
-        require(release["component"] == "am", "Native image source differs from the push")
         history = runner(["git", "--no-replace-objects", "rev-list", "--first-parent", push_head],
                          cwd=root, timeout=10).decode().splitlines()
         require(source in history, "Native image source is outside the push's first-parent history")

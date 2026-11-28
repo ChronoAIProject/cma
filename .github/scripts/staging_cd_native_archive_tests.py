@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 import staging_cd_native_archive as native
 from staging_cd_common import Refusal
 from staging_cd_receipts_tests import fixture_identity
-from staging_cd_release_archive import ARCHIVE, seal
+from staging_cd_release_archive import ARCHIVE, MANIFEST, seal
 
 
 class NativeArchiveTests(unittest.TestCase):
@@ -56,16 +56,28 @@ class NativeArchiveTests(unittest.TestCase):
                                   json.dumps({"version": self.release["version"],
                                               "source_sha": self.release["source"]}).encode(),
                                   b"", b""])
+        def qualify_runtime(archive, release, digest, checksum, directory, _runner, *, source, check_stamp):
+            self.assertEqual((archive, release, digest, directory, source, check_stamp),
+                             (root / "producer" / ARCHIVE, self.release, self.image[0],
+                              root / "producer", root, True))
+            self.assertEqual(checksum, json.loads((directory / MANIFEST).read_text())["archive_sha256"])
+            (directory / "runtime-smoke.json").write_text("{}")
+
         checkout = (Mock(return_value=f"{self.run['head_sha']}\n{self.release['tree']}\n".encode())
                     if repo is None else native.command)
-        with patch.object(native, "image_identity", return_value=self.image):
+        with patch.object(native, "image_identity", return_value=self.image), \
+                patch.object(native, "qualify", side_effect=qualify_runtime) as qualify:
             result = native.fetch(self.release, "12", root, root, api, "fixture", root=repo or root,
                                   downloader=download, runner=checkout)
         if repo is None:
             args, kwargs = checkout.call_args
             self.assertIn(self.release["source"] + "^{tree}", args[0])
             self.assertEqual(kwargs["cwd"], root)
-        self.assertIn(self.image[1], runner.call_args_list[2].args[0])
+        if self.release["component"] == "am":
+            self.assertIn(self.image[1], runner.call_args_list[2].args[0])
+            qualify.assert_not_called()
+        else:
+            qualify.assert_called_once()
         return result
 
     def test_accepts_exact_attempt_without_waiting_for_enclosing_success(self):
@@ -101,16 +113,21 @@ class NativeArchiveTests(unittest.TestCase):
             git("merge", "--quiet", "--no-ff", "--no-edit", "side")
             head = git("rev-parse", "HEAD")
             self.run["head_sha"] = self.job["head_sha"] = self.artifact["workflow_run"]["head_sha"] = head
-            self.release.update(source=reserved, tree=git("rev-parse", reserved + "^{tree}"))
-            self.artifact["name"] = native.artifact_name(self.release)
-            result = self.fetch(root, repo=repo)
-            self.assertEqual(result.path.read_bytes(), b"the tested OCI archive")
-            with self.assertRaisesRegex(Refusal, "checkout or reserved tree differs"):
-                native.verify_source(repo, head, dict(self.release, tree=git("rev-parse", "HEAD^{tree}")))
-            with self.assertRaisesRegex(Refusal, "outside the push's first-parent history"):
-                native.verify_source(repo, head, dict(self.release, source=side, tree=git("rev-parse", side + "^{tree}")))
-            with self.assertRaisesRegex(Refusal, "checkout or reserved tree differs"):
-                native.verify_source(repo, reserved, self.release)
+            for component in ("am", "runtime", "runtime-omarchy"):
+                with self.subTest(component=component), tempfile.TemporaryDirectory(dir=root) as transfer:
+                    self.release.update(component=component, source=reserved, tree=git("rev-parse", reserved + "^{tree}"))
+                    self.job["name"] = f"Release {component} / Native release image / Build and test"
+                    self.artifact["name"] = native.artifact_name(self.release)
+                    result = self.fetch(Path(transfer), repo=repo)
+                    self.assertEqual(result.path.read_bytes(), b"the tested OCI archive")
+                    with self.assertRaisesRegex(Refusal, "checkout or reserved tree differs"):
+                        native.verify_source(repo, head, dict(self.release, tree=git("rev-parse", "HEAD^{tree}")))
+                    with self.assertRaisesRegex(Refusal, "outside the push's first-parent history"):
+                        native.verify_source(repo, head, dict(self.release, source=side, tree=git("rev-parse", side + "^{tree}")))
+                    with self.assertRaisesRegex(Refusal, "checkout or reserved tree differs"):
+                        native.verify_source(repo, reserved, self.release)
+            with self.assertRaisesRegex(Refusal, "Native image component differs"):
+                native.verify_source(repo, head, dict(self.release, component="web"))
 
     def test_refuses_artifact_from_other_attempt_or_unsuccessful_producer(self):
         for mutation in ({"run_attempt": 999}, {"conclusion": "failure"}, {"name": "Release am / Publish"}):
