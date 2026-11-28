@@ -3,6 +3,55 @@ import { expect, it } from 'vitest';
 import { MessageContent } from './MessageContent';
 
 it.each([
+  ['https://example.test/en/about/previous-releases', '；访问说明'],
+  ['https://docs.example.test/cli/v12/commands/npm-ci/?a=1#options', '；后续文字'],
+])('ends a bare %s link before the Chinese semicolon', (url, suffix) => {
+  const { container, rerender } = render(<MessageContent content={url + suffix} streaming />);
+  const assertBoundary = () => {
+    const links = screen.getAllByRole('link');
+    expect(links).toHaveLength(1);
+    expect(links[0]).toHaveAttribute('href', url);
+    expect(links[0]?.textContent).toBe(url);
+    expect(links[0]?.nextSibling?.textContent).toBe(suffix);
+    expect(container.querySelector('p')?.textContent).toBe(url + suffix);
+  };
+  assertBoundary();
+  rerender(<MessageContent content={url + suffix} />);
+  assertBoundary();
+});
+
+it('keeps GFM www links and encoded URL punctuation', () => {
+  render(<MessageContent content="www.example.test/；访问 https://example.test/a%EF%BC%9Bb" />);
+  expect(screen.getByRole('link', { name: 'www.example.test/' })).toHaveAttribute(
+    'href',
+    'http://www.example.test/',
+  );
+  expect(screen.getByRole('link', { name: 'https://example.test/a%EF%BC%9Bb' })).toHaveAttribute(
+    'href',
+    'https://example.test/a%EF%BC%9Bb',
+  );
+});
+
+it.each(['\uFEFFhttps:', 'https&#58;'])('ends a link after GFM parses the %s prefix', (prefix) => {
+  render(<MessageContent content={`${prefix}//example.test/path；后续`} />);
+  const link = screen.getByRole('link', { name: 'https://example.test/path' });
+  expect(link).toHaveAttribute('href', 'https://example.test/path');
+  expect(link.nextSibling?.textContent).toBe('；后续');
+});
+
+it('preserves semicolons inside explicit Markdown links and inline code', () => {
+  const url = 'https://example.test/path；详情';
+  const { container } = render(<MessageContent content={`[${url}](${url}) <${url}> \`${url}\``} />);
+  const links = screen.getAllByRole('link');
+  expect(links).toHaveLength(2);
+  for (const link of links) {
+    expect(link).toHaveAttribute('href', 'https://example.test/path%EF%BC%9B%E8%AF%A6%E6%83%85');
+    expect(link.textContent).toBe(url);
+  }
+  expect(container.querySelector('code')?.textContent).toBe(url);
+});
+
+it.each([
   ['检查日期：', '2026 年'],
   ['检查范围：', '仅对当前本地工作区'],
   ['QA 结论：证据不足，暂不具备通过验收的依据。', '上述为结果'],

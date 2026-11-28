@@ -11,6 +11,7 @@ import {
   safeHttpUrl,
 } from './mediaSources';
 import { CodeBlock, CodeStreamingContext } from './CodeBlock';
+import { remarkLinkSemicolon } from './remarkLinkSemicolon';
 import './MessageContent.css';
 
 const components: Components = {
@@ -91,7 +92,7 @@ export const MessageContent = memo(function MessageContent({
       <div className="agent-content" data-streaming={streaming ? '' : undefined}>
         {/* Default HTML handling preserves placeholders and markup as inert text. */}
         <Markdown
-          remarkPlugins={[remarkGfm, remarkCjkFriendly]}
+          remarkPlugins={[remarkGfm, remarkCjkFriendly, remarkLinkSemicolon]}
           components={inertResources ? inertComponents : components}
           urlTransform={(url) =>
             messageFilePath(url, access?.workingDirectory) === undefined
