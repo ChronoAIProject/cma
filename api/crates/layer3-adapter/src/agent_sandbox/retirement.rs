@@ -108,9 +108,9 @@ impl AgentSandboxClient {
         let status = exec
             .take_status()
             .ok_or_else(|| unavailable("retirement socket probe status missing"))?;
-        if !status
+        if status
             .await
-            .is_some_and(|status| status.status.as_deref() == Some("Success"))
+            .is_none_or(|status| status.status.as_deref() != Some("Success"))
         {
             return Err(unavailable("retirement socket probe did not complete"));
         }

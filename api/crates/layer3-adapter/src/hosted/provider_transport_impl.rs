@@ -20,8 +20,7 @@ impl super::super::HostedControlTransport for super::ProviderHostedControlTransp
         binding: &crate::agent_sandbox::PodBinding,
         owner: &crate::owner_protocol::TransportOwner,
     ) -> crate::Result<bool> {
-        self.challenge_native_receiver(handle, binding, owner, false)
-            .await
+        self.challenge_native_receiver(handle, binding, owner).await
     }
 
     async fn probe_unreachable_receiver(

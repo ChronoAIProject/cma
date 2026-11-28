@@ -32,7 +32,7 @@ impl ProviderHostedControlTransport {
             }
             let unreachable = if let Some(binding) = &current.1 {
                 match self
-                    .challenge_native_receiver(handle, binding, owner, true)
+                    .challenge_native_receiver_with_policy(handle, binding, owner, true)
                     .await
                 {
                     Err(error @ AdapterError::Unavailable(_))

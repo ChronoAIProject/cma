@@ -6,6 +6,16 @@ impl ProviderHostedControlTransport {
         handle: &RuntimeHandle,
         binding: &crate::agent_sandbox::PodBinding,
         owner: &TransportOwner,
+    ) -> crate::Result<bool> {
+        self.challenge_native_receiver_with_policy(handle, binding, owner, false)
+            .await
+    }
+
+    pub(in crate::hosted) async fn challenge_native_receiver_with_policy(
+        &self,
+        handle: &RuntimeHandle,
+        binding: &crate::agent_sandbox::PodBinding,
+        owner: &TransportOwner,
         expanded: bool,
     ) -> crate::Result<bool> {
         owner.validate()?;
