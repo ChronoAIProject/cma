@@ -301,10 +301,12 @@ describe('operator record tables', () => {
     expect(headers('Activity')).toEqual([
       'Time (SGT)',
       'Actor',
+      'Channel',
       'Action',
       'Target',
       'Outcome',
       'Code',
+      'Request ID',
     ]);
     const tones = ['Succeeded', 'Refused', 'Failed'].map((word) =>
       screen.getByText(word).closest('.badge')?.getAttribute('data-tone'),
