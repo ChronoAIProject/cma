@@ -3,8 +3,8 @@
 experimental = ["wrapper-scripts"]
 
 # Ordinary disposable-Mongo PR partitions (mongo-contract-tests.sh count:i/n,
-# reached through --shard 1/8 ... 8/8) and the isolated ranked-projection matrix
-# select this profile. Other dedicated modes use nextest's default profile.
+# reached through --shard 1/8 ... 8/8) and the isolated ranked-projection and
+# response-replay measurements select this profile.
 #
 # Per-test budget: 22 periods of 60 s = 1320 s. Across six AM-track runs
 # (54 shard jobs, 20 Nov 2026) the slowest ordinary contract without an

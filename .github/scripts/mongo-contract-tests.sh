@@ -37,11 +37,12 @@ readonly observation_budget_test='store::sandbox_mongo_integration_tests::resour
 readonly first_response_test='store::usage_reports::tests::submission::default_day_report_serves_four_hundred_sandboxes_without_polling'
 readonly history_test='store::usage_reports::tests::history_batch::seven_day_history_generates_and_reuses_complete_421_member_report'
 readonly ranked_projection_test='store::usage_reports::tests::projection_scale::aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources'
+readonly response_replay_test='store::sandbox_mongo_integration_tests::resource_access_tests::history_measurement::observation_budget::response_shared::shared_adopted_response_complete_routes_meet_unchanged_budgets_and_exact_replay'
 selection='all'
 suite_filter=$(python3 "$script_directory/mongo-contract-registry.py" --filter)
 readonly suite_filter
 # Keep this nextest budget for ordinary partitions and the isolated ranked
-# projection matrix. Other dedicated modes use the default profile.
+# projection and response replay measurements. Other modes use the default.
 readonly ordinary_profile='mongo-ordinary'
 # Nextest prints no custom text when it terminates a test at the budget.
 contract_failure() {
@@ -66,6 +67,7 @@ nextest_contracts() {
     scan-cooperation) selection_filter="package(=cma) and test(=$scan_cooperation_test)" ;;
     history) selection_filter="package(=cma) and test(=$history_test)" ;;
     ranked-projection) selection_filter="package(=cma) and test(=$ranked_projection_test)" ;;
+    response-replay) selection_filter="package(=cma) and test(=$response_replay_test)" ;;
     first-response) selection_filter="package(=cma) and test(=$first_response_test)" ;;
     bson-ceiling) selection_filter="package(=cma) and test(=$bson_ceiling_test)" ;;
     agent-list-contracts) selection_filter='package(=cma) and test(::resource_access_tests::personal_inventory::contracts::)' ;;
@@ -76,9 +78,9 @@ nextest_contracts() {
     request-limits) selection_filter='package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::anonymous_mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))' ;;
     cpu-profile) selection_filter="package(=cma) and test(::cpu_profile::)" ;;
     observation-budget) selection_filter="package(=cma) and test(=$observation_budget_test)" ;;
-    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test) or test(=$first_response_test) or test(=$history_test) or test(=$ranked_projection_test)) & not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=$observation_budget_test))" ;;
+    ordinary) selection_filter="not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test) or test(=$first_response_test) or test(=$history_test) or test(=$ranked_projection_test) or test(=$response_replay_test)) & not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=$observation_budget_test))" ;;
   esac
-  if [[ "$selection" == ordinary || "$selection" == ranked-projection ]]; then
+  if [[ "$selection" == ordinary || "$selection" == ranked-projection || "$selection" == response-replay ]]; then
     set -- "$@" --profile "$ordinary_profile"
   fi
   # One retry, for ordinary partitions only and never for a dedicated mode.
@@ -118,6 +120,8 @@ elif [[ $# == 1 && "$1" == '--scan-cooperation' ]]; then
   selection='scan-cooperation'
 elif [[ $# == 1 && "$1" == '--ranked-projection' ]]; then
   selection='ranked-projection'
+elif [[ $# == 1 && "$1" == '--response-replay' ]]; then
+  selection='response-replay'
 elif [[ $# == 1 && "$1" == '--history' ]]; then
   selection='history'
 elif [[ $# == 1 && "$1" == '--first-response' ]]; then
@@ -147,7 +151,7 @@ else
   partition=$1
 fi
 
-if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == organization-inventory || "$selection" == agent-list-contracts || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile ) ]]; then
+if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == organization-inventory || "$selection" == agent-list-contracts || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile || "$selection" == response-replay ) ]]; then
   nextest_build_args=(--locked -p cma)
 fi
 
@@ -280,10 +284,10 @@ test_status=0
 cd "$repo_root/api"
 if [[ "$selection" == 'availability' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --no-capture || test_status=$?
-elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'organization-inventory' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'request-limits' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' || "$selection" == 'bson-ceiling' || "$selection" == 'first-response' || "$selection" == 'history' || "$selection" == 'ranked-projection' || "$selection" == 'observation-budget' ]]; then
-  nextest_contracts run --test-threads 1 --no-fail-fast --success-output final || test_status=$?
-else
+elif [[ "$selection" == 'ordinary' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --partition "$partition" || test_status=$?
+else
+  nextest_contracts run --test-threads 1 --no-fail-fast --success-output final || test_status=$?
 fi
 printf 'Mongo fixture {"event":"finished","fixture":"%s","partition":"%s","status":%d,"elapsed_seconds":%d}\n' \
   "$contract_suffix" "$partition_name" "$test_status" "$((SECONDS - test_started))"

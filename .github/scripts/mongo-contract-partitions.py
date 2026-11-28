@@ -33,14 +33,18 @@ HISTORY_TEST = ("store::usage_reports::tests::history_batch::"
                 "seven_day_history_generates_and_reuses_complete_421_member_report")
 RANKED_PROJECTION_TEST = ("store::usage_reports::tests::projection_scale::"
                           "aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources")
+RESPONSE_REPLAY_TEST = ("store::sandbox_mongo_integration_tests::resource_access_tests::"
+                       "history_measurement::observation_budget::response_shared::"
+                       "shared_adopted_response_complete_routes_meet_unchanged_budgets_and_exact_replay")
 # The audit keeps its 30-second bound; competing fixtures must not consume its
 # resource window while it validates and promotes a full 10,000-row unit.
-# The ranked projection matrix likewise measures a fixed generation window.
+# Ranked projection and response replay also measure fixed windows.
 ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST),
                   ("--audit-bounds", AUDIT_BOUNDS_TEST), ("--diagnostics", DIAGNOSTICS_TEST),
                   ("--scan-cooperation", SCAN_COOPERATION_TEST), ("--bson-ceiling", BSON_CEILING_TEST),
                   ("--first-response", FIRST_RESPONSE_TEST), ("--history", HISTORY_TEST),
-                  ("--ranked-projection", RANKED_PROJECTION_TEST))
+                  ("--ranked-projection", RANKED_PROJECTION_TEST),
+                  ("--response-replay", RESPONSE_REPLAY_TEST))
 CLEANUP_FAILURE = 125
 DISCOVERY_TIMEOUT_SECONDS = 120
 SCHEDULE = runpy.run_path(str(Path(__file__).with_name("mongo-contract-schedule.py")))
