@@ -3,6 +3,47 @@
 use super::*;
 use crate::sandbox::{store::SandboxStoreError, Agent};
 
+type GenerationReply = oneshot::Sender<Vec<u8>>;
+
+#[derive(Default)]
+pub(super) struct GenerationWaiters(Vec<GenerationCohort>);
+
+struct GenerationCohort {
+    agent: Agent,
+    replies: Vec<GenerationReply>,
+}
+
+impl GenerationWaiters {
+    fn join(&mut self, agent: &Agent) -> oneshot::Receiver<Vec<u8>> {
+        let mut queued = 0;
+        self.0.retain_mut(|cohort| {
+            cohort.replies.retain(|reply| !reply.is_closed());
+            queued += cohort.replies.len();
+            !cohort.replies.is_empty()
+        });
+        let (reply, receive) = oneshot::channel();
+        if queued < MAX_OBSERVATION_COHORT {
+            if let Some(cohort) = self.0.iter_mut().find(|cohort| &cohort.agent == agent) {
+                cohort.replies.push(reply);
+            } else {
+                self.0.push(GenerationCohort {
+                    agent: agent.clone(),
+                    replies: vec![reply],
+                });
+            }
+        }
+        receive
+    }
+
+    fn take(&mut self, agent: &Agent) -> Vec<GenerationReply> {
+        self.0
+            .iter()
+            .position(|cohort| &cohort.agent == agent)
+            .map(|index| self.0.swap_remove(index).replies)
+            .unwrap_or_default()
+    }
+}
+
 pub(in crate::sandbox) struct OutputFlight<'a> {
     service: &'a AgentObservationService,
     authority: Arc<AgentObservationAuthority>,
@@ -25,16 +66,38 @@ impl AgentObservationService {
             .unwrap()
             .lanes
             .get(agent.id.as_str())
-            .map(|lane| (lane.authority.clone(), lane.flight.clone()));
-        let Some((authority, flight)) = lane else {
+            .map(|lane| {
+                (
+                    lane.authority.clone(),
+                    lane.flight.clone(),
+                    lane.output_waiters.clone(),
+                )
+            });
+        let Some((authority, flight, waiters)) = lane else {
             return Ok(None);
         };
+        if !authority.current() || !self.store.ready() {
+            return Err(SandboxStoreError::Unavailable("read custody ended".into()));
+        }
+        let mut reply = waiters.lock().unwrap().join(agent);
         let guard = flight.lock_owned().await;
         if !authority.current() || !self.store.ready() {
             return Err(SandboxStoreError::Unavailable("read custody ended".into()));
         }
-        let Some(generation) = self.store.output_generation(agent).await? else {
-            return Ok(None);
+        let generation = match reply.try_recv() {
+            Ok(generation) => generation,
+            Err(_) => {
+                // Only readers already waiting for this exact Agent may share
+                // the snapshot. Later arrivals must check the store again.
+                let cohort = waiters.lock().unwrap().take(agent);
+                let Some(generation) = self.store.output_generation(agent).await? else {
+                    return Ok(None);
+                };
+                for reply in cohort {
+                    let _ = reply.send(generation.clone());
+                }
+                generation
+            }
         };
         let key = serde_json::to_vec(&(
             2_u8,
