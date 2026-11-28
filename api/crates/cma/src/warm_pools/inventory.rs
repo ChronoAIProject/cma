@@ -43,7 +43,7 @@ impl NativeWarmPools {
                         .and_then(Result::ok)
                 }
                 _ => None,
-            };
+            }
         };
         let (inventory, runtime_versions) = tokio::join!(inventory, versions);
         let available = inventory.is_some();
