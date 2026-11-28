@@ -213,6 +213,7 @@ pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fingerprint a
 #[cfg(test)]
 mod sandbox_operator_mongo_integration_tests;
 mod sandbox_profiles;
+mod sandbox_quarantine;
 mod sandbox_reconciliation;
 mod sandbox_sessions;
 mod sandbox_transactions;

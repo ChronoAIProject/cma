@@ -202,12 +202,13 @@ module CIContract
       end
     end
     publications = %w[web am eg runtime runtime_omarchy].map { |component| "release_#{component}" }
-    allowed = %w[publish:images staging-release:publish omarchy-package-bundle:bundle staging-cd:protected_web
+    allowed = %w[publish:images staging-release:publish omarchy-package-bundle:bundle web-prepare-publish:publish staging-cd:protected_web
       staging-web-continuity:protected staging-web-continuity-epoch:release staging-cd:release_journey_probe] +
       publications.map { |id| "staging-cd:#{id}" }
     require!(grants.sort == allowed.sort,
       "only the reviewed release entry points may grant package write")
     omarchy_package_bundle_authority(inputs.fetch("omarchy-package-bundle"))
+    check_web_prepare_publication_authority(inputs.fetch("web-prepare-publish"))
     staging = inputs.fetch("staging-cd")
     staging_events = staging["on"] || staging[true]
     require!(staging_events == { "push" => { "branches" => ["develop"] } },
@@ -232,6 +233,32 @@ module CIContract
       producer["permissions"] == permissions && producer.fetch("jobs").keys == ["build"] &&
       !producer.dig("jobs", "build").key?("environment") && !producer.dig("jobs", "build").key?("permissions"),
       "native image producer must retain read-only release authority")
+  end
+
+  def self.check_web_prepare_publication_authority(workflow)
+    events = workflow["on"] || workflow[true]
+    require!(events.keys == ["workflow_dispatch"] &&
+      events.dig("workflow_dispatch", "inputs").keys.sort == %w[candidate incumbent] &&
+      workflow["permissions"] == {} && workflow.fetch("jobs").keys == ["publish"],
+      "Web prepare publication must be manually dispatched")
+    writer = workflow.fetch("jobs").fetch("publish")
+    require!(writer["if"] == "github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'" &&
+      writer["permissions"] == { "contents" => "read", "packages" => "write" } &&
+      writer["runs-on"] == "ubuntu-24.04" && writer["timeout-minutes"] == 30 &&
+      (writer.keys - %w[if runs-on timeout-minutes permissions steps]).empty?,
+      "Web prepare publication must use the bounded develop publisher")
+    require!(writer.fetch("steps") == [
+      { "uses" => "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+        "with" => { "persist-credentials" => false } },
+      { "name" => "Ensure registry transport", "env" => { "CD_COMPONENT" => "web" },
+        "run" => "bash .github/scripts/staging_cd_transport.sh" },
+      { "name" => "Install pinned credential scan backend",
+        "run" => "bash .github/scripts/install-image-gitleaks.sh" },
+      { "name" => "Build, scan and publish the Web prepare image",
+        "env" => { "INCUMBENT" => "${{ inputs.incumbent }}", "CANDIDATE" => "${{ inputs.candidate }}",
+                   "REGISTRY_TOKEN" => "${{ secrets.GITHUB_TOKEN }}" },
+        "run" => "python3 -B .github/scripts/staging_cd_web_prepare_publish.py" },
+    ], "Web prepare package authority must stay with the reviewed publisher")
   end
 
   def self.check_journey_publication_authority(job)

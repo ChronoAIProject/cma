@@ -27,7 +27,7 @@ impl ActivityObserver for ObservedRefusals {
 }
 
 #[derive(Default)]
-struct ReplyRecorder(Mutex<Vec<(String, Vec<u8>, Value)>>);
+struct ReplyRecorder(Mutex<Vec<(String, Vec<u8>, Value)>>, bool);
 
 impl RelayTransport for ReplyRecorder {
     fn post(
@@ -43,6 +43,9 @@ impl RelayTransport for ReplyRecorder {
                 headers["authorization"].as_bytes().to_vec(),
                 serde_json::from_slice(&body).unwrap(),
             ));
+            if self.1 {
+                return Err(TransportError::Unavailable);
+            }
             Ok(HttpReply {
                 status: StatusCode::OK,
                 headers: HeaderMap::new(),
@@ -117,6 +120,20 @@ async fn unknown_telegram_targets_are_refused_and_explained_only_when_enabled() 
                 assert_eq!(response.status(), StatusCode::ACCEPTED);
             }
         }
+        let page = owner_activity(&fixture).await;
+        let refusals_recorded: Vec<_> = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["source_refusal"] == "target_unknown")
+            .collect();
+        assert_eq!(refusals_recorded.len(), 2);
+        assert!(refusals_recorded.iter().all(|item| {
+            item["consumers"] == json!([])
+                && item["actor"]["id"] == "redacted"
+                && item["conversation"]["id"] == "redacted"
+        }));
+        assert!(!page.to_string().contains("missing-one"));
         let launches = fixture.recorder.requests.lock().unwrap();
         assert_eq!(launches.len(), 2);
         for (request, id) in launches.iter().zip(["message-3", "message-4"]) {
@@ -139,4 +156,120 @@ async fn unknown_telegram_targets_are_refused_and_explained_only_when_enabled() 
             assert_eq!(actual.2["reply"]["text"], expected.2["reply"]["text"]);
         }
     }
+}
+
+#[tokio::test]
+async fn captioned_photo_media_off_explains_refusal_without_launching() {
+    for uncertain in [false, true] {
+        assert_media_notice(uncertain).await;
+    }
+}
+
+async fn assert_media_notice(uncertain: bool) {
+    let replies = Arc::new(ReplyRecorder(Mutex::new(Vec::new()), uncertain));
+    let relay = RelayClient::new("https://nyx.example", Duration::from_secs(1))
+        .unwrap()
+        .with_transport(replies.clone());
+    let fixture =
+        Fixture::with_ingress(|_| {}, |state| state.with_routing_notice_relay(Some(relay))).await;
+    let mut photo = super::nyxid_shapes::telegram_photo();
+    fixture
+        .backend
+        .interaction_write_status
+        .store(503, Ordering::SeqCst);
+    assert_eq!(fixture.send(&photo).await.status(), 503);
+    assert!(replies.0.lock().unwrap().is_empty());
+    fixture
+        .backend
+        .interaction_write_status
+        .store(200, Ordering::SeqCst);
+    let response = fixture.send(&photo).await;
+    assert_eq!(response.status(), 202);
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({"status": "refused", "reason": "attachment_unsupported"})
+    );
+
+    // A separate replica shares the durable owner store and notice claim.
+    let activity = Arc::new(cmaeg::activity::ActivityStore::new(
+        (*fixture.records).clone(),
+        fixture.state.master_keys.clone(),
+    ));
+    let replica = fixture.state.clone().with_activity_observer(Arc::new(
+        cmaeg::activity::ObservedActivity::new(activity, fixture.state.activity.clone()),
+    ));
+    let (base, replica_task) = serve(cmaeg::http::callbacks::router(replica)).await;
+    photo.reply["jti"] = "renewed-reply-fixture".into();
+    let (body, token) = photo.signed();
+    let mut request = fixture.request(body, &token).build().unwrap();
+    *request.url_mut() = format!("{base}/v1/callbacks/{}", fixture.id)
+        .parse()
+        .unwrap();
+    assert_eq!(fixture.client.execute(request).await.unwrap().status(), 202);
+    replica_task.abort();
+
+    let page = owner_activity(&fixture).await;
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page["items"][0]["source_refusal"], "attachment_unsupported");
+    assert_eq!(page["items"][0]["consumers"], json!([]));
+    assert!(!page.to_string().contains("look at this"));
+    assert!(fixture.recorder.requests.lock().unwrap().is_empty());
+    let replies = replies.0.lock().unwrap();
+    assert_eq!(replies.len(), 1);
+    assert_eq!(replies[0].2["message_id"], "message-1");
+    assert_eq!(
+        replies[0].2["reply"]["text"],
+        "Attachments are unavailable. Please send your message as text."
+    );
+}
+
+async fn owner_activity(fixture: &Fixture) -> Value {
+    let identity = crate::fake_nyxid::FakeNyxid::start().await;
+    let (owner, _) = identity.oauth.issue_tokens("user-1");
+    let manager = crate::management_fixture::state(
+        Default::default(),
+        fixture.records.clone(),
+        fixture.state.master_keys.clone(),
+        &fixture.record_origin,
+        &identity.base_url,
+    );
+    let (base, task) = serve(cmaeg::http::management_router(manager)).await;
+    let response = fixture
+        .client
+        .get(format!("{base}/v1/channels/{}/activity", fixture.id))
+        .bearer_auth(owner)
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+    let page = response.json().await.unwrap();
+    task.abort();
+    page
+}
+
+#[tokio::test]
+async fn media_notice_requires_positive_photo_and_group_admission() {
+    let replies = Arc::new(ReplyRecorder::default());
+    let relay = RelayClient::new("https://nyx.example", Duration::from_secs(1))
+        .unwrap()
+        .with_transport(replies.clone());
+    let fixture = Fixture::with_ingress(
+        |definition| {
+            definition["sources"][0]["admission"] = json!({
+                "type": "scoped", "senders": {"type": "open"}, "chats": {"type": "open"},
+                "groups": "mention"
+            });
+        },
+        |state| state.with_routing_notice_relay(Some(relay)),
+    )
+    .await;
+    let mut group_photo = super::nyxid_shapes::telegram_photo();
+    group_photo.group();
+    assert_eq!(fixture.send(&group_photo).await.status(), 202);
+    let mut malformed = super::nyxid_shapes::telegram_photo();
+    malformed.payload["raw_platform_data"]["message"]["photo"] = json!("invalid");
+    assert_eq!(fixture.send(&malformed).await.status(), 202);
+    assert!(replies.0.lock().unwrap().is_empty());
+    assert!(fixture.recorder.requests.lock().unwrap().is_empty());
 }

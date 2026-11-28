@@ -29,7 +29,7 @@ pub(super) fn refuse(
     authenticated_refusal(state, record, SOURCE, reason)
 }
 
-pub(super) struct Receipt {
+pub(in crate::http) struct Receipt {
     owner: String,
     row: crate::activity::ChannelActivity,
     received: time::OffsetDateTime,
@@ -53,14 +53,30 @@ pub(super) fn receipt(
     {
         return None;
     }
-    let received = time::OffsetDateTime::now_utc();
-    let digest = Sha256::digest(event.as_str().as_bytes());
-    let mut row = crate::activity::ChannelActivity::metadata(
-        format!("telegram:relay-refusal:{digest:x}"),
+    receipt_for_event(
+        channel,
+        event,
         SourceKind::NyxidRelay {
             platform: Platform::Telegram,
             route_id: payload.conversation.id.clone(),
         },
+        kind,
+        payload.timestamp.clone(),
+    )
+}
+
+pub(in crate::http) fn receipt_for_event(
+    channel: &ResolvedChannel,
+    event: &EventId,
+    source: SourceKind,
+    kind: ConversationKind,
+    occurred_at: String,
+) -> Option<Receipt> {
+    let received = time::OffsetDateTime::now_utc();
+    let digest = Sha256::digest(event.as_str().as_bytes());
+    let mut row = crate::activity::ChannelActivity::metadata(
+        format!("telegram:relay-refusal:{digest:x}"),
+        source,
         Actor {
             id: "redacted".into(),
             display_name: None,
@@ -71,7 +87,7 @@ pub(super) fn receipt(
             kind,
             thread_id: None,
         },
-        payload.timestamp.clone(),
+        occurred_at,
         received.format(&Rfc3339).ok()?,
     );
     row.kind = Some("message".into());
@@ -94,6 +110,15 @@ impl Receipt {
             Refusal::ContentUnsupported => "content_unsupported",
             _ => return Ok(()),
         };
+        self.persist_label(state, record, label).await
+    }
+
+    pub(in crate::http) async fn persist_label(
+        &self,
+        state: &IngressState,
+        record: &RecordId,
+        label: &str,
+    ) -> Result<(), ()> {
         let mut row = self.row.clone();
         row.source_refusal = Some(label.into());
         state
@@ -101,4 +126,58 @@ impl Receipt {
             .source_refused(&self.owner, record, row, self.received)
             .await
     }
+}
+
+/// Establish the same message and admission facts the enabled path requires.
+pub(super) fn eligible_disabled_photo(
+    source: &Source,
+    partition: PartitionKey,
+    verified: &verify::VerifiedCallback,
+) -> bool {
+    use cmaeg_core::activity::{AttachmentSource, MediaVariant};
+    let Source::NyxidRelay {
+        platform: Platform::Telegram,
+        admission,
+        bot_id,
+        ..
+    } = source
+    else {
+        return false;
+    };
+    let payload = &verified.payload;
+    if payload
+        .content
+        .text
+        .as_ref()
+        .is_none_or(|caption| caption.is_empty())
+    {
+        return false;
+    }
+    let Ok(Observation::Message(facts)) = observe(source, payload, true) else {
+        return false;
+    };
+    if facts.actor != ActorKind::Human
+        || facts.attachments.len() != 1
+        || !facts.attachments.iter().all(|attachment| {
+            attachment.variant == Some(MediaVariant::Photo)
+                && matches!(attachment.source, Some(AttachmentSource::NyxidRelay { .. }))
+        })
+        || (partition == PartitionKey::Thread && facts.thread_id.is_none())
+    {
+        return false;
+    }
+    admit(
+        admission,
+        &AdmissionFacts {
+            sender_id: &payload.sender.platform_id,
+            chat_id: &payload.conversation.platform_id,
+            is_group: facts.conversation != ConversationKind::Private,
+            is_bot_sender: false,
+            receiving_bot_id: bot_id.as_deref(),
+            mentioned: facts.mentioned,
+            is_system: false,
+            addressed: facts.addressed(admission),
+        },
+    )
+    .is_ok()
 }

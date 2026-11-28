@@ -53,8 +53,8 @@ impl MongoRuntimeRouting {
             .is_some();
         // Before changing allocation policy, deploy this version with legacy creation
         // enabled. Existing unknown dispatches receive an immutable legacy route.
-        let mut rows = db
-            .collection::<Document>("sandboxes")
+        let sandboxes = super::durability::majority_collection(db, "sandboxes");
+        let mut rows = sandboxes
             .find(doc! {})
             .await
             .map_err(|_| "cannot read retained runtime routes")?;
@@ -63,8 +63,9 @@ impl MongoRuntimeRouting {
             .await
             .map_err(|_| "cannot read retained runtime routes")?
         {
-            let sandbox =
-                super::sandboxes::read_sandbox(&row).map_err(|_| "invalid retained Sandbox")?;
+            let Some(sandbox) = super::sandbox_quarantine::retained(&sandboxes, row).await? else {
+                continue;
+            };
             let generation = sandbox.lifecycle.runtime_generation_high_water.max(1);
             let key = RouteKey::new(deployment, sandbox.id.as_str(), generation)
                 .map_err(|e| e.to_string())?;
@@ -88,6 +89,11 @@ impl MongoRuntimeRouting {
                 .await
                 .map_err(|e| e.to_string())?;
         }
+        let quarantined = sandboxes
+            .count_documents(doc! { (super::sandbox_quarantine::FIELD): { "$exists": true } })
+            .await
+            .map_err(|_| "cannot count quarantined Sandboxes")?;
+        metrics::gauge!("cma_retained_sandbox_quarantined").set(quarantined as f64);
         store
             .rows
             .update_one(

@@ -68,6 +68,22 @@ async fn attach_subject_inner(
         drop(observation);
         return next.run(request).await;
     }
+    if auth.rejects_unverified_proxy_headers(request.headers()) {
+        let observation = crate::request_observation::Resolution::start(&request, "ambient");
+        return observation.rejected(
+            (
+                StatusCode::UNAUTHORIZED,
+                [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+                Json(serde_json::json!({
+                    "type": "about:blank",
+                    "title": "Request proof required",
+                    "status": 401,
+                    "code": "nyxid_proxy_request_proof_required",
+                })),
+            )
+                .into_response(),
+        );
+    }
     let mut observation = crate::request_observation::Resolution::start(&request, "ambient");
     let personal_inventory = is_personal_inventory(&request);
     let mut browser_proof = None;

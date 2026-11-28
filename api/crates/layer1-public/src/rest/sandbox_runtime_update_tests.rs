@@ -141,27 +141,38 @@ async fn owner_managed_runtime_update_refuses_an_explicit_image_on_a_retained_ho
 }
 
 #[test]
-fn explicitly_selected_image_keeps_custom_update_guidance() {
-    use crate::rest::sandbox_runtime_update::{RuntimeUpdateImageOrigin, SandboxRuntimeUpdateView};
-    use layer2_core::sandbox::SandboxRuntimeImageOrigin;
+fn owner_runtime_view_distinguishes_desktop_image_selection_at_the_same_digest() {
+    use crate::rest::sandbox_runtime_update::SandboxRuntimeUpdateView;
+    use layer2_core::sandbox::SandboxRuntimeImageOrigin::{ManagedDesktop, UserSelected};
 
-    let mut sandbox = native_runtime_update_sandbox(
+    let mut original = native_runtime_update_sandbox(
         stored_sandbox("sbx_update", "owner", SandboxStatus::Active, 4),
         true,
     );
-    sandbox.origin = SandboxOrigin::Lifecycle {
+    original.origin = SandboxOrigin::Lifecycle {
         operation_id: "fixture-operation".into(),
     };
-    sandbox.lifecycle.runtime_image_origin = Some(SandboxRuntimeImageOrigin::UserSelected);
-    sandbox.validate().unwrap();
-    let service = SandboxRuntimeUpdateService::new(
-        Arc::new(InMemorySandboxStore::default()),
-        "runtime-v2".into(),
-    );
-    let view = SandboxRuntimeUpdateView::new(&sandbox, &service);
-    assert_eq!(view.image_origin, RuntimeUpdateImageOrigin::UserSelected);
-    assert!(!view.can_update);
-    assert_eq!(view.blocked_reason.as_deref(), Some("This Sandbox uses a custom image. Automatic CMA runtime updates do not replace custom images."));
+    let image = original.profile.content.runtime_image.clone().unwrap();
+    let service =
+        SandboxRuntimeUpdateService::new(Arc::new(InMemorySandboxStore::default()), image.clone());
+    for (origin, expected, preserves_home) in [
+        (ManagedDesktop, "managed_desktop", true),
+        (UserSelected, "user_selected", false),
+    ] {
+        let mut sandbox = original.clone();
+        sandbox.lifecycle.runtime_image_origin = Some(origin);
+        sandbox.validate().unwrap();
+        let view = serde_json::to_value(SandboxRuntimeUpdateView::new(&sandbox, &service)).unwrap();
+        assert_eq!(view["image_origin"], expected);
+        assert_eq!(view["current_version"], image);
+        assert_eq!(view["preserves_home"], preserves_home);
+        if origin == ManagedDesktop {
+            assert_eq!(view["current_version_confirmed"], true);
+        } else {
+            assert_eq!(view["can_update"], false);
+            assert_eq!(view["blocked_reason"], "This Sandbox uses a custom image. Automatic CMA runtime updates do not replace custom images.");
+        }
+    }
 }
 
 #[tokio::test]

@@ -19,6 +19,7 @@ mod activity_pages;
 mod activity_retention;
 mod auto_pause_compatibility;
 mod released_authority;
+mod retained_sandbox_quarantine;
 mod routing_source_fence;
 mod session_versions;
 mod startup_ddl;

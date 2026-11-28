@@ -1,0 +1,44 @@
+name: Publish Web prepare image
+
+on:
+  workflow_dispatch:
+    inputs:
+      incumbent:
+        description: Existing CMA Web release version or sha256 digest whose HTML is retained
+        required: true
+        type: string
+      candidate:
+        description: Existing CMA Web release version or sha256 digest for the successor assets
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: web-prepare-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Ensure registry transport
+        env:
+          CD_COMPONENT: web
+        run: bash .github/scripts/staging_cd_transport.sh
+      - name: Install pinned credential scan backend
+        run: bash .github/scripts/install-image-gitleaks.sh
+      - name: Build, scan and publish the Web prepare image
+        env:
+          INCUMBENT: ${{ inputs.incumbent }}
+          CANDIDATE: ${{ inputs.candidate }}
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 -B .github/scripts/staging_cd_web_prepare_publish.py

@@ -166,6 +166,27 @@ fn retained_defaults_and_runtime_values_form_a_complete_configuration() {
 }
 
 #[test]
+fn task_audit_selection_is_wired_into_process_configuration() {
+    let selection = configured(&[]).unwrap().task_audit.unwrap();
+    assert_eq!(selection.from, "2026-11-24T16:00:00Z");
+    assert_eq!(selection.to, None);
+    assert_eq!(selection.overdue_seconds, 3600);
+
+    let setting = "CHRONO_TASK_AUDIT_SELECTION";
+    let override_json = r#"{"from":"2026-01-01T00:00:00Z","to":"2026-01-02T00:00:00Z","overdue_seconds":120}"#;
+    let selection = configured(&[(setting, override_json)])
+        .unwrap()
+        .task_audit
+        .unwrap();
+    assert_eq!(selection.from, "2026-01-01T00:00:00Z");
+    assert_eq!(selection.to.as_deref(), Some("2026-01-02T00:00:00Z"));
+    assert_eq!(selection.overdue_seconds, 120);
+
+    assert!(configured(&[(setting, "null")]).unwrap().task_audit.is_none());
+    assert!(configured(&[(setting, "{}")]).unwrap_err().contains(setting));
+}
+
+#[test]
 fn account_deletion_config_defaults_off() {
     assert!(!configured(&[]).unwrap().account_deletion_enabled);
     assert!(

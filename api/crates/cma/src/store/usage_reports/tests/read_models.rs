@@ -1,5 +1,35 @@
 use super::*;
 
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn retained_sandbox_quarantine_preserves_usage_and_healthy_metadata() {
+    let store = fixture().await;
+    let at = now();
+    let first = state(1, at - 600);
+    let second = state(2, at - 600);
+    seed(&store, &[first.clone(), second.clone()]).await;
+    let mut healthy =
+        crate::store::sandbox_mongo_integration_tests::sandbox(second.sandbox_id.as_str());
+    healthy.owner = second.owner.clone();
+    store.collection("sandboxes").insert_many([
+        doc! { "_id": first.sandbox_id.as_str(), (crate::store::sandbox_quarantine::FIELD): {} },
+        crate::store::sandboxes::sandbox_document(&healthy, 0).unwrap(),
+    ]).await.unwrap();
+
+    let mut session = store.snapshot().await.unwrap();
+    let query = ReportInput::default().validate(at).unwrap();
+    let rows = store
+        .inventory(&mut session, &scope("operator", true), &query, None)
+        .await
+        .unwrap();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].state.sandbox_id, first.sandbox_id);
+    assert!(rows[0].sandbox.is_none());
+    assert_eq!(rows[1].sandbox.as_ref(), Some(&healthy));
+    drop(session);
+    store.db.drop().await.unwrap();
+}
+
 pub(super) mod measured_usage;
 
 pub(super) fn binding(id: &str, kind: BindingKind, at: u64) -> Binding {
