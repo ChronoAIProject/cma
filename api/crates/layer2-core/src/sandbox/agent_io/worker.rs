@@ -30,6 +30,7 @@ pub enum CommandAttempt {
 pub enum CommandReadiness {
     Ready,
     Retry,
+    WaitingForActiveTurn,
     Reject(CommandFailureCode),
 }
 
@@ -200,6 +201,15 @@ impl AgentCommandWorker {
         }
         match readiness {
             CommandReadiness::Ready => {}
+            CommandReadiness::WaitingForActiveTurn => {
+                let delay = api_message_recheck_delay(
+                    &candidate.receipt.envelope,
+                    &candidate.receipt.admitted_at,
+                    &candidate.queue_deadline,
+                    &now_rfc3339(),
+                );
+                return Ok(unclaimed_cooldown(&candidate, delay));
+            }
             CommandReadiness::Retry => {
                 let delay = unclaimed_recheck_delay(&candidate);
                 if is_channel_message(&candidate) {

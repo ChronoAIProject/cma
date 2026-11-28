@@ -97,6 +97,7 @@ enum Behavior {
 #[derive(Default)]
 struct Probe {
     dispatched: Mutex<BTreeMap<AgentCommandId, bool>>,
+    turn_waits: Mutex<BTreeMap<AgentCommandId, AgentId>>,
     jobs: Mutex<BTreeMap<AgentCommandId, Behavior>>,
     calls: Mutex<Vec<AgentCommandId>>,
     discovery_calls: Mutex<Vec<Instant>>,
@@ -129,6 +130,7 @@ impl Probe {
             drain_timeout: Duration::from_secs(5),
             reconcile_pacing: false,
             cancel_wake: None,
+            turn_terminal: None,
         }
     }
 }
@@ -171,6 +173,7 @@ impl CommandScheduleWork for Probe {
                 .map(|id| {
                     let dispatched = self.dispatched.lock().unwrap();
                     ScheduledAgentCommand {
+                        turn_wait_agent: self.turn_waits.lock().unwrap().get(&id).cloned(),
                         dispatched: dispatched.contains_key(&id),
                         reconcile_current: dispatched.get(&id).copied().unwrap_or(false),
                         id,

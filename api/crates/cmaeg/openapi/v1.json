@@ -2739,7 +2739,8 @@
           "endpoints": {
             "oneOf": [
               {
-                "$ref": "#/components/schemas/EndpointResponse"
+                "$ref": "#/components/schemas/EndpointResponse",
+                "description": "Omitted for incomplete creations (`definition.creation.ready == false`)\nand legacy records without a recoverable channel ID."
               },
               {
                 "type": "null"
