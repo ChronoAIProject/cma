@@ -41,6 +41,7 @@ export function AgentProvisioningProgress({
     readonly stage: PreparationStage;
     readonly label: string;
     readonly now: number;
+    readonly phaseHistoryUnavailable: boolean;
   };
 }) {
   const status =
@@ -77,7 +78,9 @@ export function AgentProvisioningProgress({
   const steps = reportedSteps.map(({ phase, label }) => ({
     phase,
     label,
-    state: provisioningStepState(phase, events, status, operation),
+    state: task?.phaseHistoryUnavailable
+      ? ('Not reported' as const)
+      : provisioningStepState(phase, events, status, operation),
     ...provisioningStepTiming(phase, events, status, now),
   }));
   // Four Ready steps are not success: only the operation's own success with
@@ -131,7 +134,9 @@ export function AgentProvisioningProgress({
               : 'Preparing your Agent'}
       </h3>
       <p className="agent-lifecycle-provisioning__status" role="status">
-        {task?.stage === 'preparing' && current === undefined ? <StateDot state="ongoing" /> : null}
+        {task?.stage === 'preparing' && !task.phaseHistoryUnavailable && current === undefined ? (
+          <StateDot state="ongoing" />
+        ) : null}
         {message}
       </p>
       <ol className="agent-lifecycle-steps" aria-label="Agent setup steps">
