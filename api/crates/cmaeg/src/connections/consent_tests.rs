@@ -285,6 +285,45 @@ async fn managed_consent_refuses_identity_credentials_extra_sources_and_wrong_ow
 }
 
 #[tokio::test]
+async fn quarantined_channel_create_preserves_connection_bytes_and_version() {
+    use crate::{channels::management, records::RecordError};
+
+    let mut app = Native::new().await;
+    app.begin(false).await;
+    app.service
+        .observe_creation(&app.channel, &app.receipt(42, now(), 107))
+        .await
+        .unwrap();
+    let (connection, _) = app.stored().await;
+    assert_eq!(connection.status, Status::Ready);
+    assert!(connection.channel_record.is_none());
+
+    let records = app.fixture.records().connections();
+    let url = records.record_url(&connection.id).unwrap();
+    let before = records.get(url.as_str()).await.unwrap();
+    let mut template = app.channel.definition.clone();
+    template.profile.metadata.owner.subject = connection.owner.clone();
+    let request = app.replacement_request(&template);
+    app.service.management.records = Arc::new(app.fixture.records().quarantine_channel_creates());
+
+    let result = management::create(
+        &app.service.management,
+        &owner(&connection.owner, connection.organization),
+        request,
+    )
+    .await;
+    assert!(matches!(
+        result,
+        Err(management::ManagementError::Record(
+            RecordError::Unavailable(_)
+        ))
+    ));
+    let after = records.get(url.as_str()).await.unwrap();
+    assert_eq!(after.version, before.version);
+    assert!(after.blob == before.blob);
+}
+
+#[tokio::test]
 async fn setup_gate_refuses_new_binding_but_preserves_bound_retry_and_update() {
     let mut app = Native::new().await;
     let current = managed(&app).await;
