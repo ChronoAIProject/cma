@@ -4,6 +4,9 @@ import { commandIsTerminal, type V2CommandStatus } from '@cma/client';
 import type { AgentV2Session } from './client';
 import { transientReadFailure } from '../loadAgent';
 import { observeRead } from './readObserver';
+import type { ConversationState } from '../model';
+
+export type StopRequestState = 'stopping' | 'checking-request';
 
 function notice(command: V2CommandStatus, interruption: boolean): string | undefined {
   // Successful delivery is reflected by the conversation; keep only actionable status.
@@ -46,12 +49,30 @@ function retainedAction(session: AgentV2Session | undefined) {
 /** Observe the retained receipt; GET retries never submit or retarget an action. */
 export function useControlStatus(
   session: AgentV2Session | undefined,
+  binding: ConversationState['responseBinding'],
   onIdentityChange: (error: unknown) => boolean,
-): string | undefined {
-  const [result, setResult] = useState<{ id: string; text: string | undefined }>();
+) {
+  const [result, setResult] = useState<{
+    session: AgentV2Session;
+    id: string;
+    text?: string;
+    failed?: boolean;
+  }>();
   let commandId: string | undefined;
+  let stopRequest: StopRequestState | undefined;
   try {
     commandId = retainedAction(session)?.commandId;
+    const control = session?.journal.readControl();
+    if (
+      binding &&
+      control?.body.command.type === 'cancel' &&
+      control.responseId === binding.responseId &&
+      control.body.turn_sequence === binding.turnSequence
+    ) {
+      if (control.commandId === null) stopRequest = 'checking-request';
+      else if (!(result?.session === session && result?.id === control.commandId && result.failed))
+        stopRequest = 'stopping';
+    }
   } catch {
     // Mutation and observation paths clear views whose local epoch has expired.
   }
@@ -73,7 +94,12 @@ export function useControlStatus(
           (command.turn_sequence !== null && command.turn_sequence !== intent.turnSequence)
         )
           throw new Error('The action receipt changed its conversation target.');
-        setResult({ id: commandId, text: notice(command, intent.interruption) });
+        setResult({
+          session,
+          id: commandId,
+          text: notice(command, intent.interruption),
+          failed: command.status === 'failed' || command.status === 'cancelled',
+        });
         if (commandIsTerminal(command)) return;
         failures = 0;
         const progress = JSON.stringify([
@@ -88,6 +114,7 @@ export function useControlStatus(
       } catch (error) {
         if (signal.aborted || onIdentityChange(error)) return;
         setResult({
+          session,
           id: commandId,
           text: 'Your response action status is unavailable. Its original receipt is retained.',
         });
@@ -100,5 +127,8 @@ export function useControlStatus(
     });
     return () => observer.dispose();
   }, [session, commandId, onIdentityChange]);
-  return result?.id === commandId ? result?.text : undefined;
+  return {
+    notice: result?.session === session && result?.id === commandId ? result?.text : undefined,
+    stopRequest,
+  };
 }

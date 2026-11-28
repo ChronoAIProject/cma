@@ -28,7 +28,7 @@ async fn retained_cleanup_charges_bytes_until_child_deletion_is_acknowledged() {
         .database("admin")
         .run_command(doc! {
             "configureFailPoint":"failCommand","mode":{"times":1},
-            "data":{"failCommands":["delete"],"errorCode":2}
+            "data":{"failCommands":["delete"],"errorCode":50}
         })
         .await
         .unwrap();
@@ -63,6 +63,49 @@ async fn retained_cleanup_charges_bytes_until_child_deletion_is_acknowledged() {
             .unwrap()
             > 0
     );
+    let fresh = store
+        .latest(&scope("foreign", true), &selection, now())
+        .await
+        .unwrap()
+        .report;
+    let lease = store
+        .claim_report("report:1", "unrelated-report")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(lease.report.report_id, fresh.report_id);
+    let generated =
+        crate::sandbox_metrics::generate_fixture_with_collection(store.clone(), &lease, false)
+            .await
+            .unwrap();
+    store.finish_report(&lease, generated, true).await.unwrap();
+    assert!(
+        store
+            .report(&scope("foreign", true), &fresh.report_id, now())
+            .await
+            .unwrap()
+            .report_complete
+    );
+
+    // While the failed worker's cleanup lease is still held, another worker
+    // cannot immediately retry the same delete.
+    store.prune_cache(now()).await.unwrap();
+    assert!(store
+        .collection(JOBS)
+        .find_one(filter.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .get_bool("reserved")
+        .unwrap());
+    store
+        .collection(CONTROL)
+        .update_one(
+            doc! {"_id":super::super::retirement::SLOT},
+            doc! {"$set":{"lease_until":0_i64}},
+        )
+        .await
+        .unwrap();
     store.prune_cache(now()).await.unwrap();
     let released = store
         .collection(JOBS)
@@ -88,6 +131,121 @@ async fn retained_cleanup_charges_bytes_until_child_deletion_is_acknowledged() {
             0
         );
     }
+    store.db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn retirement_resumes_bounded_batches_and_rotates_to_another_parent() {
+    let store = fixture().await;
+    let at = now();
+    let query = ReportInput::default().validate(at).unwrap();
+    let a = store
+        .submit(scope("first", true), query.clone(), at)
+        .await
+        .unwrap();
+    let b = store
+        .submit(scope("second", true), query, at)
+        .await
+        .unwrap();
+    let pending = doc! {"_id":{"$in":[&a.report_id,&b.report_id]}};
+    store
+        .collection(JOBS)
+        .update_many(
+            pending,
+            doc! {"$set":{"logical_expires_at":0_i64,"expires_at":expires(at + 3600)}},
+        )
+        .await
+        .unwrap();
+    let (first, other) = if a.report_id < b.report_id {
+        (a, b)
+    } else {
+        (b, a)
+    };
+    let first_job = doc! {"_id":&first.report_id};
+    let first_rows = doc! {"report_id":&first.report_id};
+    store
+        .collection(ROWS)
+        .insert_many((0..130).map(|index| {
+            doc! {
+                "_id":format!("retirement-row-{index}"),"document_schema_version":1_i64,
+                "report_id":&first.report_id,"sandbox_id":format!("sandbox-{index}"),
+            }
+        }))
+        .await
+        .unwrap();
+    store.prune_cache(at).await.unwrap();
+    assert_eq!(
+        store
+            .collection(ROWS)
+            .count_documents(first_rows.clone())
+            .await
+            .unwrap(),
+        66
+    );
+    let held = store
+        .collection(JOBS)
+        .find_one(first_job.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(held.get_bool("reserved").unwrap());
+    assert_eq!(held.get("expires_at"), Some(&mongodb::bson::Bson::Null));
+    assert!(store
+        .report(&first.scope, &first.report_id, now())
+        .await
+        .is_err());
+
+    let second_store = ReportingStore::connect(
+        &std::env::var("CHRONO_TEST_MONGODB_URI").unwrap(),
+        store.db.name(),
+        &[19; 32],
+    )
+    .await
+    .unwrap();
+    second_store.prune_cache(at).await.unwrap();
+    let completed = store
+        .collection(JOBS)
+        .find_one(doc! {"_id":&other.report_id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!completed.get_bool("reserved").unwrap());
+    assert_eq!(
+        store
+            .collection(ROWS)
+            .count_documents(first_rows.clone())
+            .await
+            .unwrap(),
+        66
+    );
+
+    second_store.prune_cache(at).await.unwrap();
+    assert_eq!(
+        store
+            .collection(ROWS)
+            .count_documents(first_rows.clone())
+            .await
+            .unwrap(),
+        2
+    );
+    second_store.prune_cache(at).await.unwrap();
+    assert_eq!(
+        store
+            .collection(ROWS)
+            .count_documents(first_rows)
+            .await
+            .unwrap(),
+        0
+    );
+    let completed = store
+        .collection(JOBS)
+        .find_one(first_job)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!completed.get_bool("reserved").unwrap());
+    assert!(completed.get_datetime("expires_at").is_ok());
     store.db.drop().await.unwrap();
 }
 

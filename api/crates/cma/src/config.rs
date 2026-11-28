@@ -212,6 +212,8 @@ pub struct Config {
     pub lifecycle_failure_metadata_enabled: bool,
     pub activity_async_enabled: bool,
     pub activity_operational_read_sampling_enabled: bool,
+    pub activity_ingress_audit_enabled: bool,
+    pub activity_gateway_audit_subject: Option<layer2_core::SubjectId>,
     pub default_profiles: DefaultProfileConfig,
     pub agent_manager_sandbox_capacity: layer3_adapter::SandboxCapacity,
     pub desktop_verified_runtime_image: Option<String>,
@@ -377,6 +379,11 @@ impl Config {
             );
         }
         let agent_manager_replicas = AgentManagerReplicas::from_lookup(&mut lookup)?;
+        if runtime.pool_rollout.fixed_prewarm_generation.is_some()
+            && agent_manager_replicas.is_none()
+        {
+            return Err("fixed-pin prewarm requires CHRONO_AGENT_MANAGER_REPLICAS_ENABLED for provider target fencing".into());
+        }
         if features.agent_shared_observation && agent_manager_replicas.is_none() {
             return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGENT_MANAGER_REPLICAS_ENABLED".into());
         }
@@ -429,6 +436,8 @@ impl Config {
             lifecycle_failure_metadata_enabled: lifecycle_failure::enabled(&mut lookup)?,
             activity_async_enabled: activity::enabled(&mut lookup)?,
             activity_operational_read_sampling_enabled: activity::sampling_enabled(&mut lookup)?,
+            activity_ingress_audit_enabled: activity::ingress_audit_enabled(&mut lookup)?,
+            activity_gateway_audit_subject: activity::gateway_audit_subject(&mut lookup)?,
             default_profiles,
             agent_manager_sandbox_capacity,
             desktop_verified_runtime_image: lookup("CHRONO_DESKTOP_VERIFIED_RUNTIME_IMAGE")?

@@ -210,6 +210,26 @@ impl Authentication {
         headers: &HeaderMap,
         body: &[u8],
     ) -> Result<Proof, ()> {
+        let proof = self.verify_signature(raw, method, uri, headers, body)?;
+        let now = now()?;
+        let mut nonces = self.nonces.lock().unwrap();
+        nonces.retain(|_, until| *until > now);
+        if nonces.len() >= 8192 || nonces.contains_key(&proof.nonce) {
+            return Err(());
+        }
+        nonces.insert(proof.nonce.clone(), proof.until);
+        Ok(proof)
+    }
+
+    /// Classify a signed hop without consuming its nonce or granting authority.
+    pub(super) fn verify_signature(
+        &self,
+        raw: &str,
+        method: &Method,
+        uri: &Uri,
+        headers: &HeaderMap,
+        body: &[u8],
+    ) -> Result<Proof, ()> {
         if raw.len() > 4096 {
             return Err(());
         }
@@ -228,12 +248,6 @@ impl Authentication {
         if proof.until <= now || proof.until > now + 10 {
             return Err(());
         }
-        let mut nonces = self.nonces.lock().unwrap();
-        nonces.retain(|_, until| *until > now);
-        if nonces.len() >= 8192 || nonces.contains_key(&proof.nonce) {
-            return Err(());
-        }
-        nonces.insert(proof.nonce.clone(), proof.until);
         Ok(proof)
     }
 }

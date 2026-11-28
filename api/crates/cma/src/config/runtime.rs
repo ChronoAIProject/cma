@@ -5,10 +5,10 @@ use axum::http::HeaderValue;
 use super::{parse_canonical_https_origin, required};
 
 pub(crate) mod canary;
+mod pool_rollout;
+use pool_rollout::{parse_pinned_image, SHA256_SEPARATOR};
 
 const MAX_URL_LENGTH: usize = 2_048;
-const MAX_IMAGE_REFERENCE_LENGTH: usize = 2_048;
-const SHA256_SEPARATOR: &str = "@sha256:";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Provider {
@@ -68,6 +68,7 @@ pub(crate) struct RuntimeConfig {
     /// ordinary Agent creation from silently changing its runtime.
     pub machine_sandbox_image: Option<String>,
     pub runtime_pointer: Option<crate::runtime_pointer::RuntimePointerConfig>,
+    pub(crate) pool_rollout: pool_rollout::PoolRollout,
     pub(crate) runtime_canary_releases: canary::Catalog,
     pub(crate) runtime_canary_writes: canary::WriteScope,
     pub(crate) retained_runtime_writes: canary::WriteScope,
@@ -305,6 +306,11 @@ impl RuntimeConfig {
         if runtime_pointer.is_some() && (!allocate_agent_sandbox || agent_sandbox.is_none()) {
             return Err("runtime pointer following requires native allocation".into());
         }
+        let pool_rollout = pool_rollout::PoolRollout::from_lookup(
+            lookup,
+            runtime_pointer.is_none() && allocate_agent_sandbox && agent_sandbox.is_some(),
+            machine_sandbox_image.is_some(),
+        )?;
         if legacy_receiver_image.is_some()
             && (agent_sandbox.is_none()
                 || agent_sandbox_runtime_transport
@@ -352,6 +358,7 @@ impl RuntimeConfig {
             github_repository_runtime_images,
             machine_sandbox_image,
             runtime_pointer,
+            pool_rollout,
             runtime_canary_releases,
             runtime_canary_writes,
             retained_runtime_writes,
@@ -429,33 +436,6 @@ fn parse_canonical_https_base_url(key: &str, raw: &str) -> Result<String, String
         ));
     }
     Ok(canonical)
-}
-
-fn parse_pinned_image(key: &str, raw: &str) -> Result<String, String> {
-    let valid = raw
-        .rsplit_once(SHA256_SEPARATOR)
-        .is_some_and(|(image, digest)| {
-            raw.len() <= MAX_IMAGE_REFERENCE_LENGTH
-                && !image.is_empty()
-                && !image.contains('@')
-                && !image.contains("://")
-                && !image.starts_with(['.', '-', '_', '/', ':'])
-                && !image.ends_with(['.', '-', '_', '/', ':'])
-                && !image.contains("//")
-                && image.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'/' | b':')
-                })
-                && digest.len() == 64
-                && digest
-                    .bytes()
-                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
-        });
-    if !valid {
-        return Err(format!(
-            "{key} must be an immutable OCI image reference ending in @sha256: and 64 lowercase hexadecimal digits"
-        ));
-    }
-    Ok(raw.to_owned())
 }
 
 fn parse_sandbox_namespace(key: &str, raw: &str) -> Result<String, String> {

@@ -58,6 +58,7 @@ impl PoolTarget {
                     None
                 }
             }),
+            reconciliation_failure: self.reconciliation_failure.clone(),
             machine: self.machine,
             current_runtime: None,
         }

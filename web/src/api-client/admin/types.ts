@@ -121,6 +121,9 @@ const activityOutcome = tagged(
   },
   'status',
 );
+export const activityChannel = enumeration('web', 'api', 'cli', 'sdk', 'service', 'unknown');
+export type ActivityChannel = Output<typeof activityChannel>;
+export type ActivityResult = 'succeeded' | 'refused' | 'failed';
 const activityFields = {
   id: text,
   at: text,
@@ -131,6 +134,13 @@ const activityFields = {
   action: activityAction,
   target: nullable(activityTarget),
   outcome: activityOutcome,
+  channel: optional(activityChannel),
+  request_id: optional(text),
+  route: optional(text),
+  method: optional(text),
+  credential_kind: optional(text),
+  actor_scope: optional(text),
+  http_status: optional(integer),
 };
 export const activitySummary = object(activityFields);
 export type ActivitySummary = Output<typeof activitySummary>;

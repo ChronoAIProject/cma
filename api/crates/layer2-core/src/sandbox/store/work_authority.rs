@@ -18,6 +18,28 @@ pub enum ClaimedWork {
     Workspace(Box<Workspace>),
 }
 
+#[derive(Debug)]
+pub enum WorkAuthorityFailure {
+    Authority(SandboxStoreError),
+    RenewalTimeout,
+    RenewalRefused,
+    Renewal(SandboxStoreError),
+    InvalidGrant(SandboxStoreError),
+    Execution(SandboxStoreError),
+}
+
+impl WorkAuthorityFailure {
+    pub fn into_store_error(self) -> SandboxStoreError {
+        match self {
+            Self::Authority(error)
+            | Self::Renewal(error)
+            | Self::InvalidGrant(error)
+            | Self::Execution(error) => error,
+            Self::RenewalTimeout | Self::RenewalRefused => SandboxStoreError::Conflict,
+        }
+    }
+}
+
 /// The identity is immutable, even when an operation loads a newer revision.
 /// Nested Workspace execution also retains the originating Sandbox authority.
 #[derive(Clone)]
@@ -102,43 +124,63 @@ impl WorkAuthority {
         Ok(())
     }
 
-    async fn heartbeat<R, F>(&self, renew: &mut R) -> Result<Instant, SandboxStoreError>
+    async fn heartbeat<R, F>(&self, renew: &mut R) -> Result<Instant, WorkAuthorityFailure>
     where
         R: FnMut() -> F,
         F: Future<Output = Result<Option<WorkLeaseGrant>, SandboxStoreError>>,
     {
         let start = Instant::now();
         let limit = self
-            .deadline()?
+            .deadline()
+            .map_err(WorkAuthorityFailure::Authority)?
             .min(start + Duration::from_secs(WORK_RENEW_SECONDS));
         let grant = tokio::time::timeout_at(limit, renew())
             .await
-            .map_err(|_| SandboxStoreError::Conflict)??
-            .ok_or(SandboxStoreError::Conflict)?;
-        self.accept(start, grant)?;
+            .map_err(|_| WorkAuthorityFailure::RenewalTimeout)?
+            .map_err(WorkAuthorityFailure::Renewal)?
+            .ok_or(WorkAuthorityFailure::RenewalRefused)?;
+        self.accept(start, grant)
+            .map_err(WorkAuthorityFailure::InvalidGrant)?;
         Ok(start + Duration::from_secs(WORK_RENEW_SECONDS))
     }
 
     /// The effect future is never polled before an immediate renewal succeeds.
     /// A slow effect cannot suppress heartbeat polling. Dropping this scope
     /// cancels local work; it does not claim that remote effects were cancelled.
-    pub async fn run<T, W, R, F>(&self, work: W, mut renew: R) -> Result<T, SandboxStoreError>
+    pub async fn run<T, W, R, F>(&self, work: W, renew: R) -> Result<T, SandboxStoreError>
     where
         W: Future<Output = Result<T, SandboxStoreError>>,
         R: FnMut() -> F,
         F: Future<Output = Result<Option<WorkLeaseGrant>, SandboxStoreError>>,
     {
-        let mut chain = Self::current()?;
+        self.run_observed(work, renew)
+            .await
+            .map_err(WorkAuthorityFailure::into_store_error)
+    }
+
+    pub async fn run_observed<T, W, R, F>(
+        &self,
+        work: W,
+        mut renew: R,
+    ) -> Result<T, WorkAuthorityFailure>
+    where
+        W: Future<Output = Result<T, SandboxStoreError>>,
+        R: FnMut() -> F,
+        F: Future<Output = Result<Option<WorkLeaseGrant>, SandboxStoreError>>,
+    {
+        let mut chain = Self::current().map_err(WorkAuthorityFailure::Authority)?;
         chain.push(self.clone());
         let _closed = CloseOnDrop(Arc::clone(&self.validity));
         CURRENT.scope(chain, async {
             let mut next = self.heartbeat(&mut renew).await?;
             tokio::pin!(work);
             loop {
-                let deadline = self.deadline()?;
+                let deadline = self.deadline().map_err(WorkAuthorityFailure::Authority)?;
                 tokio::select! {
                     biased;
-                    _ = tokio::time::sleep_until(deadline) => return Err(SandboxStoreError::Conflict),
+                    _ = tokio::time::sleep_until(deadline) => {
+                        return Err(WorkAuthorityFailure::Authority(SandboxStoreError::Conflict));
+                    }
                     _ = tokio::time::sleep_until(next) => {
                         // Publication and renewal can contend on the same row.
                         // Let work holding that row proceed under the current grant.
@@ -149,7 +191,7 @@ impl WorkAuthority {
                             result = &mut work => return result,
                         }
                     }
-                    result = &mut work => return result,
+                    result = &mut work => return result.map_err(WorkAuthorityFailure::Execution),
                 }
             }
         }).await

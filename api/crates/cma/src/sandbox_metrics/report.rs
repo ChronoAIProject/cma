@@ -6,6 +6,19 @@ use layer2_core::sandbox_metrics::*;
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 impl MetricsWorkers {
+    pub(super) async fn retire_reports(&self) {
+        loop {
+            let delay = match self.store.prune_cache(now()).await {
+                Ok(()) => 2,
+                Err(error) => {
+                    tracing::warn!(%error, "sandbox report retirement deferred");
+                    10
+                }
+            };
+            tokio::time::sleep(Duration::from_secs(delay)).await;
+        }
+    }
+
     pub(super) async fn reports(&self, slot: u8) {
         let slot = format!("report:{slot}");
         let mut work = self.store.report_work();

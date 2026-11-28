@@ -99,11 +99,8 @@ impl SandboxWorker {
         match self.dependencies.adapter.provision_runtime(&request).await {
             Ok(handle) => {
                 timing.completed("runtime_provision");
-                let boot_id = match crate::sandbox::runtime_attachment::provisioned_runtime_status(
-                    self.dependencies.adapter.as_ref(),
-                    &request.spec,
-                    &handle,
-                    generation,
+                let boot_id = match Box::pin(
+                    self.initial_provisioned_runtime_status(&sandbox, &request, &handle),
                 )
                 .await
                 {

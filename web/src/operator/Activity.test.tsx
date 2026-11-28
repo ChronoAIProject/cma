@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it } from 'vitest';
 import { ApiError, type ActivitySummary } from '@cma/client';
@@ -26,6 +26,49 @@ function pending() {
 }
 
 describe('Activity summary pages', () => {
+  it('shows authenticated channel and request ID and reapplies filters from the first page', async () => {
+    const client = operatorClient();
+    client.admin.listActivitySummary.mockResolvedValue({
+      items: [
+        {
+          ...row('agent-target'),
+          actor: 'verified-user',
+          channel: 'api',
+          method: 'POST',
+          route: '/api/v1/agents/{id}/input',
+          request_id: '00000000-0000-4000-8000-000000000022',
+          http_status: 202,
+        },
+      ],
+      next: null,
+    });
+    const user = userEvent.setup();
+    render(<Activity client={client} />);
+    expect(await screen.findByText('API · client unknown')).toBeVisible();
+    expect(screen.getByText('00000000-0000-4000-8000-000000000022')).toBeVisible();
+    expect(screen.getByText('POST /api/v1/agents/{id}/input')).toBeVisible();
+    await chooseOptionValue(user, screen.getByLabelText('Activity channel'), 'api');
+    await chooseOptionValue(user, screen.getByLabelText('Activity result'), 'succeeded');
+    fireEvent.change(screen.getByLabelText('Recorded from (SGT)'), {
+      target: { value: '2026-11-28T16:00' },
+    });
+    fireEvent.change(screen.getByLabelText('Recorded before (SGT)'), {
+      target: { value: '2026-11-28T17:00' },
+    });
+    await user.click(screen.getByRole('button', { name: 'Apply filters' }));
+    await waitFor(() =>
+      expect(client.admin.listActivitySummary).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+          cursor: undefined,
+          channel: 'api',
+          result: 'succeeded',
+          recordedFrom: '2026-11-28T16:00:00+08:00',
+          recordedBefore: '2026-11-28T17:00:00+08:00',
+        }),
+      ),
+    );
+  });
+
   it('announces the cursor position and actual record range through navigation and refresh', async () => {
     const client = operatorClient();
     client.admin.listActivitySummary.mockImplementation(async (options) => {

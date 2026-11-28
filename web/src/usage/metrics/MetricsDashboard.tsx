@@ -77,12 +77,17 @@ function MetricsDashboardContent({
     measured,
     true,
   );
+  const needsDailyPreview =
+    !state.report &&
+    Boolean(state.pending) &&
+    (effectiveSelection.range === '7d' || effectiveSelection.range === '30d');
   useWarmUsageRanges(
     api,
     effectiveSelection,
     admin,
     principal,
-    visible && !state.error && Boolean(state.report || state.pending),
+    visible && !state.error && (needsDailyPreview || Boolean(state.report && !state.refreshing)),
+    needsDailyPreview,
   );
   const [group, setGroup] = useState<Group>('total');
   const [metric, setMetric] = useState<Metric>('cpu');
@@ -92,13 +97,14 @@ function MetricsDashboardContent({
   const preview = state.report ? undefined : state.fallback;
   const displayedReport = state.report ?? preview?.report;
   const reportId = displayedReport?.report_id;
-  const initialMatchesSelection =
-    !preview &&
-    state.initial &&
-    state.initialProjection?.first_page?.sort === effectiveSelection.sort &&
-    state.initialProjection?.first_page?.order === effectiveSelection.order;
-  const initialPage = initialMatchesSelection ? state.initial?.rows : undefined;
-  const initialCharts = initialMatchesSelection ? state.initial?.charts : undefined;
+  const initial = preview ? preview.initial : state.initial;
+  const projection = preview ? preview.initialProjection : state.initialProjection;
+  const initialPage =
+    projection?.first_page?.sort === effectiveSelection.sort &&
+    projection?.first_page?.order === effectiveSelection.order
+      ? initial?.rows
+      : undefined;
+  const initialCharts = initial?.charts;
   const onFailure = useCallback(
     (failure: MetricsFailure) => {
       if (reportId) setBlocked({ report: reportId, failure });

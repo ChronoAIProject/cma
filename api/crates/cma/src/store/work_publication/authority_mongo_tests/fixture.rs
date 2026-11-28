@@ -71,8 +71,7 @@ impl Fixture {
     }
 
     pub(super) async fn fail(&self, command: &str, times: i32, unknown_commit: bool) {
-        self.reset_trace();
-        let mut data = doc! {"failCommands":[command], "appName":&self.app};
+        let mut data = doc! {"failCommands":[command]};
         if unknown_commit {
             data.insert(
                 "writeConcernError",
@@ -85,6 +84,12 @@ impl Fixture {
             data.insert("errorCode", 112_i32);
             data.insert("errorLabels", vec!["TransientTransactionError"]);
         }
+        self.fail_command(times, data).await;
+    }
+
+    pub(super) async fn fail_command(&self, times: i32, mut data: Document) {
+        data.insert("appName", &self.app);
+        self.reset_trace();
         self.admin
             .database("admin")
             .run_command(doc! {

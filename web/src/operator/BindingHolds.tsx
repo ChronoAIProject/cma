@@ -86,8 +86,9 @@ export function BindingHolds({ client }: { readonly client: OperatorClient }) {
         </div>
       </header>
       <p className="operator-notice">
-        Observations from registered reporters may omit starting or unreachable processes. This view
-        does not establish deployment-wide health. Reading it does not retry a binding.
+        This diagnostic counts only Sandboxes whose runtime binding has been deferred. Registered
+        reporters may omit starting or unreachable processes. Reading this panel does not retry a
+        binding.
       </p>
       {!current || current.busy ? <p role="status">Reading binding observations…</p> : null}
       {current?.error && (
@@ -99,8 +100,11 @@ export function BindingHolds({ client }: { readonly client: OperatorClient }) {
       {data && (
         <>
           <p role="status">
-            <strong>{data.observed_sandboxes} observed Sandboxes</strong> · {data.reports.length} of{' '}
-            {data.registered_reporters} sampled reporters answered.
+            <strong>
+              {data.observed_sandboxes} {data.observed_sandboxes === 1 ? 'Sandbox' : 'Sandboxes'}{' '}
+              with deferred bindings
+            </strong>{' '}
+            · {data.reports.length} of {data.registered_reporters} sampled reporters answered.
           </p>
           <p className="operator-notice">
             Read at <ObservationTime value={data.observed_at} />. Refresh for a new observation.

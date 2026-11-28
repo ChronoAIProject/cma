@@ -429,7 +429,9 @@ test('LOCAL unbound response never advertises Stop; focus outside the composer c
     const field = page.getByRole('textbox', { name: 'Message', exact: true });
     await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeDisabled();
     await expect(
-      page.getByText('Stop is unavailable for this response.', { exact: true }),
+      page.getByText('Stop is unavailable because this turn has no bound response.', {
+        exact: true,
+      }),
     ).toBeVisible();
     await field.press('Escape');
     await expect(page.getByText('Esc to stop', { exact: true })).toHaveCount(0);
