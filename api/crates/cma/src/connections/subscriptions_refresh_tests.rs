@@ -58,6 +58,29 @@ async fn forced_refresh_accepts_a_different_cache_published_while_waiting() {
 }
 
 #[tokio::test]
+async fn refreshed_codex_0172_cache_is_committed_without_losing_metadata() {
+    let raw = cache("account", 7200);
+    let mut upgraded: serde_json::Value = serde_json::from_str(raw.expose()).unwrap();
+    upgraded["tokens"]["oauth_provenance"] = serde_json::json!({
+        "issuer": "https://example.invalid",
+        "client_id": "synthetic-client"
+    });
+    upgraded["tokens"]["login_owner_id"] = "synthetic-login".into();
+    let renewed = SecretValue::new(upgraded.to_string());
+    let (manager, store, native, owner) = fixture(renewed.clone()).await;
+    native.release.add_permits(1);
+    let tokens = manager
+        .tokens(&owner, false, Some("account"))
+        .await
+        .unwrap();
+    assert_eq!(tokens.account_id, "account");
+    assert_eq!(native.calls.load(Ordering::SeqCst), 1);
+    let record = store.get(&owner).await.unwrap().unwrap();
+    assert_eq!(record.cache, Some(renewed));
+    assert!(record.refresh_lease.is_none());
+}
+
+#[tokio::test]
 async fn changed_incarnation_or_lease_holder_defeats_refresh_completion() {
     for incarnation in [true, false] {
         let (manager, store, native, owner) = fixture(cache("account", 3600)).await;

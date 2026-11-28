@@ -84,6 +84,29 @@ fn admitted_cache_preserves_credentials_expiry_and_redaction() {
 }
 
 #[test]
+fn codex_0172_cache_metadata_preserves_legacy_and_admitted_projection() {
+    let raw = cache("one", "one", 1000);
+    let legacy = SubscriptionTokens::from_native_cache(&raw).unwrap();
+    let mut upgraded: serde_json::Value = serde_json::from_str(raw.expose()).unwrap();
+    upgraded["tokens"]["oauth_provenance"] = serde_json::json!({
+        "issuer": "https://example.invalid",
+        "client_id": "synthetic-client"
+    });
+    upgraded["tokens"]["login_owner_id"] = "synthetic-login".into();
+    let updated = SecretValue::new(upgraded.to_string());
+    let tokens = SubscriptionTokens::from_native_cache(&updated).unwrap();
+    assert_eq!(tokens.access_token, legacy.access_token);
+    assert_eq!(tokens.account_id, legacy.account_id);
+    assert_eq!(tokens.plan_type, legacy.plan_type);
+    assert_eq!(tokens.expires_at, legacy.expires_at);
+    assert_parity(&updated);
+    upgraded["tokens"]["account_id"] = "other".into();
+    let invalid = SecretValue::new(upgraded.to_string());
+    assert!(SubscriptionTokens::from_native_cache(&invalid).is_err());
+    assert_parity(&invalid);
+}
+
+#[test]
 fn admitted_cache_preserves_domain_rejections_and_releases_scratch() {
     for raw in [
         cache("one", "two", 1000),
