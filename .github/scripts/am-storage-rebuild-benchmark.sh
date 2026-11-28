@@ -24,6 +24,7 @@ build=(cargo build --release --locked --bin cma
 
 run_timed() {
     local phase=$1
+    printf 'Starting %s release build\n' "$phase" >&2
     python3 - "$evidence/$phase.seconds" "${build[@]}" <<'PYTHON'
 from pathlib import Path
 import subprocess
@@ -32,7 +33,10 @@ import time
 
 start = time.monotonic()
 subprocess.run(sys.argv[2:], check=True)
-Path(sys.argv[1]).write_text(str(time.monotonic() - start))
+elapsed = time.monotonic() - start
+path = Path(sys.argv[1])
+path.write_text(str(elapsed))
+print(f"{path.stem} release build completed in {elapsed:.3f} seconds", file=sys.stderr)
 PYTHON
 }
 
