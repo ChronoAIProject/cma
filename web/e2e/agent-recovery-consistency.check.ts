@@ -67,7 +67,8 @@ test('LOCAL completed-turn recovery agrees across task, header and tools after r
     ).toBeVisible();
     await expect(task(page)).toHaveAccessibleName(/Turn ended/);
     await expect(headerStatus(page, 'Ready')).toBeVisible();
-    await expect(progress.getByText('Turn ended', { exact: true })).toBeVisible();
+    await expect(progress.getByText('Turn ended', { exact: true })).toHaveCount(0);
+    await expect(progress.locator('.agent-mascot__artwork')).toHaveCount(0);
     await expect(page.getByText('Refreshing live updates…', { exact: true })).toHaveCount(0);
     await expect(page.locator('[data-streaming]')).toHaveCount(0);
     await page.reload();

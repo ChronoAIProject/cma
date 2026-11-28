@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import markMarkup from '../assets/brand/cma-mark.svg?raw';
+import { pixelBrand } from '../assets/brand/pixel/identity';
+import { useBrandTheme } from '../brand/AgentMascot';
 import './LandingCharacter.css';
 
 export type CharacterState = 'brand' | 'running' | 'completed' | 'pending' | 'failed';
@@ -25,6 +26,7 @@ export function LandingCharacter({
   readonly autoRotate?: boolean;
   readonly onActivate?: () => void;
 }) {
+  const mark = pixelBrand.mark[useBrandTheme()];
   const hostRef = useRef<HTMLButtonElement & HTMLSpanElement>(null);
   const [invited, setInvited] = useState(false);
 
@@ -128,11 +130,7 @@ export function LandingCharacter({
             }
       }
     >
-      <span
-        className="landing__character-fallback"
-        aria-hidden="true"
-        dangerouslySetInnerHTML={{ __html: markMarkup }}
-      />
+      <img className="landing__character-fallback" src={mark} alt="" aria-hidden="true" />
       {onActivate === undefined ? null : (
         <span className="landing__character-invitation" aria-hidden="true">
           <span>Click to start...</span>

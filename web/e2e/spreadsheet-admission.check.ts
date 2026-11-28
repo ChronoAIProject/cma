@@ -148,7 +148,7 @@ for (const theme of ['light', 'dark']) {
       expect(writes).toHaveLength(1);
       expect(writes[0]!.body).toEqual(body(LINK));
       expect(writes[0]!.key).toBeTruthy();
-      const followup = page.getByRole('textbox', { name: 'Follow-up draft', exact: true });
+      const followup = page.getByRole('textbox', { name: 'Follow-up message', exact: true });
       await followup.fill('a later invalid draft');
       await page.reload();
       await settle(page);

@@ -35,7 +35,7 @@ const draw = (conversation: ConversationState) => (
 );
 afterEach(() => vi.useRealTimers());
 
-it('keeps one current-turn picture through tools, approval, deadline and verified completion', () => {
+it('keeps one current-turn picture through tools and approval until normal completion', () => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-01-01T00:04:59.000Z'));
   const client = agentClient();
@@ -84,11 +84,15 @@ it('keeps one current-turn picture through tools, approval, deadline and verifie
     progress().getByText('Waiting for the server to confirm the approval outcome'),
   ).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Waiting for your approval' })).toBeVisible();
+  const completionStatus = container.querySelector('.sr-only[role="status"]');
+  expect(completionStatus).toBeEmptyDOMElement();
   rerender(branded(ended));
-  expect(progress().getByText('Turn ended')).toBeVisible();
+  expect(completionStatus).toHaveTextContent('Turn completed.');
+  expect(container.querySelector('.sr-only[role="status"]')).toBe(completionStatus);
+  expect(screen.queryByText('Turn ended', { exact: true })).not.toBeInTheDocument();
   rerender(branded(ended, acceptance));
-  expect(progress().getByText('Task complete')).toBeVisible();
-  expect(container.querySelector('.turn-activity .agent-mascot__artwork')).toBe(art);
+  expect(container.querySelector('.turn-activity .agent-mascot__artwork')).toBeNull();
+  expect(art).not.toBeInTheDocument();
   rerender(branded({ ...working, activeRunId: '2', latestTurnId: '2' }, acceptance, 2));
   expect(progress().getByText('Waiting for a response')).toBeVisible();
 });

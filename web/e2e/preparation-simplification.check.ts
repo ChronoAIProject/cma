@@ -27,7 +27,8 @@ for (const theme of ['dark', 'light']) {
       const message = preparation.getByRole('region', { name: 'Original request' });
       await message.getByRole('button', { name: 'Show more' }).click();
       expect(await message.locator('p').textContent()).toBe(original);
-      const input = page.getByRole('textbox', { name: 'Follow-up draft', exact: true });
+      const input = page.getByRole('textbox', { name: 'Follow-up message', exact: true });
+      await expect(preparation.getByText('Follow-up draft', { exact: true })).toHaveCount(0);
       await input.fill(followup);
       await input.press('Control+Enter');
       await input.press('Meta+Enter');
@@ -81,7 +82,7 @@ for (const theme of ['dark', 'light']) {
       await page.getByRole('button', { name: 'Start task', exact: true }).click();
       const preparation = page.getByRole('region', { name: 'Task preparation', exact: true });
       await expect(preparation.locator(`time[datetime="${acceptedAt}"]`)).toBeVisible();
-      await page.getByRole('textbox', { name: 'Follow-up draft', exact: true }).fill(followup);
+      await page.getByRole('textbox', { name: 'Follow-up message', exact: true }).fill(followup);
       const request = structuredClone(local.creates);
       if (state === 'stalled') local.stall();
       else if (state === 'failed') local.fail();
@@ -97,9 +98,9 @@ for (const theme of ['dark', 'light']) {
       await expect(preparation.locator(`time[datetime="${acceptedAt}"]`)).toBeVisible();
       await expect(preparation.locator(`time[datetime="${progressAt}"]`)).toBeVisible();
       await expect(preparation.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
-      await expect(page.getByRole('textbox', { name: 'Follow-up draft', exact: true })).toHaveValue(
-        followup,
-      );
+      await expect(
+        page.getByRole('textbox', { name: 'Follow-up message', exact: true }),
+      ).toHaveValue(followup);
       await expect(preparation.locator('.agent-mascot__poster')).toHaveCount(1);
       await expect(preparation.locator('.agent-mascot__sprite')).toHaveCount(0);
       if (state === 'failed')

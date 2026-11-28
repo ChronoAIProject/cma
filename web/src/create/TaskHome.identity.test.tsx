@@ -274,7 +274,7 @@ it('resumes shared desktop and repository only on explicit connection action wit
   expect(screen.getByText('Shared desktop')).toBeInTheDocument();
   expect(writes).toHaveLength(1);
   expect(checks).toBe(checksBeforeRefresh);
-  fireEvent.change(screen.getByLabelText('Follow-up draft'), {
+  fireEvent.change(screen.getByLabelText('Follow-up message'), {
     target: { value: 'Next task draft' },
   });
   fireEvent.click(screen.getByRole('button', { name: 'Continue original task' }));
@@ -286,7 +286,7 @@ it('resumes shared desktop and repository only on explicit connection action wit
     machine_included: true,
   });
   expect(checks).toBe(checksBeforeRefresh + 1);
-  expect(screen.getByLabelText('Follow-up draft')).toHaveValue('Next task draft');
+  expect(screen.getByLabelText('Follow-up message')).toHaveValue('Next task draft');
 });
 
 it.each(['client', 'account', 'context', 'unmount'] as const)(

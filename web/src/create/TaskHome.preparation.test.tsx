@@ -43,7 +43,7 @@ async function submit() {
   fireEvent.change(screen.getByLabelText('Your task'), { target: { value: request } });
   await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
-  return screen.findByRole('textbox', { name: 'Follow-up draft' });
+  return screen.findByRole('textbox', { name: 'Follow-up message' });
 }
 
 it('renders one preparation host and keeps the original request separate from a reloadable unsent draft', async () => {
@@ -65,7 +65,7 @@ it('renders one preparation host and keeps the original request separate from a 
   expect(h.create).toHaveBeenCalledTimes(1);
   view.unmount();
   view = render(h.draw());
-  expect(await screen.findByRole('textbox', { name: 'Follow-up draft' })).toHaveValue(followup);
+  expect(await screen.findByRole('textbox', { name: 'Follow-up message' })).toHaveValue(followup);
   expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toBe(original);
   expect(h.create).toHaveBeenCalledTimes(1);
   expect(h.navigate).not.toHaveBeenCalled();

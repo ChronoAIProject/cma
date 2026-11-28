@@ -53,17 +53,11 @@ it('uses one personal identity for recorded and optimistic messages and one Agen
   expect(agents[1]!.querySelector('.message__avatar')!.childElementCount).toBe(0);
   for (const row of agents.slice(0, 1)) {
     expect(within(row).getByText('Chrono Agent')).toBeVisible();
-    // The mark is inline SVG painted with currentColor, never a raster with its own ground.
     const avatar = row.querySelector('.message__avatar')!;
     expect(avatar).toHaveAttribute('aria-hidden', 'true');
-    expect(avatar.querySelector('img')).toBeNull();
-    expect(avatar.querySelector('svg')).not.toBeNull();
-    for (const painted of avatar.querySelectorAll('[fill], [stroke]')) {
-      for (const attribute of ['fill', 'stroke']) {
-        const value = painted.getAttribute(attribute);
-        if (value !== null) expect(['currentColor', 'none']).toContain(value);
-      }
-    }
+    const poster = avatar.querySelector('.agent-mascot__poster');
+    expect(poster).toHaveAttribute('alt', '');
+    expect(poster).toHaveAttribute('width', '32');
     expect(row.querySelector('canvas')).toBeNull();
   }
   expect(agents[1]).toHaveAttribute('data-streaming');
@@ -159,7 +153,7 @@ describe('identity runs', () => {
     expect(own.map(named)).toEqual(['Ada Lovelace', null, 'Ada Lovelace']);
     expect(agent.map(named)).toEqual(['Chrono Agent', null]);
     expect(own[1]!.querySelector('img')).toBeNull();
-    expect(agent[1]!.querySelector('.message__avatar svg')).toBeNull();
+    expect(agent[1]!.querySelector('.message__avatar img')).toBeNull();
     const process = screen.getByRole('button', { name: 'Check status Duration unavailable' });
     expect(process).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(process);

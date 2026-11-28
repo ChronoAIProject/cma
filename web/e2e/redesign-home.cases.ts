@@ -252,7 +252,7 @@ export function registerRedesignHomeCases() {
       const recovery = page.getByRole('region', { name: 'Task preparation', exact: true });
       await expect(recovery.getByRole('alert')).toContainText('resend the same request');
       await expect(recovery.getByRole('alert')).toHaveCount(1);
-      const followup = page.getByRole('textbox', { name: 'Follow-up draft', exact: true });
+      const followup = page.getByRole('textbox', { name: 'Follow-up message', exact: true });
       await followup.fill('Separate newer draft');
       await capture(page, info, theme, 'receipt-unconfirmed');
       for (const width of [320, 360, 390, 720]) {

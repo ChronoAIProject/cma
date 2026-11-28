@@ -58,8 +58,8 @@ export function useTurnVisual(
     (latestTurnId === undefined || latestTurnId === turnId) &&
     outcome === undefined;
   const completed = status === 'ready' && activeRunId === undefined && outcome === 'completed';
-  if (!active && !completed) return;
   const acceptance = completed ? acceptanceForTurn(taskAcceptance, turnId) : undefined;
+  if (!active && taskAcceptanceStatus(acceptance) !== 'needs_attention') return;
   const current = agentVisual({
     status,
     task: active ? 'working' : (taskAcceptanceStatus(acceptance) ?? 'completed'),

@@ -26,10 +26,14 @@ export function AgentSandboxStatus({
         <LifecycleProgress {...observation} />
       ) : null}
       {onReviewEnvironment ? (
-        <section aria-label="Cancel Agent setup">
+        <section className="setup-cancel" aria-label="Cancel Agent setup">
           <Alert
             tone="info"
-            actions={<Button onClick={onReviewEnvironment}>Review environment</Button>}
+            actions={
+              <Button variant="outline" onClick={onReviewEnvironment}>
+                Cancel setup…
+              </Button>
+            }
           >
             {SETUP_ENVIRONMENT_NOTICE}
           </Alert>

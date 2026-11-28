@@ -87,7 +87,7 @@ it.each([false, true])(
     expect(
       screen.queryByRole('menuitemcheckbox', { name: 'Agent browser' }),
     ).not.toBeInTheDocument();
-    fireEvent.change(screen.getByLabelText('Follow-up draft'), {
+    fireEvent.change(screen.getByLabelText('Follow-up message'), {
       target: { value: 'Next task draft' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));

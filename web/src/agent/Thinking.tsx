@@ -1,8 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
-import markMarkup from '../assets/brand/cma-mark.svg?raw';
+import { AgentMascot } from '../brand/AgentMascot';
 import { elapsedTime } from './workspaceTime';
 import { ThinkingProgress, type recordedTurnActivity } from './ThinkingProgress';
-const markHtml = { __html: markMarkup };
 import './Thinking.css';
 
 export interface ThinkingActivityBody {
@@ -88,11 +87,9 @@ export function Thinking({
       <div className="thinking__key">
         {branded ? null : (
           <>
-            <span
-              className="thinking__logo"
-              aria-hidden="true"
-              dangerouslySetInnerHTML={markHtml}
-            />
+            <span className="thinking__logo" aria-hidden="true">
+              <AgentMascot visual={{ action: 'working', label: 'Working' }} size={16} decorative />
+            </span>
             <span className="thinking__title" role="status">
               {waitingForResponse ? 'Waiting for a response' : 'Thinking'}
             </span>
