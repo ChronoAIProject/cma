@@ -11,7 +11,13 @@ const bsonCeilingTest = 'store::sandbox_mongo_integration_tests::resource_access
 const firstResponseTest = 'store::usage_reports::tests::submission::default_day_report_serves_four_hundred_sandboxes_without_polling';
 const historyTest = 'store::usage_reports::tests::history_batch::seven_day_history_generates_and_reuses_complete_421_member_report';
 const rankedProjectionTest = 'store::usage_reports::tests::projection_scale::aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources';
-const isolatedTests = [scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest];
+const responseReplayTest = 'store::sandbox_mongo_integration_tests::resource_access_tests::history_measurement::observation_budget::response_shared::shared_adopted_response_complete_routes_meet_unchanged_budgets_and_exact_replay';
+const isolatedModes = [
+  ['scale', scaleTest], ['owner', ownerTest], ['audit', auditTest], ['diagnostics', diagnosticsTest],
+  ['scan', scanTest], ['bson', bsonCeilingTest], ['first-response', firstResponseTest],
+  ['history', historyTest], ['ranked-projection', rankedProjectionTest], ['response-replay', responseReplayTest],
+];
+const isolatedTests = isolatedModes.map(([, name]) => name);
 // On-demand only: neither the listing nor any PR shard selects it.
 const observationTest = 'store::sandbox_mongo_integration_tests::resource_access_tests::history_measurement::observation_budget::observation_one_hundred_observers_on_two_replicas_for_thirty_minutes';
 // The isolated fixtures start many mock subprocesses before ordinary work.
@@ -19,7 +25,7 @@ const observationTest = 'store::sandbox_mongo_integration_tests::resource_access
 const runnerSetupTimeoutMs = 30_000;
 const fixturePredicate = 'not test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure) & not test(=store::native_warm_pools::retirement::machine_selection::tests::fixed_pin_machine_selection_works_without_released_runtime_grant) & not test(=agent_manager::relay::tests::mongo::preferences::process_recovery::child::preferences_replica_child) & not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) & not test(=store::bindings::reset_tests::gateway_reset_tests::profile_reset_receipt_replays_after_a_later_channel_revision) & not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison) & not test(=store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration) & not test(=store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix) & not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_disabled_services_and_ownerless_receiver_refuse_new_streams) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows) & not test(=store::sandbox_mongo_integration_tests::command_ledger_tests::execution_tests::stale_turn_tests::native_stop_trace::native_stop_trace_recorder_ack_matches_a_fresh_checkpoint) & not test(=store::agent_log_segments::active_proof::prepare::tests::active_proof_operator_cli_uses_generated_isolated_role)';
 const qualificationPredicate = `not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=${observationTest}))`;
-const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}) or test(=${auditTest}) or test(=${diagnosticsTest}) or test(=${scanTest}) or test(=${bsonCeilingTest}) or test(=${firstResponseTest}) or test(=${historyTest}) or test(=${rankedProjectionTest})) & ${qualificationPredicate}`;
+const ordinaryPredicate = `not (${isolatedTests.map(name => `test(=${name})`).join(' or ')}) & ${qualificationPredicate}`;
 
 function fixture(scenario, reuse = false) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'cma-mongo-runner-test-')));
@@ -60,32 +66,10 @@ if (command === 'cargo') {
     const testcases = Object.fromEntries(Array.from({length:count}, (_, index) => [
       'store::usage_reports::tests::ordinary_'+index, {ignored:scenario !== 'list-not-ignored', 'filter-match':{status:'matches'}},
     ]));
-    if (!['list-empty', 'list-no-scale'].includes(scenario)) {
-      testcases[${JSON.stringify(scaleTest)}] = {ignored:scenario !== 'list-scale-not-ignored', 'filter-match':{status:'matches'}};
-    }
-    if (!['list-empty', 'list-no-owner'].includes(scenario)) {
-      testcases[${JSON.stringify(ownerTest)}] = {ignored:scenario !== 'list-owner-not-ignored', 'filter-match':{status:'matches'}};
-    }
-    if (!['list-empty', 'list-no-audit'].includes(scenario)) {
-      testcases[${JSON.stringify(auditTest)}] = {ignored:scenario !== 'list-audit-not-ignored', 'filter-match':{status:'matches'}};
-    }
-    if (!['list-empty', 'list-no-diagnostics'].includes(scenario)) {
-      testcases[${JSON.stringify(diagnosticsTest)}] = {ignored:scenario !== 'list-diagnostics-not-ignored', 'filter-match':{status:'matches'}};
-    }
-    if (!['list-empty', 'list-no-scan'].includes(scenario)) {
-      testcases[${JSON.stringify(scanTest)}] = {ignored:scenario !== 'list-scan-not-ignored', 'filter-match':{status:'matches'}};
-    }
-    if (!['list-empty', 'list-no-bson'].includes(scenario)) {
-      testcases[${JSON.stringify(bsonCeilingTest)}] = {ignored:scenario !== 'list-bson-not-ignored', 'filter-match':{status:'matches'}};
-    }
-    if (!['list-empty', 'list-no-first-response'].includes(scenario)) {
-      testcases[${JSON.stringify(firstResponseTest)}] = {ignored:scenario !== 'list-first-response-not-ignored', 'filter-match':{status:'matches'}};
-    }
-    if (!['list-empty', 'list-no-history'].includes(scenario)) {
-      testcases[${JSON.stringify(historyTest)}] = {ignored:scenario !== 'list-history-not-ignored', 'filter-match':{status:'matches'}};
-    }
-    if (!['list-empty', 'list-no-ranked-projection'].includes(scenario)) {
-      testcases[${JSON.stringify(rankedProjectionTest)}] = {ignored:scenario !== 'list-ranked-projection-not-ignored', 'filter-match':{status:'matches'}};
+    const exclusiveModes = ${JSON.stringify(isolatedModes)};
+    for (const [mode, name] of exclusiveModes) {
+      if (scenario === 'list-empty' || scenario === 'list-no-' + mode) continue;
+      testcases[name] = {ignored:scenario !== 'list-' + mode + '-not-ignored', 'filter-match':{status:'matches'}};
     }
     for (const name of Object.keys(JSON.parse(fs.readFileSync(path.join(process.cwd(), '../.github/scripts/mongo-contract-exceptions.json'))))) {
       testcases[name] = {ignored:true, 'filter-match':{status:'mismatch'}};
@@ -94,15 +78,9 @@ if (command === 'cargo') {
     if (scenario === 'list-selected-helper') testcases['sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child']['filter-match'].status = 'matches';
     if (scenario === 'list-stale-exception') delete testcases['sandbox::agent_worker_tests::sdk_conformance_tests::official_responses_sdk_server'];
     const suites = {'cma::bin/cma':{'package-name':'cma', 'binary-name':'cma', kind:'bin', testcases}};
-    if (scenario === 'list-duplicate-scale') suites.duplicate = {testcases:{[${JSON.stringify(scaleTest)}]:testcases[${JSON.stringify(scaleTest)}]}};
-    if (scenario === 'list-duplicate-owner') suites.duplicate = {testcases:{[${JSON.stringify(ownerTest)}]:testcases[${JSON.stringify(ownerTest)}]}};
-    if (scenario === 'list-duplicate-audit') suites.duplicate = {testcases:{[${JSON.stringify(auditTest)}]:testcases[${JSON.stringify(auditTest)}]}};
-    if (scenario === 'list-duplicate-diagnostics') suites.duplicate = {testcases:{[${JSON.stringify(diagnosticsTest)}]:testcases[${JSON.stringify(diagnosticsTest)}]}};
-    if (scenario === 'list-duplicate-scan') suites.duplicate = {testcases:{[${JSON.stringify(scanTest)}]:testcases[${JSON.stringify(scanTest)}]}};
-    if (scenario === 'list-duplicate-bson') suites.duplicate = {testcases:{[${JSON.stringify(bsonCeilingTest)}]:testcases[${JSON.stringify(bsonCeilingTest)}]}};
-    if (scenario === 'list-duplicate-first-response') suites.duplicate = {testcases:{[${JSON.stringify(firstResponseTest)}]:testcases[${JSON.stringify(firstResponseTest)}]}};
-    if (scenario === 'list-duplicate-history') suites.duplicate = {testcases:{[${JSON.stringify(historyTest)}]:testcases[${JSON.stringify(historyTest)}]}};
-    if (scenario === 'list-duplicate-ranked-projection') suites.duplicate = {testcases:{[${JSON.stringify(rankedProjectionTest)}]:testcases[${JSON.stringify(rankedProjectionTest)}]}};
+    for (const [mode, name] of exclusiveModes) {
+      if (scenario === 'list-duplicate-' + mode) suites.duplicate = {testcases:{[name]:testcases[name]}};
+    }
     console.log(JSON.stringify({'rust-suites':suites}));
     process.exit(0);
   }
@@ -114,34 +92,29 @@ if (command === 'cargo') {
     if (args.includes('--partition')) process.exit(8);
     process.exit(scenario === 'cpu-error' ? 7 : scenario === 'cpu-empty' ? 4 : 0);
   }
-  const scale = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${scaleTest})');
-  const owner = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${ownerTest})');
-  const audit = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${auditTest})');
-  const diagnostics = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${diagnosticsTest})');
-  const scan = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${scanTest})');
-  const bson = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${bsonCeilingTest})');
-  const firstResponse = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${firstResponseTest})');
-  const history = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${historyTest})');
-  const rankedProjection = args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${rankedProjectionTest})');
-  const isolated = rankedProjection || history || scale || owner || audit || diagnostics || scan || bson || firstResponse;
-  const partition = isolated ? 'count:1/1' : args[args.indexOf('--partition') + 1];
+  const selector = args[args.indexOf('-E')+1];
+  const exclusiveModes = ${JSON.stringify(isolatedModes)};
+  const exclusiveIndex = exclusiveModes.findIndex(([, name]) => selector.startsWith('package(=cma) and test(=' + name + ')'));
+  const exclusive = exclusiveModes[exclusiveIndex];
+  const partition = exclusive ? 'count:1/1' : args[args.indexOf('--partition') + 1];
   const match = /^count:([1-9][0-9]*)\\/([1-9][0-9]*)$/.exec(partition);
-  if (!match) process.exit(8);
-  const index = scale ? 0 : owner ? -1 : audit ? -2 : diagnostics ? -3 : scan ? -4 : bson ? -5 : firstResponse ? -6 : history ? -7 : rankedProjection ? -8 : Number(match[1]);
+  if (!match || (exclusive && args.includes('--partition'))) process.exit(8);
+  const index = exclusive ? -exclusiveIndex : Number(match[1]);
   const count = scenario.startsWith('shard') ? 321 : scenario.startsWith('batches') ? 161 : 80;
-  const selected = scale ? [${JSON.stringify(scaleTest)}] : owner ? [${JSON.stringify(ownerTest)}] : audit ? [${JSON.stringify(auditTest)}] : diagnostics ? [${JSON.stringify(diagnosticsTest)}] : scan ? [${JSON.stringify(scanTest)}] : bson ? [${JSON.stringify(bsonCeilingTest)}] : firstResponse ? [${JSON.stringify(firstResponseTest)}] : history ? [${JSON.stringify(historyTest)}] : rankedProjection ? [${JSON.stringify(rankedProjectionTest)}] : Array.from({length:count}, (_, i) =>
+  const selected = exclusive ? [exclusive[1]] : Array.from({length:count}, (_, i) =>
     'store::usage_reports::tests::ordinary_'+i).filter((_, i) => i % Number(match[2]) === index-1);
   fs.writeFileSync(log+'.selected-'+index, JSON.stringify(selected));
   fs.writeFileSync(log+'.started-'+index, 'started');
   if (scenario === 'batches-cleanup-error' && index === 1) fs.writeFileSync(log+'.failed-cleanup-uri', process.env.CHRONO_TEST_MONGODB_URI);
-  if ((scenario === 'scale-empty' && scale) || (scenario === 'owner-empty' && owner) || (scenario === 'audit-empty' && audit) || (scenario === 'diagnostics-empty' && diagnostics) || (scenario === 'scan-empty' && scan) || (scenario === 'bson-empty' && bson) || (scenario === 'first-response-empty' && firstResponse) || (scenario === 'history-empty' && history) || (scenario === 'ranked-projection-empty' && rankedProjection) || (scenario === 'ordinary-empty' && index === 1)) {
+  if (scenario === (exclusive ? exclusive[0] + '-empty' : 'ordinary-empty') && (exclusive || index === 1)) {
     console.log('Starting 0 tests');
     const option = args.indexOf('--no-tests');
     const policy = option >= 0 ? args[option+1] : process.env.NEXTEST_NO_TESTS;
     fs.writeFileSync(log+'.empty-'+index, policy || 'auto');
     process.exit(policy === 'pass' ? 0 : 4);
   }
-  if ((scenario === 'batches-cleanup-error' && index === 2) || (scenario === 'cancel' && !isolated) || (scenario === 'cancel-scale' && scale) || (scenario === 'cancel-owner' && owner) || (scenario === 'cancel-audit' && audit) || (scenario === 'cancel-diagnostics' && diagnostics) || (scenario === 'cancel-scan' && scan) || (scenario === 'cancel-history' && history)) { setInterval(() => {}, 1000); }
+  if ((scenario === 'batches-cleanup-error' && index === 2) ||
+      scenario === (exclusive ? 'cancel-' + exclusive[0] : 'cancel')) { setInterval(() => {}, 1000); }
   else {
     const deadline = Date.now()+5000;
     while (!scenario.startsWith('shard') && index >= 1 && index <= 2 && !fs.existsSync(log+'.started-'+(3-index))) {
@@ -149,7 +122,9 @@ if (command === 'cargo') {
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
     }
     fs.writeFileSync(log+'.finished-'+index, 'finished');
-    process.exit((['test-error','batches-error','shard-error'].includes(scenario) && index === 1) || (scenario === 'scale-error' && scale) || (scenario === 'owner-error' && owner) || (scenario === 'audit-error' && audit) || (scenario === 'diagnostics-error' && diagnostics) || (scenario === 'scan-error' && scan) || (scenario === 'bson-error' && bson) || (scenario === 'first-response-error' && firstResponse) || (scenario === 'history-error' && history) || (scenario === 'ranked-projection-error' && rankedProjection) ? 7 : 0);
+    const failed = exclusive ? scenario === exclusive[0] + '-error'
+      : ['test-error','batches-error','shard-error'].includes(scenario) && index === 1;
+    process.exit(failed ? 7 : 0);
   }
 } else {
   const file = name => log+'.container-'+name;
@@ -235,4 +210,4 @@ if (command === 'cargo') {
   };
 }
 
-export { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, isolatedTests, observationTest, runnerSetupTimeoutMs, fixturePredicate, qualificationPredicate, ordinaryPredicate, fixture };
+export { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, responseReplayTest, isolatedTests, observationTest, runnerSetupTimeoutMs, fixturePredicate, qualificationPredicate, ordinaryPredicate, fixture };

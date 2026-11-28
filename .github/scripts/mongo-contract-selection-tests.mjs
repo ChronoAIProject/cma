@@ -97,7 +97,7 @@ done
 }
 const expression = args => args[args.indexOf('-E') + 1];
 
-export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
+export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, responseReplayTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
   test('selection proof parses old and isolated owner and audit predicates', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
     const result = execFileSync('python3', ['-c', `
@@ -105,9 +105,9 @@ import json, runpy, sys
 parse = runpy.run_path(sys.argv[1])["mongo_filters"]
 source = sys.argv[2]
 before = "\\n".join(line for line in source.splitlines()
-    if not line.startswith(("readonly owner_allocation_test=", "readonly audit_bounds_test=", "readonly diagnostics_test=", "readonly scan_cooperation_test=", "readonly bson_ceiling_test=", "readonly first_response_test=", "readonly history_test=", "readonly ranked_projection_test="))
-    and not line.strip().startswith(("owner-allocation)", "audit-bounds)", "diagnostics)", "scan-cooperation)", "bson-ceiling)", "first-response)", "history)", "ranked-projection)")))
-before = before.replace('not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test) or test(=$first_response_test) or test(=$history_test) or test(=$ranked_projection_test))', 'not test(=$scale_test)')
+    if not line.startswith(("readonly owner_allocation_test=", "readonly audit_bounds_test=", "readonly diagnostics_test=", "readonly scan_cooperation_test=", "readonly bson_ceiling_test=", "readonly first_response_test=", "readonly history_test=", "readonly ranked_projection_test=", "readonly response_replay_test="))
+    and not line.strip().startswith(("owner-allocation)", "audit-bounds)", "diagnostics)", "scan-cooperation)", "bson-ceiling)", "first-response)", "history)", "ranked-projection)", "response-replay)")))
+before = before.replace('not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test) or test(=$first_response_test) or test(=$history_test) or test(=$ranked_projection_test) or test(=$response_replay_test))', 'not test(=$scale_test)')
 print(json.dumps({"before": parse(before), "after": parse(source)}))
 `, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
       env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
@@ -150,6 +150,7 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
     ['first-response', 'first_response_test', firstResponseTest],
     ['history', 'history_test', historyTest],
     ['ranked-projection', 'ranked_projection_test', rankedProjectionTest],
+    ['response-replay', 'response_replay_test', responseReplayTest],
   ]) {
     test(`selection proof moves only ${mode} from ordinary partitions`, () => {
       const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
@@ -233,7 +234,7 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
     const profile = invocations.ordinary[invocations.ordinary.indexOf('--profile') + 1];
     for (const [mode, args] of Object.entries(invocations)) {
       const profileIndex = args.indexOf('--profile');
-      const budgeted = mode === 'ordinary' || mode === 'ranked-projection';
+      const budgeted = ['ordinary', 'ranked-projection', 'response-replay'].includes(mode);
       assert.equal(profileIndex !== -1, budgeted, `${mode} nextest profile`);
       if (budgeted) assert.equal(args[profileIndex + 1], profile);
     }
@@ -329,7 +330,7 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
 test('merged runner selections share the complete contract corpus and fixture exclusions', () => {
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
   const modes = ['all', 'ordinary', 'scale', 'owner-allocation', 'audit-bounds', 'diagnostics',
-    'scan-cooperation', 'history', 'ranked-projection', 'request-limits', 'agent-list-contracts', 'availability',
+    'scan-cooperation', 'history', 'ranked-projection', 'response-replay', 'request-limits', 'agent-list-contracts', 'availability',
     'agent-list-profile', 'organization-inventory', 'agent-lists', 'cpu-profile', 'observation-budget'];
   const prefix = selectionFunctions(source);
   const captured = execFileSync('bash', ['-c', prefix + `
