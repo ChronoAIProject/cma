@@ -1,6 +1,6 @@
 //! Legacy wire projection from the same certified turn and original points.
 use super::*;
-use crate::responses::v2::projection::indexed::corrupt;
+use crate::responses::v2::projection::indexed::{corrupt, seek_message};
 use layer2_core::sandbox::store::indexed::OUTPUT_PAGE_BYTES;
 use layer2_core::sandbox::{AgentLogEntry, AgentOutputObservation, AgentReadError};
 
@@ -78,25 +78,7 @@ pub(in crate::responses) async fn messages(
     let mut messages = vec![];
     let mut bytes = 2048;
     for ordinal in from..through {
-        let mut low = 0;
-        let mut high = index.changes;
-        // Skip all tool changes via certified message counters. A turn with
-        // few messages never scans every unrelated tool or source event.
-        while low < high {
-            let mid = low + (high - low) / 2;
-            let rows = source.changes(mid, 1).await?;
-            let change = rows.first().ok_or_else(corrupt)?;
-            if change.after.messages <= ordinal {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
-        }
-        let changes = source.changes(low, 1).await?;
-        let change = changes.first().ok_or_else(corrupt)?;
-        if change.message_ordinal != Some(ordinal) {
-            return Err(corrupt());
-        }
+        let change = seek_message(source, ordinal).await?;
         let rows = source.points(&[change.source_sequence]).await?;
         let Some(AgentLogKind::AgentMessage { content }) =
             rows.first().and_then(|r| r.kind.as_ref())

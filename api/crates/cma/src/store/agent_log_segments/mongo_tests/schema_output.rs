@@ -12,6 +12,7 @@ fn output(ordinal: u64) -> Document {
             nonempty_messages: ordinal,
             tool_starts: 0,
             tool_finishes: 0,
+            text: Default::default(),
         },
         after: AgentOutputTotals {
             items: ordinal + 1,
@@ -19,6 +20,7 @@ fn output(ordinal: u64) -> Document {
             nonempty_messages: ordinal + 1,
             tool_starts: 0,
             tool_finishes: 0,
+            text: Default::default(),
         },
         item_ordinal: ordinal,
         message_ordinal: Some(ordinal),

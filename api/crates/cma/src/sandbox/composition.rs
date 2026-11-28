@@ -63,6 +63,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub owner_stop_settlement_enabled: bool,
     pub bounded_live_fragments: bool,
     pub quiet_output: Option<layer2_core::sandbox::AgentOutputCoalescePolicy>,
+    pub incremental_text: bool,
     pub coordinated_ingress: bool,
     pub access_transport_migration: Option<crate::config::AgentAccessMigration>,
     pub managed_documents_enabled: bool,
@@ -194,13 +195,14 @@ impl SandboxLifecycleComposition {
         } else {
             reconciliation
         };
-        let updates = DurableAgentUpdateRecorder::with_output_policy(
+        let updates = DurableAgentUpdateRecorder::with_incremental_output_policy(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),
             Some(dependencies.store.clone()),
             config.bounded_live_fragments,
             config.coordinated_ingress,
             config.quiet_output,
+            config.incremental_text,
         );
         let registry = Arc::clone(&dependencies.registry);
         let suggestions = super::suggestion_worker::SuggestionWorker::new(

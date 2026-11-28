@@ -70,6 +70,7 @@ mod worker_supervision;
 
 use std::sync::Arc;
 
+pub(crate) use projections::{rest_links, rest_router, REST_LINKS};
 use startup::serve;
 
 use axum::{
@@ -78,10 +79,8 @@ use axum::{
     http::{header, HeaderMap, HeaderName, HeaderValue, Method},
     middleware::Next,
     response::Response,
-    routing::any,
     Router,
 };
-use layer1_public::rest::HttpProblem;
 use tower_http::{
     request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
@@ -89,9 +88,6 @@ use tower_http::{
 use tracing::Level;
 
 pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
-pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
-    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", <https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
-);
 
 const DEFAULT_LOG_FILTER: &str = "info";
 const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
@@ -333,22 +329,6 @@ async fn run() {
         tracing::error!(error = %error, "CMA stopped");
         std::process::exit(1);
     }
-}
-
-fn rest_router(resource_routes: Router) -> Router {
-    layer1_public::rest::router()
-        .merge(resource_routes)
-        .route("/api/v1", any(|| async { HttpProblem::NotFound }))
-        .route("/api/v1/", any(|| async { HttpProblem::NotFound }))
-        .route("/api/v1/{*path}", any(|| async { HttpProblem::NotFound }))
-        .method_not_allowed_fallback(|| async { HttpProblem::MethodNotAllowed })
-        .layer(axum::middleware::from_fn(rest_links))
-}
-
-async fn rest_links(request: Request, next: Next) -> Response {
-    let mut response = next.run(request).await;
-    response.headers_mut().append(header::LINK, REST_LINKS);
-    response
 }
 
 fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {

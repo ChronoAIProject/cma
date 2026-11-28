@@ -92,6 +92,12 @@ pub enum AgentLogKind {
     AgentMessage {
         content: String,
     },
+    /// A committed suffix of the current assistant message. The final message
+    /// remains the transcript row.
+    AgentMessageDelta {
+        offset: u32,
+        content: String,
+    },
     TurnCompleted {
         turn_sequence: u64,
     },
