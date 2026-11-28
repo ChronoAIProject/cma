@@ -113,6 +113,19 @@ impl SandboxReconciliationStore for MongoSandboxStore {
         {
             return Ok(true);
         }
+        if self
+            .sandboxes
+            .find_one(doc! {
+                "_id": id.as_str(),
+                (super::sandbox_quarantine::FIELD): {"$exists": true},
+            })
+            .projection(doc! {"_id": 1})
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+            .is_some()
+        {
+            return Ok(true);
+        }
         let Some(reservation) = self.warm_sandbox(id).await? else {
             return Ok(false);
         };
