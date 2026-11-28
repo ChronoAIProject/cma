@@ -185,7 +185,6 @@ async fn connection_recovery_survives_same_member_renewal_contention() {
         .await
         .unwrap();
     assert_eq!(write.matched_count, 1);
-    let start = tokio::time::Instant::now();
     let (scheduled, committed) = tokio::join!(
         f.authority
             .run(f.store.schedule_agent_connection_recovery(request.clone())),
@@ -194,7 +193,6 @@ async fn connection_recovery_survives_same_member_renewal_contention() {
             commit_transaction(&mut held).await
         },
     );
-    let elapsed = start.elapsed();
     // A real renewal must still make progress on the same member and token.
     let renewed = f.independent.renew(&renewing.token).await;
     let repeated = f
@@ -204,6 +202,7 @@ async fn connection_recovery_survives_same_member_renewal_contention() {
     let after = f.snapshot().await;
     let owner = f.independent.owner(&f.agent.id).await.unwrap().unwrap();
     let commands = f.clear().await;
+    let member_conflicts = f.member_write_conflicts();
     f.cleanup().await;
 
     assert!(matches!(committed, CommitOutcome::Committed));
@@ -211,7 +210,10 @@ async fn connection_recovery_survives_same_member_renewal_contention() {
         scheduled.unwrap().unwrap(),
         AgentConnectionRecoveryOutcome::Scheduled
     );
-    assert!(elapsed >= Duration::from_millis(400));
+    assert!(
+        member_conflicts > 0,
+        "the scheduling member write must lose a real code-112 conflict"
+    );
     assert_eq!(
         repeated.unwrap().unwrap(),
         AgentConnectionRecoveryOutcome::AlreadyScheduled
@@ -225,4 +227,112 @@ async fn connection_recovery_survives_same_member_renewal_contention() {
     let attempts = starts(&commands).len();
     assert!((2..=TRANSACTION_ATTEMPTS).contains(&attempts));
     assert_fresh(&commands, attempts);
+}
+
+#[tokio::test]
+#[ignore = "requires disposable replica set via CHRONO_TEST_MONGODB_FAILPOINT_URI"]
+async fn connection_recovery_reports_confirmed_contention_exhaustion() {
+    use layer2_core::sandbox::store::{AgentConnectionRecoveryCandidate, AgentWorkerStore};
+
+    let f = Fixture::new().await;
+    let before = f.snapshot().await;
+    let request = AgentConnectionRecoveryCandidate::from_agent(&f.agent)
+        .unwrap()
+        .restart_request(layer2_core::now_rfc3339());
+    f.fault("update", 0, false, false).await;
+    let result = f
+        .authority
+        .run(f.store.schedule_agent_connection_recovery(request))
+        .await;
+    let commands = f.clear().await;
+    let member_conflicts = f.member_write_conflicts();
+    let after = f.snapshot().await;
+    f.cleanup().await;
+
+    assert_eq!(
+        result.unwrap(),
+        Err(SandboxStoreError::Unavailable(
+            "connection recovery scheduling transaction retry budget exhausted".into()
+        ))
+    );
+    assert_eq!(member_conflicts, TRANSACTION_ATTEMPTS);
+    assert_fresh(&commands, TRANSACTION_ATTEMPTS);
+    assert_eq!(after, before);
+}
+
+#[tokio::test]
+#[ignore = "requires disposable replica set via CHRONO_TEST_MONGODB_FAILPOINT_URI"]
+async fn connection_recovery_unknown_commit_does_not_start_new_transaction() {
+    use layer2_core::sandbox::store::{AgentConnectionRecoveryCandidate, AgentWorkerStore};
+
+    let f = Fixture::new().await;
+    let before = f.snapshot().await;
+    let request = AgentConnectionRecoveryCandidate::from_agent(&f.agent)
+        .unwrap()
+        .restart_request(layer2_core::now_rfc3339());
+    f.fault("commitTransaction", 0, true, false).await;
+    let result = f
+        .authority
+        .run(f.store.schedule_agent_connection_recovery(request))
+        .await;
+    let commands = f.clear().await;
+    let after = f.snapshot().await;
+    f.cleanup().await;
+
+    assert!(
+        matches!(result.unwrap(), Err(SandboxStoreError::Unavailable(detail))
+        if !detail.contains("retry budget exhausted"))
+    );
+    assert_fresh(&commands, 1);
+    assert_eq!(after, before);
+}
+
+#[tokio::test]
+#[ignore = "requires disposable replica set via CHRONO_TEST_MONGODB_FAILPOINT_URI"]
+async fn connection_recovery_rechecks_owner_after_confirmed_abort() {
+    use layer2_core::sandbox::store::{
+        AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome, AgentWorkerStore,
+    };
+
+    let f = Fixture::new().await;
+    let request = AgentConnectionRecoveryCandidate::from_agent(&f.agent)
+        .unwrap()
+        .restart_request(layer2_core::now_rfc3339());
+    let count = f.fault("update", 1, false, true).await;
+    let pending = tokio::spawn({
+        let store = f.store.clone();
+        let authority = f.authority.clone();
+        async move {
+            authority
+                .run(store.schedule_agent_connection_recovery(request))
+                .await
+        }
+    });
+    f.wait_for_fault(count).await;
+    f.independent.heartbeat("original", true).await.unwrap();
+    f.independent.release(&f.authority.token).await.unwrap();
+    f.independent
+        .register(fixture::member("successor"))
+        .await
+        .unwrap();
+    let successor = f
+        .independent
+        .acquire(&f.agent.id, "successor")
+        .await
+        .unwrap()
+        .unwrap();
+    let result = pending.await.unwrap();
+    let commands = f.clear().await;
+    let after = f.snapshot().await;
+    let owner = f.independent.owner(&f.agent.id).await.unwrap().unwrap();
+    f.cleanup().await;
+
+    assert_eq!(
+        result.unwrap().unwrap(),
+        AgentConnectionRecoveryOutcome::Superseded
+    );
+    assert_fresh(&commands, 2);
+    assert_eq!(after.0, f.agent);
+    assert_eq!(owner.token, successor.token);
+    assert!(successor.token.epoch > f.authority.token.epoch);
 }

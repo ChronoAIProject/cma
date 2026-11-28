@@ -245,6 +245,16 @@ async fn update(
             }
         }
     }
+    if connection_recovery {
+        tracing::warn!(
+            agent_id = %id,
+            attempts = TRANSACTION_ATTEMPTS,
+            "Agent connection recovery scheduling transaction retry budget exhausted"
+        );
+        return Err(SandboxStoreError::Unavailable(
+            "connection recovery scheduling transaction retry budget exhausted".into(),
+        ));
+    }
     Err(SandboxStoreError::Conflict)
 }
 
