@@ -3,6 +3,22 @@ use layer3_adapter::{CredentialFrame, RuntimeCredential};
 use super::*;
 use axum::http::HeaderMap;
 
+#[test]
+fn platform_alias_is_limited_to_the_fixed_loopback_pair() {
+    for (bind, expected) in [
+        ("127.0.0.2:9092", Some("127.0.0.1:9092")),
+        ("127.0.0.1:9092", Some("127.0.0.2:9092")),
+        ("127.0.0.1:19092", None),
+        ("127.0.0.3:9092", None),
+        ("[::1]:9092", None),
+    ] {
+        assert_eq!(
+            platform_loopback_alias(bind.parse().unwrap()),
+            expected.map(|address| address.parse().unwrap())
+        );
+    }
+}
+
 #[tokio::test]
 async fn model_credit_required_refuses_before_the_upstream_write() {
     use tower::ServiceExt;

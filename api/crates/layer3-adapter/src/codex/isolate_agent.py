@@ -305,7 +305,11 @@ class TcpServer(socketserver.ThreadingTCPServer):
 def relays(socket_root, inside):
     servers = []
     try:
-        for name, host, port in PROXIES:
+        proxies = PROXIES
+        if inside and ("platform", "127.0.0.2", 9092) in proxies:
+            # Both namespace listeners feed the same restricted host socket.
+            proxies = (*proxies, ("platform", "127.0.0.1", 9092))
+        for name, host, port in proxies:
             path = str(pathlib.Path(socket_root) / (name + ".sock"))
             if inside:
                 server = TcpServer((host, port), Relay)

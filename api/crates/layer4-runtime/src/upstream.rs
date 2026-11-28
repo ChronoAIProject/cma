@@ -162,13 +162,18 @@ pub(crate) struct PreparedProxies {
 impl PreparedProxies {
     pub(crate) async fn bind(config: &RuntimeConfig) -> Result<Self> {
         let mut proxies = Vec::new();
-        for proxy in [&config.model_proxy, &config.platform_proxy]
-            .into_iter()
-            .flatten()
-        {
-            proxies.push(
-                bind_proxy(proxy, config.model_credit_required && proxy.role == "model").await?,
-            );
+        if let Some(model) = &config.model_proxy {
+            proxies.push(bind_proxy(model, config.model_credit_required).await?);
+        }
+        if let Some(platform) = &config.platform_proxy {
+            proxies.push(bind_proxy(platform, false).await?);
+            if let Some(bind) = platform_loopback_alias(platform.bind) {
+                let alias = ProxyConfig {
+                    bind,
+                    ..platform.clone()
+                };
+                proxies.push(bind_proxy(&alias, false).await?);
+            }
         }
         let github = match &config.github_proxy {
             Some(config) => Some(crate::github_proxy::PreparedGithubProxy::bind(config).await?),
@@ -195,6 +200,17 @@ impl PreparedProxies {
         for proxy in self.proxies {
             spawn_proxy(proxy, credential.clone());
         }
+    }
+}
+
+// Preserve both fixed platform addresses across Runtime/Agent Manager upgrades.
+fn platform_loopback_alias(bind: std::net::SocketAddr) -> Option<std::net::SocketAddr> {
+    let legacy = std::net::SocketAddr::from(([127, 0, 0, 2], 9092));
+    let canonical = std::net::SocketAddr::from(([127, 0, 0, 1], 9092));
+    match bind {
+        addr if addr == legacy => Some(canonical),
+        addr if addr == canonical => Some(legacy),
+        _ => None,
     }
 }
 
