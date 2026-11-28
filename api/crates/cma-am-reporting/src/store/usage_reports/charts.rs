@@ -349,27 +349,21 @@ pub(super) async fn fold_sandbox_series<T: ChartRow>(
     let mut owner = String::new();
     let mut sparse = BTreeMap::new();
     let mut expectations = Vec::new();
-    let mut buckets = Vec::new();
-    let complete = |buckets: &mut Vec<Bucket>,
-                    sparse: &BTreeMap<u64, Bucket>,
-                    expectations: &[Expectation]| {
-        series::complete_into(
-            buckets,
-            sparse,
-            expectations,
-            metric,
-            report.effective_range,
-            report.query.step_seconds,
-        )
-    };
+    let mut completion = series::Completion::default();
     while let Some(doc) = cursor.try_next().await.map_err(map_query_error)? {
         if std::time::Instant::now() > deadline {
             return Err(MetricsError::Busy);
         }
         let next = doc.sandbox()?;
         if !sandbox.is_empty() && sandbox != next {
-            complete(&mut buckets, &sparse, &expectations);
-            consume(&sandbox, &owner, &buckets)?;
+            let buckets = completion.complete(
+                &sparse,
+                &expectations,
+                metric,
+                report.effective_range,
+                report.query.step_seconds,
+            );
+            consume(&sandbox, &owner, buckets)?;
             sparse.clear();
             expectations.clear();
         }
@@ -384,8 +378,14 @@ pub(super) async fn fold_sandbox_series<T: ChartRow>(
         }
     }
     if !sandbox.is_empty() {
-        complete(&mut buckets, &sparse, &expectations);
-        consume(&sandbox, &owner, &buckets)?;
+        let buckets = completion.complete(
+            &sparse,
+            &expectations,
+            metric,
+            report.effective_range,
+            report.query.step_seconds,
+        );
+        consume(&sandbox, &owner, buckets)?;
     }
     Ok(())
 }
