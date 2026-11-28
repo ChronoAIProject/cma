@@ -6,7 +6,7 @@ import {
   type AgentTransportJournal,
 } from './journal';
 import { IdentityChangedError } from './identity';
-import { recoverAgentInput, submitAgentInput } from './submit';
+import { inputRetryAt, recoverAgentInput, submitAgentInput } from './submit';
 import { createTransportPreparation } from './preparation';
 import { withRequestRecovery, type RecoveryPolicy, type RequestRecovery } from './requestRecovery';
 import {
@@ -131,6 +131,7 @@ export class AgentV2Session {
     readonly acceptedSteering?: string;
     readonly acceptedInterruption?: string;
     readonly control?: boolean;
+    readonly inputRetryAt?: number;
   } {
     try {
       const input = this.journal.read();
@@ -144,6 +145,7 @@ export class AgentV2Session {
             : undefined,
         input: input?.state === 'pending' ? input.input : undefined,
         acceptedInterruption: interruption?.receipt != null ? interruption.body.text : undefined,
+        inputRetryAt: inputRetryAt(this.journal),
         control: control?.commandId === null || interruption?.receipt === null,
       };
     } catch {

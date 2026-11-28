@@ -205,7 +205,11 @@ export class ResponsesV2 {
     return this.submit(`/api/v2/agents/${segment(id)}/responses`, body, options, id);
   }
   /** Look up the exact admitted input without submitting it. A miss is indeterminate. */
-  findAgentInputReceipt(id: string, body: CreateV2AgentResponseRequest, options: CommandOptions) {
+  findAgentInputReceipt(
+    id: string,
+    body: CreateV2AgentResponseRequest,
+    options: CommandOptions & { readonly requireJson?: boolean },
+  ) {
     input((value) => v2Request(value, id), body);
     const headers = responseKeyHeaders(options.idempotencyKey);
     if (headers === undefined) throw new ValidationError('Supply the original idempotency key');

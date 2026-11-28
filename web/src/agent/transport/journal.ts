@@ -6,6 +6,7 @@ import { QueuedCancellationJournal } from './queuedJournal';
 import { QueuedInputJournal } from './queuedInputJournal';
 import { InterruptionJournal } from './interruptionJournal';
 import { LegacySuggestionJournal } from './legacySuggestionJournal';
+import { inputRefusalJournal } from './inputRefusal';
 import { bindDraftCommand, DraftBindingError } from '../draftDelivery';
 import { acceptDraftCommand, clearOwnerDrafts } from '../draftStorage';
 import {
@@ -97,6 +98,7 @@ export class AgentTransportJournal {
   readonly queuedInputs: QueuedInputJournal;
   readonly interruption: InterruptionJournal;
   readonly legacySuggestion: LegacySuggestionJournal;
+  readonly inputRefusal: ReturnType<typeof inputRefusalJournal>;
 
   constructor(
     private readonly storage: BrowserStorage,
@@ -105,6 +107,11 @@ export class AgentTransportJournal {
     private readonly makeKey: () => string,
   ) {
     this.key = `${PREFIX}${encodeURIComponent(identity.user)}:${encodeURIComponent(agent)}`;
+    this.inputRefusal = inputRefusalJournal(
+      storage,
+      `${this.key}:input-refusal:${identity.epoch}`,
+      () => this.read(),
+    );
     this.legacySuggestion = new LegacySuggestionJournal(
       storage,
       `${this.key}:suggestion:${identity.epoch}`,

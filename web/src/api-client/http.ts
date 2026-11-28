@@ -16,7 +16,10 @@ import {
   TransportError,
   ValidationError,
 } from './errors.js';
+import { retryAfterMilliseconds } from './retryAfter.js';
 import { MAX_REVOCATION_LINK_LENGTH } from './resource-revocation-links.js';
+
+export { retryAfterMilliseconds } from './retryAfter.js';
 
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
@@ -37,6 +40,7 @@ export interface RequestOptions extends OperationOptions {
   /** Binary body for upload endpoints; mutually exclusive with JSON body. */
   readonly rawBody?: Blob;
   readonly headers?: HeadersInit;
+  readonly requireJson?: boolean;
   readonly expectedStatus?: number | readonly number[];
 }
 
@@ -70,14 +74,24 @@ export async function request(
     if (response.status === 204) {
       return null;
     }
-    return readJsonBody(response, signal);
+    return readJsonBody(response, signal, !options.requireJson);
   });
 }
 
 /** Bounded JSON decoding shared with non-problem browser authentication responses. */
-export async function readJsonBody(response: Response, signal?: AbortSignal): Promise<unknown> {
+export async function readJsonBody(
+  response: Response,
+  signal?: AbortSignal,
+  allowEmpty = true,
+): Promise<unknown> {
   const body = await readText(response, signal);
-  if (body.trim() === '') return null;
+  if (allowEmpty && body.trim() === '') return null;
+  if (
+    !allowEmpty &&
+    response.headers.get('content-type')?.split(';', 1)[0]?.trim().toLowerCase() !==
+      'application/json'
+  )
+    throw new ProtocolError('operation expected a JSON response');
   try {
     return JSON.parse(body) as unknown;
   } catch (cause) {
@@ -374,25 +388,6 @@ export function errorFromBody(
     statusLink !== null && statusLink.length <= MAX_REVOCATION_LINK_LENGTH ? statusLink : undefined,
     nonEmptyText(body.type),
   );
-}
-
-const MAX_RETRY_AFTER_MS = 2_147_483_647;
-
-export function retryAfterMilliseconds(response: Response): number | undefined {
-  const value = response.headers.get('retry-after')?.trim();
-  if (value === undefined || value === '') return undefined;
-  if (/^[0-9]+$/.test(value)) {
-    const milliseconds = Number(value) * 1_000;
-    return Number.isSafeInteger(milliseconds) &&
-      milliseconds > 0 &&
-      milliseconds <= MAX_RETRY_AFTER_MS
-      ? milliseconds
-      : undefined;
-  }
-  const milliseconds = Math.ceil(Date.parse(value) - Date.now());
-  return Number.isFinite(milliseconds) && milliseconds > 0 && milliseconds <= MAX_RETRY_AFTER_MS
-    ? milliseconds
-    : undefined;
 }
 
 async function readText(response: Response, signal?: AbortSignal): Promise<string> {

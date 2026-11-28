@@ -4,10 +4,14 @@ import { expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { build } from 'vite';
 import { buildIdentityEvidence } from './identity';
-import { recoveryEvidence, replicaRecoveryEnabled } from './recovery';
+import { inputRefusalRecoveryEnabled, recoveryEvidence, replicaRecoveryEnabled } from './recovery';
 
 it('defaults automatic mutation recovery off and accepts only explicit booleans', () => {
   expect(replicaRecoveryEnabled({})).toBe(false);
+  expect(inputRefusalRecoveryEnabled({ CHRONO_WEB_REPLICA_RECOVERY_ENABLED: 'true' })).toBe(false);
+  expect(inputRefusalRecoveryEnabled({ CHRONO_WEB_INPUT_REFUSAL_RECOVERY_ENABLED: 'true' })).toBe(
+    true,
+  );
   expect(replicaRecoveryEnabled({ CHRONO_WEB_REPLICA_RECOVERY_ENABLED: 'false' })).toBe(false);
   expect(replicaRecoveryEnabled({ CHRONO_WEB_REPLICA_RECOVERY_ENABLED: 'true' })).toBe(true);
 });
@@ -23,6 +27,10 @@ it.each(['', 'TRUE', 'False', '1', '0', ' true', 'false '])(
 
 it('keeps the image build and provenance defaults aligned with Vite', () => {
   const dockerfile = readFileSync(new URL('../../web/Dockerfile', import.meta.url), 'utf8');
+  expect(dockerfile).toContain('ARG CHRONO_WEB_INPUT_REFUSAL_RECOVERY_ENABLED=false');
+  expect(dockerfile).toContain(
+    'CHRONO_WEB_INPUT_REFUSAL_RECOVERY_ENABLED=$CHRONO_WEB_INPUT_REFUSAL_RECOVERY_ENABLED',
+  );
   expect(dockerfile.match(/^ARG CHRONO_WEB_REPLICA_RECOVERY_ENABLED=false$/gm)).toHaveLength(2);
   expect(dockerfile).toContain(
     'CHRONO_WEB_REPLICA_RECOVERY_ENABLED=$CHRONO_WEB_REPLICA_RECOVERY_ENABLED',
@@ -48,7 +56,7 @@ it.each([false, true])('emits matching immutable evidence for recovery %s', asyn
         load: (id) => (id === 'virtual:recovery-fixture' ? 'export const fixture = true;' : null),
       },
       buildIdentityEvidence(identity),
-      recoveryEvidence(identity, enabled),
+      recoveryEvidence(identity, enabled, !enabled),
     ],
     build: { write: false, rollupOptions: { input: 'virtual:recovery-fixture' } },
   });
@@ -60,5 +68,9 @@ it.each([false, true])('emits matching immutable evidence for recovery %s', asyn
     return JSON.parse(asset.source);
   };
   expect(evidence('build-info.json')).toEqual(identity);
-  expect(evidence('recovery-info.json')).toEqual({ ...identity, replicaRecoveryEnabled: enabled });
+  expect(evidence('recovery-info.json')).toEqual({
+    ...identity,
+    replicaRecoveryEnabled: enabled,
+    inputRefusalRecoveryEnabled: !enabled,
+  });
 });

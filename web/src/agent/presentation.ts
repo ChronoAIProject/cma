@@ -25,7 +25,10 @@ export function usePresentedRetainedInputs(
   legacy: AgentV2Session | undefined,
   pending: AgentCommand | undefined,
   onIdentityChange: (error: unknown) => boolean,
-  recoverInputError?: (session: AgentV2Session, key: string) => () => void,
+  recoverInputError?: (
+    session: AgentV2Session,
+    key: string,
+  ) => (outcome?: 'accepted' | 'refused') => void,
 ) {
   const [checked, setChecked] = useState<{ session: AgentV2Session; key: string }>();
   const legacyInput = legacy?.journal.legacySuggestion.read();
@@ -53,6 +56,9 @@ export function usePresentedRetainedInputs(
             if (!controller.signal.aborted) recovered?.();
           }, controller.signal);
     void receipt
+      .then((result) => {
+        if (v2 && result === 'refused' && !controller.signal.aborted) recovered?.('refused');
+      })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) onIdentityChange(error);
       })
@@ -63,6 +69,7 @@ export function usePresentedRetainedInputs(
   }, [checkingInputReceipt, key, onIdentityChange, recoverInputError, session, v2]);
 
   const retained = v2?.pending();
+  const inputCoolingDown = useInputCooldown(retained?.inputRetryAt);
   return {
     readSuggestionRequest: () => v2?.journal.read() ?? legacy?.journal.legacySuggestion.read(),
     pendingMessage:
@@ -73,7 +80,23 @@ export function usePresentedRetainedInputs(
     acceptedInterruptionMessage: retained?.acceptedInterruption,
     pendingControl: retained?.control,
     checkingInputReceipt,
+    inputCoolingDown,
   };
+}
+
+function useInputCooldown(retryAt: number | undefined) {
+  const [elapsed, setElapsed] = useState<number>();
+  useEffect(() => {
+    if (retryAt === undefined || retryAt === elapsed) return;
+    const wake = () => {
+      const remaining = retryAt - Date.now();
+      if (remaining <= 0) setElapsed(retryAt);
+      else timer = setTimeout(wake, remaining);
+    };
+    let timer = setTimeout(wake, Math.max(0, retryAt - Date.now()));
+    return () => clearTimeout(timer);
+  }, [retryAt, elapsed]);
+  return retryAt !== undefined && retryAt !== elapsed;
 }
 
 function pendingInputKey(session: AgentV2Session | undefined) {

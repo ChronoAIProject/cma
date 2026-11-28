@@ -86,9 +86,13 @@ export function useOptimisticMessages(
     const previous = retained(mode);
     const source = mode === 'steer' || mode === 'interrupt' ? mode : undefined;
     let previousKey = previous?.key;
+    const ordinaryInput = mode === undefined || mode === 'queue' ? previous : retained();
+    const ordinaryInputReleased = session !== undefined && ordinaryInput === null;
     update((current) => [
       // A different next draft must not discard a refused message's text/files.
-      ...current.filter((row) => row.state !== 'not_sent' || row.content !== content),
+      ...current
+        .map((row) => ordinaryRefused(row, ordinaryInputReleased))
+        .filter((row) => row.state !== 'not_sent' || row.content !== content),
       ...(previous?.state === 'accepted' && !current.some((row) => row.key === previous.key)
         ? [
             {
@@ -205,7 +209,7 @@ export function useOptimisticMessages(
         record === null
       )
         return { ...row, state: 'not_sent' };
-      return row;
+      return ordinaryRefused(row, session !== undefined && input === null);
     })
     .filter(
       (row) =>
@@ -219,4 +223,16 @@ export function useOptimisticMessages(
         ),
     );
   return { begin, messages: visible };
+}
+
+function ordinaryRefused(row: OptimisticMessage, inputReleased: boolean): OptimisticMessage {
+  if (
+    inputReleased &&
+    row.source === undefined &&
+    row.key !== undefined &&
+    row.state === 'unconfirmed' &&
+    row.receipt === undefined
+  )
+    return { ...row, state: 'not_sent' };
+  return row;
 }

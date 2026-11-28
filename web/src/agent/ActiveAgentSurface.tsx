@@ -456,6 +456,7 @@ export function ActiveAgentSurface({
                     ? 'checking'
                     : controller.responseControls
             }
+            inputCoolingDown={controller.inputCoolingDown}
             requestPending={
               controller.pendingMessage !== undefined || controller.pendingControl === true
             }
