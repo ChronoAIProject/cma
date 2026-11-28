@@ -1,0 +1,241 @@
+[
+  {
+    "id": "cma-user.usage.refresh",
+    "role": "user",
+    "feature": "Refresh usage and recover a failed report explicitly",
+    "entry_point": "Your usage → Refresh usage / retry",
+    "steps": [
+      "Open a completed or failed personal report",
+      "Request an explicit refresh/retry",
+      "Observe the exact admitted report until ready or terminal failure"
+    ],
+    "expected_result": "Refresh reports freshness honestly and observes the admitted job identity; it does not hide allocation failures behind endless new jobs.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/view",
+        "openapi_path": "/api/v1/usage/metrics/view",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/reports",
+        "openapi_path": "/api/v1/usage/metrics/reports",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/reports/{report}",
+        "openapi_path": "/api/v1/usage/metrics/reports/{report}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/UsageOverviewHeader.tsx",
+        "line": 18,
+        "sha256": "900348aed44cfeb45305c5be11f8a89b64f9cfc3d6514665b05ad1f1764befcf",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 183,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/UsageReportProgress.tsx",
+        "line": 13,
+        "sha256": "9c3cc87d2e32be7efb1dbce7efba6243bca396c3908498d0fb4b15f81ebe60dc",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.usage.table-charts",
+    "role": "user",
+    "feature": "Inspect allocation/measured summaries, charts and paged inventory",
+    "entry_point": "Your usage → Allocation overview / charts / Sandboxes table",
+    "steps": [
+      "Use an already completed report",
+      "Read allocation summary and measurement freshness/coverage where available",
+      "Change chart series and inspect tabular chart data",
+      "Sort and page Sandbox rows; expand permitted details"
+    ],
+    "expected_result": "Charts, rows and totals share the exact report identity; absent measurements are shown as unavailable rather than zero and pagination remains scoped.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/reports/{report}/sandboxes",
+        "openapi_path": "/api/v1/usage/metrics/reports/{report}/sandboxes",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}",
+        "openapi_path": "/api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/reports/{report}/series",
+        "openapi_path": "/api/v1/usage/metrics/reports/{report}/series",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/MetricsDashboard.tsx",
+        "line": 25,
+        "sha256": "6e12f406a04e08c552c7f5fe025248189af66fa79fcd771e56bc6ed137fb4615",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricSummary.tsx",
+        "line": 120,
+        "sha256": "a306167f7b65e76502f173f873e49d7ae30ac152144a178c0cee6593af3e416f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricChart.tsx",
+        "line": 25,
+        "sha256": "ae78a4059981aadd586fe816da02fbf9de78e47693237aa20bbb36432fed1dec",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricTable.tsx",
+        "line": 14,
+        "sha256": "770bb17a5b6fb4e2427b8213885982f056ac6baf1e1608edd50887830e4aeb3c",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/UsageInventoryRow.tsx",
+        "line": 9,
+        "sha256": "746fafae64c5253c3a10bdff832c1e41a07a03609d4ebe93c5836905bc5bfccb",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.usage.event-history",
+    "role": "user",
+    "feature": "Inspect per-Sandbox allocation history",
+    "entry_point": "Your usage → Sandbox detail/history",
+    "steps": [
+      "Open a Sandbox usage detail from a completed report",
+      "Read allocation/lifecycle events",
+      "Page through event history"
+    ],
+    "expected_result": "History is authorized for the selected Sandbox and reports actual event times/changes without inferring missing measurements.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}",
+        "openapi_path": "/api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/{id}/events",
+        "openapi_path": "/api/v1/usage/sandboxes/{id}/events",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/usage/UsageHistory.tsx",
+        "line": 9,
+        "sha256": "b743d503015396d284a790dbadf3ca6e3e152e63710285df211068fb168405a7",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricDetail.tsx",
+        "line": 14,
+        "sha256": "c9a3a96752170305b7aa9905e2bc1163b92daaaaf89f0d80a9bfd86726620ea6",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricsDashboard.tsx",
+        "line": 25,
+        "sha256": "6e12f406a04e08c552c7f5fe025248189af66fa79fcd771e56bc6ed137fb4615",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.navigation.eg-transition",
+    "role": "user",
+    "feature": "Navigate from CMA to Event Gateway and return",
+    "entry_point": "Command menu → Event Gateway; /event-gateway",
+    "steps": [
+      "Open Event Gateway from CMA",
+      "Check account identity and the selected service surface",
+      "Return to an authorized CMA Agent"
+    ],
+    "expected_result": "Navigation preserves correct account authority; detailed bots, Your usage and EG-to-AM verification are tracked by eg.json.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/shell/commands.tsx",
+        "line": 36,
+        "sha256": "62b73a7e9a6c8b617604ef1d1c39b6eae16fa5cbc6cd700b88810e1f54c87f26",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/App.tsx",
+        "line": 42,
+        "sha256": "9adb36427103a534178d07432f19387b37533f9923ae821373773127869214bc",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/BotManagement.tsx",
+        "line": 20,
+        "sha256": "77099a943c0e36b5236faa3a67339ff6bd110cf95b42ae1eb45608ff8703eeb1",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.navigation.admin-denied",
+    "role": "user",
+    "feature": "Keep Operations unavailable to a non-admin user",
+    "entry_point": "Account menu and direct /operations",
+    "steps": [
+      "Use a non-admin local test account",
+      "Inspect the Account menu",
+      "Open /operations directly"
+    ],
+    "expected_result": "Operations is hidden or denied according to current capabilities; no admin data or write control leaks through direct navigation.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 50,
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/operator/OperationsRoute.tsx",
+        "line": 9,
+        "sha256": "1526e3711b8869560a64073d82396fa45d47e8672f0a2d1c6dec9fb0fd7d20f6",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/operator/capabilities.ts",
+        "line": 3,
+        "sha256": "06de0d1e18d8cc9ecca3811d4514af413d37d6238df6fad59219319ecd1e0533",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

@@ -1,0 +1,254 @@
+[
+  {
+    "id": "EG-031",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Delete disposable channel",
+    "entry_point": "Channel inspector -> Delete channel",
+    "steps": [
+      "Open delete confirmation for a test-owned channel.",
+      "Confirm, then reload list and the old ID across replicas."
+    ],
+    "expected_result": "The intended version is removed and no new events dispatch through the deleted channel; unrelated channels remain.",
+    "writes": true,
+    "api": [
+      "DELETE /v1/channels/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/ChannelEditor.tsx",
+        "line": 368,
+        "anchor": "export function DeleteChannel",
+        "sha256": "08b57a858e8f321172020103c0667e4ce472144a730654a936b553fdacf8012c"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10681,
+        "anchor": "\"operationId\": \"deleteChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-032",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Telegram via NyxID: connect, receive, AM turn and reply",
+    "entry_point": "NyxID Telegram bot/route -> EG channel producer nyxid_relay -> assigned consumer -> platform chat",
+    "steps": [
+      "Use the designated test Telegram bot and exact NyxID issuer/key/route; inspect channel callback and verification mode.",
+      "Send an admitted numbered message, wait for the actual platform answer, then send a contextual follow-up.",
+      "Join event/conversation/response IDs to both serving AM and owning AM; repeat at least three times in the single caller lane."
+    ],
+    "expected_result": "The correct verified sender/conversation reaches the correct consumer and AM, and each intended answer returns once to the correct destination with follow-up context preserved.",
+    "writes": true,
+    "api": [
+      "POST /v1/callbacks/{channel_id}",
+      "POST provider-advertised AM responses path (CMA: /api/v2/responses)"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/RelaySetupGuidance.tsx",
+        "line": 4,
+        "anchor": "telegram:",
+        "sha256": "10b4b09a2530f992f1f8d585dcf5a1b06f216b3a42141beb231f70646c0913cb"
+      },
+      {
+        "path": "web/src/services/channelForm/SourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e71be645b1570d4635baecdeee56e9b00ad2e277c2590171ddcdf8d6393133d9"
+      },
+      {
+        "path": "api/crates/cmaeg/src/http/chat_dispatch.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "0408047e8714802c7de1a2bea97e724100bbef12930bab096a165b0e3a6ce116"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/client.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c9aeb7385f96415e925876aff28c28eaec932c69f502d28588c173d93198e537"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10153,
+        "anchor": "\"operationId\": \"receiveRelayCallback\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-033",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Discord via NyxID: connect, receive, AM turn and reply",
+    "entry_point": "NyxID Discord bot/route -> EG channel producer nyxid_relay -> assigned consumer -> platform chat",
+    "steps": [
+      "Use the designated test Discord bot and exact NyxID issuer/key/route; inspect channel callback and verification mode.",
+      "Send an admitted numbered message, wait for the actual platform answer, then send a contextual follow-up.",
+      "Join event/conversation/response IDs to both serving AM and owning AM; repeat at least three times in the single caller lane."
+    ],
+    "expected_result": "The correct verified sender/conversation reaches the correct consumer and AM, and each intended answer returns once to the correct destination with follow-up context preserved.",
+    "writes": true,
+    "api": [
+      "POST /v1/callbacks/{channel_id}",
+      "POST provider-advertised AM responses path (CMA: /api/v2/responses)"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/RelaySetupGuidance.tsx",
+        "line": 9,
+        "anchor": "discord:",
+        "sha256": "10b4b09a2530f992f1f8d585dcf5a1b06f216b3a42141beb231f70646c0913cb"
+      },
+      {
+        "path": "web/src/services/channelForm/SourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e71be645b1570d4635baecdeee56e9b00ad2e277c2590171ddcdf8d6393133d9"
+      },
+      {
+        "path": "api/crates/cmaeg/src/http/chat_dispatch.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "0408047e8714802c7de1a2bea97e724100bbef12930bab096a165b0e3a6ce116"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/client.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c9aeb7385f96415e925876aff28c28eaec932c69f502d28588c173d93198e537"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10153,
+        "anchor": "\"operationId\": \"receiveRelayCallback\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-034",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "WhatsApp via NyxID: connect, receive, AM turn and reply",
+    "entry_point": "NyxID WhatsApp bot/route -> EG channel producer nyxid_relay -> assigned consumer -> platform chat",
+    "steps": [
+      "Use the designated test WhatsApp bot and exact NyxID issuer/key/route; inspect channel callback and verification mode.",
+      "Send an admitted numbered message, wait for the actual platform answer, then send a contextual follow-up.",
+      "Join event/conversation/response IDs to both serving AM and owning AM; repeat at least three times in the single caller lane."
+    ],
+    "expected_result": "The correct verified sender/conversation reaches the correct consumer and AM, and each intended answer returns once to the correct destination with follow-up context preserved.",
+    "writes": true,
+    "api": [
+      "POST /v1/callbacks/{channel_id}",
+      "POST provider-advertised AM responses path (CMA: /api/v2/responses)"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "production_owner_lane",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/RelaySetupGuidance.tsx",
+        "line": 11,
+        "anchor": "whatsapp:",
+        "sha256": "10b4b09a2530f992f1f8d585dcf5a1b06f216b3a42141beb231f70646c0913cb"
+      },
+      {
+        "path": "web/src/services/channelForm/SourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e71be645b1570d4635baecdeee56e9b00ad2e277c2590171ddcdf8d6393133d9"
+      },
+      {
+        "path": "api/crates/cmaeg/src/http/chat_dispatch.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "0408047e8714802c7de1a2bea97e724100bbef12930bab096a165b0e3a6ce116"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/client.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c9aeb7385f96415e925876aff28c28eaec932c69f502d28588c173d93198e537"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10153,
+        "anchor": "\"operationId\": \"receiveRelayCallback\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-035",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "NyxID relay verification, group admission and duplicate-event behavior",
+    "entry_point": "Designated relay channel -> callback ingress",
+    "steps": [
+      "Locally replay the same signed event to different EG replicas.",
+      "Exercise invalid signatures, wrong route, denied sender, private/group mention policies and retained-event replay."
+    ],
+    "expected_result": "Invalid or out-of-scope events do not create AM work. Duplicate delivery does not create a second logical turn/effect; accepted/rejected/refused outcomes remain distinct.",
+    "writes": true,
+    "api": [
+      "POST /v1/callbacks/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/SourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e71be645b1570d4635baecdeee56e9b00ad2e277c2590171ddcdf8d6393133d9"
+      },
+      {
+        "path": "web/src/services/channelForm/AdmissionFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c8578b41c847a4d497577eb16b34103b5ee639808206f47d5a545231d527a92a"
+      },
+      {
+        "path": "api/crates/cmaeg/src/http/callbacks.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b18b84febeaabae235bf5b70b6f9ef4544f7bd1e5c689a2f7a79cc53804373ad"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10153,
+        "anchor": "\"operationId\": \"receiveRelayCallback\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  }
+]

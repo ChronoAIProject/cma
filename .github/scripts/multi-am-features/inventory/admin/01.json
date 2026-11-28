@@ -1,0 +1,249 @@
+[
+  {
+    "id": "ADM-001",
+    "role": "admin",
+    "feature": "Open Operations from account menu, command menu and direct route",
+    "entry_point": "Account menu → Operations; /operations",
+    "steps": [
+      "Sign in as the owner operator.",
+      "Open Operations from Account, then command menu, then /operations.",
+      "Confirm the displayed view matches current capabilities and browser navigation."
+    ],
+    "expected_result": "Authorized Operations renders; an ordinary user gets Operations unavailable with no privileged data.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/OperationsRoute.tsx",
+        "line": 1,
+        "sha256": "1526e3711b8869560a64073d82396fa45d47e8672f0a2d1c6dec9fb0fd7d20f6"
+      },
+      {
+        "path": "web/src/operator/capabilities.ts",
+        "line": 1,
+        "sha256": "06de0d1e18d8cc9ecca3811d4514af413d37d6238df6fad59219319ecd1e0533"
+      },
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 1,
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657"
+      },
+      {
+        "path": "web/src/shell/commands.tsx",
+        "line": 1,
+        "sha256": "62b73a7e9a6c8b617604ef1d1c39b6eae16fa5cbc6cd700b88810e1f54c87f26"
+      }
+    ]
+  },
+  {
+    "id": "ADM-002",
+    "role": "admin",
+    "feature": "Operations tabs, deep links, legacy usage alias and keyboard navigation",
+    "entry_point": "Account menu → Operations; /operations",
+    "steps": [
+      "Open sandboxes, warm_pools, settings and activity query tabs.",
+      "Open ?tab=usage and verify migration to Sandboxes & usage.",
+      "Use Left/Right/Home/End and browser Back; test a capability-limited operator locally."
+    ],
+    "expected_result": "Only entitled tabs appear; selected tab, URL and tabpanel stay consistent; unknown/disallowed selections fall back to an entitled view.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/Operations.tsx",
+        "line": 1,
+        "sha256": "136e42a2fc9ddd0987809754733f6fb9c0626221b9b7cbf2946ad99d5d01bacf"
+      },
+      {
+        "path": "web/src/operator/useOperationsTab.ts",
+        "line": 1,
+        "sha256": "8ce6f5fb62919041a23114400cb91d977699faee034c55867d1dde18bebd0145"
+      },
+      {
+        "path": "web/src/routing/routes.ts",
+        "line": 1,
+        "sha256": "572794a74eaac06f0d32f57e7e705ee905442a929705fc3f1cef2d65d13a8daa"
+      }
+    ]
+  },
+  {
+    "id": "ADM-003",
+    "role": "admin",
+    "feature": "Admin capability separation and authorization revocation",
+    "entry_point": "Local two-AM role fixtures; Operations plus direct API",
+    "steps": [
+      "Test read_all_sandboxes-only, control_any_sandbox-only, configure_platform-only and read_activity_log-only callers.",
+      "Revoke a capability between requests to different AMs; try prior report/record identifiers.",
+      "Check that denied operations disclose neither other-owner state nor credential values."
+    ],
+    "expected_result": "Each endpoint checks its required capability on every request; read access does not authorize writes; revoked data is cleared from the UI.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/sandboxes",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_sandboxes"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/activity",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_activity"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/Operations.tsx",
+        "line": 1,
+        "sha256": "136e42a2fc9ddd0987809754733f6fb9c0626221b9b7cbf2946ad99d5d01bacf"
+      },
+      {
+        "path": "web/src/operator/SandboxDetail.tsx",
+        "line": 1,
+        "sha256": "a2604de5793e52d4908e5db6a405cace29fc317a78588ad35ae5b5fda73b097f"
+      },
+      {
+        "path": "api/crates/layer2-core/src/sandbox/admin.rs",
+        "line": 1,
+        "sha256": "b892d0a79d82b92fd214ebaa3971b8e43e282f089cfb98d923811871806f478a"
+      },
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      }
+    ]
+  },
+  {
+    "id": "ADM-010",
+    "role": "admin",
+    "feature": "Admin usage completed report: 24h",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → Time range",
+    "steps": [
+      "Select 24h; for custom enter a valid local-time interval no longer than 30 days.",
+      "Apply filters and measure until the requested range has committed totals and a populated or valid empty table.",
+      "Repeat three times, retaining request/report IDs and AM attribution; count cold and warm observations separately."
+    ],
+    "expected_result": "The requested authorized range completes, allocation totals are finite and correctly scoped, and no preview/pending/error view is reported as completed.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/view",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_view"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/reports",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_reports"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/Sandboxes.tsx",
+        "line": 1,
+        "sha256": "41cc00a2ef050833096603e16481389c4d3ab3eaffea1ec8efe39576fcd7e35f"
+      },
+      {
+        "path": "web/src/usage/metrics/OpsMetricFilters.tsx",
+        "line": 1,
+        "sha256": "bd05d0bd2d1ebe5f146e16eb0c8d5cffa1b6a5fabd1da30841e40366a8ef501b"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 1,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  },
+  {
+    "id": "ADM-011",
+    "role": "admin",
+    "feature": "Admin usage completed report: 7d",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → Time range",
+    "steps": [
+      "Select 7d; for custom enter a valid local-time interval no longer than 30 days.",
+      "Apply filters and measure until the requested range has committed totals and a populated or valid empty table.",
+      "Repeat three times, retaining request/report IDs and AM attribution; count cold and warm observations separately."
+    ],
+    "expected_result": "The requested authorized range completes, allocation totals are finite and correctly scoped, and no preview/pending/error view is reported as completed.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/view",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_view"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/reports",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_reports"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/Sandboxes.tsx",
+        "line": 1,
+        "sha256": "41cc00a2ef050833096603e16481389c4d3ab3eaffea1ec8efe39576fcd7e35f"
+      },
+      {
+        "path": "web/src/usage/metrics/OpsMetricFilters.tsx",
+        "line": 1,
+        "sha256": "bd05d0bd2d1ebe5f146e16eb0c8d5cffa1b6a5fabd1da30841e40366a8ef501b"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 1,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  }
+]

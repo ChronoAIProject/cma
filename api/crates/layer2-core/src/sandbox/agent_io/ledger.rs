@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 
 use crate::ids::{AgentCommandId, AgentResponseId};
 use crate::sandbox::store::SandboxMutationGuard;
-use crate::sandbox::{Agent, AgentStatus, Sandbox, SandboxStatus};
+use crate::sandbox::{Agent, AgentStatus, AgentWorkStep, Sandbox, SandboxStatus};
 use crate::RuntimeCapability;
 
 use super::{AdmissionReceipt, AgentCommandEnvelope, AgentOwner, AgentResponseStatus};
@@ -78,6 +78,27 @@ impl AdmittedAgentCommand {
             revision.validate(self)?;
         }
         super::work::validate_work(self)
+    }
+
+    /// A normal append can leave publication to the independent recovery worker.
+    /// Callers must first authorize the current Agent and Sandbox lineage.
+    pub fn awaits_connection_publication(&self, agent: &Agent, sandbox: &Sandbox) -> bool {
+        self.receipt.envelope.agent_id == agent.id
+            && agent.sandbox_id == sandbox.id
+            && sandbox.status == SandboxStatus::Active
+            && agent.status == AgentStatus::Ready
+            && agent.requested_stop_reason.is_none()
+            && agent.work.step == AgentWorkStep::PublishConnection
+            && agent
+                .conversation
+                .runtime_generation
+                .is_some_and(|generation| generation > 0)
+            && agent
+                .conversation
+                .conversation_id
+                .as_ref()
+                .is_some_and(|id| !id.trim().is_empty())
+            && self.receipt.envelope.is_ordinary_append()
     }
 
     pub fn scope(&self) -> String {

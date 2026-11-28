@@ -9,6 +9,9 @@ use std::{panic::AssertUnwindSafe, time::Duration};
 mod child;
 use child::ReplicaProcess;
 
+#[path = "process_recovery/rename_contention.rs"]
+mod rename_contention;
+
 const FIRST_TITLE: &str = "Title acknowledged before process loss";
 const NEXT_TITLE: &str = "Title acknowledged by the successor";
 const FIRST_REQUEST: &str = "00000000-0000-4000-8000-000000000101";

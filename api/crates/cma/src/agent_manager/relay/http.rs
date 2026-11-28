@@ -264,6 +264,7 @@ async fn route_request(
         let response = destination
             .authority
             .run(async {
+                relay_diagnostics::peer_write_entered(&request, destination.token.epoch);
                 if file_write {
                     layer3_adapter::file_receiver_retry::scope_conditional_write(next.run(request))
                         .await

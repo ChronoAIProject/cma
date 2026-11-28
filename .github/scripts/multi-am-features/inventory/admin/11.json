@@ -1,0 +1,218 @@
+[
+  {
+    "id": "ADM-057",
+    "role": "admin",
+    "feature": "Approved request models and framing overhead",
+    "entry_point": "/operations?tab=settings → Platform settings → Spend controls → Request models",
+    "steps": [
+      "Add/remove model names and input_overhead_tokens; test duplicates, valuation compatibility and request-write unavailable flag.",
+      "Save locally with expected_revision; read from the other AM and restore original local policy."
+    ],
+    "expected_result": "Only configured model names are admitted for enabled scope; unavailable writers retain values and do not save.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/SpendControls.tsx",
+        "line": 1,
+        "sha256": "e31f92458112779172dede46f28495dee68b8102bb5beab826ea68d3abdf0b19"
+      },
+      {
+        "path": "web/src/operator/SpendPolicyLists.tsx",
+        "line": 1,
+        "sha256": "c883dab1f6d1b9d698dcc6bd5c8218178fc7cdb49825be59e99c0fa7ee5dee82"
+      },
+      {
+        "path": "web/src/operator/OwnerPolicyFields.tsx",
+        "line": 1,
+        "sha256": "ffa5b587510eb5a734f9819922af48585fabc2f4c31b087576ecee4df1f5f997"
+      },
+      {
+        "path": "web/src/operator/spendBudget.ts",
+        "line": 1,
+        "sha256": "7a993b5ea6c57bef40b89436ab088394ae053a4d4b34d7dfbaa22395db91dfd2"
+      },
+      {
+        "path": "web/src/operator/spendValidation.ts",
+        "line": 1,
+        "sha256": "360a306fa028366c386b9cdfad672d2fee0a78fca7094f888f61b45428d076fc"
+      }
+    ]
+  },
+  {
+    "id": "ADM-060",
+    "role": "admin",
+    "feature": "Warm-pool inventory, defaults and controller convergence",
+    "entry_point": "/operations?tab=warm_pools → Warm pools",
+    "steps": [
+      "Inspect current image, CPU/memory defaults, configured pools and desired/ready/pending values.",
+      "Refresh and observe one visible 10-second refresh; inspect previous-image pools and configuration hash."
+    ],
+    "expected_result": "Saved targets and observed controller capacity are distinct; unavailable/unknown states are visible and claimed Sandboxes are not counted as spare capacity.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/warm-pools",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_warm_pools"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/WarmPools.tsx",
+        "line": 1,
+        "sha256": "2397027bd3c574c5464861949578b6f977b84497547c8cdb57daa392671933e0"
+      },
+      {
+        "path": "web/src/operator/WarmPoolRow.tsx",
+        "line": 1,
+        "sha256": "321e93b64b2a78ca817068bf8aca0fe64d57688135041610413afc4ef3ece26f"
+      },
+      {
+        "path": "sdk/typescript/src/admin/warm-pools.ts",
+        "line": 1,
+        "sha256": "49b9f3149da46278c180cece1299a96db1273ce3451e7cee19a8db9a796e8e13"
+      }
+    ]
+  },
+  {
+    "id": "ADM-061",
+    "role": "admin",
+    "feature": "Create/configure a warm pool with idempotent request identity",
+    "entry_point": "/operations?tab=warm_pools → Warm pools → Configure warm pool → Save pool target",
+    "steps": [
+      "On the local two-AM fixture, enter CPU, memory and target.",
+      "Submit once; retry an injected uncertain result with the same original key and body.",
+      "Observe pending→ready; target zero and clean fixture capacity through supported controls."
+    ],
+    "expected_result": "202 denotes accepted configuration; one idempotency identity yields one pool, bounds are enforced, and controller readiness is checked separately.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/warm-pools",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_warm_pools"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/warm-pools",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_warm_pools"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/WarmPoolCreate.tsx",
+        "line": 1,
+        "sha256": "83e8ea2f8b262efe0d33eb592bc4ab5d4a644ba6d747a9cfa3f5096690f67712"
+      },
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/warm_pools.rs",
+        "line": 1,
+        "sha256": "4fe11494edff07217488e2e4a9b84b3c745a9b4cd884f2d31137ce64ff4e5ad8"
+      }
+    ]
+  },
+  {
+    "id": "ADM-062",
+    "role": "admin",
+    "feature": "Resize warm pool and reconcile revision conflict",
+    "entry_point": "/operations?tab=warm_pools → Warm pools → Ready Sandbox target → Update target",
+    "steps": [
+      "Read a local pool revision; resize through one AM and submit the stale revision to the other.",
+      "Choose Read current target after conflict/uncertainty, then explicitly submit any desired new change."
+    ],
+    "expected_result": "Only a current revision changes desired capacity; the draft is retained and the UI blocks replay until readback.",
+    "writes": true,
+    "api": [
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/warm-pools/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_warm_pools_by_id"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/warm-pools",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_warm_pools"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/WarmPoolRow.tsx",
+        "line": 1,
+        "sha256": "321e93b64b2a78ca817068bf8aca0fe64d57688135041610413afc4ef3ece26f"
+      },
+      {
+        "path": "sdk/typescript/src/admin/warm-pools.ts",
+        "line": 1,
+        "sha256": "49b9f3149da46278c180cece1299a96db1273ce3451e7cee19a8db9a796e8e13"
+      }
+    ]
+  },
+  {
+    "id": "ADM-063",
+    "role": "admin",
+    "feature": "Disable current or previous-image warm pool",
+    "entry_point": "/operations?tab=warm_pools → Warm pools → Disable pool / Previous runtime pools",
+    "steps": [
+      "Disable a disposable local pool with target zero.",
+      "Inspect a previous-image pool and verify only disable is available.",
+      "Verify an already claimed Agent still serves."
+    ],
+    "expected_result": "Spare target converges to zero; previous images cannot be re-prewarmed through this control; claimed Sandboxes keep running.",
+    "writes": true,
+    "api": [
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/warm-pools/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_warm_pools_by_id"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/warm-pools",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_warm_pools"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/WarmPools.tsx",
+        "line": 1,
+        "sha256": "2397027bd3c574c5464861949578b6f977b84497547c8cdb57daa392671933e0"
+      },
+      {
+        "path": "web/src/operator/WarmPoolRow.tsx",
+        "line": 1,
+        "sha256": "321e93b64b2a78ca817068bf8aca0fe64d57688135041610413afc4ef3ece26f"
+      }
+    ]
+  }
+]

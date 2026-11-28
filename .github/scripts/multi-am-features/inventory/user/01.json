@@ -1,0 +1,257 @@
+[
+  {
+    "id": "cma-user.account.sign-in",
+    "role": "user",
+    "feature": "Sign in; sign up when offered",
+    "entry_point": "/ or a protected deep link → Sign in / Create account",
+    "steps": [
+      "Open a signed-out landing page",
+      "Use the offered NyxID sign-in or registration flow",
+      "Return to the original permitted route"
+    ],
+    "expected_result": "The authenticated identity and capabilities are loaded; the intended route opens without exposing another account’s retained content.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/auth/signup-options",
+        "openapi_path": "/auth/signup-options",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/auth/login",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      },
+      {
+        "method": "GET",
+        "path": "/auth/session",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/App.tsx",
+        "line": 42,
+        "sha256": "9adb36427103a534178d07432f19387b37533f9923ae821373773127869214bc",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/landing/SignInLanding.tsx",
+        "line": 36,
+        "sha256": "4bdcd85560c4cdc6c67e3de1208e7d4a1892174d0ff6cff99b03fbbb918f3586",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/auth/nyxid.ts",
+        "line": 70,
+        "sha256": "44b62171655aa3f7a60dc5e24647f7e5e488f09c27db4d5d832ce1f3096e5027",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/auth/signup.ts",
+        "line": 1,
+        "sha256": "8604c28396ae268b60a26b2a90650242da76eb893c2381bfd9845c4c1b5846d9",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.account.sign-out",
+    "role": "user",
+    "feature": "Sign out and clear account access",
+    "entry_point": "Account menu → Sign out",
+    "steps": [
+      "Finish active verification work",
+      "Choose Sign out",
+      "Revisit a protected resource link"
+    ],
+    "expected_result": "Session ends; protected controls and retained private content are unavailable until the correct account signs in again.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/auth/logout",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/profile/ProfileMenu.tsx",
+        "line": 50,
+        "sha256": "430a249d15088175591a193ee08b91a6eddb2ef8d889fab854a5949a3fc36657",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/auth/nyxid.ts",
+        "line": 70,
+        "sha256": "44b62171655aa3f7a60dc5e24647f7e5e488f09c27db4d5d832ce1f3096e5027",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/App.tsx",
+        "line": 42,
+        "sha256": "9adb36427103a534178d07432f19387b37533f9923ae821373773127869214bc",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.navigation.tasks",
+    "role": "user",
+    "feature": "Browse tasks and manage environments",
+    "entry_point": "/agent-manager → Tasks / Filter → Manage environments / Back to tasks",
+    "steps": [
+      "Open Tasks",
+      "Switch to Manage environments",
+      "Expand Sandbox and Workspace children",
+      "Return to Tasks and paginate or retry loading"
+    ],
+    "expected_result": "Authorized resources and lifecycle states appear once; navigation preserves the intended selection and exposes actionable loading failures.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes",
+        "openapi_path": "/api/v1/sandboxes",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}/workspaces",
+        "openapi_path": "/api/v1/sandboxes/{id}/workspaces",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents",
+        "openapi_path": "/api/v1/agents",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/shell/ManagerNavigation.tsx",
+        "line": 19,
+        "sha256": "16ae77682044f237c9db23d442c3fdf2425c4e3b7dc2862e6ec1f7b9f81cebdd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/shell/NavigationFilters.tsx",
+        "line": 17,
+        "sha256": "f6ced0e74e2c5af39aa1aa8ad018430606031334221f3626e7b64cd1925728d6",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/shell/navigation.ts",
+        "line": 98,
+        "sha256": "ce016586a3deac21478be1ed711a73210b26be3196409f674d9b2ce773e96ecd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.navigation.filters",
+    "role": "user",
+    "feature": "Filter personal, shared and organization resources",
+    "entry_point": "Task/Environment Filter → Scope and Status; /shared/agents; /organizations/{org}/agents",
+    "steps": [
+      "Choose an authorized scope",
+      "Select status filters",
+      "Page through results",
+      "Clear filters"
+    ],
+    "expected_result": "Only the selected scope and status appear; switching scope never carries write authority from a previously owned resource.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "openapi_path": "/api/v1/organizations",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes",
+        "openapi_path": "/api/v1/sandboxes",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents",
+        "openapi_path": "/api/v1/agents",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/shell/NavigationFilters.tsx",
+        "line": 17,
+        "sha256": "f6ced0e74e2c5af39aa1aa8ad018430606031334221f3626e7b64cd1925728d6",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/NavigationScope.tsx",
+        "line": 7,
+        "sha256": "e337548ea833d6ab24e6989373a8d151649a76460aa39ccad5f313766eaaa5f3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/useConsoleScope.ts",
+        "line": 8,
+        "sha256": "1436a511675d9611c696acc0886f025fbbc9124ac5e7a1ca02eec3fa90f8708c",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.navigation.inventory",
+    "role": "user",
+    "feature": "Agent inventory with creation origin and channel filters",
+    "entry_point": "/agents → Resource scope / Creation origin / Agent status / Channel activity",
+    "steps": [
+      "Open Agents",
+      "Apply each offered origin, status and channel filter",
+      "Use next and previous pages",
+      "Open a listed Agent"
+    ],
+    "expected_result": "Rows and provenance match the selected scope; channel-created and task-created Agents remain distinguishable.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance",
+        "openapi_path": "/api/v1/agents/provenance",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/organizations",
+        "openapi_path": "/api/v1/organizations",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/AgentInventory.tsx",
+        "line": 58,
+        "sha256": "ea02c883c3952c91f20b131fb43cd1c0ea45a3511cd147e6e73d3c1614e1b181",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/provenance.tsx",
+        "line": 9,
+        "sha256": "5b2ebfeae6ddbb09c646d19394e32f0c8fe3dc9123a17dbc529275afce6d49a6",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

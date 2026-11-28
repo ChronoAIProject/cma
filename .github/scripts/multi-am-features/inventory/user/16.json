@@ -1,0 +1,250 @@
+[
+  {
+    "id": "cma-user.connections.check",
+    "role": "user",
+    "feature": "Inspect required NyxID services and model subscription connections",
+    "entry_point": "Create/Open connection gate; Sandbox Access → Review service connections",
+    "steps": [
+      "Open the required-connection view",
+      "Inspect each NyxID service and model-subscription state",
+      "Use Verify again after an authorized connection change"
+    ],
+    "expected_result": "Only verified durable connections are marked satisfied; unavailable, revoked and account-mismatched connections block affected writes.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/auth/connections/check",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/connections/ConnectionWizard.tsx",
+        "line": 40,
+        "sha256": "14aae991f2d797dd3448f23eefb667c6ae9dba92fa0ade47085b538efe4e2cee",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/connections/client.ts",
+        "line": 3,
+        "sha256": "242519c03265f46941d9ff1e3b7f763a06e4f21ded794f9ea99bd685f2436ace",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/connectionReadiness.ts",
+        "line": 6,
+        "sha256": "c303ea52afa73f4658ad77034978ff24a6bec9a68edc5e35295a3d90e90429b0",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.connections.connect",
+    "role": "user",
+    "feature": "Connect required services or the model subscription",
+    "entry_point": "Required connections → Connect all / Sign in to your ChatGPT subscription",
+    "steps": [
+      "Start the required connection flow",
+      "Complete the authorized hosted sign-in/device-code flow in the popup",
+      "Return and wait for durable verification",
+      "Continue the original creation/open"
+    ],
+    "expected_result": "Verified connections belong to the same user and target; blocked-popup recovery works and the original operation resumes once.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/auth/connections/start",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      },
+      {
+        "method": "POST",
+        "path": "/auth/connections/check",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/connections/ConnectionWizard.tsx",
+        "line": 40,
+        "sha256": "14aae991f2d797dd3448f23eefb667c6ae9dba92fa0ade47085b538efe4e2cee",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/connections/client.ts",
+        "line": 3,
+        "sha256": "242519c03265f46941d9ff1e3b7f763a06e4f21ded794f9ea99bd685f2436ace",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/App.tsx",
+        "line": 42,
+        "sha256": "9adb36427103a534178d07432f19387b37533f9923ae821373773127869214bc",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.connections.cancel-reconnect",
+    "role": "user",
+    "feature": "Cancel connection setup or reconnect an expired subscription",
+    "entry_point": "Required connections → Cancel / Sign in again / Open sign-in window",
+    "steps": [
+      "Start a local disposable handoff and cancel it",
+      "Reopen a required or expired subscription flow",
+      "Complete sign-in and verify the same account"
+    ],
+    "expected_result": "Cancelled/expired handoffs cannot authorize work; reconnect needs fresh durable verification and does not treat window closure as success.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/auth/connections/cancel",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      },
+      {
+        "method": "POST",
+        "path": "/auth/connections/start",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      },
+      {
+        "method": "POST",
+        "path": "/auth/connections/check",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/connections/ConnectionWizard.tsx",
+        "line": 40,
+        "sha256": "14aae991f2d797dd3448f23eefb667c6ae9dba92fa0ade47085b538efe4e2cee",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/connections/client.ts",
+        "line": 3,
+        "sha256": "242519c03265f46941d9ff1e3b7f763a06e4f21ded794f9ea99bd685f2436ace",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/SignInCard.tsx",
+        "line": 20,
+        "sha256": "8944106c85f4182b9bc2d64bb63b72d51f7f7abcf05745fd0df102e7f98e0518",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.connections.credential-recovery",
+    "role": "user",
+    "feature": "Recover CMA sign-in required for Sandbox credentials",
+    "entry_point": "Creation failure → CMA sign-in required → Open CMA sign-in",
+    "steps": [
+      "Use a local missing-credential fixture",
+      "Open CMA sign-in",
+      "Verify the expected owner before retrying the original admission"
+    ],
+    "expected_result": "Credential recovery rejects account changes and preserves the original operation identity; no raw credentials are displayed in evidence.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/auth/login",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      },
+      {
+        "method": "GET",
+        "path": "/auth/session",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/auth/SandboxCredentialSetup.tsx",
+        "line": 8,
+        "sha256": "686a752443d194d8b87560d9e1f6809b49213ea7edb9c34a98949a6c83446442",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/auth/credentialSetup.ts",
+        "line": 3,
+        "sha256": "2e3277cbf0dc73bba3a33b606b543d55bdc1e44533d9b25bfc5c4c544ca732f8",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/NewSandboxCard.tsx",
+        "line": 22,
+        "sha256": "054f10c8a797d0ccb0bbecdddecbe4d1d14c9bdc9b019ba2c444b601a5ee3529",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.connections.scope",
+    "role": "user",
+    "feature": "Update the Sandbox’s shared service-access scope",
+    "entry_point": "Sandbox → Access → service selection → Save",
+    "steps": [
+      "Read the current effective service scope",
+      "Add or remove an approved test service",
+      "Complete required connection setup and save",
+      "Reload scope on the Sandbox and its Agent"
+    ],
+    "expected_result": "Confirmed effective scope is updated for the Sandbox key; changes respect expected scope/revision and revoked services cannot be used by a later Send.",
+    "writes": true,
+    "api": [
+      {
+        "method": "PUT",
+        "path": "/api/v1/agents/{id}/service-access",
+        "openapi_path": "/api/v1/agents/{id}/service-access",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}",
+        "openapi_path": "/api/v1/agents/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/auth/connections/check",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/sandbox/SandboxAccess.tsx",
+        "line": 91,
+        "sha256": "cae205d49dc278251be03cc865a2461b42d4e9cf4edb991f4059bfc353390833",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/ScopeSettings.tsx",
+        "line": 19,
+        "sha256": "c62f7f899da730da552718edc859252e2bc2d92efcc01e864a50ebac93acdaa0",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/scopeConnections.ts",
+        "line": 9,
+        "sha256": "a65a78d8a8b693dc887c7ccc33617e177a5a395e331d6eba400ac0a4371fc49d",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

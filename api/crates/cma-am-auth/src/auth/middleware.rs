@@ -68,6 +68,22 @@ async fn attach_subject_inner(
         drop(observation);
         return next.run(request).await;
     }
+    if auth.rejects_unverified_proxy_headers(request.headers()) {
+        let observation = crate::request_observation::Resolution::start(&request, "ambient");
+        return observation.rejected(
+            (
+                StatusCode::UNAUTHORIZED,
+                [(axum::http::header::CONTENT_TYPE, "application/problem+json")],
+                Json(serde_json::json!({
+                    "type": "about:blank",
+                    "title": "Request proof required",
+                    "status": 401,
+                    "code": "nyxid_proxy_request_proof_required",
+                })),
+            )
+                .into_response(),
+        );
+    }
     let mut observation = crate::request_observation::Resolution::start(&request, "ambient");
     let personal_inventory = is_personal_inventory(&request);
     let mut browser_proof = None;
@@ -80,16 +96,18 @@ async fn attach_subject_inner(
             .extensions()
             .get::<axum::extract::MatchedPath>()
             .is_some_and(|path| path.as_str() == "/api/v1/agents/{id}/files/content");
+    // Keep the resolver's state out of each diagnostic scope's future.
+    let resolution = Box::pin(auth.resolve_request_with_proxy_inventory(
+        request.headers(),
+        personal_inventory,
+        capture_file_preview.then_some(&mut browser_proof),
+    ));
     let ((resolved, failure), retry_after) = super::identity_throttle::capture(
         layer2_core::diagnostic_context::DiagnosticContext::current()
             .with_phase("identity")
             .scope(diagnostics::capture(super::identity_lifetime::scope(
                 &auth,
-                auth.resolve_request_with_proxy_inventory(
-                    request.headers(),
-                    personal_inventory,
-                    capture_file_preview.then_some(&mut browser_proof),
-                ),
+                resolution,
                 super::identity_retry::unavailable,
             ))),
     )

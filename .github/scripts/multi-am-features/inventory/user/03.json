@@ -1,0 +1,245 @@
+[
+  {
+    "id": "cma-user.navigation.legacy-routes",
+    "role": "user",
+    "feature": "Handle old settings/profile links and invalid routes",
+    "entry_point": "/settings[/general|/usage], /developer, /profiles/*, /marketplace/*, /image-manager, malformed routes",
+    "steps": [
+      "Open each legacy route class",
+      "Check its redirect or retirement notice",
+      "Open an unknown or malformed path"
+    ],
+    "expected_result": "Settings aliases open Usage with the appearance notice; developer redirects to Docs; profile/marketplace pages show the retirement notice; image-manager and invalid paths show not found.",
+    "writes": false,
+    "api": [],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/routing/routes.ts",
+        "line": 58,
+        "sha256": "572794a74eaac06f0d32f57e7e705ee905442a929705fc3f1cef2d65d13a8daa",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/App.tsx",
+        "line": 42,
+        "sha256": "9adb36427103a534178d07432f19387b37533f9923ae821373773127869214bc",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/Console.tsx",
+        "line": 53,
+        "sha256": "e921fc348a8c0c68ca6e669e7432a7908750363889733c14acdc82c5931f23f8",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/profile/LegacyProfileNotice.tsx",
+        "line": 1,
+        "sha256": "7cbbb65e971e00388748e1e6a2a94765f6f37348a94e8b8eb9a3e20bbc369bec",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.task.draft",
+    "role": "user",
+    "feature": "Compose and recover a task draft; task templates",
+    "entry_point": "/agent-manager or New task → Your task / template buttons",
+    "steps": [
+      "Choose a task template",
+      "Edit the task text and target choices",
+      "Navigate away and return before submitting"
+    ],
+    "expected_result": "Template fills an editable draft; the draft is scoped to the correct user/location and does not submit by itself.",
+    "writes": true,
+    "api": [],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/create/TaskHome.tsx",
+        "line": 37,
+        "sha256": "6ba9a797d3237d66d159948313e81832332a9495a24880d7fe7ea001c874f7f3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/TaskTemplates.tsx",
+        "line": 38,
+        "sha256": "4ffcf93f99c6e1e65d54fac27aec09164fb32e30c68bfb8f0cd2db9ad3b1f7ab",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/taskDraft.ts",
+        "line": 14,
+        "sha256": "fadb624a1af80d6fed5719f9ae7cde01513d9bfe85266f860d86de987697c367",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.task.create",
+    "role": "user",
+    "feature": "Create a task in a new cloud Sandbox",
+    "entry_point": "New task → Your task → Cloud computer → Start task",
+    "steps": [
+      "Keep Shared desktop off and enter a unique harmless task",
+      "Click Start task or Cmd/Ctrl+Enter once",
+      "Observe preparation through the Agent page and usable controls"
+    ],
+    "expected_result": "One lifecycle admission creates the intended resources and first message; UI reaches an operable Agent without duplicate submission.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/agent-manager/v1/agents",
+        "openapi_path": "/api/v1/agents",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      },
+      {
+        "method": "GET",
+        "path": "/api/agent-manager/v1/agent-lifecycle/{id}",
+        "openapi_path": "/api/v1/agent-lifecycle/{id}",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}",
+        "openapi_path": "/api/v1/agents/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/create/TaskHome.tsx",
+        "line": 37,
+        "sha256": "6ba9a797d3237d66d159948313e81832332a9495a24880d7fe7ea001c874f7f3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/TaskComposer.tsx",
+        "line": 5,
+        "sha256": "5e0833659824041be1614d3783361f59b92ad6706af32d12c3cb50798b48a753",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/lifecycleTransport.ts",
+        "line": 9,
+        "sha256": "ccfa0a5228150552725cc5ce914c4a9134cb1efcb6950fd81e6589d4f78b722f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest.ts",
+        "line": 29,
+        "sha256": "3ab6df7ab60aedab24c8f17915a2570b6b8afd91fd5fcabae7700ed03aa5f3b6",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.task.existing-location",
+    "role": "user",
+    "feature": "Start a task in an existing Sandbox or Workspace",
+    "entry_point": "Sandbox/Workspace → New agent / New agent here",
+    "steps": [
+      "Select a disposable existing Sandbox or Workspace",
+      "Start a unique task from that resource",
+      "Observe the resulting Agent location"
+    ],
+    "expected_result": "The new Agent uses the requested location and keeps the Sandbox’s original Machine setup; no unintended new Sandbox is created.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/agent-manager/v1/agents",
+        "openapi_path": "/api/v1/agents",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      },
+      {
+        "method": "GET",
+        "path": "/api/agent-manager/v1/agent-lifecycle/{id}",
+        "openapi_path": "/api/v1/agent-lifecycle/{id}",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/create/CreationFlow.tsx",
+        "line": 17,
+        "sha256": "131ec44273f31f2acb6529a49029276b503eeb8a6585c541bdcf55e959e31fae",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/TaskHome.tsx",
+        "line": 37,
+        "sha256": "6ba9a797d3237d66d159948313e81832332a9495a24880d7fe7ea001c874f7f3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/sandbox/SandboxWorkspaces.tsx",
+        "line": 63,
+        "sha256": "0a630014fc7e6b32a823109708d2d5f9e52c24409c2b8c87426e857d099748c1",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.task.repository",
+    "role": "user",
+    "feature": "Create a task from a GitHub repository and ref",
+    "entry_point": "New task → repository chip/dialog",
+    "steps": [
+      "Choose a permitted repository and branch/ref",
+      "Submit a harmless task",
+      "Open Details and inspect repository, requested ref and resolved commits"
+    ],
+    "expected_result": "Repository input is validated and the resulting workspace reports the requested and resolved source accurately.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/agent-manager/v1/agents",
+        "openapi_path": "/api/v1/agents",
+        "in_saved_openapi": true,
+        "alias_note": "Web Agent Manager prefix; canonical native path is /api/v1, as assembled by source OpenAPI."
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}",
+        "openapi_path": "/api/v1/agents/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/create/RepositoryDialog.tsx",
+        "line": 14,
+        "sha256": "d084191820c3490235ab225196096d5fcf3667efcbe30f2c542d91a569f051c2",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/RepositoryChip.tsx",
+        "line": 11,
+        "sha256": "670b35610d2de7df4d3663f519d046a319561fb6f7092908cbcc75d34c8b64d4",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/create/TaskHome.tsx",
+        "line": 37,
+        "sha256": "6ba9a797d3237d66d159948313e81832332a9495a24880d7fe7ea001c874f7f3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/Details.tsx",
+        "line": 26,
+        "sha256": "3dabea9cd24261a2f9eec2bc4ea09eb3720e5ec25dd19b93b89f81d452b8f98b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

@@ -89,6 +89,7 @@ pub(in crate::rest) fn operation_problem(
         | AgentOperationError::PreviousTurnConflict
         | AgentOperationError::DeliveryAmbiguous { .. }
         | AgentOperationError::OutcomeUnavailable(_)
+        | AgentOperationError::RuntimeAttachmentUnavailable(_)
         | AgentOperationError::RuntimeUnavailable(_)
         | AgentOperationError::Unavailable(_)
         | AgentOperationError::Corrupt(_)

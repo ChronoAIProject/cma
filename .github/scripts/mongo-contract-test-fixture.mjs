@@ -11,11 +11,12 @@ const bsonCeilingTest = 'store::sandbox_mongo_integration_tests::resource_access
 const firstResponseTest = 'store::usage_reports::tests::submission::default_day_report_serves_four_hundred_sandboxes_without_polling';
 const historyTest = 'store::usage_reports::tests::history_batch::seven_day_history_generates_and_reuses_complete_421_member_report';
 const rankedProjectionTest = 'store::usage_reports::tests::projection_scale::aggregate_projection_ranges_measure_sparse_and_dense_frozen_sources';
+const tc070ControlTest = 'store::sandbox_mongo_integration_tests::command_ledger_tests::targeted_control_tests::capacity_control_qualification::tc070_admitted_controls_remain_bounded_at_retained_home_capacity';
 const responseReplayTest = 'store::sandbox_mongo_integration_tests::resource_access_tests::history_measurement::observation_budget::response_shared::shared_adopted_response_complete_routes_meet_unchanged_budgets_and_exact_replay';
 const isolatedModes = [
   ['scale', scaleTest], ['owner', ownerTest], ['audit', auditTest], ['diagnostics', diagnosticsTest],
   ['scan', scanTest], ['bson', bsonCeilingTest], ['first-response', firstResponseTest],
-  ['history', historyTest], ['ranked-projection', rankedProjectionTest], ['response-replay', responseReplayTest],
+  ['history', historyTest], ['ranked-projection', rankedProjectionTest], ['tc070-control', tc070ControlTest], ['response-replay', responseReplayTest],
 ];
 const isolatedTests = isolatedModes.map(([, name]) => name);
 // On-demand only: neither the listing nor any PR shard selects it.
@@ -38,6 +39,13 @@ function fixture(scenario, reuse = false) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   cpSync(new URL('mongo-contract-suites', import.meta.url), join(scripts, 'mongo-contract-suites'), {recursive: true});
+  if (scenario.startsWith('prepared-startup')) {
+    const controlsDir = join(scripts, 'multi-am-features');
+    mkdirSync(controlsDir);
+    for (const name of ['startup-controls.txt', 'startup_controls.py']) {
+      copyFileSync(new URL(`multi-am-features/${name}`, import.meta.url), join(controlsDir, name));
+    }
+  }
   const metadata = join(root, 'api/target/nextest');
   writeFileSync(join(metadata, 'cargo-metadata.json'), JSON.stringify({workspace_root: join(root, 'api'), target_directory: join(root, 'api/target')}));
   writeFileSync(join(metadata, 'binaries-metadata.json'), JSON.stringify({'rust-build-meta': {'target-directory': join(root, 'api/target')}}));
@@ -59,6 +67,16 @@ if (command === 'openssl') {
 fs.appendFileSync(log, JSON.stringify({command,args,uri:process.env.CHRONO_TEST_MONGODB_URI,authenticatedUri:process.env.CMA_AUTHENTICATED_TEST_MONGODB_URI,retriesEnv:process.env.NEXTEST_RETRIES,flakyResultEnv:process.env.NEXTEST_FLAKY_RESULT})+'\\n');
 if (command === 'cargo') {
   if (args[1] === 'run' && args.filter(value => value === '--no-tests').length !== 1) process.exit(24);
+  if (scenario.startsWith('prepared-startup')) {
+    const inventory = fs.readFileSync('../.github/scripts/multi-am-features/startup-controls.txt', 'utf8').trim().split('\\n');
+    if (args[1] === 'list') {
+      const selected = scenario === 'prepared-startup-missing' ? inventory.slice(1) : inventory;
+      const testcases = Object.fromEntries(selected.map(name => [name, {'filter-match': {status: 'matches'}}]));
+      console.log(JSON.stringify({'rust-suites': {cma: {testcases}}}));
+      process.exit(0);
+    }
+    process.exit(scenario === 'prepared-startup-error' ? 7 : 0);
+  }
   if (args[1] === 'list') {
     if (scenario === 'list-error') process.exit(7);
     if (scenario === 'list-malformed') { console.log('invalid-json'); process.exit(0); }
@@ -210,4 +228,4 @@ if (command === 'cargo') {
   };
 }
 
-export { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, responseReplayTest, isolatedTests, observationTest, runnerSetupTimeoutMs, fixturePredicate, qualificationPredicate, ordinaryPredicate, fixture };
+export { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, tc070ControlTest, responseReplayTest, isolatedTests, observationTest, runnerSetupTimeoutMs, fixturePredicate, qualificationPredicate, ordinaryPredicate, fixture };

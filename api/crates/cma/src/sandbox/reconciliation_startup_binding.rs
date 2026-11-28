@@ -1,6 +1,8 @@
 //! Retryable startup failures defer one binding while its authority stays fenced.
-use super::super::{corrupt, transient, SandboxReconciler};
+use super::super::{corrupt, diagnostics, provider_error, transient, SandboxReconciler};
+use layer2_core::sandbox::store::ReconciliationSandbox;
 use layer2_core::sandbox::{Sandbox, SandboxStoreError};
+use layer3_adapter::binding_diagnostics::{measure, Stage};
 use layer3_adapter::RuntimeObservation;
 use sha2::{Digest, Sha256};
 use std::time::SystemTime;
@@ -30,7 +32,9 @@ impl SandboxReconciler {
                     // timestamp while another writer advances this parent.
                     (sandbox, SystemTime::now().max(floor))
                 } else {
-                    let Some(current) = self.store.get_sandbox(&sandbox.id).await? else {
+                    let ReconciliationSandbox::Present(current) =
+                        self.store.reconciliation_sandbox(&sandbox.id).await?
+                    else {
                         return Ok(true);
                     };
                     hold.observe(&current, inventory);
@@ -47,7 +51,7 @@ impl SandboxReconciler {
                     {
                         return Ok(false);
                     }
-                    fresh = current;
+                    fresh = *current;
                     // A concurrent writer may have advanced updated_at since
                     // startup began. Keep an explicit future floor intact; do
                     // not move any provider-observation boundary forward.
@@ -121,10 +125,55 @@ impl SandboxReconciler {
                     hold.refused();
                     return Ok(false);
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    if matches!(error, SandboxStoreError::Corrupt(_))
+                        && matches!(
+                            self.store.reconciliation_sandbox(&sandbox.id).await?,
+                            ReconciliationSandbox::Quarantined
+                        )
+                    {
+                        hold.complete();
+                        return Ok(true);
+                    }
+                    return Err(error);
+                }
             }
         }
         hold.raced();
         Ok(false)
+    }
+
+    pub(in crate::sandbox::reconciliation) async fn binding_result<T>(
+        &self,
+        sandbox: &Sandbox,
+        result: layer3_adapter::Result<T>,
+    ) -> Result<T, SandboxStoreError> {
+        let error = match result {
+            Ok(value) => return Ok(value),
+            Err(error) => error,
+        };
+        if error.is_native_home_identity_refusal() {
+            let current = measure(
+                Stage::DurableRead,
+                self.store.reconciliation_sandbox(&sandbox.id),
+                diagnostics::store_outcome,
+            )
+            .await?;
+            match current {
+                ReconciliationSandbox::Quarantined => return Err(SandboxStoreError::Conflict),
+                ReconciliationSandbox::Present(row)
+                    if row.revision > sandbox.revision
+                        && (row.runtime != sandbox.runtime
+                            || row.lifecycle.suspended_runtime
+                                != sandbox.lifecycle.suspended_runtime
+                            || row.lifecycle.home != sandbox.lifecycle.home) =>
+                {
+                    return Err(SandboxStoreError::Conflict);
+                }
+                _ => {}
+            }
+            return Err(transient::native_home_identity(error));
+        }
+        Err(provider_error(error))
     }
 }

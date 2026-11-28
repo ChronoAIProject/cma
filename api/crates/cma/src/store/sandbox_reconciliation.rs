@@ -3,11 +3,14 @@
 use crate::store::transaction_terminal::GuardedTerminal as _;
 use futures_util::TryStreamExt;
 use layer2_core::sandbox::store::{
-    validate_sandbox_runtime_loss_request, Page, PageRequest, SandboxReconciliationStore,
-    SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest, SandboxStoreError, MAX_PAGE_SIZE,
+    validate_sandbox_runtime_loss_request, Page, PageRequest, ReconciliationSandbox,
+    SandboxReconciliationStore, SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
+    SandboxStoreError, MAX_PAGE_SIZE,
 };
 use layer2_core::sandbox::Sandbox;
 use mongodb::bson::doc;
+use mongodb::error::{ErrorKind, WriteFailure};
+use sha2::{Digest, Sha256};
 
 use super::native_retirement_action::RetirementAction;
 use super::sandbox_mongo::{
@@ -31,6 +34,26 @@ mod transaction;
 
 #[async_trait::async_trait]
 impl SandboxReconciliationStore for MongoSandboxStore {
+    async fn reconciliation_sandbox(
+        &self,
+        id: &layer2_core::SandboxId,
+    ) -> Result<ReconciliationSandbox, SandboxStoreError> {
+        let row = self
+            .sandboxes
+            .find_one(doc! { "_id": id.as_str() })
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        match row.as_ref() {
+            None => Ok(ReconciliationSandbox::Missing),
+            Some(row) if super::sandbox_quarantine::contains(row) => {
+                Ok(ReconciliationSandbox::Quarantined)
+            }
+            Some(row) => {
+                read_sandbox(row).map(|sandbox| ReconciliationSandbox::Present(Box::new(sandbox)))
+            }
+        }
+    }
+
     async fn unowned_home_reservation(
         &self,
         id: &layer2_core::SandboxId,
@@ -197,6 +220,21 @@ async fn recover(
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
                 let _ = session.abort_guarded().await;
+                let write_conflict = match error.kind.as_ref() {
+                    ErrorKind::Command(error) => error.code == 112,
+                    ErrorKind::Write(WriteFailure::WriteError(error)) => error.code == 112,
+                    _ => false,
+                };
+                if write_conflict && retirement.is_none() {
+                    tracing::debug!(
+                        target: "cma::agent_manager::writer_publication",
+                        parent: None,
+                        sandbox_sha256 = %format_args!("{:x}", Sha256::digest(request.sandbox_id.as_str().as_bytes())),
+                        operation = "runtime_loss",
+                        failure = "known_aborted_cas",
+                        "Runtime loss transaction aborted before rebuilding recovery"
+                    );
+                }
                 last_transient = Some(error.to_string());
                 continue;
             }

@@ -2,7 +2,10 @@
 use super::*;
 use layer2_core::sandbox::store::AgentWorkerStore;
 use mongodb::bson::doc;
+use mongodb::event::{command::CommandEvent, EventHandler};
+use mongodb::options::ClientOptions;
 use std::sync::atomic::Ordering;
+use std::sync::Mutex;
 use std::time::Duration;
 
 async fn claimed(fixture: &Fixture) -> (Agent, LiveAgentAttachment, SystemTime) {
@@ -132,8 +135,29 @@ async fn prepared_connection_contention_releases_only_new_lease_and_preserves_in
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at disposable replica set"]
 async fn prepared_connection_unknown_commit_never_releases_as_aborted_contention() {
     let app = format!("cma-prepared-unknown-{}", uuid::Uuid::new_v4().simple());
-    let fixture = Fixture::with_app(Some(app.clone())).await;
+    let transactions = Arc::new(Mutex::new(Vec::new()));
+    let events = transactions.clone();
+    let mut options =
+        ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap())
+            .await
+            .unwrap();
+    options.app_name = Some(app.clone());
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            let command = event.command;
+            let starts_body = matches!(command.get_bool("startTransaction"), Ok(true));
+            if starts_body || event.command_name == "commitTransaction" {
+                let identity = (
+                    command.get_document("lsid").cloned().unwrap(),
+                    command.get_i64("txnNumber").unwrap(),
+                );
+                events.lock().unwrap().push((starts_body, identity));
+            }
+        }
+    }));
+    let fixture = Fixture::with_mongo_options(options, false).await;
     let (agent, attachment, now) = claimed(&fixture).await;
+    transactions.lock().unwrap().clear();
     let admin = admin().await;
     admin
         .database("admin")
@@ -150,6 +174,17 @@ async fn prepared_connection_unknown_commit_never_releases_as_aborted_contention
         .await;
     disable(&admin).await;
     assert!(matches!(result, Err(SandboxStoreError::Unavailable(_))));
+    {
+        let observed = transactions.lock().unwrap();
+        let Some(((true, original), commits)) = observed.split_first() else {
+            panic!("publication must start a transaction");
+        };
+        assert!(!commits.is_empty(), "the fault must reach commit");
+        assert!(
+            commits.iter().all(|(starts, id)| !starts && id == original),
+            "all attempts after the first body must commit the same transaction"
+        );
+    }
     let after = fixture.store.get_agent(&agent.id).await.unwrap().unwrap();
     assert_eq!(after, agent);
     assert_eq!(fixture.sends.load(Ordering::SeqCst), 0);

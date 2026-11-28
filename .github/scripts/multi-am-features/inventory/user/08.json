@@ -1,0 +1,262 @@
+[
+  {
+    "id": "cma-user.agent.feedback",
+    "role": "user",
+    "feature": "Vote on a response and record improvement reasons",
+    "entry_point": "Message footer → Helpful / Needs improvement",
+    "steps": [
+      "Vote Helpful and remove the vote",
+      "Choose Needs improvement",
+      "Select offered reasons and save",
+      "Reload the same message"
+    ],
+    "expected_result": "The current user’s feedback persists on the exact message; retries retain identity and do not attach feedback to another message.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/message-feedback",
+        "openapi_path": "/api/v1/agents/{id}/message-feedback",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/agents/{id}/messages/{message_id}/feedback",
+        "openapi_path": "/api/v1/agents/{id}/messages/{message_id}/feedback",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/agents/{id}/messages/{message_id}/feedback/reasons",
+        "openapi_path": "/api/v1/agents/{id}/messages/{message_id}/feedback/reasons",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/MessageFooter.tsx",
+        "line": 43,
+        "sha256": "85ad0f8ae3511864f473995230576f93245e67c99b910d1965466ff9b7cd9054",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/FeedbackReasons.tsx",
+        "line": 16,
+        "sha256": "80623f711fd675a53a41edf2075ba7ef5c3a5841a53c489cec810c0f11a9dbfe",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/useMessageFeedback.ts",
+        "line": 24,
+        "sha256": "a9d90ce38c135c43c0c39e5246088988db0e6f2fefca78fa7166f667d1370e06",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.history",
+    "role": "user",
+    "feature": "Read historical conversation, transcript and tool output",
+    "entry_point": "/agents/{id} → conversation history / expanded thinking and tools",
+    "steps": [
+      "Open an Agent with completed and interrupted turns",
+      "Read earlier messages and tool/plan details",
+      "Reload while new events arrive"
+    ],
+    "expected_result": "Historical and live entries reconcile without duplicate/lost messages; unavailable history is stated and stale hydration cannot overwrite newer state.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/transcript",
+        "openapi_path": "/api/v1/agents/{id}/transcript",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/events",
+        "openapi_path": "/api/v1/agents/{id}/events",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v2/agents/{agent_id}/events/snapshot",
+        "openapi_path": "/api/v2/agents/{agent_id}/events/snapshot",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v2/agents/{agent_id}/events",
+        "openapi_path": "/api/v2/agents/{agent_id}/events",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/MessageStream.tsx",
+        "line": 42,
+        "sha256": "cff63d91399e274b7d0264f3323f43f8107a6ad3c788c05233f7b42ba4b8c476",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/MessageContent.tsx",
+        "line": 78,
+        "sha256": "8ce412ad6651d1f6af098a42d04fb10c7e10c454d9218626a4e7552affab41cd",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/historyPublication.ts",
+        "line": 11,
+        "sha256": "508c7573c2fe7c2f7267f8dbb1d7cfdd03c7ff7bdd10d1cf77ba6c2ec35f881f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/ToolCallRows.tsx",
+        "line": 138,
+        "sha256": "d51435aa4514b1df8ab059cec9c0b5cc779b5dceafd8a9382b49deb5b28c8c47",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.history-export",
+    "role": "user",
+    "feature": "Export Agent history",
+    "entry_point": "Agent header or tree menu → Export history",
+    "steps": [
+      "Choose Export history",
+      "Save the download privately",
+      "Check Agent identity, messages and terminal outcomes against the conversation"
+    ],
+    "expected_result": "A complete authorized JSONL history download is produced; an unavailable export reports an error.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/history",
+        "openapi_path": null,
+        "in_saved_openapi": false
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/ResourceActions.tsx",
+        "line": 28,
+        "sha256": "a5a57035c5001c96f2677ec13a0801b9e9bc47adcecb993caa7c9600dcedb094",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/historyExport.ts",
+        "line": 8,
+        "sha256": "bf0023cf93db164d295395b85c53323e5f6a7955623301c4ee2ebfa15a019b57",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/api/rest.ts",
+        "line": 29,
+        "sha256": "3ab6df7ab60aedab24c8f17915a2570b6b8afd91fd5fcabae7700ed03aa5f3b6",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.details-resources",
+    "role": "user",
+    "feature": "Inspect Agent details, repository context and machine resources",
+    "entry_point": "Agent header → Details; Sandbox machine/resources",
+    "steps": [
+      "Open Details",
+      "Inspect repository/ref, Sandbox ID and key scope",
+      "Read CPU/memory values and configured limits",
+      "Follow Sandbox operation progress"
+    ],
+    "expected_result": "Live measurements and configured capacities are distinguished; unavailable readings do not become zero; repository and resource identity match this Agent.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/resources",
+        "openapi_path": "/api/v1/agents/{id}/resources",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}",
+        "openapi_path": "/api/v1/agents/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/{id}",
+        "openapi_path": "/api/v1/sandboxes/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/Details.tsx",
+        "line": 26,
+        "sha256": "3dabea9cd24261a2f9eec2bc4ea09eb3720e5ec25dd19b93b89f81d452b8f98b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/Resources.tsx",
+        "line": 90,
+        "sha256": "a7f7ee9a6947bff295a9b3435145c25eccbbbbd8560b1f189a578970b20b00af",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.turn-usage",
+    "role": "user",
+    "feature": "Read per-turn usage and context capacity",
+    "entry_point": "Conversation turn footer / context ring / Agent settings tooltip",
+    "steps": [
+      "Complete a harmless turn",
+      "Inspect token usage and context indicator",
+      "Compare displayed values to the usage projection"
+    ],
+    "expected_result": "Reported usage is attributed to the correct turn; missing limits stay unknown instead of inventing capacity.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/usage",
+        "openapi_path": "/api/v1/agents/{id}/usage",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/TurnUsage.tsx",
+        "line": 5,
+        "sha256": "8f8c2c139091b0f54a324513c2177670736995900e7295802c0d098edb705c46",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/ContextRing.tsx",
+        "line": 32,
+        "sha256": "0ebe49f9cc31ce62d57f3febab2f54a0b0621e664c86cc3803d49b1352ee4646",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/usage.ts",
+        "line": 7,
+        "sha256": "1c8f140aae16af4275bbe1c436f53d8b4be3927e03e718f33684fcf4ac00b4b9",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/SessionSettings.tsx",
+        "line": 17,
+        "sha256": "9c15889cb5330c105c32540cc7105ce7a6a53e628ec3c6caba4b27c24e9bd9ec",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

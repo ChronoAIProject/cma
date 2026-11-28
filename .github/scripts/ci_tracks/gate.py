@@ -11,17 +11,20 @@ from version_label import deployables
 
 EXPECTED = {
     "repo": {"repo", "version-label"},
-    "am": {"rust-test-build", "am", "am-images", "runtime-images", "omarchy", "approval-contract"},
+    "am": {"rust-test-build", "am", "am-images", "runtime-images", "omarchy", "approval-contract", "two-am-features"},
     "eg": {"rust-test-build", "eg", "eg-images", "runtime-images", "omarchy"},
     "web": {"web", "web-images"},
 }
 RUNTIME = {"runtime-images", "omarchy"}
+GATEWAY_FIXTURE = "eg-fixture-image"
 
 
 def evaluate(track, needs, *, full=False, split=False):
     expected = EXPECTED[track]
     if split and track == "eg":
         expected = expected - RUNTIME
+    if split and track == "am":
+        expected = expected | {GATEWAY_FIXTURE}
     if set(needs) != expected | {"changes"}:
         raise ValueError("missing or unexpected gate dependency")
     changes = needs["changes"]
@@ -60,7 +63,20 @@ def evaluate(track, needs, *, full=False, split=False):
             raise ValueError("approval contract did not reach its expected state")
         if contract_required and needs["rust-test-build"].get("result") != "success":
             raise ValueError("approval contract requires the Rust test archive")
-        expected = expected - {"approval-contract"}
+        fixture = outputs.get("two_am_features")
+        if fixture not in {"true", "false"} or (fixture == "true" and not tracks["am"]):
+            raise ValueError("invalid two-Agent-Manager fixture selection")
+        if needs["two-am-features"].get("result") != ("success" if fixture == "true" else "skipped"):
+            raise ValueError("two-Agent-Manager fixture did not reach its expected state")
+        if split and needs[GATEWAY_FIXTURE].get("result") != ("success" if fixture == "true" else "skipped"):
+            raise ValueError("two-Agent-Manager fixture Gateway image did not reach its expected state")
+        expected = expected - {"approval-contract", "two-am-features"}
+        if split:
+            expected = expected - {GATEWAY_FIXTURE}
+    if not split and track == "eg" and selected == "false" and outputs.get("two_am_features") == "true":
+        if needs["eg-images"].get("result") != "success":
+            raise ValueError("two-Agent-Manager fixture requires the Gateway image")
+        expected = expected - {"eg-images"}
     if split:
         # The Agent Manager workflow owns the runtime checks for either Rust
         # product. An EG-only change still needs both runtime images to pass.

@@ -1,0 +1,307 @@
+[
+  {
+    "id": "ADM-081",
+    "role": "admin",
+    "feature": "Cross-owner Send, interrupt, second Send and approvals as control operator",
+    "entry_point": "Locally created other-owner Agent → conversation",
+    "steps": [
+      "Read fresh access with control_any_sandbox.",
+      "Send, interrupt, send again and resolve one approval across AMs.",
+      "Revoke authority between admission and effect and verify rejection/revalidation."
+    ],
+    "expected_result": "Interact/resolve_approval are enforced, output appears once, and a revoked connection or stale authority is never used for a send.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_access_by_kind_by_id"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/input",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_input"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/interrupt",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_interrupt"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/approvals/{request_id}",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_approvals_by_request_id"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      },
+      {
+        "path": "web/src/resources/SharedAgent.tsx",
+        "line": 1,
+        "sha256": "93554cd32e46df76d248d4d03f043c437c83d08c308905a7e5873c73c96f3b67"
+      },
+      {
+        "path": "web/src/resources/accessSummary.ts",
+        "line": 1,
+        "sha256": "ab0f1321ae5536c3ad230d5d7bf66b8e5d35b30a15b462b54f3e65cea86ded58"
+      }
+    ]
+  },
+  {
+    "id": "ADM-082",
+    "role": "admin",
+    "feature": "Cross-owner Agent operating controls, settings and attachment writes",
+    "entry_point": "Local other-owner Agent controls/Files; configuration/preferences also via API",
+    "steps": [
+      "Read operate_agent access, then exercise stop, editable Agent settings and a bounded fixture attachment/file write.",
+      "Use GET/PATCH preferences for title/system prompt only with current operate_agent plus use_own_sandboxes; compare owner-only UI availability and service refusal for a control-only identity.",
+      "Read results from the other AM and remove only test files/resources through supported APIs."
+    ],
+    "expected_result": "Each implemented control checks current authority; settings/preferences additionally require use_own_sandboxes. The current shared UI does not expose the owner rename menu. Stop is distinct from Sandbox retirement.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_access_by_kind_by_id"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/stop",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_stop"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/preferences",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_agents_by_id_preferences"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/v1/agents/{id}/preferences",
+        "in_captured_openapi": true,
+        "operation_id": "patch_api_v1_agents_by_id_preferences"
+      },
+      {
+        "method": "PATCH",
+        "path": "/api/v1/agents/{id}/settings",
+        "in_captured_openapi": true,
+        "operation_id": "patch_api_v1_agents_by_id_settings"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/attachments",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_attachments"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/files",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_files"
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/v1/agents/{id}/files",
+        "in_captured_openapi": true,
+        "operation_id": "delete_api_v1_agents_by_id_files"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      },
+      {
+        "path": "web/src/resources/SharedAgent.tsx",
+        "line": 1,
+        "sha256": "93554cd32e46df76d248d4d03f043c437c83d08c308905a7e5873c73c96f3b67"
+      },
+      {
+        "path": "web/src/resources/accessSummary.ts",
+        "line": 1,
+        "sha256": "ab0f1321ae5536c3ad230d5d7bf66b8e5d35b30a15b462b54f3e65cea86ded58"
+      },
+      {
+        "path": "web/src/resources/SharedAgentDetails.tsx",
+        "line": 1,
+        "sha256": "57749f7df1a240f2f6dbdccb1123be4e8f02a3196c9563a268bcfc96b818dfa8"
+      },
+      {
+        "path": "web/src/agent/OwnerAgentHeader.tsx",
+        "line": 1,
+        "sha256": "67cb5e9b603d368d9699d1a96775274c2c49759e6c46e4961b51d782bf173590"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/agent_preferences.rs",
+        "line": 1,
+        "sha256": "e2ea54a8d9b8664c362551fe2bc8236a25d82752c4fdfa3b700f1f2cfcd87ff6"
+      },
+      {
+        "path": "api/crates/layer2-core/src/sandbox/agent_settings_authority.rs",
+        "line": 1,
+        "sha256": "2308a100640cbb77eac2a24c6d4d3b20cabbdb3bc33e9f761be965672afce343"
+      }
+    ]
+  },
+  {
+    "id": "ADM-083",
+    "role": "admin",
+    "feature": "Admin Sandbox pause/resume through durable command receipts",
+    "entry_point": "Shared/organization Sandbox detail → Sandbox controls",
+    "steps": [
+      "Use a disposable local active/paused Sandbox with current manage_sandbox access.",
+      "Submit pause or revive with expected_revision and original idempotency identity; poll the receipt through the other AM.",
+      "Test stale revision, expired queue and revoked access."
+    ],
+    "expected_result": "Queued/applied/rejected are distinct from runtime lifecycle completion; authority is rechecked and no duplicate effect occurs.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_access_by_kind_by_id"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/{id}/commands",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_sandboxes_by_id_commands"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/sandbox-commands/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_sandbox_commands_by_id"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      },
+      {
+        "path": "web/src/resources/SandboxControls.tsx",
+        "line": 1,
+        "sha256": "73d9816f8401a54a753638fc3a4bc804cb0b9fe69ca900b123d2d6c4ba55be59"
+      },
+      {
+        "path": "web/src/resources/useSandboxControl.ts",
+        "line": 1,
+        "sha256": "206c3b33f09ebe03f3be93b63fb6a6138e169d17036d392f85308d9369330f9c"
+      },
+      {
+        "path": "sdk/typescript/src/sandboxes.ts",
+        "line": 1,
+        "sha256": "c180e2661d7f83c1591c2c41151c476c4b4897c229b5154c94f32f58f6e4e305"
+      }
+    ]
+  },
+  {
+    "id": "ADM-084",
+    "role": "admin",
+    "feature": "Operator worktree and Workspace preparation recovery",
+    "entry_point": "Public API/SDK recovery actions on local failed fixture",
+    "steps": [
+      "Create local recoverable failed-worktree and failed-Workspace cases.",
+      "Invoke recovery with required original idempotency identity and current authority.",
+      "Observe retained IDs/data and rejected nonrecoverable or stale cases through both AMs."
+    ],
+    "expected_result": "ControlAnySandbox is an explicit accepted route capability; recovery remains constrained to its real service authority and original failed identity.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/recover-worktree",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_agents_by_id_recover_worktree"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/workspaces/{id}/recover-prepare",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_workspaces_by_id_recover_prepare"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs",
+        "line": 1,
+        "sha256": "0c85fac2be7c8df67fda3e77e825391fe71847584ec294c1b5cdc435afe1ecca"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/workspaces.rs",
+        "line": 1,
+        "sha256": "ee89b8d247e17ff0ed6afa83379b6ef2c8270d4e5907fb8f14265b33f8e79fcd"
+      }
+    ]
+  },
+  {
+    "id": "ADM-085",
+    "role": "admin",
+    "feature": "Admin privilege does not imply sharing, bridge or credential custody",
+    "entry_point": "Local negative permission cases on another owner’s resource",
+    "steps": [
+      "With global read/control capabilities only, inspect effective access.",
+      "Attempt share management, owner credential/service changes and bridge management using documented endpoints.",
+      "Compare with an actual owner or current organization admin fixture."
+    ],
+    "expected_result": "Global operator capabilities do not grant manage_sharing, manage_bridge, profile authorship or credential custody; denied requests produce no effect.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_access_by_kind_by_id"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/resource-shares/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_resource_shares_by_kind_by_id"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/{id}/service-access",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_sandboxes_by_id_service_access"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      },
+      {
+        "path": "web/src/resources/SharedAgent.tsx",
+        "line": 1,
+        "sha256": "93554cd32e46df76d248d4d03f043c437c83d08c308905a7e5873c73c96f3b67"
+      },
+      {
+        "path": "web/src/resources/accessSummary.ts",
+        "line": 1,
+        "sha256": "ab0f1321ae5536c3ad230d5d7bf66b8e5d35b30a15b462b54f3e65cea86ded58"
+      }
+    ]
+  }
+]

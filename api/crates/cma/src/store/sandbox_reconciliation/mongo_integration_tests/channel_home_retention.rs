@@ -244,3 +244,6 @@ async fn channel_home_reconciler_keeps_ordinary_late_home_cleanup_and_matching_h
 
 #[path = "fair_sweep.rs"]
 mod fair_sweep;
+
+#[path = "quarantined_native_home.rs"]
+mod quarantined_native_home;
