@@ -9,6 +9,7 @@ function options(overrides: Partial<ShellCommandOptions> = {}): ShellCommandOpti
   return {
     items: navigationFixture(),
     onNavigate: vi.fn(),
+    onOpenEnvironments: vi.fn(),
     canOpenTriggers: false,
     canOpenOperations: false,
     onAppearance: vi.fn(),

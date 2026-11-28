@@ -21,6 +21,7 @@ import type { NavigationSandbox } from './navigation';
 export interface ShellCommandOptions {
   readonly items: readonly NavigationSandbox[];
   readonly onNavigate: (route: AppRoute) => void;
+  readonly onOpenEnvironments: () => void;
   /** Present only when New agent can be used right now. */
   readonly onNewAgent?: () => void;
   readonly canOpenTriggers: boolean;
@@ -37,6 +38,7 @@ export interface ShellCommandOptions {
 export function shellCommands({
   items,
   onNavigate,
+  onOpenEnvironments,
   onNewAgent,
   canOpenTriggers,
   canOpenOperations,
@@ -129,6 +131,13 @@ export function shellCommands({
   const destinations: Command[] = [
     go('agent-manager', 'Agent Manager', { kind: 'agent_manager' }),
     go('event-gateway', 'Event Gateway', { kind: 'event_gateway' }),
+    {
+      id: 'go:environments',
+      group: 'Go to',
+      label: 'Environments',
+      icon: <IconRightUpOutline16 />,
+      run: onOpenEnvironments,
+    },
     ...(canOpenTriggers ? [go('triggers', 'Triggers', { kind: 'triggers' })] : []),
     go('artifacts', 'Artifacts', { kind: 'artifacts' }),
     go('docs', 'Docs', { kind: 'docs' }),
