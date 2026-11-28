@@ -67,10 +67,8 @@ impl Schedule {
             for (id, sandbox) in &page_authority.items {
                 let latest = service.latest_version_for(sandbox);
                 if !sandbox.unpublished_recovery_candidate()
-                    || sandbox
-                        .automatic_unpublished_recovery_target_for_release(
-                            latest.as_deref().unwrap_or_default(),
-                        )
+                    || service
+                        .automatic_recovery_target(sandbox, latest.as_deref().unwrap_or_default())
                         .is_none()
                 {
                     continue;

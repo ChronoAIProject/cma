@@ -336,31 +336,6 @@ async fn retrying_a_reopen_parked_on_a_superseded_target_recovers_onto_the_lates
 }
 
 #[tokio::test]
-async fn retrying_a_machine_reopen_keeps_the_admitted_target_after_a_release() {
-    let (store, id) = parked(Some(SandboxRuntimeImageOrigin::ManagedMachine));
-    let before = store.get_sandbox(&id).await.unwrap().unwrap();
-    let released = Arc::new(layer3_adapter::PinnedReleasedRuntime::new(
-        "unrelated-agent-release",
-        Some("image-v3".into()),
-    ));
-    let service = SandboxRuntimeUpdateService::with_released(store.clone(), released)
-        .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
-    assert!(service.target_is_qualified(&before, "image-v3"));
-    assert!(!service.retry_uses_latest(&before, "image-v2", "image-v3"));
-    let caller = crate::Caller {
-        subject: before.owner.clone(),
-        authorization: crate::Authorization::new([crate::Capability::UseOwnSandboxes]),
-    };
-    let after = service.request(&caller, &id, "image-v2").await.unwrap();
-    assert_eq!(after.admitted_runtime_update_target(), Some("image-v2"));
-    assert_eq!(
-        after.runtime_update_request().unwrap().target_version,
-        "image-v2"
-    );
-    assert_eq!(after.lifecycle.home, before.lifecycle.home);
-}
-
-#[tokio::test]
 async fn retrying_a_parked_update_before_reopen_keeps_its_pinned_target() {
     // Only a stalled reopen moves off a superseded target; other parked phases retry as pinned.
     let (store, id) = parked(None);
@@ -391,4 +366,70 @@ async fn retrying_a_parked_update_before_reopen_keeps_its_pinned_target() {
     );
     assert!(after.runtime_update_request().unwrap().failure.is_none());
     assert!(after.lifecycle.unpublished_recovery.is_none());
+}
+
+#[tokio::test]
+async fn rotation_recovery_uses_qualified_managed_lane_for_retry_and_automatic_reopen() {
+    for origin in [
+        SandboxRuntimeImageOrigin::ManagedMachine,
+        SandboxRuntimeImageOrigin::ManagedDesktop,
+    ] {
+        for automatic in [false, true] {
+            let (store, id) = parked(Some(origin));
+            let mut store = Arc::unwrap_or_clone(store);
+            if origin == SandboxRuntimeImageOrigin::ManagedDesktop {
+                store.desktop_runtime_version = Some("image-v3".into());
+            }
+            if automatic {
+                store
+                    .lock()
+                    .sandboxes
+                    .get_mut(&id)
+                    .unwrap()
+                    .lifecycle
+                    .unpublished_recovery_attempted = false;
+            }
+            let store = Arc::new(store);
+            let release = if origin == SandboxRuntimeImageOrigin::ManagedMachine {
+                PinnedReleasedRuntime::new("other-lane", Some("image-v3".into()))
+            } else {
+                PinnedReleasedRuntime::new("image-v3", Some("other-lane".into()))
+            };
+            let before = store
+                .unpublished_runtime_recovery_snapshot(&id)
+                .await
+                .unwrap();
+            let service =
+                SandboxRuntimeUpdateService::with_released(store.clone(), Arc::new(release))
+                    .with_unpublished_recovery(Arc::new(VerifyOriginalProcesses));
+            let owner = crate::Caller {
+                subject: before.sandbox.owner.clone(),
+                authorization: crate::Authorization::new([crate::Capability::UseOwnSandboxes]),
+            };
+            store.lock().held_runtime_target = Some("image-v3".into());
+            assert!(service
+                .automatic_recovery_target(&before.sandbox, "image-v3")
+                .is_none());
+            assert!(!service.can_update(&before.sandbox));
+            store.lock().held_runtime_target = None;
+
+            let after = if automatic {
+                assert_eq!(
+                    service.automatic_recovery_target(&before.sandbox, "image-v3"),
+                    Some("image-v3")
+                );
+                service.recover_failed_unpublished(&id).await.unwrap()
+            } else {
+                assert!(service.retry_uses_latest(&before.sandbox, "image-v2", "image-v3"));
+                service.request(&owner, &id, "image-v2").await.unwrap()
+            };
+            assert_eq!(after.admitted_runtime_update_target(), Some("image-v3"));
+            assert_eq!(after.runtime_update_request().unwrap().automatic, automatic);
+            assert_eq!(after.lifecycle.home, before.sandbox.lifecycle.home);
+            assert_eq!(
+                store.lock().agents.values().cloned().collect::<Vec<_>>(),
+                before.agents
+            );
+        }
+    }
 }

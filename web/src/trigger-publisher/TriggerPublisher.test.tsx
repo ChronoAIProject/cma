@@ -44,6 +44,26 @@ async function toPresentation(user: ReturnType<typeof userEvent.setup>) {
 }
 
 describe('Trigger publisher flow', () => {
+  it('focuses the invalid title and exposes its error until it is corrected', async () => {
+    const user = userEvent.setup();
+    const { client } = publisherFixture();
+    render(<RoutedPublisher client={client} />);
+    await toPresentation(user);
+    const title = screen.getByRole('textbox', { name: 'title' });
+
+    await next(user);
+    expect(title).toHaveFocus();
+    expect(title).toHaveAttribute('aria-invalid', 'true');
+    expect(title).toHaveAccessibleDescription('Enter a title of 1 to 120 bytes.');
+
+    await next(user);
+    expect(title).toHaveFocus();
+    await user.keyboard('Project notes');
+    expect(title).toHaveValue('Project notes');
+    expect(title).toHaveAttribute('aria-invalid', 'false');
+    expect(title).not.toHaveAccessibleDescription();
+  });
+
   it('opens embed code from a saved published trigger and returns directly after adding a source', async () => {
     const user = userEvent.setup();
     const document = { ...published, placements: [] };

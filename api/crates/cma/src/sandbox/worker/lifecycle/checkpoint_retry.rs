@@ -33,12 +33,21 @@ impl SandboxWorker {
             let stamp = rfc3339_at(now);
             let lease = super::support::lifecycle_lease(&sandbox, &self.config.holder)?;
             let mut next = sandbox.clone();
-            next.retry_lifecycle_after_writer_resume(
-                rfc3339_at(now + decision.delay),
-                &lease.holder,
-                lease.fence,
-                stamp.clone(),
-            )
+            if self.should_park_rotation(&sandbox, decision) {
+                next.park_runtime_update_after_writer_resume(
+                    failure.typed(),
+                    &lease.holder,
+                    lease.fence,
+                    stamp.clone(),
+                )
+            } else {
+                next.retry_lifecycle_after_writer_resume(
+                    rfc3339_at(now + decision.delay),
+                    &lease.holder,
+                    lease.fence,
+                    stamp.clone(),
+                )
+            }
             .map_err(model_error)?;
             self.commit_lifecycle_phase(
                 &sandbox,

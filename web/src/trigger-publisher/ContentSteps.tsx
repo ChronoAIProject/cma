@@ -1,6 +1,6 @@
 import { Picker } from '../ui/Picker';
 import { Presence } from '../ui/Presence';
-import type { SetStateAction } from 'react';
+import type { Ref, SetStateAction } from 'react';
 import type { ProfileKind, TriggerContent } from '@cma/client';
 import { Input } from '../ui/Input';
 import { ChoiceGroup } from '../profiles/ChoiceGroup';
@@ -119,11 +119,13 @@ export function PresentationStep({
   value,
   disabled,
   errors,
+  titleInput,
   onChange,
 }: {
   readonly value: TriggerContent;
   readonly disabled: boolean;
   readonly errors: Readonly<Record<string, string>>;
+  readonly titleInput: Ref<HTMLInputElement>;
   readonly onChange: (value: TriggerContent) => void;
 }) {
   const presentation = value.presentation;
@@ -139,6 +141,8 @@ export function PresentationStep({
               ? 'Sign-up hint (optional)'
               : name;
         const error = errors[name === 'first_message' ? name : `presentation.${name}`];
+        const fieldId = `trigger-${name}`;
+        const errorId = `${fieldId}-error`;
         const text = name === 'first_message' ? value.first_message : (presentation[name] ?? '');
         const change = (text: string) =>
           name === 'first_message'
@@ -146,28 +150,31 @@ export function PresentationStep({
             : field(name, text);
         return (
           <div key={name} className="trigger-field">
-            <label htmlFor={`trigger-${name}`}>{label}</label>
+            <label htmlFor={fieldId}>{label}</label>
             {name === 'title' || name === 'signup_hint' ? (
               <Input
-                id={`trigger-${name}`}
+                id={fieldId}
+                ref={name === 'title' ? titleInput : undefined}
                 value={text}
                 disabled={disabled}
                 aria-invalid={error !== undefined}
+                aria-describedby={error === undefined ? undefined : errorId}
                 onChange={(event) => change(event.target.value)}
               />
             ) : (
               <textarea
-                id={`trigger-${name}`}
+                id={fieldId}
                 rows={name === 'first_message' ? 5 : 3}
                 value={text}
                 disabled={disabled}
                 aria-invalid={error !== undefined}
+                aria-describedby={error === undefined ? undefined : errorId}
                 onChange={(event) => change(event.target.value)}
               />
             )}
             <Presence>
               {error === undefined ? null : (
-                <p className="trigger-error" role="alert">
+                <p id={errorId} className="trigger-error" role="alert">
                   {error}
                 </p>
               )}

@@ -480,6 +480,7 @@ export function ConsoleContent({
               enabled={!user.visitor}
               navigation={navigation}
               onNavigate={onNavigate}
+              onOpenEnvironments={() => environments.ref.current?.openEnvironments()}
               onNewAgent={canCreateInScope ? newAgent : undefined}
               canOpenTriggers={canOpenTriggers}
               canOpenOperations={canOpenOperations(user.capabilities)}

@@ -93,14 +93,14 @@ describe('the button', () => {
   it('takes interaction values from the named component tokens', () => {
     const css = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
     expect(css).toMatch(
-      /\.button--primary:hover:not\(:disabled\)\s*\{[^}]*box-shadow: var\(--dsw-shadow-accent-hover\)/,
+      /\.button--primary:hover:not\(:disabled, \[aria-disabled='true'\]\)\s*\{[^}]*box-shadow: var\(--dsw-shadow-accent-hover\)/,
     );
     expect(css).toMatch(
-      /\.button--primary:active:not\(:disabled\)\s*\{[^}]*var\(--dsw-alias-button-primary-active\)/,
+      /\.button--primary:active:not\(:disabled, \[aria-disabled='true'\]\)\s*\{[^}]*var\(--dsw-alias-button-primary-active\)/,
     );
     expect(css).toMatch(/\.button--outline\s*\{[^}]*var\(--dsw-alias-border-l3\)/);
     expect(css).toMatch(
-      /\.button--outline:hover:not\(:disabled\)\s*\{[^}]*var\(--dsw-alias-interactive-bg-hover\)[^}]*var\(--dsw-alias-border-l4\)/,
+      /\.button--outline:hover:not\(:disabled, \[aria-disabled='true'\]\)\s*\{[^}]*var\(--dsw-alias-interactive-bg-hover\)[^}]*var\(--dsw-alias-border-l4\)/,
     );
   });
 
@@ -121,7 +121,9 @@ describe('the button', () => {
     // Dimmed rather than recoloured, so a primary button that cannot be
     // pressed is still recognisably the one somebody is looking for.
     const buttonCss = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
-    expect(buttonCss).toMatch(/\.button:disabled\s*\{[^}]*opacity: 0\.4/);
+    expect(buttonCss).toMatch(
+      /\.button\[aria-disabled='true'\],\s*\.button:disabled\s*\{[^}]*opacity: 0\.4/,
+    );
     expect(buttonCss).toMatch(/\.button:disabled\s*\{[^}]*cursor: not-allowed/);
 
     // The reason class is part of the shared vocabulary, and stays there.
@@ -187,9 +189,11 @@ describe('the shared component vocabulary', () => {
 
   it('settles a pressed button to 96% and keeps it still under reduced motion', () => {
     const css = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
-    expect(css).toMatch(/\.button:active:not\(:disabled\) \{\s*scale: 0\.96;/);
     expect(css).toMatch(
-      /prefers-reduced-motion: reduce[\s\S]*\.button:active:not\(:disabled\) \{\s*scale: none;/,
+      /\.button:active:not\(:disabled, \[aria-disabled='true'\]\) \{\s*scale: 0\.96;/,
+    );
+    expect(css).toMatch(
+      /prefers-reduced-motion: reduce[\s\S]*\.button:active:not\(:disabled, \[aria-disabled='true'\]\) \{\s*scale: none;/,
     );
     const shared = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
     expect(shared).toMatch(/scale var\(--ds-transition-duration-fast\)/);
