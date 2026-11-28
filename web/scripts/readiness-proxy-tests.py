@@ -28,6 +28,8 @@ WORKERS_DOWN = {
 STREAM_OPEN = b"event: open\ndata: started\n\n"
 STREAM_END = b"event: completed\ndata: finished\n\n"
 STREAM_BODY = STREAM_OPEN + b"data: " + b"x" * 4096 + b"\n\n" + STREAM_END
+ASSET_PATH = "/assets/entry-Dra1n.js"
+ASSET_BODY = b"export const retained = true;\n"
 
 
 def docker(*args):
@@ -121,6 +123,7 @@ server {
         (directory / "default.conf").write_text(config)
         (directory / "index.html").write_text("<!doctype html><title>SPA fixture</title>")
         (directory / "drain-stream").write_bytes(STREAM_BODY)
+        (directory / "entry-Dra1n.js").write_bytes(ASSET_BODY)
         for name in ("web-clear-drain.sh", "web-prestop.sh"):
             script = directory / name
             shutil.copyfile(ROOT / "web/scripts" / name, script)
@@ -131,6 +134,7 @@ server {
             "--volume", f"{directory}/default.conf:/etc/nginx/conf.d/default.conf:ro",
             "--volume", f"{directory}/index.html:/tmp/readiness-static/index.html:ro",
             "--volume", f"{directory}/drain-stream:/tmp/readiness-static/drain-stream:ro",
+            "--volume", f"{directory}/entry-Dra1n.js:/tmp/readiness-static{ASSET_PATH}:ro",
             "--volume", f"{directory}/web-clear-drain.sh:/docker-entrypoint.d/40-clear-web-drain.sh:ro",
             "--volume", f"{directory}/web-prestop.sh:/usr/local/bin/cma-web-prestop:ro",
             image,
@@ -193,6 +197,9 @@ server {
             hook = subprocess.Popen(["docker", "exec", self.container, "/usr/local/bin/cma-web-prestop"])
             _, headers, body = self.wait_for_status("/web-readyz", 503)
             self.assertEqual((headers["cache-control"], body), ("no-store", b"draining\n"))
+            status, headers, body = self.get(ASSET_PATH)
+            self.assertEqual((status, body), (200, ASSET_BODY))
+            self.assertIn("immutable", headers["cache-control"])
             self.assertEqual(self.get("/")[0], 200)
             self.assertTrue(ready(self.get("/ready")))
             self.assertEqual(stream.read(), STREAM_BODY[len(STREAM_OPEN):])

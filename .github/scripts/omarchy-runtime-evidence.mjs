@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { desktopSeccomp } from './desktop-seccomp.mjs';
 
-const [revision, destination] = process.argv.slice(2);
+const [revision, destination, imageReference = 'cma-runtime-omarchy:ci'] = process.argv.slice(2);
 assert.match(revision, /^[0-9a-f]{40}$/);
 mkdirSync(destination, { recursive: true });
 const name = 'cma-omarchy-test-' + randomUUID();
@@ -42,7 +42,7 @@ try {
     result.graphicsDriver = 'vkms';
   }
   result.graphicsDevices = devices.filter(x => x.startsWith('/dev/dri/'));
-  const image = JSON.parse(docker(['image', 'inspect', 'cma-runtime-omarchy:ci']))[0];
+  const image = JSON.parse(docker(['image', 'inspect', imageReference]))[0];
   assert.equal(image.Config.Labels['org.opencontainers.image.revision'], revision);
   assert.equal(image.Config.Labels['dev.chrono.cma.runtime-contract'], '3');
   assert.equal(image.Config.Labels['dev.chrono.cma.desktop-environment'], 'omarchy-4.0.6');

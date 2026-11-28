@@ -125,6 +125,7 @@ async fn save_with_format(
         fields,
         new_obligation,
         carry_proof,
+        recovery_source.is_some(),
     )
     .await?;
     if result.matched_count == 1 {
@@ -143,6 +144,7 @@ async fn update(
     fields: Document,
     new_obligation: Option<&SandboxId>,
     carry_proof: Option<(&Document, &Agent, &Agent)>,
+    connection_recovery: bool,
 ) -> Result<mongodb::results::UpdateResult, SandboxStoreError> {
     let update = doc! {"$set": fields};
     let owner_scoped = store.agent_ownership.is_some()
@@ -154,7 +156,15 @@ async fn update(
             .await
             .map_err(driver);
     }
-    for _ in 0..TRANSACTION_ATTEMPTS {
+    for attempt in 0..TRANSACTION_ATTEMPTS {
+        // An owner renewal can hold the member row long enough to exhaust
+        // instantaneous recovery retries. Wait outside the aborted session,
+        // then recheck both ownership fences in a fresh transaction.
+        if connection_recovery && attempt > 0 {
+            let jitter = uuid::Uuid::new_v4().as_u128() as u64;
+            let delay_ms = (100_u64 << (attempt - 1)) + (jitter & 31);
+            tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+        }
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if native_retirement_action::retryable_body_error(&error) => continue,
@@ -234,6 +244,16 @@ async fn update(
                 return Err(driver(error))
             }
         }
+    }
+    if connection_recovery {
+        tracing::warn!(
+            agent_id = %id,
+            attempts = TRANSACTION_ATTEMPTS,
+            "Agent connection recovery scheduling transaction retry budget exhausted"
+        );
+        return Err(SandboxStoreError::Unavailable(
+            "connection recovery scheduling transaction retry budget exhausted".into(),
+        ));
     }
     Err(SandboxStoreError::Conflict)
 }
