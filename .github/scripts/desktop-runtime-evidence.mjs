@@ -18,9 +18,10 @@ let startupDiagnostics = '';
 const result = { schema: 'cma-desktop-evidence-v1', revision, image: null, result: 'fail', cleanup: false };
 async function waitReady() {
   for (let i = 0; i < 45; i++) {
-    const check = docker(['exec', name, 'python3', '-c',
-      'import socket; s=socket.socket(); s.settimeout(1); print(s.connect_ex(("127.0.0.1",9090)))']).trim();
-    if (check === '0') return;
+    const state = docker(['exec', name, 'python3', '-c',
+      'import json,urllib.request\ntry:\n print(json.loads(urllib.request.urlopen("http://127.0.0.1:9090/readyz",timeout=2).read()).get("desktop","ready"))\nexcept Exception: print("unreachable")']).trim();
+    if (state === 'ready') return;
+    if (state === 'failed') assert.fail('desktop runtime startup failed');
     if (i % 5 === 0) {
       startupDiagnostics = docker(['exec', name, 'sh', '-c',
         'tail -c 4000 /tmp/cma-chromium.log /tmp/cma-xvfb.log /tmp/cma-xfce.log /tmp/cma-websockify.log /tmp/cma-x11vnc.log 2>/dev/null || true']);
