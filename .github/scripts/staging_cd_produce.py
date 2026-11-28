@@ -9,10 +9,10 @@ from pathlib import Path
 
 from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
-from staging_cd_build import build, command, identity, snapshot
+from staging_cd_build import build, identity, snapshot
 from staging_cd_build_cache import SCOPES, BuildCache
 from staging_cd_cache_save import report_layers
-from staging_cd_native_archive import COMPONENTS, METADATA, artifact_name, stamp_metadata
+from staging_cd_native_archive import COMPONENTS, METADATA, artifact_name, stamp_metadata, verify_source
 from staging_cd_common import require
 from staging_cd_github import GitHub
 from staging_cd_publication_diagnostics import run_publication
@@ -36,8 +36,12 @@ def select_native(env):
     def run(_masker, _diagnostics):
         tasks = planned(env)
         require(env["CD_COMPONENT"] in COMPONENTS, "Reserved native producer component differs")
-        select = len(tasks) == 1 and tasks[0][0] == "publish" and tasks[0][1]["source"] == env["GITHUB_SHA"]
+        single_publish = len(tasks) == 1 and tasks[0][0] == "publish"
+        select = single_publish and (env["CD_COMPONENT"] == "am" or tasks[0][1]["source"] == env["GITHUB_SHA"])
+        if select:
+            verify_source(Path.cwd(), env["GITHUB_SHA"], tasks[0][1])
         step_output(env, "build", "true" if select else "false")
+        print(f"Staging native image selection result={'selected' if select else 'skipped'}", flush=True)
         return True
 
     return run_publication(run, component=env.get("CD_COMPONENT"))
@@ -56,13 +60,12 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
         return "no-single-reservation"
     reservation = pending[0]
     historical_web = reservation["component"] == "web" and env.get("CD_WEB_CONTINUITY_RAW") == "true"
-    if reservation["source"] != env["GITHUB_SHA"] and not historical_web:
+    historical_native_am = native and reservation["component"] == "am"
+    if reservation["source"] != env["GITHUB_SHA"] and not (historical_web or historical_native_am):
         return "historical-reservation"
 
     if native:
-        head, tree = command(["git", "rev-parse", "HEAD", "HEAD^{tree}"], cwd=root, timeout=10).decode().splitlines()
-        require((head, tree) == (reservation["source"], reservation["tree"]),
-                "Native producer checkout differs from the reservation")
+        verify_source(root, env["GITHUB_SHA"], reservation)
 
     token = env.get("GH_TOKEN")
     api = GitHub(token, local_tags=local_tag_reader(root))

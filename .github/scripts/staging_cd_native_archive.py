@@ -29,6 +29,22 @@ def artifact_name(release):
             f"{release['run_id']}-{release['run_attempt']}")
 
 
+def verify_source(root, push_head, release, runner=command):
+    """Bind the release tree to the exact triggering push's local checkout."""
+    source = release["source"]
+    require(matches(r"[0-9a-f]{40}", push_head) and matches(r"[0-9a-f]{40}", source),
+            "Native image source is invalid")
+    head, tree = runner(["git", "--no-replace-objects", "rev-parse", "HEAD", source + "^{tree}"],
+                        cwd=root, timeout=10).decode().splitlines()
+    require((head, tree) == (push_head, release["tree"]),
+            "Native image checkout or reserved tree differs")
+    if source != push_head:
+        require(release["component"] == "am", "Native image source differs from the push")
+        history = runner(["git", "--no-replace-objects", "rev-list", "--first-parent", push_head],
+                         cwd=root, timeout=10).decode().splitlines()
+        require(source in history, "Native image source is outside the push's first-parent history")
+
+
 def image_identity(archive, release, source, runner):
     digest = inspect(archive, release, runner, compatibility=from_source(
         release["component"], release["source"], source))
@@ -77,7 +93,7 @@ def stamp_metadata(directory, release, source, runner=command):
     return metadata
 
 
-def fetch(release, artifact_id, directory, source, api, token, *, downloader=download,
+def fetch(release, artifact_id, directory, source, api, token, *, root, downloader=download,
           runner=command, clock=time.monotonic):
     """Trust only an immutable artifact uploaded by this attempt's producer job."""
     require(release["component"] in COMPONENTS and matches(r"[1-9][0-9]{0,19}", artifact_id),
@@ -90,9 +106,12 @@ def fetch(release, artifact_id, directory, source, api, token, *, downloader=dow
     validate_artifact(artifact, artifact_name(release), max_bytes=MAX_ARTIFACT)
     producer = validate_producer(run, jobs, artifact, release["component"],
                                  job_name=native_producer_job(release["component"]))
-    require(producer == {"producer_run": release["run_id"], "producer_attempt": release["run_attempt"],
-                         "producer_source": release["source"]}
+    require(producer["producer_run"] == release["run_id"]
+            and producer["producer_attempt"] == release["run_attempt"]
             and artifact["id"] == int(artifact_id), "Native image producer differs from the reservation")
+    # GitHub identifies the job by the push head. The sealed release identifies
+    # the allocator-selected source within that push's first-parent history.
+    verify_source(root, producer["producer_source"], release, runner)
 
     bundle = directory / "native.zip"
     output = directory / "reserved-native"
@@ -131,9 +150,9 @@ def unpack(bundle, output, deadline, clock):
                     outgoing.write(chunk)
 
 
-def try_fetch(release, artifact_id, directory, source, api, token, on_miss):
+def try_fetch(release, artifact_id, directory, source, api, token, on_miss, *, root):
     try:
-        return fetch(release, artifact_id, directory, source, api, token)
+        return fetch(release, artifact_id, directory, source, api, token, root=root)
     except (Refusal, ArtifactRefused, OSError, subprocess.SubprocessError, ValueError, TypeError,
             KeyError, AttributeError, zipfile.BadZipFile, zlib.error):
         # A failed optional transfer does not supply publication authority.
