@@ -90,7 +90,9 @@ for (const theme of ['light', 'dark']) {
     await expect(panel.getByText('Retrying at observation time', { exact: true })).toBeVisible();
     await expect(panel.getByText(/Eligible no earlier than/)).toBeVisible();
     await expect(panel.getByText(/Incomplete observation/)).toBeVisible();
-    await expect(panel.getByText(/does not establish deployment-wide health/)).toBeVisible();
+    await expect(
+      panel.getByText(/Registered reporters may omit starting or unreachable processes/),
+    ).toBeVisible();
     const button = panel.getByRole('button', { name: 'Refresh binding observations' });
     for (const width of [1440, 390, 320]) {
       await page.setViewportSize({ width, height: 1000 });
