@@ -110,27 +110,32 @@ async fn the_session_subject_is_rests_creator_and_fills_its_cache() {
 /// composition hooks still use the reviewed shared authentication entrypoints.
 #[test]
 fn creator_authentication_keeps_the_reviewed_surface() {
-    let source = include_str!("../../src/auth/creator.rs");
-    let public: Vec<&str> = source
-        .lines()
-        .map(str::trim_start)
-        .filter_map(|line| {
-            line.strip_prefix("pub fn ")
-                .or_else(|| line.strip_prefix("pub async fn "))
-                .or_else(|| line.strip_prefix("pub(crate) fn "))
-                .or_else(|| line.strip_prefix("pub(crate) async fn "))
-        })
-        .map(|rest| rest.split(['(', '<']).next().unwrap())
-        .collect();
+    fn public_functions(source: &str) -> Vec<&str> {
+        source
+            .lines()
+            .map(str::trim_start)
+            .filter_map(|line| {
+                line.strip_prefix("pub fn ")
+                    .or_else(|| line.strip_prefix("pub async fn "))
+                    .or_else(|| line.strip_prefix("pub(crate) fn "))
+                    .or_else(|| line.strip_prefix("pub(crate) async fn "))
+            })
+            .map(|rest| rest.split(['(', '<']).next().unwrap())
+            .collect()
+    }
+
     assert_eq!(
-        public,
+        public_functions(include_str!("../../src/auth/creator.rs")),
         [
             "new",
             "with_service",
             "with_owner_keys",
-            "authenticate",
-            "authenticate_token",
+            "authenticate_token"
         ]
+    );
+    assert_eq!(
+        public_functions(include_str!("../../src/auth/creator_request.rs")),
+        ["authenticate"]
     );
 }
 

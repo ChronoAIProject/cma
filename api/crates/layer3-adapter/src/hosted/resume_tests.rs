@@ -124,6 +124,42 @@ async fn scope_resume_renders_new_scope_and_keeps_persisted_image_and_home_on_re
 }
 
 #[tokio::test]
+async fn resume_checks_the_provider_when_this_replica_cached_an_older_generation() {
+    let (adapter, backend, mut retained) = fixture();
+    let cached = RuntimeProvisionRequest::new(3, retained.spec.clone());
+    adapter.resume_runtime(&retained, &cached).await.unwrap();
+
+    // Another replica suspended generation 3 and resumed generation 4.
+    // This replica still knows generation 3 under the same retained handle.
+    retained.generation = 4;
+    let next = RuntimeProvisionRequest::new(5, retained.spec.clone());
+    assert_eq!(
+        adapter.resume_runtime(&retained, &next).await.unwrap(),
+        retained.handle
+    );
+
+    let calls = backend.0.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[1].0.metadata["cma/runtime-generation"], "4");
+    assert_eq!(calls[1].1.metadata["cma/runtime-generation"], "5");
+}
+
+#[tokio::test]
+async fn resume_refuses_a_cached_successor_with_a_different_specification() {
+    let (adapter, backend, retained) = fixture();
+    let cached = RuntimeProvisionRequest::new(3, retained.spec.clone());
+    adapter.resume_runtime(&retained, &cached).await.unwrap();
+
+    let mut different = cached;
+    different.spec.reaches.push("api-github".into());
+    assert!(matches!(
+        adapter.resume_runtime(&retained, &different).await,
+        Err(AdapterError::Rejected(_))
+    ));
+    assert_eq!(backend.0.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn scope_resume_refuses_unreserved_generation_and_unrelated_spec_changes_before_dispatch() {
     let (adapter, backend, retained) = fixture();
     let next = RuntimeProvisionRequest::new(3, retained.spec.clone());
