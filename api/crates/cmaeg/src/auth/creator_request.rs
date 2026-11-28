@@ -1,5 +1,8 @@
 //! Method permissions and current organization scope for creator requests.
-use super::{bearer, selected_owner, service_error, Creator, CreatorAuthError, CreatorAuthState};
+use super::{
+    bearer, selected_owner, service_error, Creator, CreatorAuthError, CreatorAuthState,
+    CreatorAuthenticator,
+};
 use axum::{
     extract::FromRequestParts,
     http::{request::Parts, HeaderMap},
