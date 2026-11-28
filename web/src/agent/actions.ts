@@ -10,13 +10,11 @@ import {
   stoppedInputMessage,
 } from './controllerError';
 import { agentRestartReady } from './controlReadiness';
+import { inputRateLimited } from './transport/submit';
+import { recoverPendingV2Action } from './transport/recoverPending';
 import { runId } from './transport/runId';
-import { submitV2Control, recoverV2Control } from './transport/controls';
-import {
-  submitV2Interruption,
-  recoverV2Interruption,
-  InterruptionNotSubmittedError,
-} from './transport/interruption';
+import { submitV2Control } from './transport/controls';
+import { submitV2Interruption, InterruptionNotSubmittedError } from './transport/interruption';
 export function useAgentActions({
   agentId,
   client,
@@ -134,10 +132,10 @@ export function useAgentActions({
       let retainedInput: InputErrorOwner | undefined;
       try {
         if (session !== undefined) {
-          const sendInput = (text: string) => {
+          const sendInput = async (text: string) => {
             recoveringInput = session.journal.read()?.state === 'pending';
             setInitialSend(!recoveringInput);
-            return session.send(
+            const result = await session.send(
               text,
               (receipt) => {
                 if (controller.signal.aborted || currentContext.current !== context) return;
@@ -154,12 +152,20 @@ export function useAgentActions({
                 retainedInput = { session, key };
               },
             );
+            if (
+              result === 'refused' &&
+              !controller.signal.aborted &&
+              currentContext.current === context
+            ) {
+              onRefused?.();
+              setActionError(inputRateLimited);
+            }
           };
           if (approving) {
             const scope = `agent:${agentId}:approval:${approval.id}:${approval.decision}`;
             await submitV2Control(
               session,
-              current.status === 'ready' ? current.conversation.responseBinding : undefined,
+              current.conversation.responseBinding,
               { type: 'resolve_approval', approval_id: approval.id, decision: approval.decision },
               runId(),
               controller.signal,
@@ -467,16 +473,7 @@ export function useAgentActions({
         }
         return;
       }
-      // Empty recovery helpers still authorize. Avoid making a retained Cancel
-      // wait for unrelated input/interruption checks that have nothing to send.
-      if (v2.journal.readControl()?.commandId === null)
-        await recoverV2Control(v2, controller.signal);
-      if (v2.journal.interruption.read()?.receipt === null)
-        await recoverV2Interruption(v2, controller.signal);
-      if (
-        v2.journal.read()?.state === 'pending' &&
-        !(await v2.recover(() => {}, controller.signal))
-      ) {
+      if ((await recoverPendingV2Action(v2, controller.signal)) === false) {
         setActionError(
           'The original message is still awaiting confirmation. Check the pending request again.',
         );

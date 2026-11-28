@@ -52,10 +52,15 @@ export function useAgentActionError() {
   }, []);
   const recoverInputError = useCallback((session: AgentV2Session, key: string) => {
     const expected = latest.current;
-    return () => {
+    return (outcome: 'accepted' | 'refused' = 'accepted') => {
       try {
-        const accepted = session.journal.read();
-        if (accepted?.state !== 'accepted' || accepted.key !== key) return;
+        const retained = session.journal.read();
+        if (
+          outcome === 'refused'
+            ? retained !== null
+            : retained?.state !== 'accepted' || retained.key !== key
+        )
+          return;
       } catch {
         return;
       }

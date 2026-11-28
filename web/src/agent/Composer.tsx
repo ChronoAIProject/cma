@@ -55,6 +55,7 @@ interface ComposerProps {
   readonly controlsUnavailable?: boolean;
   readonly responseControls?: ResponseControlAvailability;
   readonly requestPending?: boolean;
+  readonly inputCoolingDown?: boolean;
   readonly acceptedMessage?: string;
   readonly acceptedSteeringMessage?: string;
   readonly acceptedInterruptionMessage?: string;
@@ -91,6 +92,7 @@ export function Composer({
   controlsUnavailable = false,
   responseControls,
   requestPending = false,
+  inputCoolingDown = false,
   acceptedMessage,
   acceptedSteeringMessage,
   acceptedInterruptionMessage,
@@ -129,6 +131,7 @@ export function Composer({
     onStop,
   });
   const noticeId = useId();
+  const sendBlocked = busy || requestPending || inputCoolingDown;
   const inputBlocked = !inputAvailability.allowed || draft?.recoveryBlocked === true;
   const preparing = status === 'starting' && queueWhileStarting;
   const notice = inputAvailability.notice ?? pausedNotice;
@@ -227,12 +230,11 @@ export function Composer({
       message === '' ||
       composing.current ||
       !usable ||
-      busy ||
+      sendBlocked ||
       (running && !queueWhileRunning) ||
       (running && steeringMode === 'interrupt' && controlsUnavailable) ||
       starting ||
       (inputBlocked && !prepare) ||
-      requestPending ||
       (quickMessage === undefined && attachments.blocked) ||
       sending.current
     )
@@ -331,12 +333,11 @@ export function Composer({
         messages={quickMessages}
         disabled={
           !usable ||
-          busy ||
+          sendBlocked ||
           (running && !queueWhileRunning) ||
           starting ||
           inputBlocked ||
-          submitting ||
-          requestPending
+          submitting
         }
         onSend={submit}
       />
@@ -470,11 +471,10 @@ export function Composer({
                   disabled={
                     !usable ||
                     (running && !queueWhileRunning) ||
-                    busy ||
+                    sendBlocked ||
                     submitting ||
                     starting ||
                     (inputBlocked && !canPrepareFirstSend) ||
-                    requestPending ||
                     messageContent === '' ||
                     attachments.blocked ||
                     (running && steeringMode === 'interrupt' && controlsUnavailable)

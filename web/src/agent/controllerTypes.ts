@@ -38,6 +38,7 @@ export interface AgentController {
   readonly queuedMessage?: QueuedMessageControl;
   readonly queuedInputs?: QueuedInputsControl;
   readonly pendingMessage?: string;
+  readonly inputCoolingDown?: boolean;
   readonly checkingInputReceipt?: boolean;
   readonly acceptedMessage?: string;
   readonly acceptedSteeringMessage?: string;

@@ -1,7 +1,11 @@
 import { ApiError, type Cma, type V2ResponseReceipt, type AnswerContext } from '@cma/client';
 import type { AgentTransportJournal } from './journal';
 import type { InputRecord } from './journalRecord';
+import { responseBody, sameInput } from './inputRefusal';
+import { inputRefusalRecoveryEnabled } from './recoveryConfig';
 import { transientRequestFailure, type RequestRecovery } from './requestRecovery';
+
+export const inputRateLimited = 'The message was rate limited. Try sending it again shortly.';
 
 interface SubmissionOptions {
   readonly answerContext?: AnswerContext;
@@ -20,14 +24,16 @@ export function submitAgentInput(
   journal: AgentTransportJournal,
   input: string,
   options: SubmissionOptions,
-): Promise<void> {
+): Promise<'refused' | void> {
   options.signal?.throwIfAborted();
   const recovering = journal.read()?.state === 'pending';
+  if (!recovering && inputRetryAt(journal) !== undefined) return Promise.resolve('refused');
   const retained = journal.retain(input, options.answerContext);
   options.onRetained?.(retained.key);
   if (recovering) {
     return recoverAgentInput(sdk, journal, options).then((confirmed) => {
       if (!confirmed) throw unconfirmedInput();
+      if (confirmed === 'refused') return confirmed;
     });
   }
   return submit(sdk, journal, retained, options);
@@ -38,7 +44,7 @@ export async function recoverAgentInput(
   sdk: Cma,
   journal: AgentTransportJournal,
   options: SubmissionOptions,
-): Promise<boolean> {
+): Promise<boolean | 'refused'> {
   options.signal?.throwIfAborted();
   const retained = journal.read();
   if (retained === null) return false;
@@ -46,43 +52,64 @@ export async function recoverAgentInput(
     options.onAccepted(retained.receipt);
     return true;
   }
-  const lookup = async () => {
-    const receipt = await findReceipt(
-      sdk,
-      journal,
-      retained,
-      options.signal,
-      options.recovery?.timeoutMs,
-    );
-    if (!receipt) return false;
-    await options.authorize?.();
-    options.signal?.throwIfAborted();
-    requireRetained(journal, retained);
-    journal.accepted(retained.key, receipt);
-    options.onAccepted(receipt);
-    return true;
-  };
+  const lookup = () =>
+    reconcileInput(sdk, journal, retained, options, async (receipt) => {
+      await options.authorize?.();
+      options.signal?.throwIfAborted();
+      acceptInput(journal, retained, receipt);
+      options.onAccepted(receipt);
+    });
   return options.recovery ? options.recovery.retry(lookup) : lookup();
 }
 
-function responseBody(input: InputRecord) {
-  return {
-    input: input.input,
-    stream: true as const,
-    ...(input.answerContext ? { answer_context: input.answerContext } : {}),
-  };
+export function inputRetryAt(journal: AgentTransportJournal): number | undefined {
+  return inputRefusalRecoveryEnabled ? journal.inputRefusal.retryAt() : undefined;
 }
 
 function requireRetained(journal: AgentTransportJournal, input: InputRecord) {
-  const retained = journal.read();
-  if (
-    retained?.key !== input.key ||
-    retained.input !== input.input ||
-    retained.answerContext?.turn_sequence !== input.answerContext?.turn_sequence ||
-    retained.answerContext?.answer_sequence !== input.answerContext?.answer_sequence
-  ) {
+  if (!sameInput(journal.read(), input)) {
     throw new Error('The retained input changed while its receipt was being recovered.');
   }
+}
+
+function acceptInput(
+  journal: AgentTransportJournal,
+  input: InputRecord,
+  receipt: V2ResponseReceipt,
+) {
+  requireRetained(journal, input);
+  journal.accepted(input.key, receipt);
+  if (inputRefusalRecoveryEnabled) journal.inputRefusal.clear(input);
+}
+
+async function reconcileInput(
+  sdk: Cma,
+  journal: AgentTransportJournal,
+  input: InputRecord,
+  options: SubmissionOptions,
+  confirm: (receipt: V2ResponseReceipt) => Promise<void>,
+): Promise<boolean | 'refused'> {
+  const canRelease = inputRefusalRecoveryEnabled && journal.inputRefusal.matches(input);
+  const receipt = await findReceipt(
+    sdk,
+    journal,
+    input,
+    options.signal,
+    options.recovery?.timeoutMs,
+    canRelease,
+  );
+  if (receipt) {
+    await confirm(receipt);
+    return true;
+  }
+  if (receipt !== null || !canRelease) return false;
+
+  await options.authorize?.();
+  options.signal?.throwIfAborted();
+  if (!journal.inputRefusal.matches(input)) return false;
+  journal.refused(input.key);
+  journal.inputRefusal.clear(input);
+  return 'refused';
 }
 
 async function findReceipt(
@@ -91,13 +118,16 @@ async function findReceipt(
   input: InputRecord,
   signal?: AbortSignal,
   timeoutMs?: number,
+  requireJson?: boolean,
 ) {
   requireRetained(journal, input);
   const status = await sdk.responsesV2.findAgentInputReceipt(journal.agentId, responseBody(input), {
     idempotencyKey: input.key,
     signal,
     timeoutMs: timeoutMs ?? 5000,
+    ...(requireJson ? { requireJson } : {}),
   });
+  if (status === null) return null;
   const receipt = status?.receipt;
   return receipt?.response_id
     ? { responseId: receipt.response_id, commandId: receipt.command_id }
@@ -115,7 +145,7 @@ async function submit(
   journal: AgentTransportJournal,
   input: InputRecord,
   options: SubmissionOptions,
-): Promise<void> {
+): Promise<'refused' | void> {
   const request = new AbortController();
   const abort = () => request.abort(options.signal?.reason);
   options.signal?.addEventListener('abort', abort, { once: true });
@@ -132,8 +162,7 @@ async function submit(
       throw error;
     }
     options.signal?.throwIfAborted();
-    requireRetained(journal, input);
-    journal.accepted(input.key, receipt);
+    acceptInput(journal, input, receipt);
     options.onAccepted(receipt);
     acknowledged = true;
     request.abort();
@@ -154,22 +183,21 @@ async function submit(
         },
         onEvent() {},
       });
+    const lookup = async () => {
+      await options.authorize?.();
+      request.signal.throwIfAborted();
+      const result = await reconcileInput(
+        sdk,
+        journal,
+        input,
+        { ...options, signal: request.signal },
+        confirm,
+      );
+      if (!result) throw unconfirmedInput();
+      if (result === 'refused') return result;
+    };
     const attemptRequest = async (retry: number) => {
-      if (retry > 0) {
-        if (knownReceipt) return confirm(knownReceipt);
-        await options.authorize?.();
-        request.signal.throwIfAborted();
-        const receipt = await findReceipt(
-          sdk,
-          journal,
-          input,
-          request.signal,
-          options.recovery?.timeoutMs,
-        );
-        if (!receipt) throw unconfirmedInput();
-        await confirm(receipt);
-        return;
-      }
+      if (retry > 0) return knownReceipt ? confirm(knownReceipt) : lookup();
       try {
         await send();
       } catch (error) {
@@ -180,11 +208,22 @@ async function submit(
           (error instanceof ApiError &&
             error.status === 409 &&
             error.code === 'agent_command_admission_conflict');
+        if (
+          inputRefusalRecoveryEnabled &&
+          !receiptObserved &&
+          error instanceof ApiError &&
+          error.status === 429 &&
+          error.code === 'rate_limited'
+        ) {
+          request.signal.throwIfAborted();
+          if (journal.inputRefusal.remember(input, error.retryAfterMs)) return lookup();
+        }
         throw error;
       }
     };
-    if (options.recovery) await options.recovery.retry(attemptRequest);
-    else await attemptRequest(0);
+    return options.recovery
+      ? await options.recovery.retry(attemptRequest)
+      : await attemptRequest(0);
   } catch (error) {
     if (!acknowledged) {
       if (

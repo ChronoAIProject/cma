@@ -25,7 +25,11 @@ function clean(fixture: ReplicaFixture) {
 test('serving artifact binds activation to immutable build input', async ({ request }) => {
   const identity = await (await request.get('/build-info.json')).json();
   const recovery = await (await request.get('/recovery-info.json')).json();
-  expect(recovery).toEqual({ ...identity, replicaRecoveryEnabled: enabled });
+  expect(recovery).toEqual({
+    ...identity,
+    replicaRecoveryEnabled: enabled,
+    inputRefusalRecoveryEnabled: false,
+  });
   if (process.env.CMA_RECOVERY_SOURCE)
     expect(identity.revision).toBe(process.env.CMA_RECOVERY_SOURCE);
 });
