@@ -13,7 +13,7 @@ use crate::rest::agents_tests::{
 async fn insufficient_credit_terminal_is_consistent_on_retrieval_and_both_streams() {
     let (state, store) = conversation_fixture().await;
     let agent = seeded_agent("agt_credit", AgentStatus::Ready, 6, None);
-    let detail = "The model request failed with HTTP 402 because its billing account has insufficient credits. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.";
+    let detail = "The model request failed with HTTP 402 because the model billing account has insufficient credits. Earlier files, tool results, and partial output remain available. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.";
     insert_agent(
         &store,
         agent.clone(),

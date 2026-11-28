@@ -2,7 +2,7 @@
 
 use super::acp::Outcome;
 
-const RECOVERY: &str = "The model request failed with HTTP 402 because its billing account has insufficient credits. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.";
+const RECOVERY: &str = "The model request failed with HTTP 402 because the model billing account has insufficient credits. Earlier files, tool results, and partial output remain available. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.";
 
 pub(super) fn classify(message: &str, bounded_json: bool) -> Option<Outcome> {
     // Match the observed transport diagnostic, then parse its structured body.
