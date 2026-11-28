@@ -119,6 +119,20 @@ pub(super) async fn attach(auth: &AuthState, request: Request, next: Next) -> Re
     {
         return observation.rejected(response);
     }
+    if crate::request_audit::bind(crate::request_audit::VerifiedActor {
+        subject: verified.subject.clone(),
+        channel: layer2_core::ActivityChannel::Api,
+        credential: crate::request_audit::Credential::RequestBoundRead,
+        scope: "request_bound",
+    })
+    .await
+    .is_err()
+    {
+        return refusal(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "activity_admission_unavailable",
+        );
+    }
     let context = CallerContext {
         credential_source: CredentialSource::RequestBoundRead {
             expires_at: verified.expires_at,

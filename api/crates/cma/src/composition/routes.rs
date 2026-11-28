@@ -59,6 +59,14 @@ pub(super) fn compose(
     (health, tools): (Router, Router),
     relay: Option<&Arc<crate::agent_manager::relay::Relay>>,
 ) -> Router {
+    let ingress_audit = config
+        .activity_ingress_audit_enabled
+        .then(|| crate::activity::ingress::Admission::new(&recorder, relay));
+    let gateway_audit = config
+        .activity_gateway_audit_subject
+        .clone()
+        .map(|subject| crate::activity::gateway::router(subject, &recorder, auth.clone()))
+        .unwrap_or_default();
     let public = crate::rest_router(resources)
         .merge(crate::connections::router(connections, auth.clone()))
         .merge(crate::auth::router(auth.clone()))
@@ -94,8 +102,17 @@ pub(super) fn compose(
             ))
         }
     };
+    let public = if let Some(admission) = ingress_audit {
+        public.layer(axum::middleware::from_fn_with_state(
+            admission,
+            crate::activity::ingress::audit,
+        ))
+    } else {
+        public
+    };
     Router::new()
         .merge(public)
+        .merge(gateway_audit)
         .merge(tools)
         .layer(axum::middleware::from_fn(
             crate::background::interactive_request,

@@ -68,50 +68,19 @@ async fn confirm_spare_shortage(
     )))
 }
 
-// A returned retirement may have published a durable failure. Require
-// its recorded settlement before classifying startup as capacity-only.
-async fn confirm_retirement_settlement(
-    store: &dyn PoolTargetStore,
-    attempts: &BTreeMap<String, RetirementAttempt>,
-) -> Result<(), WarmPoolError> {
-    for (id, attempt) in attempts {
-        if matches!(attempt, RetirementAttempt::Unacknowledged) {
-            return Err(WarmPoolError::Unavailable);
-        }
-        let target = store.find(id).await?.ok_or(WarmPoolError::Unavailable)?;
-        let eligible = match attempt {
-            RetirementAttempt::QuarantineDeferred { revision } => {
-                // This attempt stopped before either retirement marker. A
-                // prior unresolved effect must still fail the shortage check.
-                target.revision == *revision && !store.candidate_protected(&target).await?
-            }
-            _ => target.retiring,
-        };
-        if !target.retired
-            && (!eligible
-                || target.lease.is_some()
-                || target.error.is_some()
-                || target.applied_revision != target.revision)
-        {
-            return Err(WarmPoolError::Unavailable);
-        }
-    }
-    Ok(())
-}
-
 pub(super) async fn confirm_after_retirement(
     store: &dyn PoolTargetStore,
     provider: &dyn NativePoolControl,
     plan: &NativePoolConfiguration,
     target_fencing: bool,
     admission: &Admission,
-    attempts: &BTreeMap<String, RetirementAttempt>,
+    retirement: impl std::future::Future<Output = Result<(), WarmPoolError>>,
 ) -> Result<WarmPoolStartup, WarmPoolError> {
     tokio::select! {
         biased;
         () = admission.stopping() => Ok(WarmPoolStartup::Stopping),
         result = tokio::time::timeout(Duration::from_secs(8), async {
-            confirm_retirement_settlement(store, attempts).await?;
+            retirement.await?;
             confirm_spare_shortage(store, provider, plan, target_fencing).await
         }) => result.map_err(|_| WarmPoolError::Unavailable)?,
     }
@@ -136,7 +105,7 @@ pub(in crate::warm_pools) async fn await_ready_with_fencing(
                 plan,
                 policy.target_fencing,
                 admission.ok_or(WarmPoolError::Unavailable)?,
-                &BTreeMap::new(),
+                std::future::ready(Ok(())),
             )
             .await
         }

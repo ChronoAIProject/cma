@@ -136,10 +136,8 @@ async fn legacy_evidence(
     let bounded = matches!(
         command.receipt.envelope.command,
         layer2_core::sandbox::agent_io::AgentCommand::Message { .. }
-    ) && !matches!(
-        command.receipt.envelope.actor,
-        layer2_core::sandbox::agent_io::AgentActor::Trigger { .. }
-    ) && dispatch.operation_sequence.checked_add(1) == Some(dispatch.turn_sequence)
+    ) && !command.receipt.envelope.is_first_message()
+        && dispatch.operation_sequence.checked_add(1) == Some(dispatch.turn_sequence)
         && suffix_length.is_some_and(|length| length <= 16)
         && super::super::agent_log_integrity::trusted_summary(
             store,

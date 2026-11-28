@@ -292,8 +292,7 @@ impl WorkspaceStore for MongoSandboxStore {
             }
         }
         if layer2_core::sandbox::store::WorkAuthority::active() {
-            return super::work_publication::workspace::save(self, expected_revision, &workspace)
-                .await;
+            return super::work_publication::workspace::save(self, &current, &workspace).await;
         }
         let result = self
             .workspaces

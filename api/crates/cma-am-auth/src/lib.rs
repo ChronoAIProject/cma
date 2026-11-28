@@ -11,6 +11,7 @@ pub mod profile;
 pub mod provider;
 mod proxy_grant;
 mod records;
+pub mod request_audit;
 pub mod request_observation;
 pub mod service_config;
 pub mod shutdown;

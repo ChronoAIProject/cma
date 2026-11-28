@@ -235,7 +235,7 @@ async fn scan(
     draining: bool,
 ) -> Result<RetirementScan, WarmPoolError> {
     if !authorized(store, target, image).await? {
-        return Ok(deferred(target, "release_settling"));
+        return Ok(deferred(target, "release_settling", "The current release is not confirmed or is still settling. Verify its active image and allow the release to settle."));
     }
     // Inspect the operation first. If it has finished, the later Sandbox
     // scan sees any home it created before publishing that outcome.
@@ -254,7 +254,7 @@ async fn scan(
         .await
         .map_err(|_| WarmPoolError::Unavailable)?
     {
-        return Ok(deferred(target, "lifecycle_admission"));
+        return Ok(deferred(target, "lifecycle_admission", "A lifecycle operation still depends on this pool. Let the operation finish before retirement."));
     }
     let mut evidence = NativePoolDrain::default();
     let mut quarantined = false;
@@ -270,7 +270,7 @@ async fn scan(
         match owned_home(&sandbox, target, image)? {
             eligibility::Owned::Blocked => {
                 if !draining {
-                    return Ok(deferred(target, "sandbox_in_use"));
+                    return Ok(deferred(target, "sandbox_in_use", "A Sandbox still depends on this pool. Keep the original definitions until the dependency clears."));
                 }
                 if let Some(home) = eligibility::settled_native_home(&sandbox, target)? {
                     evidence.homes.push(home);
@@ -282,10 +282,10 @@ async fn scan(
                     .as_ref()
                     .and_then(|home| home.native_pool.as_ref())
                 else {
-                    return Ok(deferred(target, "sandbox_unsettled"));
+                    return Ok(deferred(target, "sandbox_unsettled", "A Sandbox allocation is still unresolved. Check the saved allocation and wait for its Claim to settle."));
                 };
                 if target.binding.as_ref() != Some(&native.request.pool) {
-                    return Ok(deferred(target, "sandbox_unsettled"));
+                    return Ok(deferred(target, "sandbox_unsettled", "A Sandbox allocation is still unresolved. Check the saved allocation and wait for its Claim to settle."));
                 }
                 let Some(claim) = native.claim.as_ref().filter(|claim| {
                     !native.cleaned
@@ -293,7 +293,7 @@ async fn scan(
                         && claim.request == native.request
                         && claim.sandbox_name.is_some()
                 }) else {
-                    return Ok(deferred(target, "sandbox_unsettled"));
+                    return Ok(deferred(target, "sandbox_unsettled", "A Sandbox allocation is still unresolved. Check the saved allocation and wait for its Claim to settle."));
                 };
                 evidence.claims.push(claim.clone());
             }
@@ -312,7 +312,7 @@ async fn scan(
             .map_err(|_| WarmPoolError::Unavailable)?
         {
             if warm_blocks(&warm, target, image)? {
-                return Ok(deferred(target, "prepared_reservation"));
+                return Ok(deferred(target, "prepared_reservation", "A prepared Sandbox reservation still depends on this pool. Allow the reservation to settle."));
             }
         }
     }
@@ -320,14 +320,14 @@ async fn scan(
         let warm = crate::store::warm_sandboxes::read(&document)
             .map_err(|_| WarmPoolError::Unavailable)?;
         if warm_blocks(&warm, target, image)? {
-            return Ok(deferred(target, "legacy_warm_sandbox"));
+            return Ok(deferred(target, "legacy_warm_sandbox", "A retained warm Sandbox still depends on this pool. Check the legacy allocation and let it settle."));
         }
     }
     // This runs again after the provider's admission marker. Every allocation
     // persists its reservation before selection/Claim I/O; the fresh scan thus
     // catches work that crossed the earlier selection before the marker.
     if !authorized(store, target, image).await? {
-        return Ok(deferred(target, "release_settling"));
+        return Ok(deferred(target, "release_settling", "The current release is not confirmed or is still settling. Verify its active image and allow the release to settle."));
     }
     if quarantined {
         log_deferral(target, "quarantined_sandbox");
@@ -338,9 +338,9 @@ async fn scan(
 
 /// Retirement used to defer silently, leaving obsolete capacity running with
 /// no sign of why. Name the blocking class so a stuck record is diagnosable.
-fn deferred(target: &PoolTarget, reason: &'static str) -> RetirementScan {
+fn deferred(target: &PoolTarget, reason: &'static str, message: &'static str) -> RetirementScan {
     log_deferral(target, reason);
-    RetirementScan::Blocked
+    RetirementScan::Blocked(PoolFailure::retirement(reason, message))
 }
 
 fn log_deferral(target: &PoolTarget, reason: &'static str) {
@@ -394,10 +394,18 @@ pub(super) async fn remove(
     filter.extend(doc! {"retiring":true,"target_replicas":0_i64});
     // Keep the immutable activation/identity tombstone. Physically removing it
     // would let an old API recreate its deterministic target with a fresh date.
-    store.check_fenced_write(store.targets.update_one(filter, doc! {"$set":{
-        "retired":true,"lease":mongodb::bson::Bson::Null,"lease_until":DateTime::from_millis(0),
-        "error":mongodb::bson::Bson::Null,"applied_revision":target.revision
-    }}).await).await
+    store
+        .check_fenced_write(store.targets.update_one(filter, tombstone(target)).await)
+        .await
+}
+
+pub(super) fn tombstone(target: &PoolTarget) -> Document {
+    doc! {"$set": {
+        "retired": true, "lease": mongodb::bson::Bson::Null,
+        "lease_until": DateTime::from_millis(0), "error": mongodb::bson::Bson::Null,
+        "reconciliation_failure": mongodb::bson::Bson::Null,
+        "applied_revision": target.revision,
+    }}
 }
 
 #[cfg(test)]

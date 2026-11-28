@@ -13,6 +13,30 @@ pub(super) fn sampling_enabled(
     boolean("CHRONO_ACTIVITY_OPERATIONAL_READ_SAMPLING_ENABLED", lookup)
 }
 
+pub(super) fn ingress_audit_enabled(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<bool, String> {
+    boolean("CHRONO_ACTIVITY_INGRESS_AUDIT_ENABLED", lookup)
+}
+
+pub(super) fn gateway_audit_subject(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+) -> Result<Option<layer2_core::SubjectId>, String> {
+    let Some(subject) = lookup("CHRONO_ACTIVITY_GATEWAY_AUDIT_SUBJECT")? else {
+        return Ok(None);
+    };
+    if subject.is_empty()
+        || subject.len() > 256
+        || subject.trim() != subject
+        || subject.chars().any(char::is_control)
+    {
+        return Err(
+            "CHRONO_ACTIVITY_GATEWAY_AUDIT_SUBJECT requires one exact service subject".into(),
+        );
+    }
+    Ok(Some(layer2_core::SubjectId::new(subject)))
+}
+
 fn boolean(
     key: &str,
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,

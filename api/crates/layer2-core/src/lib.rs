@@ -56,8 +56,9 @@ pub mod sequence;
 pub mod trigger_domain;
 
 pub use activity::{
-    ActivityAction, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord, ActivitySummary,
-    ActivityTarget, DEFAULT_ACTIVITY_LIMIT, MAX_ACTIVITY_LIMIT,
+    ActivityAction, ActivityChannel, ActivityId, ActivityOutcome, ActivityQuery, ActivityRecord,
+    ActivityResult, ActivitySummary, ActivityTarget, ACTIVITY_OUTCOME_UNCONFIRMED,
+    DEFAULT_ACTIVITY_LIMIT, MAX_ACTIVITY_LIMIT,
 };
 pub use activity_detail::{ActivityDetail, DetailKey};
 pub use activity_service::{ActivityService, ActivityStore};

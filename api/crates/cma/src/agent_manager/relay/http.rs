@@ -394,7 +394,7 @@ fn settings_patch(path: &str, method: &axum::http::Method) -> bool {
             .is_some_and(|(id, suffix)| !id.is_empty() && suffix == "settings")
 }
 
-fn body_limit(path: &str) -> usize {
+pub(super) fn body_limit(path: &str) -> usize {
     if path.ends_with("/attachments") {
         layer2_core::sandbox::agent_attachments::MAX_ATTACHMENT_BYTES
     } else if path.ends_with("/files") {

@@ -29,6 +29,7 @@ pub mod providers;
 mod readback;
 pub mod records;
 pub mod replicas;
+mod request_audit;
 pub mod runtime;
 mod serve;
 mod serve_routed;

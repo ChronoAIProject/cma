@@ -149,3 +149,6 @@ async fn public_control_admits_and_recovers_after_execution_observed() {
     );
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "onboarding_first_message_tests.rs"]
+mod onboarding_first_message;

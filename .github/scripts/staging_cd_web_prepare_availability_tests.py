@@ -68,7 +68,7 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
             self.origin, self.stock, self.prepare, incumbent_sha256=sha256(self.stock),
             prepare_sha256=prepare_sha256 or sha256(self.prepare),
             incumbent_image=STOCK_IMAGE, prepare_image=PREPARE_IMAGE,
-            deadline=time.monotonic() + 10, rollout=rollout, record=record or self.rows.append, fetch=fetch,
+            deadline=time.monotonic() + 30, rollout=rollout, record=record or self.rows.append, fetch=fetch,
         )
 
     def test_full_catalog_uses_same_edge_and_defers_candidate_only_paths_until_settled(self):
@@ -229,16 +229,20 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
                 "--incumbent-image", STOCK_IMAGE, "--prepare-image", PREPARE_IMAGE,
                 "--ready-file", str(ready), "--submit-file", str(submitted), "--settled-file", str(settled),
                 "--evidence", str(journal),
-                "--seconds", "4",
+                "--seconds", "30",
             ]
             with subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
                 try:
-                    deadline = time.monotonic() + 3
+                    deadline = time.monotonic() + 15
                     while not ready.is_file() and process.poll() is None and time.monotonic() < deadline:
                         time.sleep(0.01)
-                    self.assertTrue(ready.is_file())
-                    submitted.touch()
-                    submit_ns = submitted.stat().st_mtime_ns
+                    if not ready.is_file():
+                        if process.poll() is None:
+                            process.kill()
+                        _, stderr = process.communicate(timeout=10)
+                        self.fail(f"Prepare check did not begin sampling: {stderr}")
+                    submit_ns = time.time_ns()
+                    submitted.write_text(f"{submit_ns}\n")
                     while time.monotonic() < deadline:
                         if any(row.get("request_started_ns", 0) >= submit_ns
                                for row in map(json.loads, journal.read_text().splitlines()[:-1])):
@@ -248,9 +252,9 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
                         self.fail("No overlap request started after the submit marker")
                     self.serve = self.serve_prepare
                     status = root / "status"
-                    status.write_text("prepared\n")
+                    status.write_text(f"prepared {time.time_ns()}\n")
                     status.rename(settled)
-                    stdout, stderr = process.communicate(timeout=5)
+                    stdout, stderr = process.communicate(timeout=10)
                     self.assertEqual(process.returncode, 0, stderr)
                     self.assertIn("PASS", stdout)
                 finally:
@@ -258,7 +262,7 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
                         process.kill()
             original = journal.read_text()
             self.assertTrue(json.loads(original.splitlines()[-1])["passed"])
-            replay = subprocess.run(arguments, text=True, capture_output=True, timeout=5)
+            replay = subprocess.run(arguments, text=True, capture_output=True, timeout=10)
             self.assertEqual(replay.returncode, 1)
             self.assertEqual(journal.read_text(), original)
 

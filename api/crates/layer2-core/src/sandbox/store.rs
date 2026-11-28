@@ -34,7 +34,7 @@ pub use sandbox_worker::SandboxWorkerStore;
 mod work_authority;
 mod work_lease;
 mod work_snapshot;
-pub use work_authority::{ClaimedWork, WorkAuthority};
+pub use work_authority::{ClaimedWork, WorkAuthority, WorkAuthorityFailure};
 pub use work_lease::{
     WorkAuthorityProtocol, WorkLeaseGrant, WORK_LEASE_SECONDS, WORK_RENEW_SECONDS,
 };

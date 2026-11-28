@@ -4,15 +4,22 @@ use layer2_core::resource_access::{ResourceOwner, ResourcePolicyFence};
 use layer2_core::sandbox::store::AgentAdmission;
 use layer2_core::trigger_domain::Launch;
 
+impl MongoSandboxStore {
+    pub(crate) fn with_onboarding_command_admission(mut self, enabled: bool) -> Self {
+        self.onboarding_command_admission = enabled;
+        self
+    }
+}
+
 /// Shares the Agent creation/reuse transaction, after its aggregate is written.
 pub(in crate::store) async fn attach(
     store: &MongoSandboxStore,
-    launch: &Launch,
+    launch: Option<&Launch>,
     admission: &AgentAdmission,
     agent: &mut Agent,
     session: &mut ClientSession,
 ) -> Result<(), LoadError> {
-    if launch.input_protocol.is_none() || agent.conversation.first_message.is_none() {
+    if agent.conversation.first_message.is_none() {
         return Ok(());
     }
     if agent
@@ -56,9 +63,15 @@ pub(in crate::store) async fn attach(
         sandbox_created_at: parent.created_at.clone(),
         policy_revision: policy.as_ref().map_or(0, |policy| policy.revision),
     };
-    let (mut binding, request) =
-        TriggerFirstMessageBinding::prepare(launch, admission, agent, &parent, fence, owner)
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+    let (mut binding, request) = match launch {
+        Some(launch) => {
+            TriggerFirstMessageBinding::prepare(launch, admission, agent, &parent, fence, owner)
+        }
+        None => {
+            TriggerFirstMessageBinding::prepare_onboarding(admission, agent, &parent, fence, owner)
+        }
+    }
+    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
     let accepted = Box::pin(super::super::agent_commands::reserve::apply_with_cause(
         store,
         &request,
@@ -92,20 +105,22 @@ pub(in crate::store) async fn attach(
     if changed.matched_count != 1 {
         return Err(LoadError::Domain(SandboxStoreError::Conflict));
     }
-    let launches = super::super::durability::majority_collection::<Document>(
-        &store.client.database(&store.agents.namespace().db),
-        "trigger_launches",
-    );
-    let revision = super::super::sandbox_mongo::signed(launch.revision, "Launch revision")
-        .map_err(SandboxStoreError::Corrupt)?;
-    let next_revision = revision.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
-    let changed = launches.update_one(doc! {"_id":launch.id.as_str(), "revision":revision, "trigger_input_binding_sha256":{"$exists":false},
+    if let Some(launch) = launch {
+        let launches = super::super::durability::majority_collection::<Document>(
+            &store.client.database(&store.agents.namespace().db),
+            "trigger_launches",
+        );
+        let revision = super::super::sandbox_mongo::signed(launch.revision, "Launch revision")
+            .map_err(SandboxStoreError::Corrupt)?;
+        let next_revision = revision.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
+        let changed = launches.update_one(doc! {"_id":launch.id.as_str(), "revision":revision, "trigger_input_binding_sha256":{"$exists":false},
         "trigger_input_protocol":record_bson(&launch.input_protocol.as_ref().ok_or(SandboxStoreError::Conflict)?).map_err(SandboxStoreError::Corrupt)?},
         doc! {"$set":{"trigger_input_binding_sha256":binding.digest().map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?,
             "revision":next_revision,"record.revision":next_revision}})
         .session(&mut *session).await.map_err(LoadError::Driver)?;
-    if changed.matched_count != 1 {
-        return Err(LoadError::Domain(SandboxStoreError::Conflict));
+        if changed.matched_count != 1 {
+            return Err(LoadError::Domain(SandboxStoreError::Conflict));
+        }
     }
     agent
         .conversation

@@ -17,6 +17,7 @@ mod owners;
 mod progress;
 pub(crate) use progress::Progress;
 mod reads;
+mod retirement;
 mod schema;
 mod submission;
 mod view_admission;

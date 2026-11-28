@@ -22,15 +22,34 @@ impl NativeWarmPools {
     /// Fixed pins can lag the durable release after a control-plane rollback.
     pub(crate) async fn ensure_fixed_defaults(&self) -> Result<bool, WarmPoolError> {
         let released = self.released_images();
-        self.ensure_fixed_image(&released.agent, self.default_target, false)
-            .await?;
-        if let Some((image, target)) = &released.machine {
-            self.ensure_fixed_image(image, *target, true).await?;
+        let mut qualified = Vec::new();
+        if let Some(target) = self
+            .ensure_fixed_lane(&released.agent, self.default_target, false)
+            .await?
+        {
+            qualified.push(target);
+        }
+        if let Some((image, target)) = released.machine {
+            if let Some(target) = self.ensure_fixed_lane(&image, target, true).await? {
+                qualified.push(target);
+            }
+        }
+        if let Some(generation) = self
+            .fixed_prewarm_generation
+            .filter(|_| !qualified.is_empty())
+        {
+            let provider = self
+                .adapter
+                .native_pools()
+                .ok_or(WarmPoolError::Unavailable)?;
+            self.store
+                .activate_fixed_pools(&qualified, provider, self.target_fencing, generation)
+                .await?;
         }
         Ok(self.default_holds.lane(false) || self.default_holds.lane(true))
     }
 
-    async fn ensure_fixed_image(
+    pub(super) async fn ensure_fixed_image(
         &self,
         image: &RuntimeImage,
         replicas: u32,
@@ -183,7 +202,7 @@ impl NativeWarmPools {
             target.operator_replicas = operator_replicas;
         }
         // Concurrent starters derive the same id; the store keeps one insert.
-        self.store.insert(target).await
+        self.insert_target(target).await
     }
 
     fn default_plan(&self, image: &RuntimeImage) -> Result<NativePoolConfiguration, WarmPoolError> {
