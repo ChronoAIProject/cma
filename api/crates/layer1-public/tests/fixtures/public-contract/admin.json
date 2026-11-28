@@ -1080,6 +1080,7 @@
       "response": {
         "status": 200,
         "headers": {
+          "cache-control": "private, no-store",
           "content-type": "application/json"
         },
         "body": {
@@ -1289,6 +1290,7 @@
       "response": {
         "status": 200,
         "headers": {
+          "cache-control": "private, no-store",
           "content-type": "application/json"
         },
         "body": {
