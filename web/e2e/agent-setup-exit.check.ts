@@ -115,7 +115,7 @@ for (const scenario of [
     const panel = page.getByRole('region', { name: 'Cancel Agent setup' });
     await expect(panel).toContainText('This removes the environment and all Agents inside it.');
     if (scenario.entry === 'panel') {
-      await panel.getByRole('button', { name: 'Review environment', exact: true }).click();
+      await panel.getByRole('button', { name: 'Cancel setup…', exact: true }).click();
     } else {
       if (scenario.entry === 'header') {
         await page.getByRole('button', { name: 'More Agent actions', exact: true }).click();

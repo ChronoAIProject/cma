@@ -49,21 +49,6 @@
   box-sizing: border-box;
   padding: 15%;
 }
-.landing__character-fallback svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-.landing__character-fallback svg * {
-  stroke: currentColor;
-}
-.landing__character-fallback svg rect {
-  fill: var(--dsw-static-zinc-950);
-  stroke: var(--dsw-static-zinc-950);
-}
-.landing__character-fallback svg path:last-child {
-  stroke: var(--dsw-static-zinc-950);
-}
 .landing__character[data-ready] .landing__character-fallback {
   visibility: hidden;
 }

@@ -74,8 +74,7 @@
 .preparation-message button {
   min-height: 44px;
 }
-.preparation-draft,
-.preparation-draft label {
+.preparation-draft {
   display: grid;
   gap: var(--space-3);
   min-width: 0;

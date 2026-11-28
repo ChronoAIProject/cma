@@ -229,23 +229,23 @@ it.each([true, false])(
     await screen.findByText(
       "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
     );
-    fireEvent.change(screen.getByLabelText('Follow-up draft'), {
+    fireEvent.change(screen.getByLabelText('Follow-up message'), {
       target: { value: 'Next independent draft' },
     });
     first.unmount();
     client.taskExperience = taskExperience('owner', enabled);
     render(<TaskHome {...props} />);
-    expect(screen.getByLabelText('Follow-up draft')).toHaveValue('Next independent draft');
+    expect(screen.getByLabelText('Follow-up message')).toHaveValue('Next independent draft');
     expect(screen.queryByRole('button', { name: 'Start task' })).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Recover original task' }));
     await waitFor(() => expect(requests).toHaveLength(2));
-    fireEvent.change(screen.getByLabelText('Follow-up draft'), {
+    fireEvent.change(screen.getByLabelText('Follow-up message'), {
       target: { value: 'Newer draft while recovering' },
     });
     resolve(Response.json({ id: 'original-operation', status: 'provisioning' }, { status: 202 }));
     await screen.findByText('Getting its cloud computer ready');
     expect(requests[1]).toEqual(requests[0]);
-    expect(screen.getByLabelText('Follow-up draft')).toHaveValue('Newer draft while recovering');
+    expect(screen.getByLabelText('Follow-up message')).toHaveValue('Newer draft while recovering');
   },
 );
 

@@ -103,6 +103,14 @@
   border-color: var(--dsw-alias-border-l4);
 }
 
+.setup-cancel .button--outline {
+  border-color: var(--dsw-alias-label-secondary);
+}
+
+.setup-cancel .button--outline:hover:not(:disabled, [aria-disabled='true']) {
+  border-color: var(--dsw-alias-label-primary);
+}
+
 /* A control sitting on chrome rather than on a page. */
 .button--toolbar {
   background: var(--dsw-alias-button-tool-bar-fill);

@@ -188,7 +188,7 @@ for (const theme of ['light', 'dark']) {
           fields: Object.fromEntries(item.fields.map(([, value, key]) => [key, value])),
         },
       });
-      const followup = page.getByRole('textbox', { name: 'Follow-up draft', exact: true });
+      const followup = page.getByRole('textbox', { name: 'Follow-up message', exact: true });
       await followup.fill('Later draft');
       await page.reload();
       await settle(page);

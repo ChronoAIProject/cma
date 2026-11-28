@@ -36,14 +36,14 @@ it('groups the uncertain receipt and recovery while resending only the original 
   expect(within(recovery).getAllByRole('alert')).toHaveLength(1);
   expect(within(recovery).getByRole('alert')).toHaveTextContent('resend the same request');
   const original = JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner'))!);
-  fireEvent.change(screen.getByLabelText('Follow-up draft'), {
+  fireEvent.change(screen.getByLabelText('Follow-up message'), {
     target: { value: 'A separate newer draft' },
   });
   fireEvent.click(within(recovery).getByRole('button', { name: 'Recover original task' }));
   await waitFor(() => expect(create).toHaveBeenCalledTimes(2));
   expect(create.mock.calls[1]![0]).toEqual(create.mock.calls[0]![0]);
   expect(create.mock.calls[1]![1].idempotencyKey).toBe(original.intent.key);
-  expect(screen.getByLabelText('Follow-up draft')).toHaveValue('A separate newer draft');
+  expect(screen.getByLabelText('Follow-up message')).toHaveValue('A separate newer draft');
   expect(screen.getByRole('region', { name: 'Original request' })).toHaveTextContent(
     'Original task',
   );

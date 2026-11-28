@@ -17,7 +17,8 @@ import {
 } from '../auth/credentialSetup';
 import { SandboxCredentialSetup } from '../auth/SandboxCredentialSetup';
 import type { SignInOptions } from '../auth/types';
-import lockup from '../assets/brand/cma-lockup-horizontal.svg';
+import { pixelBrand } from '../assets/brand/pixel/identity';
+import { useBrandTheme } from '../brand/AgentMascot';
 import { parseRoute, routePath, type AppRoute, type AppRouter } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { publicCopy } from '../vocabulary/needs';
@@ -54,6 +55,7 @@ export function PublicJourney({
   readonly route: PublicRoute;
   readonly onNavigate: AppRouter['navigate'];
 }) {
+  const lockup = pixelBrand.lockup[useBrandTheme()];
   const auth = useAuth();
   return (
     <div className="public-frame">

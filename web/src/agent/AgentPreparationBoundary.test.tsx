@@ -191,10 +191,10 @@ it('uses one bound preparation view and transfers only the follow-up into the mo
   expect(screen.getByRole('region', { name: 'Original request' }).textContent).toBe(original);
   expect(screen.getByRole('list', { name: 'Agent setup steps' })).toBeVisible();
   expect(screen.getAllByRole('region', { name: 'Agent provisioning progress' })).toHaveLength(1);
-  expect(screen.getByLabelText('Follow-up draft')).toHaveValue(text);
+  expect(screen.getByLabelText('Follow-up message')).toHaveValue(text);
   expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
   expect(view.container.querySelectorAll('.agent-mascot__artwork')).toHaveLength(1);
-  fireEvent.keyDown(screen.getByLabelText('Follow-up draft'), { key: 'Enter', ctrlKey: true });
+  fireEvent.keyDown(screen.getByLabelText('Follow-up message'), { key: 'Enter', ctrlKey: true });
   expect(h.connection).not.toHaveBeenCalled();
   expect(h.create).not.toHaveBeenCalled();
   expect(h.send).not.toHaveBeenCalled();
@@ -238,7 +238,7 @@ it('discovers a bound draft after lifecycle cleanup and refuses to replace an in
 it('keeps the Agent draft untouched while the accepted original request is still being prepared', async () => {
   const h = fixture();
   render(<h.Host />);
-  const input = await screen.findByLabelText('Follow-up draft');
+  const input = await screen.findByLabelText('Follow-up message');
   fireEvent.change(input, { target: { value: text } });
   await act(async () => {});
   expect(readAgentDraft('owner', 'agt_1').content).toBe('');

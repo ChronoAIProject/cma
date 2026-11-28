@@ -4,7 +4,7 @@ import { originalRequest, retainedAnswer, retiredFixture } from './retired-agent
 
 const notice = "This agent's cloud computer was deleted. The conversation is kept read-only.";
 async function noRuntimeControls(page: Page) {
-  for (const name of ['Message', 'Follow-up draft'])
+  for (const name of ['Message', 'Follow-up message'])
     await expect(page.getByRole('textbox', { name, exact: true })).toHaveCount(0);
   await expect(page.locator('.agent-side-panel')).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'More Agent actions' })).toHaveCount(0);

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { AgentMascot } from '../brand/AgentMascot';
 import type { User } from '../auth/types';
 
 export type MessageUser = Pick<User, 'displayName' | 'handle' | 'avatarUrl'>;
@@ -7,7 +8,6 @@ interface Identity {
   readonly name: string;
   readonly initials: string;
   readonly avatarUrl?: string;
-  /** The Agent is drawn as the CMA mark rather than an image or initials. */
   readonly agent?: true;
 }
 
@@ -45,38 +45,6 @@ export function messageIdentity(
   return { name, initials: initials(name), avatarUrl: safeAvatar(user?.avatarUrl) };
 }
 
-/**
- * The CMA mark (`assets/brand/cma-mark.svg`, §21) as the Agent's face.
- *
- * Inline rather than an image so it paints with `currentColor` on a circle
- * the sheet draws from theme aliases. The raster capture it replaces carried
- * its own black ground, which read as a black square in the light theme.
- */
-function AgentMark() {
-  return (
-    <svg viewBox="0 0 100 100" width="20" height="20" focusable="false">
-      <path
-        d="M71 71 A30 30 0 1 0 29 71"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="11"
-        strokeLinecap="round"
-      />
-      <path
-        d="M71 71 L61 59 L50 71 L39 59 L29 71"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="10"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-      <rect x="30" y="38" width="17" height="12" rx="4" fill="currentColor" />
-      <rect x="53" y="38" width="17" height="12" rx="4" fill="currentColor" />
-      <path d="M46 44 L54 44" fill="none" stroke="currentColor" strokeWidth="4" />
-    </svg>
-  );
-}
-
 export function MessageAvatar({
   identity,
   continued = false,
@@ -91,7 +59,7 @@ export function MessageAvatar({
   if (identity.agent === true)
     return (
       <span className="message__avatar" data-agent="" aria-hidden="true">
-        <AgentMark />
+        <AgentMascot visual={{ action: 'ready', label: identity.name }} size={32} decorative />
       </span>
     );
   return (

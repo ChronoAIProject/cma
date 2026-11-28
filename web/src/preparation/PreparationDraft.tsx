@@ -14,17 +14,15 @@ export function PreparationDraft({
 }) {
   return (
     <div className="preparation-draft">
-      <label>
-        Follow-up draft
-        <textarea
-          value={draft.text}
-          onChange={(event) => draft.change(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) event.preventDefault();
-          }}
-          placeholder="Keep a follow-up here while setup finishes"
-        />
-      </label>
+      <textarea
+        aria-label="Follow-up message"
+        value={draft.text}
+        onChange={(event) => draft.change(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) event.preventDefault();
+        }}
+        placeholder="Keep a follow-up here while setup finishes"
+      />
       <p>{unavailableReason}</p>
       <Button disabled>Send</Button>
       {draft.error ? (

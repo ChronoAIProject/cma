@@ -105,7 +105,7 @@ it('has no sending action during preparation, including keyboard shortcuts and p
     return <PreparationDraft draft={usePreparationDraft(client, scope)} />;
   }
   render(<Host />);
-  const input = screen.getByLabelText('Follow-up draft');
+  const input = screen.getByLabelText('Follow-up message');
   fireEvent.change(input, { target: { value: 'Type while preparing' } });
   fireEvent.keyDown(input, { key: 'Enter' });
   fireEvent.keyDown(input, { key: 'Enter', ctrlKey: true });

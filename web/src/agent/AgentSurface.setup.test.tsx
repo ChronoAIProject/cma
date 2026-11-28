@@ -81,7 +81,7 @@ it.each(['provisioning', 'installing'] as const)(
     const { onNavigate, onAgentAction, controls } = surface(status);
     const panel = screen.getByRole('region', { name: 'Cancel Agent setup' });
     expect(panel).toHaveTextContent('This removes the environment and all Agents inside it.');
-    fireEvent.click(within(panel).getByRole('button', { name: 'Review environment' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'Cancel setup…' }));
     expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
     fireEvent.click(screen.getByRole('button', { name: 'More Agent actions' }));
     expect(screen.getByRole('menuitem', { name: /^Stop agent/ })).toHaveAttribute(
@@ -113,7 +113,7 @@ it.each([
   { parent: { id: 'sbx_other' } },
 ])('does not offer a setup deletion path without verified access: %j', (overrides) => {
   surface('installing', overrides);
-  expect(screen.queryByRole('button', { name: 'Review environment' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Cancel setup…' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'More Agent actions' }));
   expect(screen.queryByRole('menuitem', { name: /^Review environment/ })).not.toBeInTheDocument();
 });
@@ -130,10 +130,10 @@ it.each(['active', 'paused', 'reviving', 'retiring', 'retired'] as const)(
 
 it('drops the previous parent action when the selected Agent changes before its detail arrives', () => {
   const view = surface();
-  expect(screen.getByRole('button', { name: 'Review environment' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Cancel setup…' })).toBeInTheDocument();
   view.props.agentId = 'agt_next';
   view.rerender(view.draw());
-  expect(screen.queryByRole('button', { name: 'Review environment' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Cancel setup…' })).not.toBeInTheDocument();
   expect(view.onNavigate).not.toHaveBeenCalled();
 });
 
@@ -144,7 +144,7 @@ it('withdraws the setup shortcut when permission is lost with the menu open', ()
   view.props.permissions.deleteSandbox = false;
   view.rerender(view.draw());
   expect(screen.queryByRole('menuitem', { name: /^Review environment/ })).not.toBeInTheDocument();
-  expect(screen.queryByRole('button', { name: 'Review environment' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Cancel setup…' })).not.toBeInTheDocument();
   expect(view.onNavigate).not.toHaveBeenCalled();
   expect(view.onAgentAction).not.toHaveBeenCalled();
 });

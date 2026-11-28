@@ -154,7 +154,7 @@
   line-height: 18px;
 }
 
-.message__avatar img {
+.message__avatar:not([data-agent]) img {
   display: block;
   width: 100%;
   height: 100%;
@@ -168,14 +168,10 @@
   visibility: hidden;
 }
 
-/* The Agent's mark takes the brand ink on a layer circle, so it follows both appearances. */
 .message__avatar[data-agent] {
-  color: var(--dsw-alias-brand-primary);
-  background: var(--dsw-alias-bg-layer-2);
-}
-
-.message__avatar svg {
-  display: block;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
 }
 
 .message--user > .message__avatar {

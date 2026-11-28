@@ -90,7 +90,7 @@ describe('CharacterAvatar', () => {
     stage.attach.mockReturnValue(undefined);
     const { container } = render(<CharacterAvatar pose="paused" size={24} tone="error" />);
     await waitFor(() => {
-      expect(container.querySelector('.character-avatar__fallback svg')).not.toBeNull();
+      expect(container.querySelector('img.character-avatar__fallback')).not.toBeNull();
     });
     expect(container.querySelector('.character-avatar')).toHaveAttribute('data-tone', 'error');
   });

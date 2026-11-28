@@ -241,11 +241,6 @@
   height: 24px;
   color: var(--dsw-alias-workspace-link);
 }
-.thinking__logo svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
 .thinking__title {
   background: linear-gradient(
     90deg,

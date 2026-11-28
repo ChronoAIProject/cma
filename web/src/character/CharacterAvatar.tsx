@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from 'react';
-import markMarkup from '../assets/brand/cma-mark.svg?raw';
+import { pixelBrand } from '../assets/brand/pixel/identity';
+import { useBrandTheme } from '../brand/AgentMascot';
 import { CharacterColorContext } from './characterColor';
 import type { CharacterPose } from './poses';
 import type { CharacterHandle, CharacterOptions, CharacterTone } from './stage';
@@ -33,7 +34,7 @@ export function characterPhase(id: string): number {
 
 /**
  * The shipped 3D character as a decorative avatar. It reserves its square at once, draws
- * through the page's one shared stage, and falls back to the still CMA mark when WebGL is
+ * through the page's one shared stage, and falls back to the pixel brand mark when WebGL is
  * unavailable. It is always `aria-hidden`: the caller keeps the status in words.
  */
 export function CharacterAvatar({
@@ -46,6 +47,7 @@ export function CharacterAvatar({
   phase = 0,
   className,
 }: CharacterAvatarProps) {
+  const mark = pixelBrand.mark[useBrandTheme()];
   const inherited = useContext(CharacterColorContext);
   const body = tone === 'brand' ? (color ?? inherited) : undefined;
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -91,7 +93,6 @@ export function CharacterAvatar({
   return (
     <span
       className={className === undefined ? 'character-avatar' : `character-avatar ${className}`}
-      // The still mark draws in currentColor, so the fallback wears the same Sandbox colour.
       style={{ width: size, height: size, color: body }}
       data-pose={pose}
       data-tone={tone}
@@ -101,10 +102,7 @@ export function CharacterAvatar({
     >
       <canvas ref={canvasRef} className="character-avatar__canvas" />
       {status === 'unavailable' ? (
-        <span
-          className="character-avatar__fallback"
-          dangerouslySetInnerHTML={{ __html: markMarkup }}
-        />
+        <img className="character-avatar__fallback" src={mark} alt="" />
       ) : null}
     </span>
   );

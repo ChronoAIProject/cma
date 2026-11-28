@@ -45,7 +45,7 @@ export function ActiveThinking({
           {interruptedDuration === undefined
             ? 'Response interrupted.'
             : `Response interrupted after ${elapsedTime(interruptedDuration)}.`}{' '}
-          {RESPONSE_STOP_COMMAND_NOTICE}
+          {RESPONSE_STOP_COMMAND_NOTICE} Review the conversation before sending another message.
         </span>
       </div>
     );
@@ -95,6 +95,11 @@ export function ActiveThinking({
           title={brand.visual.detail}
         >
           <AgentMascot visual={brand.visual} playback={brand.playback} size={48} />
+          {runId === undefined ? (
+            <p role="status">
+              {brand.visual.detail} Review the output before deciding what to do next.
+            </p>
+          ) : null}
         </div>
       ) : null}
       {externalApproval ? stopping ? <div role="status">Stopping…</div> : null : thinking}

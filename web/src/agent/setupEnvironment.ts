@@ -1,7 +1,7 @@
 import type { AgentStatus, SandboxDetail } from '../api/types';
 
 export const SETUP_ENVIRONMENT_NOTICE =
-  'This Agent is still being prepared. To cancel setup, review and delete its Sandbox environment. This removes the environment and all Agents inside it.';
+  'Review the environment before confirming deletion. This removes the environment and all Agents inside it.';
 
 export function setupEnvironmentRoute(
   status: AgentStatus,

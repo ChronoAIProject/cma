@@ -78,6 +78,11 @@ export function MessageStream({
   turnPresentation,
 }: MessageStreamProps) {
   const activeRunId = historyOnly ? undefined : conversation.activeRunId;
+  const latestTurnId = conversation.latestTurnId;
+  const turnCompleted =
+    activeRunId === undefined &&
+    latestTurnId !== undefined &&
+    conversation.turnOutcomes?.[latestTurnId] === 'completed';
   const {
     client: turnClient,
     agentId: turnAgent,
@@ -312,6 +317,11 @@ export function MessageStream({
         ) : null}
         <div ref={endRef} />
       </div>
+      {historyOnly ? null : (
+        <span className="sr-only" role="status" aria-atomic="true">
+          {turnCompleted ? 'Turn completed.' : null}
+        </span>
+      )}
     </MessageResources>
   );
 }

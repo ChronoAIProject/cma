@@ -219,10 +219,12 @@ function PreparationHost(
         }
         actions={
           review ? (
-            <>
+            <section className="setup-cancel" aria-label="Cancel Agent setup">
               <p>{SETUP_ENVIRONMENT_NOTICE}</p>
-              <Button onClick={() => props.onNavigate(review)}>Review environment</Button>
-            </>
+              <Button variant="outline" onClick={() => props.onNavigate(review)}>
+                Cancel setup…
+              </Button>
+            </section>
           ) : undefined
         }
         draft={
