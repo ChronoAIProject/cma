@@ -177,6 +177,43 @@ pub(crate) async fn owner_key_cutover_valid(
     Ok(false)
 }
 
+/// Operator audits must use the same Gateway database authority as the server.
+pub(crate) async fn record_client(
+    client: records::RecordClient,
+) -> Result<records::RecordClient, records::RecordError> {
+    let client = client
+        .with_channel_mutation_custody(crate::channels::mutation::enabled_from_env().map_err(
+            |_| records::RecordError::Rejected("channel custody flag is invalid".into()),
+        )?)
+        .with_retained_origins(&crate::config::cma_record_origin_aliases().map_err(|_| {
+            records::RecordError::Rejected("retained CMA record origins are invalid".into())
+        })?)?;
+    if ![
+        CMAEG_MONGODB_URI,
+        CMAEG_MONGODB_DATABASE,
+        CMAEG_MONGODB_AUTHORITY_MODE,
+    ]
+    .iter()
+    .any(|key| std::env::var_os(key).is_some())
+    {
+        return Ok(client);
+    }
+    let uri = std::env::var(CMAEG_MONGODB_URI)
+        .map_err(|_| records::RecordError::Rejected("Gateway database URI is required".into()))?;
+    let name = std::env::var(CMAEG_MONGODB_DATABASE)
+        .map_err(|_| records::RecordError::Rejected("Gateway database name is required".into()))?;
+    let mongo = mongodb::Client::with_uri_str(uri)
+        .await
+        .map_err(|_| records::RecordError::Unavailable("Gateway database unavailable".into()))?;
+    let authority = cma_service_auth::mongodb_authority::MongoAuthorityMode::from_env(
+        CMAEG_MONGODB_AUTHORITY_MODE,
+    )
+    .map_err(|_| records::RecordError::Rejected("Gateway database authority is invalid".into()))?;
+    Ok(client.with_database(
+        records::mongo::MongoRecords::open_with_authority(mongo.database(&name), authority).await?,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -274,41 +311,4 @@ mod tests {
             Err(auth::CreatorAuthError::NotAuthenticated)
         ));
     }
-}
-
-/// Operator audits must use the same Gateway database authority as the server.
-pub(crate) async fn record_client(
-    client: records::RecordClient,
-) -> Result<records::RecordClient, records::RecordError> {
-    let client = client
-        .with_channel_mutation_custody(crate::channels::mutation::enabled_from_env().map_err(
-            |_| records::RecordError::Rejected("channel custody flag is invalid".into()),
-        )?)
-        .with_retained_origins(&crate::config::cma_record_origin_aliases().map_err(|_| {
-            records::RecordError::Rejected("retained CMA record origins are invalid".into())
-        })?)?;
-    if ![
-        CMAEG_MONGODB_URI,
-        CMAEG_MONGODB_DATABASE,
-        CMAEG_MONGODB_AUTHORITY_MODE,
-    ]
-    .iter()
-    .any(|key| std::env::var_os(key).is_some())
-    {
-        return Ok(client);
-    }
-    let uri = std::env::var(CMAEG_MONGODB_URI)
-        .map_err(|_| records::RecordError::Rejected("Gateway database URI is required".into()))?;
-    let name = std::env::var(CMAEG_MONGODB_DATABASE)
-        .map_err(|_| records::RecordError::Rejected("Gateway database name is required".into()))?;
-    let mongo = mongodb::Client::with_uri_str(uri)
-        .await
-        .map_err(|_| records::RecordError::Unavailable("Gateway database unavailable".into()))?;
-    let authority = cma_service_auth::mongodb_authority::MongoAuthorityMode::from_env(
-        CMAEG_MONGODB_AUTHORITY_MODE,
-    )
-    .map_err(|_| records::RecordError::Rejected("Gateway database authority is invalid".into()))?;
-    Ok(client.with_database(
-        records::mongo::MongoRecords::open_with_authority(mongo.database(&name), authority).await?,
-    ))
 }
