@@ -69,6 +69,8 @@ pub enum AgentOperationError {
     Corrupt(String),
     #[error("agent runtime is unavailable: {0}")]
     RuntimeUnavailable(String),
+    #[error("agent runtime attachment is unavailable: {0}")]
+    RuntimeAttachmentUnavailable(crate::sandbox::AgentRuntimeError),
     #[error("agent operation delivery is ambiguous at fence {operation_sequence}: {detail}")]
     DeliveryAmbiguous {
         operation_sequence: u64,
@@ -114,7 +116,9 @@ impl AgentOperationError {
             Self::PreviousTurnConflict => "agent_previous_turn_conflict",
             Self::LogCapacityExceeded => "agent_log_capacity_exceeded",
             Self::Corrupt(_) => "stored_agent_corrupt",
-            Self::RuntimeUnavailable(_) => "agent_runtime_unavailable",
+            Self::RuntimeUnavailable(_) | Self::RuntimeAttachmentUnavailable(_) => {
+                "agent_runtime_unavailable"
+            }
             Self::DeliveryAmbiguous { .. } => "agent_delivery_ambiguous",
             Self::OutcomeUnavailable(_) => "agent_operation_outcome_unavailable",
             Self::Unavailable(_) => "agent_operation_unavailable",
