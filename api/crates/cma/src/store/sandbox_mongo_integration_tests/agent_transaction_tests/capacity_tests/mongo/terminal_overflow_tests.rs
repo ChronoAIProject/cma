@@ -1,4 +1,5 @@
 use super::*;
+use crate::store::agent_log_integrity::STOP_AGENT_LOG_BYTES;
 use crate::store::sandbox_mongo_integration_tests::capacity_fixtures::fill_to;
 use layer2_core::sandbox::{
     AgentConversationError, AgentMessageAssembly, AgentUpdateRecorder, DurableAgentUpdateRecorder,
@@ -39,7 +40,7 @@ async fn overflow(bytes: bool, refused: bool) {
         &store,
         start.agent,
         (!bytes).then_some(10_062),
-        bytes.then_some(64 * 1024 * 1024),
+        bytes.then_some(STOP_AGENT_LOG_BYTES - 4096),
     )
     .await;
     let before_hash = fingerprint(&store, &full.id, full.conversation.last_seq).await;
