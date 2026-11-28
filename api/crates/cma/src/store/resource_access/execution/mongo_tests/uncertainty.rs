@@ -378,7 +378,6 @@ async fn request_bound_read_authority_keeps_its_original_expiry_and_read_only_sc
         .is_err());
     fixture.cleanup().await;
 }
-
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn owning_organization_uses_current_membership_without_becoming_personal_owner() {
