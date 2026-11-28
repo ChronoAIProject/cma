@@ -4,8 +4,8 @@ use axum::{extract::FromRequest, extract::Request, Json};
 use layer2_core::profiles::{AgentProfileRef, SandboxProfileRef, WorkspaceProfileRef};
 use layer2_core::{
     platform::UsageReportingSettings, AgentProfileId, InactivitySettings, MarketplaceSettings,
-    PlatformDefaults, PlatformLimits, PlatformSettings, PlatformSettingsService, RetentionSettings,
-    SandboxProfileId, StoredPlatformSettings, TriggerSettings, WorkspaceProfileId,
+    PlatformDefaults, PlatformLimits, PlatformSettings, RetentionSettings, SandboxProfileId,
+    TriggerSettings, WorkspaceProfileId,
 };
 use serde::{de::DeserializeOwned, Deserialize, Deserializer, Serialize};
 use utoipa::ToSchema;
@@ -224,27 +224,6 @@ impl From<MarketplaceSettingsBody> for MarketplaceSettings {
     fn from(value: MarketplaceSettingsBody) -> Self {
         Self {
             enabled: value.enabled,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, ToSchema)]
-pub(crate) struct SettingsView {
-    revision: u64,
-    settings: PlatformSettingsBody,
-    model_budget_writes_available: bool,
-    model_request_budget_writes_available: bool,
-    platform_spend_writes_available: bool,
-}
-
-impl SettingsView {
-    pub(crate) fn new(value: StoredPlatformSettings, service: &PlatformSettingsService) -> Self {
-        Self {
-            revision: value.revision,
-            settings: value.settings.into(),
-            model_budget_writes_available: service.model_budget_writes_enabled(),
-            model_request_budget_writes_available: service.model_request_budget_writes_enabled(),
-            platform_spend_writes_available: service.platform_spend_writes_enabled(),
         }
     }
 }

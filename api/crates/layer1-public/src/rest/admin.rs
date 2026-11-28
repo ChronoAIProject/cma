@@ -160,7 +160,10 @@ pub fn router(state: AdminState) -> Router {
     };
     Router::new()
         .merge(diagnostics)
-        .merge(settings::routes(state.settings.clone()))
+        .merge(settings::routes(
+            state.settings.clone(),
+            state.users.clone(),
+        ))
         .merge(spend::routes())
         .merge(admission::routes())
         .merge(auto_pause::routes())
@@ -178,7 +181,7 @@ pub fn router(state: AdminState) -> Router {
 
 /// Platform settings with their usual caller, revision and write checks.
 pub fn platform_settings_router(settings: Arc<layer2_core::PlatformSettingsService>) -> Router {
-    settings::routes(settings)
+    settings::routes(settings, None)
 }
 
 pub(super) struct NotAnOperator;

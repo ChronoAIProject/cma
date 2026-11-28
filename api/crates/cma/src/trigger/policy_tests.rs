@@ -22,6 +22,7 @@ impl CountedSettings {
         settings.triggers.orchestration_paused = orchestration_paused;
         Arc::new(Self {
             result: Mutex::new(Ok(StoredPlatformSettings {
+                changes: Default::default(),
                 revision: 1,
                 settings,
             })),

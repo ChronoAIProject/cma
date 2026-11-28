@@ -1,3 +1,4 @@
+import { openSettingsEditors } from './settingsTestSupport';
 import { readFileSync } from 'node:fs';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -37,6 +38,7 @@ for (const enabled of [false, true]) {
         },
       });
       render(<PlatformSettings client={client} />);
+      await openSettingsEditors();
       await screen.findByLabelText('Enable spend controls');
       expect(amount()).toBeDisabled();
       fireEvent.change(screen.getByLabelText('Agent log retention (days)'), {
@@ -56,7 +58,8 @@ it.each([false, undefined])(
     const initial = configured(available);
     client.admin.readSettings.mockResolvedValue(initial);
     render(<PlatformSettings client={client} />);
-    await screen.findByText(/Saving spend controls is not available yet/);
+    await openSettingsEditors();
+    await screen.findAllByText(/Saving spend controls is not available yet/);
     expect(screen.getByLabelText('Enable spend controls')).toBeDisabled();
     expect(amount()).toBeDisabled();
     expect(amount()).toHaveValue(String(testBudget.default_policy!.turn_limit));
@@ -77,6 +80,7 @@ it('keeps an enabled policy read-only when the deployment closes writes', async 
   const client = operatorClient();
   client.admin.readSettings.mockResolvedValue(configured(false, true));
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   expect(await screen.findByLabelText('Enable spend controls')).toBeChecked();
   expect(screen.getByLabelText('Enable spend controls')).toBeDisabled();
   expect(client.admin.replaceSettings).not.toHaveBeenCalled();
@@ -90,6 +94,7 @@ it('retains a refused draft until a fresh available revision is explicitly revie
     new ApiError(503, 'Unavailable', 'model_budget_writes_unavailable'),
   );
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   await screen.findByLabelText('Enable spend controls');
   fireEvent.change(amount(), { target: { value: '80' } });
   await userEvent.click(save());
@@ -126,12 +131,13 @@ it.each([false, undefined])('adopts availability %s from a successful save', asy
     revision: 5,
   });
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   await screen.findByLabelText('Enable spend controls');
   await userEvent.click(save());
   await screen.findByText('Settings saved at revision 5.');
   expect(screen.getByLabelText('Enable spend controls')).toBeDisabled();
   expect(save()).toBeEnabled();
-  expect(screen.getByText(/Saving spend controls is not available yet/)).toBeVisible();
+  expect(screen.getAllByText(/Saving spend controls is not available yet/)[0]).toBeVisible();
 });
 
 it('renders the actual backend public-contract response through the SDK with writes closed', async () => {
@@ -150,7 +156,8 @@ it('renders the actual backend public-contract response through the SDK with wri
     },
   });
   render(<PlatformSettings client={createOperatorClient(sdk)} />);
-  await screen.findByText(/Saving spend controls is not available yet/);
+  await openSettingsEditors();
+  await screen.findAllByText(/Saving spend controls is not available yet/);
   expect(screen.getByLabelText('Enable spend controls')).not.toBeChecked();
   expect(screen.getByRole('button', { name: 'Configure platform period' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Configure default owner policy' })).toBeDisabled();

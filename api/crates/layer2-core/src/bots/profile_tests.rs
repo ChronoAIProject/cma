@@ -11,6 +11,7 @@ struct Settings(PlatformSettings);
 impl PlatformSettingsStore for Settings {
     async fn read(&self) -> Result<StoredPlatformSettings, StoreError> {
         Ok(StoredPlatformSettings {
+            changes: Default::default(),
             revision: 1,
             settings: self.0.clone(),
         })

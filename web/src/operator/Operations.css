@@ -206,12 +206,87 @@
   max-width: 920px;
   margin: 0 auto;
 }
-.operator-settings section {
+.operator-settings form > section {
   padding: 24px 0;
   border-bottom: 1px solid var(--dsw-alias-border-l2);
 }
-.operator-settings section:first-of-type {
+.operator-settings form > section:first-of-type {
   padding-top: 0;
+}
+.operator-setting-cards {
+  display: grid;
+  gap: var(--space-4);
+  margin-block: var(--space-6);
+}
+.operator-settings .operator-setting-card,
+.operator-settings-overview {
+  min-width: 0;
+  padding: var(--space-4);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: var(--radius-md);
+}
+.operator-setting-card header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-4);
+}
+.operator-setting-card header > div {
+  min-width: 0;
+}
+.operator-setting-card h3 {
+  margin-bottom: var(--space-1);
+  scroll-margin-top: var(--space-4);
+}
+.operator-setting-card p {
+  margin: var(--space-2) 0;
+}
+.operator-setting-card .operator-setting-value {
+  font: var(--dsw-font-base-strong-16);
+  overflow-wrap: anywhere;
+}
+.operator-settings-overview dl,
+.operator-setting-values {
+  display: grid;
+  gap: var(--space-2);
+  margin: 0;
+}
+.operator-settings-overview dl {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+}
+.operator-settings-overview a {
+  color: var(--dsw-alias-brand-text);
+}
+.operator-settings-overview dd,
+.operator-setting-values dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.operator-setting-values > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.operator-setting-card details {
+  margin: var(--space-2) 0;
+}
+.operator-setting-card summary {
+  cursor: pointer;
+}
+.operator-setting-items {
+  max-height: 24rem;
+  overflow: auto;
+  padding-inline: var(--space-4);
+}
+.operator-setting-items > li + li {
+  margin-block-start: var(--space-4);
+}
+.operator-setting-audit {
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xxs-12);
+}
+.operator-setting-editor {
+  margin-block-start: var(--space-4);
 }
 .operator-settings-grid {
   display: grid;

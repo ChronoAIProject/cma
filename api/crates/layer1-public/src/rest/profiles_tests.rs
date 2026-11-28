@@ -97,6 +97,7 @@ impl MemorySettingsStore {
         let mut settings = PlatformSettings::default();
         settings.marketplace.enabled = marketplace_enabled;
         Self(Mutex::new(StoredPlatformSettings {
+            changes: Default::default(),
             revision: 0,
             settings,
         }))
@@ -128,6 +129,7 @@ impl PlatformSettingsStore for MemorySettingsStore {
             });
         }
         *stored = StoredPlatformSettings {
+            changes: Default::default(),
             revision: expected_revision + 1,
             settings: settings.clone(),
         };

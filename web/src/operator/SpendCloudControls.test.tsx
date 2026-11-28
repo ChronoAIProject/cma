@@ -1,3 +1,4 @@
+import { openSettingsEditors } from './settingsTestSupport';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
@@ -78,10 +79,11 @@ function fixture(budget: unknown = configured, available: boolean | undefined = 
 it('configures and removes the pair explicitly using exact integers and the current revision', async () => {
   const local = fixture(testBudget);
   render(<PlatformSettings client={local.client} />);
+  await openSettingsEditors();
   await userEvent.click(await screen.findByRole('button', { name: 'Configure cloud metering' }));
   expect(screen.getByLabelText(rateLabel)).toHaveValue('');
   expect(screen.getByLabelText(ageLabel)).toHaveValue('');
-  expect(screen.getByText(/Configuring cloud metering enables platform/)).toBeVisible();
+  expect(screen.getByText('Projects daily cloud spend between observations.')).toBeVisible();
   change(rateLabel, '9007199254740991');
   fireEvent.submit(save().closest('form')!);
   expect(local.writes).toEqual([]);
@@ -119,6 +121,7 @@ it.each(['9007199254740991.1', '9007199254740992', '1e2', '0'])(
   async (value) => {
     const local = fixture();
     render(<PlatformSettings client={local.client} />);
+    await openSettingsEditors();
     await screen.findByLabelText(rateLabel);
     change(rateLabel, value);
     await userEvent.click(save());
@@ -135,6 +138,7 @@ for (const enabled of [false, true]) {
       const local = fixture({ ...configured, enabled });
       local.setAvailable(available);
       render(<PlatformSettings client={local.client} />);
+      await openSettingsEditors();
       expect(await screen.findByLabelText(rateLabel)).toHaveValue('12');
       expect(screen.getByLabelText(rateLabel)).toBeDisabled();
       expect(screen.getByLabelText(ageLabel)).toBeDisabled();
@@ -153,6 +157,7 @@ it.each([false, undefined])(
     const local = fixture(testBudget);
     local.setAvailable(available);
     render(<PlatformSettings client={local.client} />);
+    await openSettingsEditors();
     expect(await screen.findByRole('button', { name: 'Configure cloud metering' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Refresh settings availability' })).toBeEnabled();
     change('Agent log retention (days)', '45');
@@ -165,6 +170,7 @@ it.each([false, undefined])(
 it('preserves unknown cloud data through unrelated and cloud edits', async () => {
   const local = fixture();
   render(<PlatformSettings client={local.client} />);
+  await openSettingsEditors();
   await screen.findByLabelText(rateLabel);
   change('Agent log retention (days)', '45');
   change('Platform period cap (accounting units)', '20000');
@@ -187,7 +193,10 @@ it('preserves unsupported cloud data on an unrelated settings save', async () =>
   };
   const local = fixture(budget);
   render(<PlatformSettings client={local.client} />);
-  await screen.findByText(/this server does not expose the supported spend-controls configuration/);
+  await openSettingsEditors();
+  await screen.findAllByText(
+    /This server does not expose the supported spend-controls configuration/,
+  );
   change('Agent log retention (days)', '45');
   await userEvent.click(save());
   await screen.findByText('Settings saved at revision 5.');
@@ -198,6 +207,7 @@ it('retains a rejected cloud draft on validation failure', async () => {
   const local = fixture();
   local.setFailure(422);
   render(<PlatformSettings client={local.client} />);
+  await openSettingsEditors();
   await screen.findByLabelText(rateLabel);
   change(rateLabel, '24');
   await userEvent.click(save());
@@ -209,6 +219,7 @@ it('retains a rejected cloud draft on validation failure', async () => {
 it('reviews cloud edits against the latest revision without overwriting new unknown fields', async () => {
   const local = fixture();
   render(<PlatformSettings client={local.client} />);
+  await openSettingsEditors();
   await screen.findByLabelText(rateLabel);
   change(rateLabel, '24');
   const latestCloud = { ...cloud, max_observation_age_seconds: 90, future: { retained: false } };
@@ -236,6 +247,7 @@ it.each([false, undefined])(
   async (available) => {
     const local = fixture();
     render(<PlatformSettings client={local.client} />);
+    await openSettingsEditors();
     await screen.findByLabelText(rateLabel);
     change(rateLabel, '24');
     local.setAvailable(available);

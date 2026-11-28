@@ -430,6 +430,7 @@ use self::schemas::*;
         PatchRequest,
         ResetRequest,
         SettingsView,
+        SettingChangeView,
         SandboxSummaryView,
         SandboxPageView,
         WorkspaceSummaryView,

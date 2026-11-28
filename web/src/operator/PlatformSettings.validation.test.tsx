@@ -1,3 +1,4 @@
+import { openSettingsEditors } from './settingsTestSupport';
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
@@ -12,7 +13,8 @@ it.each([
 ])('exposes native validation for %s and clears it when corrected', async (label) => {
   const client = operatorClient();
   render(<PlatformSettings client={client} />);
-  const input = (await screen.findByLabelText(label)) as HTMLInputElement;
+  await openSettingsEditors();
+  const input = (await screen.findByLabelText(label, { selector: 'input' })) as HTMLInputElement;
   const original = input.value;
   for (const value of ['-1', '', '1.5', '4294967296']) {
     fireEvent.change(input, { target: { value } });

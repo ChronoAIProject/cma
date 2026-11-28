@@ -1,3 +1,4 @@
+import { openSettingsEditors } from './settingsTestSupport';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
@@ -20,6 +21,7 @@ it('defaults Show measured usage off for old settings and only notifies after a 
   window.addEventListener('cma:usage-settings', changed);
   try {
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     const toggle = await screen.findByRole('checkbox', { name: 'Show measured usage' });
     expect(toggle).not.toBeChecked();
     await actor.click(toggle);
@@ -49,6 +51,7 @@ it('allows an administrator to turn measured visibility off', async () => {
   });
   const actor = userEvent.setup();
   render(<PlatformSettings client={client} />);
+  await openSettingsEditors();
   const toggle = await screen.findByRole('checkbox', { name: 'Show measured usage' });
   expect(toggle).toBeChecked();
   await actor.click(toggle);
@@ -77,6 +80,7 @@ it('retains a conflicted visibility draft and requires review before another wri
   window.addEventListener('cma:usage-settings', changed);
   try {
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await actor.click(await screen.findByRole('checkbox', { name: 'Show measured usage' }));
     await actor.click(screen.getByRole('button', { name: 'Save settings' }));
     await screen.findByText(/The current revision is 8/);
@@ -108,6 +112,7 @@ it('does not announce a refused visibility write as saved', async () => {
   window.addEventListener('cma:usage-settings', changed);
   try {
     render(<PlatformSettings client={client} />);
+    await openSettingsEditors();
     await actor.click(await screen.findByRole('checkbox', { name: 'Show measured usage' }));
     await actor.click(screen.getByRole('button', { name: 'Save settings' }));
     await waitFor(() =>

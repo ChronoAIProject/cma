@@ -26,6 +26,7 @@ impl PlatformSettingsStore for ConflictingSettings {
         let mut settings = PlatformSettings::default();
         settings.triggers.orchestration_paused = self.0;
         Ok(StoredPlatformSettings {
+            changes: Default::default(),
             revision: 0,
             settings,
         })

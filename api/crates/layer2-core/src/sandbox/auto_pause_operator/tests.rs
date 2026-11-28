@@ -185,6 +185,7 @@ fn fixture() -> (
     policy.inactivity.grace_started_at = Some(crate::now_rfc3339());
     let settings = Arc::new(Settings(
         Mutex::new(StoredPlatformSettings {
+            changes: Default::default(),
             revision: 5,
             settings: policy,
         }),

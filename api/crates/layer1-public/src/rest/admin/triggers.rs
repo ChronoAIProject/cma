@@ -6,7 +6,7 @@ use axum::{extract::State, routing::post, Json, Router};
 
 use crate::AuthenticatedCaller;
 
-use super::settings::SettingsView;
+use super::settings::{self, SettingsView};
 use super::{AdminState, CollectionProblem};
 
 pub(super) fn routes() -> Router<Arc<AdminState>> {
@@ -25,13 +25,10 @@ pub(crate) async fn pause(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
 ) -> Result<Json<SettingsView>, CollectionProblem> {
-    state
-        .settings
-        .pause_triggers(&caller)
-        .await
-        .map(|stored| SettingsView::new(stored, &state.settings))
-        .map(Json)
-        .map_err(CollectionProblem::from)
+    let stored = state.settings.pause_triggers(&caller).await?;
+    Ok(Json(
+        settings::view(stored, &state.settings, &state.users, &caller).await,
+    ))
 }
 
 #[utoipa::path(
@@ -44,11 +41,8 @@ pub(crate) async fn resume(
     State(state): State<Arc<AdminState>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
 ) -> Result<Json<SettingsView>, CollectionProblem> {
-    state
-        .settings
-        .resume_triggers(&caller)
-        .await
-        .map(|stored| SettingsView::new(stored, &state.settings))
-        .map(Json)
-        .map_err(CollectionProblem::from)
+    let stored = state.settings.resume_triggers(&caller).await?;
+    Ok(Json(
+        settings::view(stored, &state.settings, &state.users, &caller).await,
+    ))
 }

@@ -5,7 +5,8 @@ pub(super) use super::super::admin::sandboxes::{
 pub(super) use super::super::admin::settings::{
     InactivitySettingsBody, MarketplaceSettingsBody, PatchRequest, PlatformDefaultsBody,
     PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
-    RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
+    RetentionSettingsBody, SettingChangeView, SettingsView, TriggerSettingsBody,
+    UsageReportingSettingsBody,
 };
 pub(super) use super::super::admin::{
     ActivityActorView, ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView,
