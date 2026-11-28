@@ -4,29 +4,22 @@ import { SpendField } from './SpendField';
 import { blankOwner, exactAmount, type SpendBudget } from './spendBudget';
 import type { SpendErrors } from './spendValidation';
 
-export function SpendPolicyLists({
-  budget,
-  disabled,
-  requestWritesAvailable,
-  errors,
-  onChange,
-}: {
+type Props = {
   readonly budget: SpendBudget;
   readonly disabled: boolean;
   readonly requestWritesAvailable: boolean;
   readonly errors: SpendErrors;
   readonly onChange: (budget: SpendBudget) => void;
-}) {
-  const models = budget.request_models ?? [];
-  const requestDisabled = disabled || !requestWritesAvailable;
+};
+
+export function OwnerOverridesEditor({
+  budget,
+  disabled,
+  errors,
+  onChange,
+}: Omit<Props, 'requestWritesAvailable'>) {
   return (
     <>
-      <h4>Owner overrides</h4>
-      <p className="operator-notice">
-        Each override replaces the default policy for that owner. Removing an override returns the
-        owner to the default policy, or outside enforcement if no default is configured. Existing
-        reservations remain.
-      </p>
       {errors.owners ? (
         <p role="alert" className="operator-failure">
           {errors.owners}
@@ -76,17 +69,21 @@ export function SpendPolicyLists({
       >
         Add owner override
       </Button>
-      <h4>Request models</h4>
-      <p className="operator-notice">
-        List approved model names and their input framing overhead. Owner token valuations must
-        cover every listed model. Unlisted models are refused for owners within the enabled scope;
-        adding a model does not establish provider usage finality.
-      </p>
-      {!requestWritesAvailable ? (
-        <p role="status" className="operator-notice">
-          Saving request models is not available yet. Current models remain readable.
-        </p>
-      ) : null}
+    </>
+  );
+}
+
+export function RequestModelsEditor({
+  budget,
+  disabled,
+  requestWritesAvailable,
+  errors,
+  onChange,
+}: Props) {
+  const models = budget.request_models ?? [];
+  const requestDisabled = disabled || !requestWritesAvailable;
+  return (
+    <>
       {errors.request_models ? (
         <p role="alert" className="operator-failure">
           {errors.request_models}

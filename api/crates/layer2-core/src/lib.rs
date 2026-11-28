@@ -91,7 +91,8 @@ pub use platform::{
     DEFAULT_WORKSPACE_PROFILE_ID, MAX_PAUSE_AFTER_SECONDS, MIN_PAUSE_AFTER_SECONDS,
 };
 pub use platform_service::{
-    PlatformSettingsService, PlatformSettingsStore, StoredPlatformSettings,
+    PlatformSettingChange, PlatformSettingChanges, PlatformSettingsService, PlatformSettingsStore,
+    StoredPlatformSettings,
 };
 pub use pressure::{
     CpuPressure, CpuPressurePolicy, CpuPressureSample, CpuPressureTransition,

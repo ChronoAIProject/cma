@@ -467,3 +467,79 @@ async fn last_budget_owner_redaction_preserves_a_readable_disabled_policy() {
     assert_eq!(cleaned.revision, 2);
     db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn removes_settings_attribution_for_an_actor_without_an_owner_override() {
+    use layer2_core::{
+        PlatformSettingChange, PlatformSettingChanges, PlatformSettings, PlatformSettingsStore,
+    };
+    let db = fixture().await;
+    let settings = PlatformSettings::default();
+    let entries = PlatformSettingChanges::from([
+        (
+            "agent_log_retention".into(),
+            PlatformSettingChange {
+                actor: SubjectId::new("erased"),
+                at: AT.into(),
+                revision: 1,
+            },
+        ),
+        (
+            "visitor_sandboxes".into(),
+            PlatformSettingChange {
+                actor: SubjectId::new("surviving-operator"),
+                at: AT.into(),
+                revision: 2,
+            },
+        ),
+    ]);
+    let store = crate::store::MongoPlatformSettingsStore::open(db.client(), db.name())
+        .await
+        .unwrap();
+    let first = PlatformSettingChanges::from([(
+        "agent_log_retention".into(),
+        entries["agent_log_retention"].clone(),
+    )]);
+    assert_eq!(
+        store
+            .replace_with_changes(0, &settings, &first)
+            .await
+            .unwrap()
+            .changes,
+        first
+    );
+    assert_eq!(
+        store
+            .replace_with_changes(1, &settings, &entries)
+            .await
+            .unwrap()
+            .changes,
+        entries
+    );
+    let original = row(&db, "platform_settings", "platform").await;
+    assert!(super::references::settings_mentions(&original, &subjects()));
+    assert_eq!(
+        redact(&db, "platform_settings", &original, &subjects())
+            .await
+            .unwrap(),
+        Redaction::Updated,
+    );
+    assert_eq!(
+        redact(&db, "platform_settings", &original, &subjects())
+            .await
+            .unwrap(),
+        Redaction::Conflict,
+    );
+    let cleaned = row(&db, "platform_settings", "platform").await;
+    assert!(!super::references::settings_mentions(&cleaned, &subjects()));
+    let stored = crate::store::settings::read_settings(cleaned).unwrap();
+    assert_eq!(stored.revision, 3);
+    assert_eq!(stored.settings, settings);
+    assert_eq!(stored.changes.len(), 1);
+    assert_eq!(
+        stored.changes["visitor_sandboxes"],
+        entries["visitor_sandboxes"]
+    );
+    db.drop().await.unwrap();
+}

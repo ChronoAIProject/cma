@@ -173,6 +173,7 @@ fn platform_spend_pause_admits_a_sandbox_without_live_agents_and_inactivity_does
 #[test]
 fn operator_pause_bypasses_only_grace_and_requires_known_enabled_matching_policy() {
     let mut stored = crate::StoredPlatformSettings {
+        changes: Default::default(),
         revision: 7,
         settings: Default::default(),
     };

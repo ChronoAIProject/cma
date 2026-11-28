@@ -122,18 +122,7 @@ pub(super) async fn redact_content(
         {
             trigger_revision(db, row).await
         }
-        "platform_settings"
-            if row
-                .get_document("settings")
-                .ok()
-                .and_then(|s| s.get_document("model_budget").ok())
-                .and_then(|s| s.get_array("owners").ok())
-                .is_some_and(|owners| {
-                    owners
-                        .iter()
-                        .any(|v| field_mentions(v.as_document(), "owner", subjects))
-                }) =>
-        {
+        "platform_settings" if settings_mentions(row, subjects) => {
             settings(db, row, subjects).await
         }
         _ => Ok(Redaction::Unchanged),
@@ -390,6 +379,27 @@ fn immutable_cas(row: &Document, collection: &'static str) -> Result<(Document, 
             .ok_or(Error::InvalidRecord(collection))?,
     ))
 }
+pub(super) fn settings_mentions(row: &Document, subjects: &BTreeSet<String>) -> bool {
+    row.get_document("settings")
+        .ok()
+        .and_then(|settings| settings.get_document("model_budget").ok())
+        .and_then(|budget| budget.get_array("owners").ok())
+        .is_some_and(|owners| {
+            owners
+                .iter()
+                .any(|row| field_mentions(row.as_document(), "owner", subjects))
+        })
+        || row
+            .get_document("setting_changes")
+            .ok()
+            .and_then(|metadata| metadata.get_document("entries").ok())
+            .is_some_and(|entries| {
+                entries
+                    .values()
+                    .any(|row| field_mentions(row.as_document(), "actor", subjects))
+            })
+}
+
 async fn settings(
     db: &Database,
     row: &Document,
@@ -405,11 +415,17 @@ async fn settings(
     settings
         .validate()
         .map_err(|_| Error::InvalidRecord(NAME))?;
+    let owner_count = settings.model_budget.owners.len();
+    let was_enabled = settings.model_budget.enabled;
     settings
         .model_budget
         .owners
-        .retain(|p| !subjects.contains(p.owner.as_str()));
-    if settings.model_budget.default_policy.is_none() && settings.model_budget.owners.is_empty() {
+        .retain(|policy| !subjects.contains(policy.owner.as_str()));
+    let owners_changed = settings.model_budget.owners.len() != owner_count;
+    if owners_changed
+        && settings.model_budget.default_policy.is_none()
+        && settings.model_budget.owners.is_empty()
+    {
         settings.model_budget.enabled = false;
     }
     settings
@@ -426,16 +442,37 @@ async fn settings(
         return Err(Error::InvalidRecord(NAME));
     }
     let mut replacement = row.clone();
-    replacement.insert(
-        "revision",
-        current.checked_add(1).ok_or(Error::InvalidRecord(NAME))?,
-    );
+    let next = current.checked_add(1).ok_or(Error::InvalidRecord(NAME))?;
+    replacement.insert("revision", next);
+    if let Ok(metadata) = replacement.get_document_mut("setting_changes") {
+        if let Ok(entries) = metadata.get_document_mut("entries") {
+            let erased: Vec<_> = entries
+                .iter()
+                .filter(|(key, value)| {
+                    field_mentions(value.as_document(), "actor", subjects)
+                        || (key.as_str() == "owner_overrides" && owners_changed)
+                        || (key.as_str() == "spend_controls"
+                            && was_enabled != settings.model_budget.enabled)
+                })
+                .map(|(key, _)| key.clone())
+                .collect();
+            for key in erased {
+                entries.remove(key);
+            }
+        }
+        if metadata.get_i64("coverage_revision").ok() == Some(current) {
+            metadata.insert("coverage_revision", next);
+        }
+    }
     replacement.insert(
         "settings",
         bson::serialize_to_bson(&settings).map_err(|_| Error::InvalidRecord(NAME))?,
     );
     let result = majority_collection::<Document>(db, NAME)
-        .replace_one(doc! {"_id":"platform","revision":current}, replacement)
+        .replace_one(
+            doc! {"_id":"platform","document_schema_version":1_i64,"revision":current},
+            replacement,
+        )
         .await?;
     Ok(outcome(result.matched_count == 1))
 }

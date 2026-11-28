@@ -1,3 +1,4 @@
+import { openSettingsEditors } from './settingsTestSupport';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
@@ -79,6 +80,7 @@ for (const enabled of [false, true]) {
     async (foundation, request) => {
       const local = transport({ ...retained, enabled }, foundation, request);
       render(<PlatformSettings client={local.client} />);
+      await openSettingsEditors();
       await screen.findByLabelText('Enable spend controls');
       expect(amount()).toBeDisabled();
       expect(amount()).toHaveValue(String(testBudget.default_policy!.turn_limit));
@@ -97,6 +99,7 @@ it.each([undefined, []].map((request_models) => ({ request_models })))(
   async ({ request_models }) => {
     const local = transport({ ...testBudget, request_models }, true, false);
     render(<PlatformSettings client={local.client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Enable spend controls');
     expect(amount()).toBeEnabled();
     fireEvent.change(amount(), { target: { value: '80' } });
@@ -117,6 +120,7 @@ it.each([
   async (budget) => {
     const local = transport(budget, false, false);
     render(<PlatformSettings client={local.client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Agent log retention (days)');
     fireEvent.change(screen.getByLabelText('Agent log retention (days)'), {
       target: { value: '45' },
@@ -136,6 +140,7 @@ it.each([
 ])('requires the foundation gate for each retained policy section: %j', async (policy) => {
   const local = transport({ enabled: false, owners: [], ...policy }, false, true);
   render(<PlatformSettings client={local.client} />);
+  await openSettingsEditors();
   await screen.findByLabelText('Enable spend controls');
   expect(save()).toBeDisabled();
   fireEvent.submit(save().closest('form')!);
@@ -147,6 +152,7 @@ it.each([false, undefined])(
   async (request) => {
     const local = transport(retained, true, true);
     render(<PlatformSettings client={local.client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Enable spend controls');
     fireEvent.change(amount(), { target: { value: '80' } });
     local.gates(true, request);
@@ -185,6 +191,7 @@ it.each([false, undefined])(
   async (request) => {
     const local = transport(retained, true, request);
     render(<PlatformSettings client={local.client} />);
+    await openSettingsEditors();
     await screen.findByLabelText('Enable spend controls');
     expect(amount()).toBeDisabled();
     expect(save()).toBeDisabled();
