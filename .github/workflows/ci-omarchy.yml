@@ -166,7 +166,7 @@ jobs:
         with:
           context: "."
           file: "api/crates/layer4-runtime/Dockerfile"
-          target: "omarchy"
+          target: "supervised-omarchy"
           platforms: "linux/amd64"
           push: false
           load: true

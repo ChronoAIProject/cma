@@ -49,8 +49,11 @@ class PublicationScopeTests(unittest.TestCase):
         validate(self.ci, self.publish)
         self.assertEqual({recipe['component'] for recipe in registry().values()}, set(COMPONENTS))
         recipe = registry()['cma-runtime-omarchy']
-        self.assertEqual(recipe['target'], 'omarchy')
+        self.assertEqual(recipe['target'], 'supervised-omarchy')
         self.assertEqual(recipe['build_args'], {'RUNTIME_DESKTOP': '1', 'OMARCHY_CMA_BASE': 'runtime-tools'})
+        workflow = yaml.safe_load((ROOT / 'workflows/ci-omarchy.yml').read_text())
+        build = next(step for step in workflow['jobs']['omarchy']['steps'] if step.get('id') == 'build')
+        self.assertEqual(build['with']['target'], recipe['target'])
 
     def test_omarchy_archive_producer_tracks_exactly_its_dependency_paths(self):
         workflow = yaml.safe_load((ROOT / 'workflows/ci-omarchy.yml').read_text())

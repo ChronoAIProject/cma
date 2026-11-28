@@ -26,7 +26,9 @@ class ImageTests(unittest.TestCase):
             self.write(directory + '/src/lib.rs', 'pub fn main() {}\n')
         for recipe in self.manifest.values():
             broad = 'api' if recipe['cargo_root'] else 'web'
-            self.write(recipe['dockerfile'], f'FROM base AS build\nCOPY {broad}/ /build/\nFROM base AS runtime\nCOPY --from=build /build/out /out\nFROM runtime AS omarchy\nFROM runtime AS default-runtime\n')
+            self.write(recipe['dockerfile'], f'FROM base AS build\nCOPY {broad}/ /build/\nFROM base AS runtime\n'
+                       'COPY --from=build /build/out /out\nFROM runtime AS omarchy\n'
+                       'FROM omarchy AS supervised-omarchy\nFROM runtime AS default-runtime\n')
             if recipe['cargo_root'] == 'cma-image-manager':
                 # An unnamed final stage is also a valid recipe target.
                 self.write(recipe['dockerfile'], 'FROM base AS build\nCOPY api/ /build/\nFROM base\nCOPY --from=build /build/out /out\n')

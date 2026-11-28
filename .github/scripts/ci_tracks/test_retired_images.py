@@ -43,7 +43,7 @@ class RetirementTests(unittest.TestCase):
             for component in RETIRED.values():
                 with self.assertRaises(ValueError):
                     resolve(old, component)
-            self.assertEqual(resolve(old, 'runtime-omarchy')['target'], 'omarchy')
+            self.assertEqual(resolve(old, 'runtime-omarchy')['target'], 'supervised-omarchy')
 
     def test_seven_to_seven_history_never_resurrects_retired_builds(self):
         self.legacy(self.root)
@@ -62,9 +62,10 @@ class RetirementTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             old = Path(directory) / 'old'
             shutil.copytree(self.root, old)
-            self.legacy(old)
-            self.manifest['cma-runtime-omarchy']['build_args']['RUNTIME_DESKTOP'] = 'changed'
-            self.pin_recipes()
+            legacy = self.legacy(old)
+            legacy['cma-runtime-omarchy']['target'] = 'omarchy'
+            (old / '.github/scripts/deployables.json').write_text(json.dumps(legacy))
+            self.assertEqual(resolve(old, 'runtime-omarchy')['target'], 'omarchy')
             snapshots = [(old, Workspace(metadata(old), old), None),
                          (self.root, self.workspace, None)]
             self.assertEqual(changed_images(['.github/scripts/deployables.json'], snapshots),
