@@ -265,13 +265,15 @@ async fn stale_turn_terminal_scans_each_replica_despite_another_holding_the_shar
     let observer = scanner.claim().await.unwrap().unwrap();
     assert!(scanner.claim().await.unwrap().is_none());
     let mut first_position = OwnedPosition::default();
-    let second_position = OwnedPosition::default();
+    let mut second_position = OwnedPosition::default();
+    let first_lane = first_position.next_lane();
+    let second_lane = second_position.next_lane();
     let first_page = scanner
-        .owned_page(&first_agents, &first_position)
+        .owned_page(&first_agents, &first_position, first_lane)
         .await
         .unwrap();
     let second_page = scanner
-        .owned_page(&second_agents, &second_position)
+        .owned_page(&second_agents, &second_position, second_lane)
         .await
         .unwrap();
     assert_eq!(first_page.rows.len(), 128);
@@ -280,28 +282,40 @@ async fn stale_turn_terminal_scans_each_replica_despite_another_holding_the_shar
     assert_eq!(second_page.rows[0].get_str("_id").unwrap(), "cmd_b");
     assert!(second_page.rows[0].get_datetime("scan_now").unwrap() >= &observer.now);
 
-    first_position.advance(&first_page, 127).unwrap();
+    first_position
+        .advance(first_lane, &first_page, 127)
+        .unwrap();
+    let waiting_lane = first_position.next_lane();
+    let waiting = scanner
+        .owned_page(&first_agents, &first_position, waiting_lane)
+        .await
+        .unwrap();
+    assert_eq!(waiting.rows.len(), 1);
+    assert_eq!(waiting.rows[0].get_str("_id").unwrap(), "cmd_wait");
+    first_position
+        .advance(waiting_lane, &waiting, waiting.rows.len())
+        .unwrap();
+    let resumed_lane = first_position.next_lane();
     let remaining = scanner
-        .owned_page(&first_agents, &first_position)
+        .owned_page(&first_agents, &first_position, resumed_lane)
         .await
         .unwrap();
     assert_eq!(remaining.rows.len(), 2);
     assert_eq!(remaining.rows[0].get_str("_id").unwrap(), "cmd_a_128");
     assert_eq!(remaining.rows[1].get_str("_id").unwrap(), "cmd_a_129");
     first_position
-        .advance(&remaining, remaining.rows.len())
+        .advance(resumed_lane, &remaining, remaining.rows.len())
         .unwrap();
-    let waiting = scanner
-        .owned_page(&first_agents, &first_position)
+    let waiting_lane = first_position.next_lane();
+    let empty = scanner
+        .owned_page(&second_agents, &first_position, waiting_lane)
         .await
         .unwrap();
-    assert_eq!(waiting.rows.len(), 1);
-    assert_eq!(waiting.rows[0].get_str("_id").unwrap(), "cmd_wait");
-    first_position
-        .advance(&waiting, waiting.rows.len())
-        .unwrap();
+    assert!(empty.rows.is_empty());
+    first_position.advance(waiting_lane, &empty, 0).unwrap();
+    let takeover_lane = first_position.next_lane();
     let takeover = scanner
-        .owned_page(&second_agents, &first_position)
+        .owned_page(&second_agents, &first_position, takeover_lane)
         .await
         .unwrap();
     assert_eq!(takeover.rows.len(), 1);

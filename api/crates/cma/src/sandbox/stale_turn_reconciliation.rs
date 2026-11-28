@@ -134,6 +134,7 @@ impl Worker {
     }
 
     async fn sweep_owned(&mut self) -> Result<(), SandboxStoreError> {
+        let lane = self.owned_position.next_lane();
         let agents: Vec<_> = self
             .ownership
             .owned()
@@ -144,7 +145,7 @@ impl Worker {
             .collect();
         let page = self
             .store
-            .owned_page(&agents, &self.owned_position)
+            .owned_page(&agents, &self.owned_position, lane)
             .await
             .map_err(store_error)?;
         let examined = match page.rows.first() {
@@ -157,7 +158,7 @@ impl Worker {
             None => 0,
         };
         self.owned_position
-            .advance(&page, examined)
+            .advance(lane, &page, examined)
             .map_err(store_error)?;
         outcome("complete");
         Ok(())

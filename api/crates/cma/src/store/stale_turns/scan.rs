@@ -1,6 +1,6 @@
 //! The scan lease fences only scheduling state. It grants no Agent authority.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use futures_util::TryStreamExt;
 use layer2_core::AgentId;
@@ -36,6 +36,13 @@ impl Lane {
             Self::WaitingAction => "waiting_action",
         }
     }
+
+    fn alternate(self) -> Self {
+        match self {
+            Self::InProgress => Self::WaitingAction,
+            Self::WaitingAction => Self::InProgress,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -59,18 +66,39 @@ pub(crate) struct Page {
 
 #[derive(Default)]
 pub(crate) struct OwnedPosition {
-    lane: Lane,
+    next: Lane,
+    in_progress: OwnedLanePosition,
+    waiting_action: OwnedLanePosition,
+    traversal_started: Option<Instant>,
+}
+
+#[derive(Default)]
+struct OwnedLanePosition {
     after: Option<(String, i64)>,
+    wrapped: bool,
 }
 
 impl OwnedPosition {
-    pub(crate) fn advance(&mut self, page: &Page, examined: usize) -> Result<(), ScanError> {
+    pub(crate) fn next_lane(&mut self) -> Lane {
+        let lane = self.next;
+        self.next = lane.alternate();
+        self.traversal_started.get_or_insert_with(Instant::now);
+        lane
+    }
+
+    pub(crate) fn advance(
+        &mut self,
+        lane: Lane,
+        page: &Page,
+        examined: usize,
+    ) -> Result<(), ScanError> {
+        let position = match lane {
+            Lane::InProgress => &mut self.in_progress,
+            Lane::WaitingAction => &mut self.waiting_action,
+        };
         if page.eof && examined == page.rows.len() {
-            self.lane = match self.lane {
-                Lane::InProgress => Lane::WaitingAction,
-                Lane::WaitingAction => Lane::InProgress,
-            };
-            self.after = None;
+            position.after = None;
+            position.wrapped = true;
         } else if let Some(row) = examined
             .checked_sub(1)
             .and_then(|index| page.rows.get(index))
@@ -80,7 +108,15 @@ impl OwnedPosition {
                 .get_i64("agent_order")
                 .or_else(|_| row.get_i32("agent_order").map(i64::from))
                 .map_err(|_| ScanError::Invalid)?;
-            self.after = Some((agent.to_owned(), order));
+            position.after = Some((agent.to_owned(), order));
+        }
+        if self.in_progress.wrapped && self.waiting_action.wrapped {
+            if let Some(started) = self.traversal_started.replace(Instant::now()) {
+                metrics::histogram!("cma_stale_turn_full_traversal_seconds", "scope" => "owner")
+                    .record(started.elapsed().as_secs_f64());
+            }
+            self.in_progress.wrapped = false;
+            self.waiting_action.wrapped = false;
         }
         Ok(())
     }
@@ -149,6 +185,7 @@ impl StaleTurnStore {
         &self,
         agents: &[AgentId],
         position: &OwnedPosition,
+        lane: Lane,
     ) -> Result<Page, ScanError> {
         if agents.is_empty() {
             return Ok(Page {
@@ -158,9 +195,13 @@ impl StaleTurnStore {
         }
         let mut filter = doc! {
             "agent_id": {"$in": agents.iter().map(AgentId::as_str).collect::<Vec<_>>()},
-            "status": position.lane.status(),
+            "status": lane.status(),
         };
-        if let Some((agent, order)) = &position.after {
+        let after = match lane {
+            Lane::InProgress => &position.in_progress.after,
+            Lane::WaitingAction => &position.waiting_action.after,
+        };
+        if let Some((agent, order)) = after {
             filter.insert(
                 "$or",
                 vec![
