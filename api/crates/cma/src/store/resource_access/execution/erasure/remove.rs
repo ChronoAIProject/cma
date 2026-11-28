@@ -1,5 +1,4 @@
 use super::*;
-use crate::store::transaction_terminal::GuardedTerminal as _;
 use mongodb::{Collection, Database};
 use std::collections::{BTreeMap, BTreeSet};
 
