@@ -183,7 +183,8 @@ async fn workspace_pin_fault(fault: PinFault) {
                 Ok(())
             },
             || async {
-                f.independent
+                // The authority scope fences through this same client session.
+                store
                     .renew_workspace_authority(&claimed, &now(), &work_lease_deadline())
                     .await
             },
