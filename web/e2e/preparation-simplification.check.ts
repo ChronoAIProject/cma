@@ -52,7 +52,6 @@ for (const theme of ['dark', 'light']) {
       );
       await expect(input).toHaveValue(followup);
       await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toHaveCount(0);
-      await page.getByText('Setup details', { exact: true }).click();
       await expect(page.getByRole('region', { name: 'Agent provisioning progress' })).toBeVisible();
       await page.screenshot({
         path: info.outputPath(`preparation-bound-${theme}-${width}.png`),
@@ -132,6 +131,12 @@ test('LOCAL preparation plays one visible mascot and keeps its poster after it s
   await page.getByLabel('Your task', { exact: true }).fill(original);
   await page.getByRole('button', { name: 'Start task', exact: true }).click();
   const preparation = page.getByRole('region', { name: 'Task preparation', exact: true });
+  const current = preparation
+    .getByRole('list', { name: 'Agent setup steps' })
+    .locator('[aria-current="step"]');
+  const marker = current.locator('.statedot__ping');
+  await expect(marker).toHaveCSS('animation-name', 'statedot-ping');
+  await expect(marker).toBeVisible();
   const sprite = preparation.locator('.agent-mascot__sprite > img:last-child');
   await expect(sprite).toBeVisible();
   await expect(page.locator('.agent-mascot__sprite')).toHaveCount(1);
@@ -143,6 +148,10 @@ test('LOCAL preparation plays one visible mascot and keeps its poster after it s
   await expect(preparation.locator('.agent-mascot__poster')).toBeVisible();
   await page.clock.runFor(1500);
   await expect(sprite).toHaveCount(0);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(marker).toHaveCSS('animation-name', 'none');
+  await expect(marker).toBeHidden();
+  await expect(current.getByText('In progress')).toBeVisible();
   expect(local.creates).toHaveLength(1);
   expect(local.boundary.writes).toEqual([]);
 });

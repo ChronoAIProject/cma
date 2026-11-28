@@ -194,7 +194,7 @@ for (const theme of ['light', 'dark']) {
       await expect(summary).toHaveText('Setup details');
       await expect(details).toHaveJSProperty('open', false);
       await expect(progress).toHaveCount(1);
-      await expect(progress).toBeHidden();
+      await expect(progress).toBeVisible();
       await showFeedback();
       await capture('submitted-preparing');
       await summary.focus();
@@ -205,7 +205,7 @@ for (const theme of ['light', 'dark']) {
       await capture('submitted-preparing-details');
       await summary.press('Enter');
       await expect(details).toHaveJSProperty('open', false);
-      await expect(progress).toBeHidden();
+      await expect(progress).toBeVisible();
       expect(writes).toBe(1);
       outcome = 'uncertain';
       await reset();

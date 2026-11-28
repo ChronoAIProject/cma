@@ -165,7 +165,8 @@ it('uses one bound preparation view and transfers only the follow-up into the mo
   ).toBeVisible();
   expect(screen.getAllByRole('heading', { name: 'New agent' })).toHaveLength(1);
   expect(screen.getByRole('region', { name: 'Original request' }).textContent).toBe(original);
-  expect(screen.getAllByText('Setup details')).toHaveLength(1);
+  expect(screen.getByRole('list', { name: 'Agent setup steps' })).toBeVisible();
+  expect(screen.getAllByRole('region', { name: 'Agent provisioning progress' })).toHaveLength(1);
   expect(screen.getByLabelText('Follow-up draft')).toHaveValue(text);
   expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
   expect(view.container.querySelectorAll('.agent-mascot__artwork')).toHaveLength(1);
