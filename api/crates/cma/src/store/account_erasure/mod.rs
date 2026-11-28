@@ -67,6 +67,24 @@ pub(crate) async fn erase_records(
     cursor: &mut Cursor,
     now: &str,
 ) -> Result<Batch, Error> {
+    erase_records_for_test(
+        db,
+        targets,
+        cursor,
+        now,
+        TransactionDrainQualification::fixture(),
+    )
+    .await
+}
+
+#[cfg(test)]
+async fn erase_records_for_test(
+    db: &Database,
+    targets: &[Target<'_>],
+    cursor: &mut Cursor,
+    now: &str,
+    qualification: TransactionDrainQualification,
+) -> Result<Batch, Error> {
     cursor.test_drain_seconds.get_or_insert(0);
     erase_records_with_options(
         db,
@@ -74,7 +92,7 @@ pub(crate) async fn erase_records(
         cursor,
         now,
         Options {
-            drain_qualification: Some(TransactionDrainQualification::fixture()),
+            drain_qualification: Some(qualification),
             billing_enabled: false,
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
@@ -100,6 +118,7 @@ pub(crate) enum CohortBlock {
         operation: &'static str,
     },
     TransactionDrainQualificationRequired,
+    ExecutionErasureQualificationRequired,
     InvalidTransactionDrain {
         parameter: &'static str,
         maximum_seconds: u64,
@@ -270,4 +289,4 @@ mod scan_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
-pub(in crate::store) use tests::drain as test_drain;
+pub(in crate::store) use tests::try_drain_execution as test_try_drain_execution;

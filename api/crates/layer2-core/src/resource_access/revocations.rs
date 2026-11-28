@@ -71,18 +71,23 @@ impl ResourceRevocationService {
     ) -> ExecutionResult<RevocationStatus> {
         operation.validate()?;
         let mut after = 0;
-        let mut stopped = 0;
+        let mut stopped = operation.erased_ordinals.len() as u32;
         let mut unresolved_effects = 0;
         while after < operation.frozen_members {
             let page = self
                 .store
                 .frozen_members(&operation.key.operation_id, after, MAX_PAGE_MEMBERS)
                 .await?;
+            if page.is_empty() && operation.next_retained_ordinal(after).is_none() {
+                break;
+            }
             if page.is_empty() || page.len() > MAX_PAGE_MEMBERS as usize {
                 return Err(ExecutionError::Corrupt);
             }
             for member in page {
-                if member.ordinal != after + 1 || member.epoch != operation.epoch {
+                if operation.next_retained_ordinal(after) != Some(member.ordinal)
+                    || member.epoch != operation.epoch
+                {
                     return Err(ExecutionError::EvidenceMismatch);
                 }
                 let request = member.barrier_request(operation)?;
@@ -188,30 +193,38 @@ impl ResourceRevocations for ResourceRevocationService {
     ) -> ExecutionResult<RevocationStatus> {
         let id = wire::Digest::new(operation).map_err(|_| ExecutionError::AuthorityChanged)?;
         tokio::time::timeout(STATUS_READ_BUDGET, async {
-            let operation = self
+            let mut operation = self
                 .coordinator
                 .revocation_status(context, credential, selector, &id)
                 .await?;
-            if operation.key.operation_id != id {
-                return Err(ExecutionError::EvidenceMismatch);
+            loop {
+                if operation.key.operation_id != id {
+                    return Err(ExecutionError::EvidenceMismatch);
+                }
+                let projection = self.project(&operation).await;
+                // Erasure can commit between the evidence reads. Recheck authority
+                // and retry when the same operation gained erased ordinals.
+                let current = self
+                    .coordinator
+                    .revocation_status(context, credential, selector, &id)
+                    .await?;
+                if current.intent != operation.intent
+                    || current.key != operation.key
+                    || current.epoch != operation.epoch
+                    || current.frozen_members != operation.frozen_members
+                    || current.frozen_at_unix_ms != operation.frozen_at_unix_ms
+                    || current.deadline_unix_ms != operation.deadline_unix_ms
+                    || !current
+                        .erased_ordinals
+                        .is_superset(&operation.erased_ordinals)
+                {
+                    return Err(ExecutionError::EvidenceMismatch);
+                }
+                if current.erased_ordinals == operation.erased_ordinals {
+                    return projection;
+                }
+                operation = current;
             }
-            let projection = self.project(&operation).await?;
-            // Evidence enumeration can wait on storage. Recheck owner/credential and
-            // incarnation before exposing the already-authorized bounded snapshot.
-            let current = self
-                .coordinator
-                .revocation_status(context, credential, selector, &id)
-                .await?;
-            if current.intent != operation.intent
-                || current.key != operation.key
-                || current.epoch != operation.epoch
-                || current.frozen_members != operation.frozen_members
-                || current.frozen_at_unix_ms != operation.frozen_at_unix_ms
-                || current.deadline_unix_ms != operation.deadline_unix_ms
-            {
-                return Err(ExecutionError::EvidenceMismatch);
-            }
-            Ok(projection)
         })
         .await
         .map_err(|_| ExecutionError::Unavailable)?
