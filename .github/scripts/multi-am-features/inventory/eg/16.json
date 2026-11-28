@@ -1,0 +1,186 @@
+[
+  {
+    "id": "EG-076",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "GitHub webhook delivery, retained receipt and task status",
+    "entry_point": "GitHub webhook -> EG -> task/receipt reads",
+    "steps": [
+      "Deliver a signed local fixture webhook and retain delivery ID.",
+      "Lookup the delivery by integration/ID and read receipt/task; replay the same webhook locally."
+    ],
+    "expected_result": "Delivery is authenticated, scoped and deduplicated; receipt/task state tracks the intended work without treating intake as completed execution.",
+    "writes": true,
+    "api": [
+      "POST /v1/github/apps/{app_ref}/webhooks",
+      "GET /v1/github/apps/{app_ref}/deliveries/{delivery_id}",
+      "GET /v1/github/deliveries/{receipt_id}",
+      "GET /v1/github/tasks/{task_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13051,
+        "anchor": "\"operationId\": \"receiveGitHubWebhook\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12809,
+        "anchor": "\"operationId\": \"lookupGitHubDelivery\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13168,
+        "anchor": "\"operationId\": \"getGitHubDelivery\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13389,
+        "anchor": "\"operationId\": \"getGitHubTask\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-077",
+    "role": "eg",
+    "actor_roles": [
+      "admin"
+    ],
+    "feature": "Service-only channel rekey",
+    "entry_point": "EG management API /v1/channels/{id}/rekey",
+    "steps": [
+      "Use an isolated service-account fixture to rekey a disposable channel.",
+      "Verify a creator-only caller cannot invoke this service operation."
+    ],
+    "expected_result": "Only the dedicated CMA service credential can rekey; ordinary owner/admin UI access does not grant it.",
+    "writes": true,
+    "api": [
+      "POST /v1/channels/{channel_id}/rekey"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11652,
+        "anchor": "\"operationId\": \"rekeyChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-078",
+    "role": "eg",
+    "actor_roles": [
+      "admin"
+    ],
+    "feature": "Organization-owned channel access and owner isolation",
+    "entry_point": "EG creator API with X-CMAEG-Owner; legacy Console owner selector",
+    "steps": [
+      "With local personal and organization-admin fixtures, select an organization the caller administers and inspect its channels.",
+      "Compare personal scope, an unrelated organization and a bearer that has lost organization authority."
+    ],
+    "expected_result": "Owner scope is derived from the exact authenticated identity and current organization-admin authorization; a header cannot select an arbitrary owner and an organization credential cannot select another organization.",
+    "writes": false,
+    "api": [
+      "GET /v1/channels",
+      "GET /v1/channels/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/auth/creator.rs",
+        "line": 274,
+        "anchor": "An organization credential cannot select another organization",
+        "sha256": "5ffe7e84079eb3c97bd420645eb42a544834782861b80219d47bfaca419ea108"
+      },
+      {
+        "path": "api/crates/cmaeg/src/auth/creator_request.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "ea8fc47ab3395804a28aa724c05eb8d08e1a34a296ee2adac652327b74646470"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10555,
+        "anchor": "\"operationId\": \"listChannels\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10739,
+        "anchor": "\"operationId\": \"getChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-079",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Upload admitted event media to AM and append its media continuation",
+    "entry_point": "EG retained media worker -> original AM binding/conversation/event/attachment slot",
+    "steps": [
+      "Deliver an authorized fixture attachment and retain the exact original target, artifact digest and attachment index.",
+      "Read the upload receipt, upload the frozen bytes if needed and submit the matching media supplement; locally replay the exact intent against the peer AM."
+    ],
+    "expected_result": "Receipt identities match the original binding generation, Agent, conversation, event and artifact. A supplement creates or recovers the intended continuation with a distinct response identity; mismatched or changed frozen data is refused and an uncertain upload is reconciled by receipt.",
+    "writes": true,
+    "api": [
+      "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment",
+      "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/providers/media_continuations.rs",
+        "line": 90,
+        "anchor": "pub async fn event_media_upload_receipt",
+        "sha256": "d9a45558964633cc9a2938fda9e0f3e0260f2d2a71b8e2de73fa5f7457857dd5"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/media_continuations.rs",
+        "line": 133,
+        "anchor": "pub async fn upload_event_media",
+        "sha256": "d9a45558964633cc9a2938fda9e0f3e0260f2d2a71b8e2de73fa5f7457857dd5"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/media_continuations.rs",
+        "line": 201,
+        "anchor": "pub async fn supplement_event_media",
+        "sha256": "d9a45558964633cc9a2938fda9e0f3e0260f2d2a71b8e2de73fa5f7457857dd5"
+      }
+    ]
+  }
+]

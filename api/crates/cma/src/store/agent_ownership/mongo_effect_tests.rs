@@ -96,9 +96,14 @@ async fn actual_conversation_and_checkpoint_writes_reject_missing_and_stale_owne
             store.commit_agent_conversation(mutation(&agent)).await,
             Err(SandboxStoreError::Conflict)
         ));
-        let checkpoint = checkpoint(&agent);
+        let initial_checkpoint = checkpoint(&agent);
         first
-            .run(store.commit_agent_message_update(agent.clone(), None, checkpoint.clone(), None))
+            .run(store.commit_agent_message_update(
+                agent.clone(),
+                None,
+                initial_checkpoint.clone(),
+                None,
+            ))
             .await
             .unwrap()
             .unwrap();
@@ -110,6 +115,9 @@ async fn actual_conversation_and_checkpoint_writes_reject_missing_and_stale_owne
         expire(ownership, &first.token).await;
         let successor = acquire(&store, &coordinators, &agent).await;
         assert!(successor.token.epoch > first.token.epoch);
+        let next_checkpoint = checkpoint(&agent);
+        assert_ne!(next_checkpoint.update_id, initial_checkpoint.update_id);
+        let before = store.agent_message_snapshot(&agent.id).await.unwrap();
         assert!(matches!(
             first
                 .run(store.commit_agent_conversation(mutation(&agent)))
@@ -121,8 +129,8 @@ async fn actual_conversation_and_checkpoint_writes_reject_missing_and_stale_owne
             first
                 .run(store.commit_agent_message_update(
                     agent.clone(),
-                    Some(checkpoint.clone()),
-                    checkpoint.clone(),
+                    Some(initial_checkpoint.clone()),
+                    next_checkpoint.clone(),
                     None
                 ))
                 .await
@@ -130,8 +138,22 @@ async fn actual_conversation_and_checkpoint_writes_reject_missing_and_stale_owne
             Err(SandboxStoreError::Conflict)
         ));
         assert_eq!(
-            store.get_agent(&agent.id).await.unwrap().unwrap().revision,
-            agent.revision
+            store.agent_message_snapshot(&agent.id).await.unwrap(),
+            before
+        );
+        successor
+            .run(store.commit_agent_message_update(
+                agent.clone(),
+                Some(initial_checkpoint),
+                next_checkpoint.clone(),
+                None,
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            store.agent_message_checkpoint(&agent.id).await.unwrap(),
+            Some(next_checkpoint)
         );
         successor
             .run(store.commit_agent_conversation(mutation(&agent)))
@@ -204,7 +226,10 @@ async fn sandbox_checkpoint_publication_fences_every_captured_remote_owner() {
     };
     use layer2_core::{
         agent_ownership::{observe_transport, transport_observation_scope},
-        sandbox::store::SandboxLifecycleExecutionStore,
+        sandbox::{
+            store::{SandboxEventStore, SandboxLifecycleExecutionStore, SandboxStore},
+            SandboxEventKind,
+        },
     };
     let (client, name, off) = database().await;
     let (sandbox, agents) = claimed_pause_fixture(&off, "owner-checkpoint").await;
@@ -215,6 +240,16 @@ async fn sandbox_checkpoint_publication_fences_every_captured_remote_owner() {
         authorities.push(acquire(&store, &coordinators, agent).await);
     }
     let mutation = checkpoint_mutation(&sandbox, &agents, checkpoint_for_agents(&agents, 1));
+    let checkpoint_filter = doc! { "sandbox_id": sandbox.id.as_str() };
+    let events = store.sandbox_events(&sandbox.id, 0, 20).await.unwrap();
+    assert_eq!(
+        store
+            .checkpoints
+            .count_documents(checkpoint_filter.clone())
+            .await
+            .unwrap(),
+        0
+    );
     assert!(matches!(
         store.publish_sandbox_checkpoint(mutation.clone()).await,
         Err(SandboxStoreError::Conflict)
@@ -230,6 +265,22 @@ async fn sandbox_checkpoint_publication_fences_every_captured_remote_owner() {
     })
     .await;
     assert!(matches!(failed, Err(SandboxStoreError::Conflict)));
+    assert_eq!(
+        store.get_sandbox(&sandbox.id).await.unwrap(),
+        Some(sandbox.clone())
+    );
+    assert_eq!(
+        store.sandbox_events(&sandbox.id, 0, 20).await.unwrap(),
+        events
+    );
+    assert_eq!(
+        store
+            .checkpoints
+            .count_documents(checkpoint_filter.clone())
+            .await
+            .unwrap(),
+        0
+    );
     // A fresh capture from the new epoch permits the exact existing publication.
     let coordinator = coordinators
         .iter()
@@ -244,7 +295,11 @@ async fn sandbox_checkpoint_publication_fences_every_captured_remote_owner() {
         .iter()
         .find(|coordinator| coordinator.instance_id == preferred)
         .unwrap();
-    authorities[0] = current.acquire(&agents[0].id).await.unwrap().unwrap();
+    let renewed = current.acquire(&agents[0].id).await.unwrap().unwrap();
+    assert!(renewed.token.epoch > authorities[0].token.epoch);
+    authorities[0] = renewed;
+    let expected = mutation.sandbox.clone();
+    let checkpoint = mutation.checkpoint.clone();
     transport_observation_scope(async {
         for authority in &authorities {
             observe_transport(authority.token.clone()).unwrap();
@@ -253,5 +308,26 @@ async fn sandbox_checkpoint_publication_fences_every_captured_remote_owner() {
     })
     .await
     .unwrap();
+    assert_eq!(
+        store.get_sandbox(&sandbox.id).await.unwrap(),
+        Some(expected)
+    );
+    assert_eq!(
+        store
+            .checkpoints
+            .count_documents(checkpoint_filter)
+            .await
+            .unwrap(),
+        1
+    );
+    let published = store.sandbox_events(&sandbox.id, 0, 20).await.unwrap();
+    assert_eq!(published.len(), events.len() + 1);
+    assert_eq!(&published[..events.len()], events.as_slice());
+    assert_eq!(
+        published.last().unwrap().kind,
+        SandboxEventKind::CheckpointSealed {
+            object_reference: checkpoint.object_reference
+        }
+    );
     client.database(&name).drop().await.unwrap();
 }

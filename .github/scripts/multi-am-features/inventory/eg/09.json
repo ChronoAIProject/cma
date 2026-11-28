@@ -1,0 +1,252 @@
+[
+  {
+    "id": "EG-041",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Direct WhatsApp phone webhook and private conversation",
+    "entry_point": "Channel producer -> WhatsApp Business account",
+    "steps": [
+      "On a dedicated local/test app verify challenge and signed webhook.",
+      "Send an admitted private message and verify reply delivery and correct phone identity."
+    ],
+    "expected_result": "Only verified account/phone events are accepted; acknowledgements and replies respect supported platform rules.",
+    "writes": true,
+    "api": [
+      "GET /v1/whatsapp/{channel_id}",
+      "POST /v1/whatsapp/{channel_id}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/WhatsappSourceFields.tsx",
+        "line": 23,
+        "anchor": "WhatsApp Business account",
+        "sha256": "6cc88961e109969ce2c4c4e0a64a902e34265d5f193ce693b7e22e8111ee26cc"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 14025,
+        "anchor": "\"operationId\": \"verifyNativeWhatsappWebhook\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 14087,
+        "anchor": "\"operationId\": \"receiveNativeWhatsappWebhook\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-042",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "WhatsApp opted-in groups, message changes and managed forms",
+    "entry_point": "WhatsApp source -> optional group/message-change/form consent",
+    "steps": [
+      "With capabilities enabled locally, select an existing allowed group and exercise permitted media/text.",
+      "Exercise retained-message edit/delete and a prepared form; withdraw consent and check pending actions."
+    ],
+    "expected_result": "Group access remains bounded to the verified phone and configured group IDs; edits retain original context; forms require readiness and explicit send, and revoked consent blocks pending effects.",
+    "writes": true,
+    "api": [
+      "PUT /v1/channels/{channel_id}",
+      "POST /v1/events/{event_ref}/form-preparation",
+      "GET /v1/events/{event_ref}/form-preparation"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/WhatsappSourceFields.tsx",
+        "line": 56,
+        "anchor": "Existing WhatsApp groups",
+        "sha256": "6cc88961e109969ce2c4c4e0a64a902e34265d5f193ce693b7e22e8111ee26cc"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10794,
+        "anchor": "\"operationId\": \"updateChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12165,
+        "anchor": "\"operationId\": \"prepareFormReply\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12122,
+        "anchor": "\"operationId\": \"readFormPreparation\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-043",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Native Lark/Feishu custom-app source and resource integrations",
+    "entry_point": "Channel producer -> Native Lark/Feishu",
+    "steps": [
+      "Inspect native-app and resource-connection capabilities.",
+      "Use a test app to receive an admitted event and exercise only selected document/resource/message effects."
+    ],
+    "expected_result": "Native intake and resource access remain distinct from NyxID relay and within selected connections/scopes; disabled controls/forms are not offered.",
+    "writes": true,
+    "api": [
+      "POST /v1/native-lark/{channel_id}",
+      "GET /v1/relay-resource-connections"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/NativeLarkSourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "9c4945b7c5acc66c73b3edd6ce5a83405d760846601800fdf83ecf09e80f6264"
+      },
+      {
+        "path": "web/src/services/channelForm/LarkResourceFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b5c613eb7da99e6a24cfdb25aeda1bd9aa9971ef66063c274ec02f2b7a347ca5"
+      },
+      {
+        "path": "web/src/services/channelForm/LarkMessageEffectsFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "cf0102e345232a579d7c2f933dcfbca712e53c98d1fa62292e5bdeb6a31c6903"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13703,
+        "anchor": "\"operationId\": \"receiveNativeLarkEvent\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13806,
+        "anchor": "\"operationId\": \"listRelayResourceConnections\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-044",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "List, inspect and attach an existing CMA-managed Telegram connection",
+    "entry_point": "Channel creation -> Use an existing CMA-managed Telegram connection",
+    "steps": [
+      "Load and paginate owner connections.",
+      "Choose a ready unbound fixture connection, set admission and save a disposable channel."
+    ],
+    "expected_result": "Only an eligible owned connection attaches; already-bound or not-ready connections are refused. NyxID route IDs cannot substitute for connection references.",
+    "writes": true,
+    "api": [
+      "GET /v1/channel-connections",
+      "GET /v1/channel-connections/{connection_ref}",
+      "POST /v1/channels"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/ManagedConnectionFields.tsx",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c6b54fd24a7ef594bde68ee3d086cc9d5191ddda3ee567223240ed0b9362d827"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10271,
+        "anchor": "\"operationId\": \"listChannelConnections\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10442,
+        "anchor": "\"operationId\": \"getChannelConnection\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10610,
+        "anchor": "\"operationId\": \"createChannel\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-045",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Create connection from admitted event and complete browser setup",
+    "entry_point": "Bot setup -> one-use /connect/start/{setup_ref} -> /connect",
+    "steps": [
+      "Use a verified originating event and authorized creator/Agent fixture to request setup.",
+      "Open the one-use link, submit the test connection through the form and read its status."
+    ],
+    "expected_result": "Setup is bounded to the original owner/event; browser capability is HttpOnly and expires; a ready connection can be selected without exposing credentials.",
+    "writes": true,
+    "api": [
+      "POST /v1/channel-connections",
+      "GET /v1/channel-connections/{connection_ref}",
+      "GET /connect/start/{setup_ref}",
+      "GET /connect",
+      "POST /connect/submit"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/http/connection_browser.rs",
+        "line": 1,
+        "anchor": "One-use setup links",
+        "sha256": "bf2a0d9c2bca8d6d86fff972d59fc90f424074e98dedf14f0b73457259765232"
+      },
+      {
+        "path": "api/crates/cmaeg/src/http/connections.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "694dbc0602264be603183eb7fc4dbcc3421873dec2ac0ad0399baddda7e5c486"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10328,
+        "anchor": "\"operationId\": \"createChannelConnection\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 10442,
+        "anchor": "\"operationId\": \"getChannelConnection\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  }
+]

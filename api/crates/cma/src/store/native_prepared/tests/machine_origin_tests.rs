@@ -9,6 +9,7 @@ use axum::{
 };
 use layer1_public::rest::{hierarchy_router, HierarchyState};
 use layer2_core::released_runtime::{ReleasedLane, ReleasedLaneRecord};
+use layer2_core::sandbox::store::WorkAuthorityProtocol;
 use layer2_core::{Authorization, Capability};
 use layer3_adapter::{
     PinnedReleasedRuntime, ReleasedLaneRevisions, ReleasedRuntime, ReleasedRuntimeSource,
@@ -109,6 +110,15 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
                 "2026-09-05T01:00:00Z".into(),
             );
         }
+        if key == "cold-managed" {
+            sandbox.work.authority_protocol = Some(WorkAuthorityProtocol::RenewedV1);
+            let mut session = client.start_session().await.unwrap();
+            session.start_transaction().await.unwrap();
+            crate::store::work_schema::floor::retain(&store, &mut session)
+                .await
+                .unwrap();
+            session.commit_transaction().await.unwrap();
+        }
         sandbox.credential.reaches = native.plan.warm.reaches.clone();
         sandbox.profile.id =
             private_sandbox_profile_id(&sandbox.owner, &format!("agent-manager:{key}:sandbox"))
@@ -159,6 +169,12 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
             &admission.admission_fingerprint,
         )
         .unwrap();
+        if key == "cold-managed" {
+            assert_eq!(
+                document.get_i64("document_schema_version").unwrap(),
+                crate::store::work_schema::RENEWED_VERSION
+            );
+        }
         store.sandboxes.insert_one(document).await.unwrap();
         store.managed_machine_updates = defaults.managed_machine_updates;
         assert_eq!(
@@ -258,6 +274,20 @@ async fn managed_machine_origin_uses_the_exact_creation_and_native_home() {
                 Some(qualified.clone())
             );
             if key == "cold-managed" {
+                let document = store
+                    .sandboxes
+                    .find_one(doc! {"_id": qualified.id.as_str()})
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(
+                    document.get_i64("document_schema_version").unwrap(),
+                    crate::store::work_schema::MANAGED_MACHINE_ORIGIN_VERSION
+                );
+                assert_eq!(
+                    crate::store::sandboxes::read_sandbox(&document).unwrap(),
+                    qualified
+                );
                 let view = runtime_update(&store, releases.clone(), &qualified).await;
                 eprintln!("shared desktop, scope matches: {view}");
                 assert_eq!(view["current_version"], machine.warm.runtime_version);

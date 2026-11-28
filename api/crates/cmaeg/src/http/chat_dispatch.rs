@@ -16,12 +16,7 @@ use axum::{
     response::{IntoResponse, Response},
     Json,
 };
-use cmaeg_core::{
-    activity::SourceKind,
-    channel::Platform,
-    problem::ProblemCode,
-    seal::{EventRef, ReplyAddress},
-};
+use cmaeg_core::{activity::SourceKind, channel::Platform, problem::ProblemCode, seal::EventRef};
 use tokio::sync::OwnedSemaphorePermit;
 /// Everything an admitted chat turn needs once its request has been released.
 ///
@@ -139,14 +134,23 @@ pub(crate) async fn dispatch(
     )
     .then(|| {
         let definition = &request.channel.definition;
+        let receipt = super::callbacks::media_refusals::receipt_for_event(
+            &request.channel,
+            &request.activity.event_id,
+            request.activity.source.clone(),
+            request.activity.conversation.kind,
+            request.activity.occurred_at.clone(),
+        );
         let notice = definition
             .routing
             .as_ref()
             .filter(|policy| policy.addressing.command && policy.addressing.unknown_target_notice)
             .map(|_| request.event_ref.clone());
         (
-            definition.record_id.clone(),
+            request.channel.clone(),
             request.activity.event_id.clone(),
+            request.activity.occurred_at.clone(),
+            receipt,
             notice,
         )
     });
@@ -176,12 +180,31 @@ pub(crate) async fn dispatch(
             if error.code == ProblemCode::AdmissionRefused
                 && error.detail.as_deref() == Some(TARGET_UNKNOWN)
             {
-                if let Some((record, event, notice)) = telegram_refusal {
+                if let Some((channel, event, occurred_at, receipt, notice)) = telegram_refusal {
+                    let record = &channel.definition.record_id;
                     state
                         .activity
-                        .refused(&record, "nyxid_relay", Some(&event), TARGET_UNKNOWN);
-                    if let Some(reference) = notice {
-                        explain_unknown_target(&state, &reference).await;
+                        .refused(record, "nyxid_relay", Some(&event), TARGET_UNKNOWN);
+                    let confirmed = match receipt {
+                        Some(receipt) => receipt
+                            .persist_label(&state, record, TARGET_UNKNOWN)
+                            .await
+                            .is_ok(),
+                        None => false,
+                    };
+                    if confirmed {
+                        if let Some(reference) = notice {
+                            explain_unknown_target(
+                                &state,
+                                &channel,
+                                &event,
+                                &occurred_at,
+                                &reference,
+                            )
+                            .await;
+                        }
+                    } else {
+                        tracing::warn!("Telegram unknown-target refusal persistence unavailable");
                     }
                 }
             }
@@ -197,39 +220,24 @@ pub(crate) async fn dispatch(
     }
 }
 
-async fn explain_unknown_target(state: &IngressState, reference: &EventRef) {
-    use crate::delivery::relay_client::Credential;
-
-    let (Some(relay), Ok(_permit)) = (&state.routing_notice_relay, state.inflight.try_acquire())
-    else {
-        return;
-    };
+async fn explain_unknown_target(
+    state: &IngressState,
+    channel: &crate::channels::resolver::ResolvedChannel,
+    event: &cmaeg_core::ids::EventId,
+    occurred_at: &str,
+    reference: &EventRef,
+) {
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     let Ok(opened) = reference.open(&state.master_keys, now) else {
         return;
     };
-    let address = &opened.payload.reply;
-    let ReplyAddress::NyxidRelay {
-        platform: Platform::Telegram,
-        reply_token,
-        reply_token_expires_at,
-        ..
-    } = address
-    else {
-        return;
-    };
-    if *reply_token_expires_at <= now {
-        return;
-    }
-    let outcome = relay
-        .send(
-            address,
-            Credential::ReplyToken(reply_token),
-            "Unknown target. Check the Consumer name and try again.",
-        )
-        .await;
-    tracing::debug!(
-        outcome = outcome.kind(),
-        "Telegram routing notice completed"
-    );
+    super::telegram_refusal_notice::send(
+        state,
+        channel,
+        event,
+        occurred_at,
+        &opened.payload.reply,
+        "Unknown target. Check the Consumer name and try again.",
+    )
+    .await;
 }

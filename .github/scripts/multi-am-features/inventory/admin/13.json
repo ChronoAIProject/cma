@@ -1,0 +1,215 @@
+[
+  {
+    "id": "ADM-075",
+    "role": "admin",
+    "feature": "Pause trigger orchestration through dedicated API",
+    "entry_point": "SDK admin.pauseTriggers",
+    "steps": [
+      "On a local disposable trigger cohort, pause orchestration.",
+      "Read settings and observe trigger behavior through both AMs; restore local state."
+    ],
+    "expected_result": "Dedicated command changes shared orchestration state and records its audit; no duplicate launch is created across AMs.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/pause",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_triggers_pause"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/triggers.rs",
+        "line": 1,
+        "sha256": "9049dde0dcf4f357a9fea7a44fd7a9447b9da7eb08783832246a3e63422c3ec3"
+      }
+    ]
+  },
+  {
+    "id": "ADM-076",
+    "role": "admin",
+    "feature": "Resume trigger orchestration through dedicated API",
+    "entry_point": "SDK admin.resumeTriggers",
+    "steps": [
+      "On a local disposable trigger cohort, resume orchestration.",
+      "Read settings and observe trigger behavior through both AMs; restore local state."
+    ],
+    "expected_result": "Dedicated command changes shared orchestration state and records its audit; no duplicate launch is created across AMs.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/resume",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_triggers_resume"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/triggers.rs",
+        "line": 1,
+        "sha256": "9049dde0dcf4f357a9fea7a44fd7a9447b9da7eb08783832246a3e63422c3ec3"
+      }
+    ]
+  },
+  {
+    "id": "ADM-077",
+    "role": "admin",
+    "feature": "Read platform spend period ledger",
+    "entry_point": "API GET /api/v1/admin/spend; no current web control",
+    "steps": [
+      "Read enabled/disabled metering, revision, levels, committed units and ledger in a local configured deployment.",
+      "Distinguish metering disabled from dependency unavailable."
+    ],
+    "expected_result": "Only authorized private accounting values are returned; cloud data absence is not treated as a proven zero.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/spend",
+        "in_captured_openapi": false,
+        "operation_id": null
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/spend.rs",
+        "line": 1,
+        "sha256": "3acf8eef491544244675b20593b05a03fb171dda277d143f6fe8a71025888d4d"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin.rs",
+        "line": 1,
+        "sha256": "a97e319cf2b1cf7c868c268ee056deb7ff75045b5e584016ee3895ac16ca060f"
+      }
+    ]
+  },
+  {
+    "id": "ADM-078",
+    "role": "admin",
+    "feature": "Record a platform cloud-spend observation",
+    "entry_point": "API POST /api/v1/admin/spend/observations",
+    "steps": [
+      "Use only local synthetic cloud source, units and observed_through.",
+      "Test future timestamp, unsafe integer and unavailable writer cases; inspect returned ledger."
+    ],
+    "expected_result": "Authorized valid observation updates the ledger; invalid/disabled writer states refuse without fabricated accounting finality.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/spend/observations",
+        "in_captured_openapi": false,
+        "operation_id": null
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/spend.rs",
+        "line": 1,
+        "sha256": "3acf8eef491544244675b20593b05a03fb171dda277d143f6fe8a71025888d4d"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin.rs",
+        "line": 1,
+        "sha256": "a97e319cf2b1cf7c868c268ee056deb7ff75045b5e584016ee3895ac16ca060f"
+      }
+    ]
+  },
+  {
+    "id": "ADM-080",
+    "role": "admin",
+    "feature": "Cross-owner Agent details, transcript and files as a read operator",
+    "entry_point": "Operations hierarchy / shared Agent detail and Files panel",
+    "steps": [
+      "Locally create an Agent under another owner; inspect effective access.",
+      "Read details, transcript/history, file tree/content and download on both AMs.",
+      "Inspect effective capabilities and verify interaction controls are unavailable with read_all_sandboxes only."
+    ],
+    "expected_result": "Global read authority grants view/history/files; interaction remains refused. Ordinary ownership and current resource authorization still fence each route.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_resource_access_by_kind_by_id"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_agents_by_id"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/transcript",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_agents_by_id_transcript"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/files/tree",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_agents_by_id_files_tree"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/files/content",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_agents_by_id_files_content"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/files/download",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_agents_by_id_files_download"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "api/crates/layer2-core/src/resource_access/policy.rs",
+        "line": 1,
+        "sha256": "1f5bf2c1661f7d7898004a4ae2eaab405be8b3293bc3d77bb41b606b383e7409"
+      },
+      {
+        "path": "web/src/resources/SharedAgent.tsx",
+        "line": 1,
+        "sha256": "93554cd32e46df76d248d4d03f043c437c83d08c308905a7e5873c73c96f3b67"
+      },
+      {
+        "path": "web/src/resources/accessSummary.ts",
+        "line": 1,
+        "sha256": "ab0f1321ae5536c3ad230d5d7bf66b8e5d35b30a15b462b54f3e65cea86ded58"
+      }
+    ]
+  }
+]

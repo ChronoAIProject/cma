@@ -9,13 +9,17 @@ import json
 from pathlib import Path
 import re
 import secrets
+import ssl
 import threading
 import time
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 OWNER = 'native-am-fixture-owner'
+ADMIN = 'native-am-fixture-admin'
+ORGANIZATION = {'id': 'fixture-organization', 'your_role': 'member', 'display_name': 'Synthetic organization'}
 SERVICES = [{'id': 'fixture-llm', 'slug': 'chrono-llm-public', 'is_active': True},
-            {'id': 'fixture-ornn', 'slug': 'ornn-api', 'is_active': True}]
+            {'id': 'fixture-ornn', 'slug': 'ornn-api', 'is_active': True},
+            {'id': 'fixture-access', 'slug': 'fixture-access-service', 'is_active': True}]
 PERMISSIONS = ['cma:sandbox:create', 'cma:sandbox:use',
                'cma:sandbox:delete', 'cma:profile:manage', 'cma:bot:manage', 'cma:trigger:publish', 'cma:trigger:launch']
 ADMIN_PERMISSIONS = PERMISSIONS + ['cma:admin:sandboxes', 'cma:admin:events', 'cma:admin:activity', 'cma:admin:users', 'cma:admin:control', 'cma:admin:settings']
@@ -72,6 +76,7 @@ class Identity(BaseHTTPRequestHandler):
     config = None
     keys = {}
     codes = {}
+    outsider_is_member = False
     lock = threading.Lock()
 
     def log_message(self, *_):
@@ -103,7 +108,7 @@ class Identity(BaseHTTPRequestHandler):
     def actor(self, token):
         for key, subject, permissions in [
             ('bearer', OWNER, PERMISSIONS),
-            ('admin_bearer', 'native-am-fixture-admin', ADMIN_PERMISSIONS),
+            ('admin_bearer', ADMIN, ADMIN_PERMISSIONS),
             ('outsider_bearer', 'native-am-fixture-outsider', PERMISSIONS),
         ]:
             expected = self.config.get(key)
@@ -112,6 +117,14 @@ class Identity(BaseHTTPRequestHandler):
         return None
 
     def do_GET(self):
+        if self.path in ('/fixture/ornn-grant', '/fixture/llm-grant'):
+            service = 'fixture-ornn' if self.path == '/fixture/ornn-grant' else 'fixture-llm'
+            auth = self.headers.get('Authorization', '')
+            with self.lock:
+                granted = any(service in value.get('service_ids', ())
+                              and hmac.compare_digest(auth, 'Bearer ' + value['credential'])
+                              for value in self.keys.values())
+            return self.reply(200 if granted else 401, {'granted': granted})
         if urlsplit(self.path).path == '/authorize':
             params = parse_qs(urlsplit(self.path).query)
             try:
@@ -120,11 +133,17 @@ class Identity(BaseHTTPRequestHandler):
                     or params['response_type'] != ['code'] or params['code_challenge_method'] != ['S256']
                     or len(params['state'][0]) > 256 or len(params['code_challenge'][0]) != 43):
                     raise ValueError('authorization_contract')
+                authorization = self.headers.get('Authorization')
+                token_key = 'bearer'
+                if authorization is not None:
+                    if not hmac.compare_digest(authorization, 'Bearer ' + self.config['admin_bearer']):
+                        return self.reply(401, {'error': 'unauthorized'})
+                    token_key = 'admin_bearer'
                 code = secrets.token_hex(32)
                 with self.lock:
                     if self.codes:
                         raise ValueError('single_authorization_bound')
-                    self.codes[code] = params['code_challenge'][0]
+                    self.codes[code] = (params['code_challenge'][0], token_key)
                 location = 'https://api.localhost.direct/auth/callback?' + urlencode({'state': params['state'][0], 'code': code})
                 self.send_response(302)
                 self.send_header('Location', location)
@@ -146,6 +165,17 @@ class Identity(BaseHTTPRequestHandler):
             actor = self.actor(header[7:]) if header.startswith('Bearer ') else None
             return self.reply(200, {'sub': actor[0], 'name': 'Local native qualification',
                                     'permissions': actor[1]}) if actor else self.reply(401, {'error': 'unauthorized'})
+        org_authorization = '/api/v1/orgs/' + ORGANIZATION['id'] + '/authorization'
+        if self.path in ('/api/v1/orgs', org_authorization):
+            authorization = self.headers.get('Authorization', '')
+            actor = self.actor(authorization[7:]) if authorization.startswith('Bearer ') else None
+            if actor is None:
+                return self.reply(401, {'error': 'unauthorized'})
+            with self.lock:
+                member = actor[0] == 'native-am-fixture-outsider' and self.outsider_is_member
+            if self.path == '/api/v1/orgs':
+                return self.reply(200, {'orgs': [ORGANIZATION] if member else []})
+            return self.reply(200, ORGANIZATION) if member else self.reply(404, {'error': 'not_member'})
         if not self.bearer():
             return self.reply(401, {'error': 'unauthorized'})
         if self.path in ['/api/v1/services', '/api/v1/user-services']:
@@ -165,17 +195,31 @@ class Identity(BaseHTTPRequestHandler):
     def do_POST(self):
         try:
             raw = self.body()
+            if self.path == '/fixture/organization-membership':
+                admin = 'Bearer ' + self.config['admin_bearer']
+                if not hmac.compare_digest(self.headers.get('Authorization', ''), admin):
+                    return self.reply(403, {'error': 'fixture_admin_required'})
+                body = json.loads(raw)
+                if not isinstance(body, dict) or set(body) != {'member'} or type(body['member']) is not bool:
+                    raise ValueError('organization_membership_contract')
+                with self.lock:
+                    type(self).outsider_is_member = body['member']
+                return self.reply(200, {'member': body['member']})
             if self.path == '/token':
                 form = parse_qs(raw.decode(), strict_parsing=True)
                 if (form.get('client_id') != [self.config['client_id']]
                     or form.get('client_secret') != [self.config['client_secret']]):
                     return self.reply(401, {'error': 'invalid_client'})
                 grant = form.get('grant_type')
+                token_key = 'bearer'
                 if grant == ['authorization_code']:
                     with self.lock:
-                        expected = self.codes.pop(form.get('code', [''])[0], None)
+                        attempt = self.codes.pop(form.get('code', [''])[0], None)
+                    if attempt is None:
+                        return self.reply(400, {'error': 'invalid_grant'})
+                    expected, token_key = attempt
                     actual = base64.urlsafe_b64encode(hashlib.sha256(form.get('code_verifier', [''])[0].encode()).digest()).decode().rstrip('=')
-                    if (expected is None or not hmac.compare_digest(expected, actual)
+                    if (not hmac.compare_digest(expected, actual)
                         or form.get('redirect_uri') != ['https://api.localhost.direct/auth/callback']):
                         return self.reply(400, {'error': 'invalid_grant'})
                 elif grant == ['refresh_token']:
@@ -183,9 +227,29 @@ class Identity(BaseHTTPRequestHandler):
                         return self.reply(400, {'error': 'invalid_grant'})
                 else:
                     return self.reply(400, {'error': 'unsupported_grant'})
-                return self.reply(200, {'access_token': self.config['bearer'], 'token_type': 'Bearer',
-                    'refresh_token': self.config['refresh_token'], 'expires_in': 3600,
-                    'scope': 'openid profile email roles proxy offline_access'})
+                response = {'access_token': self.config[token_key], 'token_type': 'Bearer', 'expires_in': 3600,
+                            'scope': 'openid profile email roles proxy'}
+                if token_key == 'bearer':
+                    response.update(refresh_token=self.config['refresh_token'],
+                                    scope=response['scope'] + ' offline_access')
+                return self.reply(200, response)
+            if self.path == '/oauth/introspect':
+                form = parse_qs(raw.decode(), strict_parsing=True)
+                client = self.config.get('gateway_client')
+                if not client or form.get('token_type_hint') != ['access_token'] or any(
+                    len(form.get(key, [])) != 1 or not hmac.compare_digest(form[key][0], client[key])
+                    for key in ('client_id', 'client_secret')
+                ):
+                    return self.reply(401, {'active': False})
+                token = form.get('token', [])
+                actor = self.actor(token[0]) if len(token) == 1 else None
+                if actor is None:
+                    return self.reply(200, {'active': False})
+                issuer = 'https://identity.localhost.direct'
+                can_read = token[0] in (self.config['bearer'], self.config['admin_bearer'])
+                return self.reply(200, {'active': True, 'iss': issuer, 'sub': actor[0], 'token_type': 'access',
+                    'exp': self.config['expires_at'], 'resource': [issuer + '/api/v1/proxy/s/cma-event-gateway'],
+                    'permissions': ['cma-eg:channels:read'] if can_read else []})
             if self.path == '/introspect':
                 form = parse_qs(raw.decode(), strict_parsing=True)
                 actor = self.actor(form.get('token', [''])[0])
@@ -207,18 +271,21 @@ class Identity(BaseHTTPRequestHandler):
                           'allow_all_services', 'allow_all_nodes', 'allow_auto_connected_services', 'scope_plan_digest'}
                 plan = scope_plan(body['allowed_service_ids'])
                 if (set(body) != fields or body['scopes'] != 'proxy read'
-                    or not re.fullmatch(r'cma:native-am-1115:[A-Za-z0-9_.-]{1,128}', body['name'])
+                    or not re.fullmatch(r'cma:' + re.escape(self.config.get('deployment_id', 'native-am-1115'))
+                                        + r':[A-Za-z0-9_.-]{1,128}', body['name'])
                     or body['allowed_node_ids'] != ['fixture-node']
                     or any(body[x] is not False for x in ['allow_all_services', 'allow_all_nodes', 'allow_auto_connected_services'])
                     or body['scope_plan_digest'] != plan['normalized_grant_digest']
                     or datetime.fromisoformat(body['expires_at'].replace('Z', '+00:00')).timestamp() <= time.time()):
                     raise ValueError('mint_contract')
                 identifier = 'fixture-key-' + secrets.token_hex(16)
+                credential = 'local-' + secrets.token_hex(32)
                 with self.lock:
                     if len(self.keys) >= 16:
                         raise ValueError('mint_bound')
-                    self.keys[identifier] = {'name': body['name']}
-                return self.reply(200, dict(id=identifier, full_key='local-' + secrets.token_hex(32),
+                    self.keys[identifier] = {'name': body['name'], 'credential': credential,
+                                             'service_ids': body['allowed_service_ids']}
+                return self.reply(200, dict(id=identifier, full_key=credential,
                     scopes=body['scopes'], state_version=1, allowed_service_ids=body['allowed_service_ids'],
                     allowed_node_ids=body['allowed_node_ids'], allow_all_services=False,
                     allow_all_nodes=False, allow_auto_connected_services=False))
@@ -238,6 +305,14 @@ class Identity(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     Identity.config = json.loads(Path('/private/identity.json').read_text())
+    certificate = Path('/private/provider.crt')
+    if certificate.is_file():
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.minimum_version = ssl.TLSVersion.TLSv1_2
+        context.load_cert_chain(certificate, '/private/provider.key')
+        secure = ThreadingHTTPServer(('0.0.0.0', 8443), Identity)
+        secure.socket = context.wrap_socket(secure.socket, server_side=True)
+        threading.Thread(target=secure.serve_forever, kwargs={'poll_interval': 0.2}, daemon=True).start()
     server = ThreadingHTTPServer(('0.0.0.0', 8080), Identity)
     server.daemon_threads = True
     server.serve_forever(poll_interval=0.2)

@@ -19,6 +19,7 @@ use super::live_agents::LiveAgentRegistry;
 use layer2_core::sandbox::SandboxPolicy;
 
 mod authority;
+mod credential_rotation;
 mod execute;
 mod home;
 mod initial_runtime;

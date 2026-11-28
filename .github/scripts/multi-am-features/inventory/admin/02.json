@@ -1,0 +1,290 @@
+[
+  {
+    "id": "ADM-012",
+    "role": "admin",
+    "feature": "Admin usage completed report: 30d",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → Time range",
+    "steps": [
+      "Select 30d; for custom enter a valid local-time interval no longer than 30 days.",
+      "Apply filters and measure until the requested range has committed totals and a populated or valid empty table.",
+      "Repeat three times, retaining request/report IDs and AM attribution; count cold and warm observations separately."
+    ],
+    "expected_result": "The requested authorized range completes, allocation totals are finite and correctly scoped, and no preview/pending/error view is reported as completed.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/view",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_view"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/reports",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_reports"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/Sandboxes.tsx",
+        "line": 1,
+        "sha256": "41cc00a2ef050833096603e16481389c4d3ab3eaffea1ec8efe39576fcd7e35f"
+      },
+      {
+        "path": "web/src/usage/metrics/OpsMetricFilters.tsx",
+        "line": 1,
+        "sha256": "bd05d0bd2d1ebe5f146e16eb0c8d5cffa1b6a5fabd1da30841e40366a8ef501b"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 1,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  },
+  {
+    "id": "ADM-013",
+    "role": "admin",
+    "feature": "Admin usage completed report: 1h",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → Time range",
+    "steps": [
+      "Select 1h; for custom enter a valid local-time interval no longer than 30 days.",
+      "Apply filters and measure until the requested range has committed totals and a populated or valid empty table.",
+      "Repeat three times, retaining request/report IDs and AM attribution; count cold and warm observations separately."
+    ],
+    "expected_result": "The requested authorized range completes, allocation totals are finite and correctly scoped, and no preview/pending/error view is reported as completed.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/view",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_view"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/reports",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_reports"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/Sandboxes.tsx",
+        "line": 1,
+        "sha256": "41cc00a2ef050833096603e16481389c4d3ab3eaffea1ec8efe39576fcd7e35f"
+      },
+      {
+        "path": "web/src/usage/metrics/OpsMetricFilters.tsx",
+        "line": 1,
+        "sha256": "bd05d0bd2d1ebe5f146e16eb0c8d5cffa1b6a5fabd1da30841e40366a8ef501b"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 1,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  },
+  {
+    "id": "ADM-014",
+    "role": "admin",
+    "feature": "Admin usage completed report: custom",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → Time range",
+    "steps": [
+      "Select custom; for custom enter a valid local-time interval no longer than 30 days.",
+      "Apply filters and measure until the requested range has committed totals and a populated or valid empty table.",
+      "Repeat three times, retaining request/report IDs and AM attribution; count cold and warm observations separately."
+    ],
+    "expected_result": "The requested authorized range completes, allocation totals are finite and correctly scoped, and no preview/pending/error view is reported as completed.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/view",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_view"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/reports",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_reports"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/Sandboxes.tsx",
+        "line": 1,
+        "sha256": "41cc00a2ef050833096603e16481389c4d3ab3eaffea1ec8efe39576fcd7e35f"
+      },
+      {
+        "path": "web/src/usage/metrics/OpsMetricFilters.tsx",
+        "line": 1,
+        "sha256": "bd05d0bd2d1ebe5f146e16eb0c8d5cffa1b6a5fabd1da30841e40366a8ef501b"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 1,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/view.ts",
+        "line": 1,
+        "sha256": "ba7d138663600c3207e7d446d225dd00be539100bfe56dd8a5da45bf8754311e"
+      }
+    ]
+  },
+  {
+    "id": "ADM-015",
+    "role": "admin",
+    "feature": "Usage refresh, stale snapshot, disabled-view fallback and retry",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → Refresh / Retry",
+    "steps": [
+      "Refresh a completed report, then exercise a cold selection.",
+      "Locally cover typed 501 report_view_disabled, pending 202, 429/503 backoff and expired report.",
+      "Change range while a request is pending; leave and reopen Operations."
+    ],
+    "expected_result": "Client uses only the supported fallback, preserves requested scope, cancels obsolete ownership, and shows pending/stale/error honestly until a complete report arrives.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/view",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_view"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/reports",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_reports"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 1,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3"
+      },
+      {
+        "path": "web/src/usage/metrics/latest.ts",
+        "line": 1,
+        "sha256": "2a3b67b8d996da3e3b5fb1b5ab0e19a2b7ae5641d6723c45e450c108cfa1fd79"
+      },
+      {
+        "path": "web/src/usage/metrics/useReport.ts",
+        "line": 1,
+        "sha256": "5183e23816632e126dcb7b3423f29b9b1704fd23b9f72f86297e49f112ffff84"
+      },
+      {
+        "path": "web/src/usage/metrics/reportCache.ts",
+        "line": 1,
+        "sha256": "057bd94659800e86b19605cc89d7cbded748a3f4c751e84757f12a2b7e44990d"
+      },
+      {
+        "path": "web/src/usage/metrics/UsageReportProgress.tsx",
+        "line": 1,
+        "sha256": "9c3cc87d2e32be7efb1dbce7efba6243bca396c3908498d0fb4b15f81ebe60dc"
+      }
+    ]
+  },
+  {
+    "id": "ADM-016",
+    "role": "admin",
+    "feature": "Admin usage owner choices, search, selection and pagination",
+    "entry_point": "Account menu → Operations; /operations → Sandboxes & usage → owner filter",
+    "steps": [
+      "Open the owner picker before the report is ready.",
+      "Search by displayed name/context, move through choices, and select a result.",
+      "For Sandbox choices, restrict to an owner and verify selection resets when owner changes."
+    ],
+    "expected_result": "Bounded choices load independently of report completion; stable identities back readable labels; search text is in the POST body, not the URL.",
+    "writes": false,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/options",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_options"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/OpsMetricFilters.tsx",
+        "line": 1,
+        "sha256": "bd05d0bd2d1ebe5f146e16eb0c8d5cffa1b6a5fabd1da30841e40366a8ef501b"
+      },
+      {
+        "path": "web/src/usage/metrics/FilterOptionPicker.tsx",
+        "line": 1,
+        "sha256": "167c70aa2a6f1f2842d57ab780ababba423970da80a0ecdb0d1fd277fc4acb30"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/options.ts",
+        "line": 1,
+        "sha256": "bfd0d40ae31246f03f5bcbe1b21102e4c5f1d1c2289e802abde2bb09607cd9f5"
+      },
+      {
+        "path": "api/crates/layer2-core/src/sandbox_metrics/options.rs",
+        "line": 1,
+        "sha256": "34951df32f92e80fa28005feac657f1fecb5a2b12e53a80b316f8702a71f576b"
+      }
+    ]
+  }
+]

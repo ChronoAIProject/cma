@@ -1,0 +1,224 @@
+[
+  {
+    "id": "cma-user.agent.queue-edit",
+    "role": "user",
+    "feature": "Edit a queued message and its attachments",
+    "entry_point": "Queued message → Edit queued message content",
+    "steps": [
+      "Queue a disposable message",
+      "Open its editor and change text/attachments",
+      "Save and verify the eventual turn content"
+    ],
+    "expected_result": "The exact queued input is updated under its current revision; a race with turn start is surfaced without overwriting another turn.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/queued-input",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/attachments",
+        "openapi_path": "/api/v1/agents/{id}/attachments",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/QueuedMessages.tsx",
+        "line": 45,
+        "sha256": "4d948ab11453ec1f20e34a8a22a43bf134b146554ca7c6666bc4ce43a875e5ca",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/QueuedMessageEditor.tsx",
+        "line": 17,
+        "sha256": "e70447dc3843b3f43534429c202ac358f66d18d4fbc585f9ae8b26615a8334b1",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/transport/queuedInputs.ts",
+        "line": 1,
+        "sha256": "6e49656aca0871535ed7ebf1fd735fc78442bcb0156f414f3dcf44f4db7f8eed",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.queue-remove",
+    "role": "user",
+    "feature": "Remove a queued message",
+    "entry_point": "Queued message → Remove queued message",
+    "steps": [
+      "Queue a disposable message while another runs",
+      "Remove that queued message",
+      "Observe confirmed cancellation and absence of later execution"
+    ],
+    "expected_result": "Only the selected queued message is cancelled; uncertainty and already-started races remain explicit.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/QueuedMessages.tsx",
+        "line": 45,
+        "sha256": "4d948ab11453ec1f20e34a8a22a43bf134b146554ca7c6666bc4ce43a875e5ca",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/transport/queuedCancellation.ts",
+        "line": 1,
+        "sha256": "00cda9ace7fbd8df40d6b44573f8341db203b6ac239f41781545e08d8f7192cc",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.pending-recovery",
+    "role": "user",
+    "feature": "Recover pending send, control or queued-message outcomes",
+    "entry_point": "Pending action notice / retained queued draft → recovery action",
+    "steps": [
+      "Locally disconnect observation after a command is sent",
+      "Reopen the same Agent",
+      "Recover the pending action before issuing a different command"
+    ],
+    "expected_result": "Recovery observes or retries the retained command identity; it never replays an unknown irreversible effect under a new identity.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v2/commands/{command_id}",
+        "openapi_path": "/api/v2/commands/{command_id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v2/responses/{response_id}",
+        "openapi_path": "/api/v2/responses/{response_id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/AgentSurfaceStates.tsx",
+        "line": 9,
+        "sha256": "0a056239eb01f07e72912eea955cd0b10b9d104b16ef6bfc77ee4668d31919a9",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/transport/requestRecovery.ts",
+        "line": 20,
+        "sha256": "a614b471d7331b0cb39c401bcfb87389743d49dc3c381d1fabd21229bbb9b67d",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/QueuedMessages.tsx",
+        "line": 45,
+        "sha256": "4d948ab11453ec1f20e34a8a22a43bf134b146554ca7c6666bc4ce43a875e5ca",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.approval-allow",
+    "role": "user",
+    "feature": "Answer an approval: Allow",
+    "entry_point": "Agent conversation → Approval card → Allow",
+    "steps": [
+      "Trigger a harmless guarded approval locally",
+      "Read the request and choose Allow",
+      "Observe the resulting turn state"
+    ],
+    "expected_result": "The exact requested action is permitted once. A stale or already-answered approval cannot authorize different work.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/approvals/{request_id}",
+        "openapi_path": "/api/v1/agents/{id}/approvals/{request_id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/ApprovalCard.tsx",
+        "line": 26,
+        "sha256": "81bc795bcdecb3cb00e27a8b5a1a848e5666b59f5f0eaf0d5f358d2481d13d31",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/actions.ts",
+        "line": 18,
+        "sha256": "08a61ab2a728248c45fc4a5a41a6ab8ac6e95b9f228459dd7fd9a904c210670f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.agent.approval-deny",
+    "role": "user",
+    "feature": "Answer an approval: Deny",
+    "entry_point": "Agent conversation → Approval card → Deny",
+    "steps": [
+      "Trigger a harmless guarded approval locally",
+      "Read the request and choose Deny",
+      "Observe the resulting turn state"
+    ],
+    "expected_result": "The requested action is refused and does not execute. A stale or already-answered approval cannot authorize different work.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/approvals/{request_id}",
+        "openapi_path": "/api/v1/agents/{id}/approvals/{request_id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "openapi_path": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/ApprovalCard.tsx",
+        "line": 26,
+        "sha256": "81bc795bcdecb3cb00e27a8b5a1a848e5666b59f5f0eaf0d5f358d2481d13d31",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/actions.ts",
+        "line": 18,
+        "sha256": "08a61ab2a728248c45fc4a5a41a6ab8ac6e95b9f228459dd7fd9a904c210670f",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

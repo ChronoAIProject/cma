@@ -1,0 +1,307 @@
+[
+  {
+    "id": "cma-user.usage.1h",
+    "role": "user",
+    "feature": "Complete a personal usage report: 1h",
+    "entry_point": "Account → Usage or /usage → Time range",
+    "steps": [
+      "Open Your usage",
+      "Select 1h and apply",
+      "Wait for a completed report with summary and rows",
+      "Record fresh/cached state, report identity and all step timings"
+    ],
+    "expected_result": "A complete authorized personal report renders within the owner target; an allocation failure, pending job, stale display or typed 501 alone is not a completed fresh report.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/view",
+        "openapi_path": "/api/v1/usage/metrics/view",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/reports",
+        "openapi_path": "/api/v1/usage/metrics/reports",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/reports/{report}",
+        "openapi_path": "/api/v1/usage/metrics/reports/{report}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/usage/UsageDialog.tsx",
+        "line": 9,
+        "sha256": "706660191a0e1c4282f12995e0779024e567094d0fe496a230b290f0d3acfb60",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 17,
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 183,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 63,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.usage.24h",
+    "role": "user",
+    "feature": "Complete a personal usage report: 24h",
+    "entry_point": "Account → Usage or /usage → Time range",
+    "steps": [
+      "Open Your usage",
+      "Select 24h and apply",
+      "Wait for a completed report with summary and rows",
+      "Record fresh/cached state, report identity and all step timings"
+    ],
+    "expected_result": "A complete authorized personal report renders within the owner target; an allocation failure, pending job, stale display or typed 501 alone is not a completed fresh report.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/view",
+        "openapi_path": "/api/v1/usage/metrics/view",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/reports",
+        "openapi_path": "/api/v1/usage/metrics/reports",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/reports/{report}",
+        "openapi_path": "/api/v1/usage/metrics/reports/{report}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/usage/UsageDialog.tsx",
+        "line": 9,
+        "sha256": "706660191a0e1c4282f12995e0779024e567094d0fe496a230b290f0d3acfb60",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 17,
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 183,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 63,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.usage.7d",
+    "role": "user",
+    "feature": "Complete a personal usage report: 7d",
+    "entry_point": "Account → Usage or /usage → Time range",
+    "steps": [
+      "Open Your usage",
+      "Select 7d and apply",
+      "Wait for a completed report with summary and rows",
+      "Record fresh/cached state, report identity and all step timings"
+    ],
+    "expected_result": "A complete authorized personal report renders within the owner target; an allocation failure, pending job, stale display or typed 501 alone is not a completed fresh report.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/view",
+        "openapi_path": "/api/v1/usage/metrics/view",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/reports",
+        "openapi_path": "/api/v1/usage/metrics/reports",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/reports/{report}",
+        "openapi_path": "/api/v1/usage/metrics/reports/{report}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/usage/UsageDialog.tsx",
+        "line": 9,
+        "sha256": "706660191a0e1c4282f12995e0779024e567094d0fe496a230b290f0d3acfb60",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 17,
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 183,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 63,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.usage.30d",
+    "role": "user",
+    "feature": "Complete a personal usage report: 30d",
+    "entry_point": "Account → Usage or /usage → Time range",
+    "steps": [
+      "Open Your usage",
+      "Select 30d and apply",
+      "Wait for a completed report with summary and rows",
+      "Record fresh/cached state, report identity and all step timings"
+    ],
+    "expected_result": "A complete authorized personal report renders within the owner target; an allocation failure, pending job, stale display or typed 501 alone is not a completed fresh report.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/view",
+        "openapi_path": "/api/v1/usage/metrics/view",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/reports",
+        "openapi_path": "/api/v1/usage/metrics/reports",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/reports/{report}",
+        "openapi_path": "/api/v1/usage/metrics/reports/{report}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/usage/UsageDialog.tsx",
+        "line": 9,
+        "sha256": "706660191a0e1c4282f12995e0779024e567094d0fe496a230b290f0d3acfb60",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 17,
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/reportLoad.ts",
+        "line": 183,
+        "sha256": "64b7da541df58d7aeb06956ea48ed23f47271243594a64673d10140efd1a87b3",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 63,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.usage.custom-filter",
+    "role": "user",
+    "feature": "Filter personal usage by custom range, Sandbox and Agent",
+    "entry_point": "Your usage → Custom range / Search / Sandbox / Agent → Apply filters",
+    "steps": [
+      "Use a valid custom interval of at most 30 days",
+      "Search/select an owned Sandbox and Agent",
+      "Apply filters and inspect the completed report",
+      "Try an invalid range locally"
+    ],
+    "expected_result": "The report matches the requested personal scope and interval; no admin owner/status/runtime controls are exposed and invalid ranges fail clearly.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents",
+        "openapi_path": "/api/v1/agents",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/usage/metrics/reports",
+        "openapi_path": "/api/v1/usage/metrics/reports",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/metrics/reports/{report}",
+        "openapi_path": "/api/v1/usage/metrics/reports/{report}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/MetricFilters.tsx",
+        "line": 17,
+        "sha256": "f1e0dad7a9b350b1c45cd04b1ce9945565a6ad336c1e8e8295e6aa1f306825da",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/UsageAgentPicker.tsx",
+        "line": 8,
+        "sha256": "03ea47a29415cbdee91fbf2fb6ebdbbe5df41a52c2aabe1b7bfade8a4993760e",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/ReportSelector.tsx",
+        "line": 11,
+        "sha256": "a85f6f5612c4b3624f784d8b5bbdbdac011bd62fe112f11d476aeb6cdcb511ce",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/usage/metrics/selection.ts",
+        "line": 53,
+        "sha256": "8f766579e57322a8b96504ac9e771100e01090ff51f2498365b26e40e4fb8733",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

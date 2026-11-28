@@ -4,6 +4,186 @@ use std::sync::{Arc, Mutex};
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn prepared_open_ready_fences_each_supported_parent_envelope() {
+    use layer2_core::sandbox::store::WorkAuthorityProtocol::RenewedV1;
+
+    for (sandbox_version, workspace_version) in
+        [(1_i64, 1_i64), (3, 1), (1, 3), (3, 3), (4, 1), (4, 3)]
+    {
+        let (client, name, store, agent, mut observed) = fixture().await;
+        let workspace_before_change = store
+            .get_workspace(&agent.workspace_id)
+            .await
+            .unwrap()
+            .unwrap();
+        if sandbox_version != 1 {
+            let sandbox = &mut observed.sandbox;
+            let previous = sandbox.revision;
+            if sandbox_version == 3 {
+                sandbox.work.authority_protocol = Some(RenewedV1);
+            } else {
+                let reservation = store
+                    .native_prepared
+                    .find_one(doc! {"_id": sandbox.id.as_str(), "state": "claimed"})
+                    .await
+                    .unwrap()
+                    .unwrap();
+                let payload = reservation
+                    .get_document("record")
+                    .unwrap()
+                    .get_document("payload")
+                    .unwrap();
+                sandbox.work.prepared_installation_digest = Some(
+                    payload
+                        .get_str("installed_request_sha256")
+                        .unwrap()
+                        .to_owned(),
+                );
+            }
+            sandbox.revision += 1;
+            store.save_sandbox(previous, sandbox.clone()).await.unwrap();
+        }
+        if workspace_version == 3 {
+            let workspace = &mut observed.workspace;
+            let previous = workspace.revision;
+            workspace.work.authority_protocol = Some(RenewedV1);
+            workspace.revision += 1;
+            store
+                .save_workspace(previous, workspace.clone())
+                .await
+                .unwrap();
+        }
+        let done = completion(&agent, &observed.worktree);
+        if workspace_version == 3 {
+            // The parallel Workspace read can complete before the Sandbox read.
+            // A second reader of the same Sandbox cannot certify this context.
+            let mixed = PreparedAgentOpenContext {
+                sandbox: store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap(),
+                workspace: workspace_before_change,
+                worktree: observed.worktree.clone(),
+            };
+            let rejected = store
+                .commit_prepared_agent_open_ready(done.clone(), mixed)
+                .await;
+            assert!(matches!(
+                rejected,
+                Err(SandboxStoreError::Conflict) | Ok(false)
+            ));
+            assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
+        }
+        assert!(store
+            .commit_prepared_agent_open_ready(done.clone(), observed.clone())
+            .await
+            .unwrap());
+        assert!(!store
+            .commit_prepared_agent_open_ready(done.clone(), observed.clone())
+            .await
+            .unwrap());
+        assert_eq!(
+            store.get_agent(&agent.id).await.unwrap().unwrap(),
+            done.agent
+        );
+        for (collection, id, schema) in [
+            (
+                &store.sandboxes,
+                observed.sandbox.id.as_str(),
+                sandbox_version,
+            ),
+            (
+                &store.workspaces,
+                observed.workspace.id.as_str(),
+                workspace_version,
+            ),
+            (&store.worktrees, observed.worktree.id.as_str(), 1),
+            (&store.native_prepared, observed.sandbox.id.as_str(), 1),
+        ] {
+            let row = collection
+                .find_one(doc! {"_id": id})
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.get_i64("document_schema_version").unwrap(), schema);
+            assert_eq!(row.get_i64("agent_prepared_open_ready_fence").unwrap(), 1);
+        }
+        client.database(&name).drop().await.unwrap();
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn prepared_open_ready_cannot_publish_after_its_sandbox_begins_pause() {
+    use layer2_core::sandbox::{
+        store::{
+            SandboxLifecycleCommand, SandboxLifecycleCommandDisposition,
+            SandboxLifecycleCommandResult, SandboxLifecycleCommandStore,
+        },
+        SandboxLifecycleOperation, SandboxStatus,
+    };
+
+    let (client, name, store, agent, observed) = fixture().await;
+    let SandboxLifecycleCommandResult::Accepted(pause) = store
+        .schedule_sandbox_lifecycle(SandboxLifecycleCommand::pause(
+            observed.sandbox.id.clone(),
+            observed.sandbox.owner.clone(),
+            layer2_core::now_rfc3339(),
+            None,
+        ))
+        .await
+        .unwrap()
+    else {
+        panic!("owner pause admission was refused");
+    };
+    assert_eq!(
+        pause.disposition,
+        SandboxLifecycleCommandDisposition::Scheduled
+    );
+    assert_eq!(pause.sandbox.status, SandboxStatus::Pausing);
+    assert!(matches!(
+        pause.sandbox.lifecycle.operation,
+        Some(SandboxLifecycleOperation::Pause { .. })
+    ));
+    assert!(pause.sandbox.lifecycle.home.is_some());
+    let paused = store
+        .get_sandbox(&observed.sandbox.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(paused, pause.sandbox);
+    let done = completion(&agent, &observed.worktree);
+    let stale = store
+        .commit_prepared_agent_open_ready(done.clone(), observed.clone())
+        .await;
+    assert!(matches!(
+        stale,
+        Err(SandboxStoreError::Conflict) | Ok(false)
+    ));
+    let current = PreparedAgentOpenContext {
+        sandbox: paused,
+        ..observed
+    };
+    assert!(!store
+        .commit_prepared_agent_open_ready(done, current.clone())
+        .await
+        .unwrap());
+    assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
+    for (collection, id) in [
+        (&store.sandboxes, current.sandbox.id.as_str()),
+        (&store.workspaces, current.workspace.id.as_str()),
+        (&store.worktrees, current.worktree.id.as_str()),
+        (&store.native_prepared, current.sandbox.id.as_str()),
+    ] {
+        let row = collection
+            .find_one(doc! {"_id": id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!row.contains_key("agent_prepared_open_ready_fence"));
+    }
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
 async fn prepared_open_ready_preserves_an_independent_parent_renewal() {
     use layer2_core::sandbox::store::SandboxWorkerStore;
     let (client, name, store, agent, mut observed) = fixture().await;
@@ -180,5 +360,76 @@ async fn prepared_open_ready_preparation_write_conflicts_with_the_consumed_snaps
     ));
     session.abort_transaction().await.unwrap();
     assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at disposable replica set"]
+async fn prepared_open_ready_refuses_a_worktree_schema_changed_after_snapshot() {
+    let (client, name, store, agent, observed) = fixture().await;
+    let peer = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let worktrees = peer
+        .database(&name)
+        .collection::<Document>(store.worktrees.name());
+    let tree_id = observed.worktree.id.as_str();
+    let future_schema = DOCUMENT_SCHEMA_VERSION + 1;
+    let done = completion(&agent, &observed.worktree);
+    let mut session = client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    let revision = prepared_open_ready::proof_revision(&store, &agent, &observed, &mut session)
+        .await
+        .unwrap_or_else(|_| panic!("eligible preparation"));
+
+    assert_eq!(
+        worktrees
+            .update_one(
+                doc! {"_id": tree_id, "document_schema_version": DOCUMENT_SCHEMA_VERSION},
+                doc! {"$set": {"document_schema_version": future_schema}},
+            )
+            .await
+            .unwrap()
+            .matched_count,
+        1
+    );
+    assert!(matches!(
+        prepared_open_ready::fence(&store, &agent, &observed.worktree, &observed,
+            revision, &mut session).await,
+        Err(ApplyError::Driver(error)) if is_transient(&error)
+    ));
+    session.abort_transaction().await.unwrap();
+    assert!(matches!(
+        store
+            .commit_prepared_agent_open_ready(done, observed.clone())
+            .await,
+        Err(SandboxStoreError::Corrupt(message))
+            if message.starts_with("unsupported document schema version ")
+    ));
+    let persisted = worktrees
+        .find_one(doc! {"_id": tree_id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        persisted.get_i64("document_schema_version").unwrap(),
+        future_schema
+    );
+    assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
+    for (collection, id) in [
+        (&store.sandboxes, observed.sandbox.id.as_str()),
+        (&store.workspaces, observed.workspace.id.as_str()),
+        (&store.worktrees, tree_id),
+        (&store.native_prepared, observed.sandbox.id.as_str()),
+    ] {
+        let row = collection
+            .find_one(doc! {"_id": id})
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!row.contains_key("agent_prepared_open_ready_fence"));
+    }
     client.database(&name).drop().await.unwrap();
 }

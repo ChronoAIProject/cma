@@ -1,0 +1,228 @@
+[
+  {
+    "id": "cma-user.connections.access-approve",
+    "role": "user",
+    "feature": "Review Agent key access request: approve",
+    "entry_point": "Agent key access dialog → Approve",
+    "steps": [
+      "Trigger a local harmless service-access request",
+      "Read requested services and current access",
+      "Choose approve",
+      "Observe the exact request result"
+    ],
+    "expected_result": "Only the selected request is decided; approval requires valid owner connections and denial grants no new service access.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/access-requests",
+        "openapi_path": "/api/v1/agents/{id}/access-requests",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/access-requests/{request_id}/approve",
+        "openapi_path": "/api/v1/agents/{id}/access-requests/{request_id}/approve",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/AccessRequestDialog.tsx",
+        "line": 76,
+        "sha256": "4f8913c6d3202335a30cdfb69223d855071799872e0cdd4eff14edb2b9c1fe42",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/accessRequests.ts",
+        "line": 65,
+        "sha256": "0f70e7450b3e963cfcd30d26a4224babe746286fd5f6c62acea61032b0aca277",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.connections.access-deny",
+    "role": "user",
+    "feature": "Review Agent key access request: deny",
+    "entry_point": "Agent key access dialog → Deny",
+    "steps": [
+      "Trigger a local harmless service-access request",
+      "Read requested services and current access",
+      "Choose deny",
+      "Observe the exact request result"
+    ],
+    "expected_result": "Only the selected request is decided; approval requires valid owner connections and denial grants no new service access.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/access-requests",
+        "openapi_path": "/api/v1/agents/{id}/access-requests",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/access-requests/{request_id}/deny",
+        "openapi_path": "/api/v1/agents/{id}/access-requests/{request_id}/deny",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/agent/AccessRequestDialog.tsx",
+        "line": 76,
+        "sha256": "4f8913c6d3202335a30cdfb69223d855071799872e0cdd4eff14edb2b9c1fe42",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/agent/accessRequests.ts",
+        "line": 65,
+        "sha256": "0f70e7450b3e963cfcd30d26a4224babe746286fd5f6c62acea61032b0aca277",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sharing.agent-link",
+    "role": "user",
+    "feature": "Create and copy an Agent share link",
+    "entry_point": "Owner Agent → Share / Details → Manage share links",
+    "steps": [
+      "Choose Anyone with the link, Organization members or Specific people",
+      "Choose View only or View and write",
+      "Create the link and copy it privately",
+      "Open with the intended test recipient"
+    ],
+    "expected_result": "The link grants only the selected audience and permission; current access is revalidated and the token is not leaked into logs/evidence.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/share-links",
+        "openapi_path": "/api/v1/agents/{id}/share-links",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/agents/{id}/share-recipients",
+        "openapi_path": "/api/v1/agents/{id}/share-recipients",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/agents/{id}/share-links",
+        "openapi_path": "/api/v1/agents/{id}/share-links",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/AgentShareLinks.tsx",
+        "line": 24,
+        "sha256": "3f4a47caa14a0d60adb41ed4025d9aeccd7bdebfa7970934979c33691c67250b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/AgentShareRecipients.tsx",
+        "line": 7,
+        "sha256": "92ffec4cbac206f7538fba4ad43234d8d3d689cb0ef7d0925c2c6df7f228b902",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "sdk/typescript/src/resource-access.ts",
+        "line": 26,
+        "sha256": "c1c99c2ca1ceffe9bb1b670ff6eae38c8904a8e767cb7ef2286bef5170a891e2",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sharing.revoke-agent-link",
+    "role": "user",
+    "feature": "Revoke an Agent share link",
+    "entry_point": "Share Agent session → Active links → Revoke link",
+    "steps": [
+      "Use a disposable local share link in a recipient session",
+      "Revoke the link as owner",
+      "Retry recipient reads and Send"
+    ],
+    "expected_result": "Revoked authority stops new protected reads/writes; an already copied/downloaded file is not claimed to be recalled.",
+    "writes": true,
+    "api": [
+      {
+        "method": "DELETE",
+        "path": "/api/v1/agents/{id}/share-links/{share_id}",
+        "openapi_path": "/api/v1/agents/{id}/share-links/{share_id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/AgentShareLinks.tsx",
+        "line": 24,
+        "sha256": "3f4a47caa14a0d60adb41ed4025d9aeccd7bdebfa7970934979c33691c67250b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/consoleAgentAccess.ts",
+        "line": 8,
+        "sha256": "27587c1212a4fd380922140b1f424e38a6ef6b081bde899e87528d50dab46ed2",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.sharing.redeem",
+    "role": "user",
+    "feature": "Open/redeem a shared Agent link",
+    "entry_point": "/agent-manager/share/{shareId}",
+    "steps": [
+      "Open a valid test link with the intended recipient",
+      "Complete required identity checks",
+      "Observe the shared Agent surface",
+      "Repeat with revoked/wrong-audience link locally"
+    ],
+    "expected_result": "Redemption opens only the authorized Agent with effective view/write permissions; invalid links fail without private content exposure.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/agent-share-links/{share_id}/redeem",
+        "openapi_path": "/api/v1/agent-share-links/{share_id}/redeem",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/resource-access/{kind}/{id}",
+        "openapi_path": "/api/v1/resource-access/{kind}/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/resources/AgentShareAccept.tsx",
+        "line": 11,
+        "sha256": "35da29a8e4f0667bab7ca9e875fa5891a9b336f62b5e3be5545f09f248952431",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/AgentSharePage.tsx",
+        "line": 8,
+        "sha256": "834233da00f192814fd0a6b69c72cf36ce5f81b99191bec350ee3e7aebe7ff70",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/resources/agentShareToken.ts",
+        "line": 7,
+        "sha256": "11e8208df28ec3fb59f6ef9046bf3e2790ad1b0658050fec05a770b44461a798",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]
