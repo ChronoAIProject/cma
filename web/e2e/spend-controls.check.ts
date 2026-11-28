@@ -92,19 +92,30 @@ async function fixture(
       json: {
         revision,
         settings,
-        setting_changes: {
-          spend_controls: {
-            actor_reference: 'fixture-admin',
-            actor_name: 'Test administrator',
-            at: '2026-11-10T00:00:00Z',
-            revision: 4,
-          },
-        },
         model_budget_writes_available: available,
         model_request_budget_writes_available: requestAvailable,
       },
     });
   });
+  await page.route('**/api/v1/admin/activity*', (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            id: 'fixture-activity',
+            at: '2026-11-10T00:00:00Z',
+            actor: 'fixture-admin',
+            actor_name: 'Test administrator',
+            action: 'configure',
+            target: { kind: 'resource', id: 'platform_settings' },
+            outcome: { status: 'succeeded' },
+            detail: { revision: String(revision) },
+          },
+        ],
+        next: null,
+      },
+    }),
+  );
   return {
     boundary,
     writes,
@@ -132,19 +143,11 @@ async function fixture(
   };
 }
 
-async function openSetting(page: Page, name: string) {
-  const card = page.getByRole('region', { name, exact: true });
-  await card.getByRole('button', { name: /^(Edit |View fields for )/ }).click();
-  return card;
-}
-
 test('LOCAL admin spend save, disable and exact-number validation', async ({ page, baseURL }) => {
   const local = await fixture(page, baseURL!);
   await page.goto('/operations?tab=settings');
-  const spend = await openSetting(page, 'Spend controls');
-  await expect(spend.getByText(/Last changed by Test administrator/)).toBeVisible();
-  await openSetting(page, 'Platform period');
-  await openSetting(page, 'Default owner policy');
+  await expect(page.getByRole('heading', { name: 'Spend controls' })).toBeVisible();
+  await expect(page.getByText(/Last platform settings change: Test administrator/)).toBeVisible();
   await page.getByLabel('Enable spend controls').check();
   const cap = page.getByLabel('Platform period cap (accounting units)', { exact: true });
   await cap.fill('9007199254740991.1');
@@ -172,8 +175,6 @@ test('LOCAL conflicts require review and server validation errors retain the dra
 }) => {
   const local = await fixture(page, baseURL!);
   await page.goto('/operations?tab=settings');
-  await openSetting(page, 'Default owner policy');
-  await openSetting(page, 'Platform period');
   await page.getByLabel('Per-turn cap (accounting units)', { exact: true }).fill('80');
   local.advance();
   local.setFailure(409);
@@ -208,10 +209,7 @@ for (const available of [false, undefined]) {
   }) => {
     const local = await fixture(page, baseURL!, { value: available });
     await page.goto('/operations?tab=settings');
-    const spend = await openSetting(page, 'Spend controls');
-    await expect(spend.getByText(/Saving spend controls is not available yet/)).toBeVisible();
-    await openSetting(page, 'Default owner policy');
-    await openSetting(page, 'Agent log retention');
+    await expect(page.getByText(/Saving spend controls is not available yet/)).toBeVisible();
     await expect(page.getByLabel('Enable spend controls')).toBeDisabled();
     await expect(
       page.getByLabel('Per-turn cap (accounting units)', { exact: true }),
@@ -235,8 +233,6 @@ for (const available of [false, undefined]) {
     const budget = { enabled: false, owners: [] };
     const local = await fixture(page, baseURL!, { value: available, budget });
     await page.goto('/operations?tab=settings');
-    await openSetting(page, 'Spend controls');
-    await openSetting(page, 'Agent log retention');
     await expect(page.getByLabel('Enable spend controls')).toBeDisabled();
     await page.getByLabel('Agent log retention (days)').fill('45');
     await page.getByRole('button', { name: 'Save settings' }).click();
@@ -258,8 +254,6 @@ for (const available of [false, undefined]) {
       },
     });
     await page.goto('/operations?tab=settings');
-    await openSetting(page, 'Default owner policy');
-    await openSetting(page, 'Agent log retention');
     await expect(
       page.getByLabel('Per-turn cap (accounting units)', { exact: true }),
     ).toBeDisabled();
@@ -283,7 +277,6 @@ for (const gate of ['foundation', 'request']) {
     });
     const setGate = gate === 'foundation' ? local.setAvailable : local.setRequestAvailable;
     await page.goto('/operations?tab=settings');
-    await openSetting(page, 'Default owner policy');
     const cap = page.getByLabel('Per-turn cap (accounting units)', { exact: true });
     await cap.fill('80');
     setGate(false);
@@ -314,7 +307,6 @@ for (const gate of ['foundation', 'request']) {
 }
 
 async function addOwner(page: Page) {
-  await openSetting(page, 'Owner overrides');
   await page.getByRole('button', { name: 'Add owner override' }).click();
   await page.getByLabel('Owner override 1: owner ID').fill('fixture-isolated-owner');
   for (const [field, label] of Object.entries(ownerAmounts))
@@ -333,9 +325,6 @@ test('LOCAL isolated owner and request-model editing saves explicit policy and v
   const local = await fixture(page, baseURL!, { value: true, request: true });
   await page.goto('/operations?tab=settings');
   await addOwner(page);
-  await openSetting(page, 'Spend controls');
-  await openSetting(page, 'Default owner policy');
-  await openSetting(page, 'Request models');
   await page.getByRole('button', { name: 'Remove default owner policy' }).click();
   await page.getByRole('button', { name: 'Add request model' }).click();
   const model = page.getByLabel('Request model 1: model name');
@@ -407,12 +396,8 @@ for (const available of [false, undefined]) {
   }) => {
     const local = await fixture(page, baseURL!, { value: true, request: available });
     await page.goto('/operations?tab=settings');
-    const requestModels = await openSetting(page, 'Request models');
-    await expect(requestModels.getByRole('button', { name: 'Add request model' })).toBeDisabled();
-    await expect(
-      requestModels.getByText(/Saving request models is not available yet/),
-    ).toBeVisible();
-    await openSetting(page, 'Default owner policy');
+    await expect(page.getByRole('button', { name: 'Add request model' })).toBeDisabled();
+    await expect(page.getByText(/Saving request models is not available yet/)).toBeVisible();
     await addOwner(page);
     await page.getByRole('button', { name: 'Save settings' }).click();
     await expect(page.getByText('Settings saved at revision 5.')).toBeVisible();

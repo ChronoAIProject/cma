@@ -54,7 +54,6 @@ test('LOCAL admin saved visibility controls measured usage without enabling coll
   for (const enabled of [true, false]) {
     await page.goto('/operations?tab=settings');
     await page.getByRole('tab', { name: 'Platform settings' }).click();
-    await page.getByRole('button', { name: 'Edit Measured usage', exact: true }).click();
     const toggle = page.getByRole('checkbox', { name: 'Show measured usage' });
     await expect(toggle).toBeChecked({ checked: !enabled });
     await toggle.click();
