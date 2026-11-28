@@ -1,0 +1,251 @@
+[
+  {
+    "id": "ADM-052",
+    "role": "admin",
+    "feature": "Platform settings audit attribution",
+    "entry_point": "/operations?tab=settings → Platform settings → Last platform settings change",
+    "steps": [
+      "Read the current revision and matching configure audit.",
+      "Test absent recent audit and a caller lacking read_activity_log."
+    ],
+    "expected_result": "Actor/time correspond to the exact settings revision or an honest unavailable/not-in-page notice; no audit permission is inferred from configure_platform.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/activity",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_activity"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/SettingsAudit.tsx",
+        "line": 1,
+        "sha256": "b0d84a146bc45630622aa9db44cd848a4052e88add4128ef919f32c601055a38"
+      },
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      }
+    ]
+  },
+  {
+    "id": "ADM-053",
+    "role": "admin",
+    "feature": "Spend control enablement and availability",
+    "entry_point": "/operations?tab=settings → Platform settings → Spend controls → Enable spend controls",
+    "steps": [
+      "Toggle locally; exercise unavailable writer flags and Refresh settings availability.",
+      "Save locally with expected_revision; read from the other AM and restore original local policy."
+    ],
+    "expected_result": "Readable values and retained policies stay visible; disabled writers cannot save, and no strict provider-spend ceiling is claimed.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/SpendControls.tsx",
+        "line": 1,
+        "sha256": "e31f92458112779172dede46f28495dee68b8102bb5beab826ea68d3abdf0b19"
+      },
+      {
+        "path": "web/src/operator/SpendPolicyLists.tsx",
+        "line": 1,
+        "sha256": "c883dab1f6d1b9d698dcc6bd5c8218178fc7cdb49825be59e99c0fa7ee5dee82"
+      },
+      {
+        "path": "web/src/operator/OwnerPolicyFields.tsx",
+        "line": 1,
+        "sha256": "ffa5b587510eb5a734f9819922af48585fabc2f4c31b087576ecee4df1f5f997"
+      },
+      {
+        "path": "web/src/operator/spendBudget.ts",
+        "line": 1,
+        "sha256": "7a993b5ea6c57bef40b89436ab088394ae053a4d4b34d7dfbaa22395db91dfd2"
+      },
+      {
+        "path": "web/src/operator/spendValidation.ts",
+        "line": 1,
+        "sha256": "360a306fa028366c386b9cdfad672d2fee0a78fca7094f888f61b45428d076fc"
+      }
+    ]
+  },
+  {
+    "id": "ADM-054",
+    "role": "admin",
+    "feature": "Platform spend period and thresholds",
+    "entry_point": "/operations?tab=settings → Platform settings → Spend controls → Platform period",
+    "steps": [
+      "Set accounting-unit cap, RFC3339 period, warning/stop percentages, protected reserve and lag allowance; test invalid ordering and exact integers.",
+      "Save locally with expected_revision; read from the other AM and restore original local policy."
+    ],
+    "expected_result": "Valid revisioned values persist without rounding; invalid values are displayed as field errors.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/SpendControls.tsx",
+        "line": 1,
+        "sha256": "e31f92458112779172dede46f28495dee68b8102bb5beab826ea68d3abdf0b19"
+      },
+      {
+        "path": "web/src/operator/SpendPolicyLists.tsx",
+        "line": 1,
+        "sha256": "c883dab1f6d1b9d698dcc6bd5c8218178fc7cdb49825be59e99c0fa7ee5dee82"
+      },
+      {
+        "path": "web/src/operator/OwnerPolicyFields.tsx",
+        "line": 1,
+        "sha256": "ffa5b587510eb5a734f9819922af48585fabc2f4c31b087576ecee4df1f5f997"
+      },
+      {
+        "path": "web/src/operator/spendBudget.ts",
+        "line": 1,
+        "sha256": "7a993b5ea6c57bef40b89436ab088394ae053a4d4b34d7dfbaa22395db91dfd2"
+      },
+      {
+        "path": "web/src/operator/spendValidation.ts",
+        "line": 1,
+        "sha256": "360a306fa028366c386b9cdfad672d2fee0a78fca7094f888f61b45428d076fc"
+      }
+    ]
+  },
+  {
+    "id": "ADM-055",
+    "role": "admin",
+    "feature": "Default owner spend policy",
+    "entry_point": "/operations?tab=settings → Platform settings → Spend controls → Default owner policy",
+    "steps": [
+      "Configure/remove daily cap, turn cap, max calls, IANA day timezone, token valuations, unobserved allowance and usage timeout.",
+      "Save locally with expected_revision; read from the other AM and restore original local policy."
+    ],
+    "expected_result": "Default applies only to owners without override; removing it does not clear existing reservations.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/SpendControls.tsx",
+        "line": 1,
+        "sha256": "e31f92458112779172dede46f28495dee68b8102bb5beab826ea68d3abdf0b19"
+      },
+      {
+        "path": "web/src/operator/SpendPolicyLists.tsx",
+        "line": 1,
+        "sha256": "c883dab1f6d1b9d698dcc6bd5c8218178fc7cdb49825be59e99c0fa7ee5dee82"
+      },
+      {
+        "path": "web/src/operator/OwnerPolicyFields.tsx",
+        "line": 1,
+        "sha256": "ffa5b587510eb5a734f9819922af48585fabc2f4c31b087576ecee4df1f5f997"
+      },
+      {
+        "path": "web/src/operator/spendBudget.ts",
+        "line": 1,
+        "sha256": "7a993b5ea6c57bef40b89436ab088394ae053a4d4b34d7dfbaa22395db91dfd2"
+      },
+      {
+        "path": "web/src/operator/spendValidation.ts",
+        "line": 1,
+        "sha256": "360a306fa028366c386b9cdfad672d2fee0a78fca7094f888f61b45428d076fc"
+      }
+    ]
+  },
+  {
+    "id": "ADM-056",
+    "role": "admin",
+    "feature": "Per-owner spend overrides",
+    "entry_point": "/operations?tab=settings → Platform settings → Spend controls → Owner overrides",
+    "steps": [
+      "Add, edit and remove a local owner override; test duplicate IDs, maximum count and concurrent list edits.",
+      "Save locally with expected_revision; read from the other AM and restore original local policy."
+    ],
+    "expected_result": "Override replaces the default for that owner; unsafe concurrent list merge requires explicit review.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/SpendControls.tsx",
+        "line": 1,
+        "sha256": "e31f92458112779172dede46f28495dee68b8102bb5beab826ea68d3abdf0b19"
+      },
+      {
+        "path": "web/src/operator/SpendPolicyLists.tsx",
+        "line": 1,
+        "sha256": "c883dab1f6d1b9d698dcc6bd5c8218178fc7cdb49825be59e99c0fa7ee5dee82"
+      },
+      {
+        "path": "web/src/operator/OwnerPolicyFields.tsx",
+        "line": 1,
+        "sha256": "ffa5b587510eb5a734f9819922af48585fabc2f4c31b087576ecee4df1f5f997"
+      },
+      {
+        "path": "web/src/operator/spendBudget.ts",
+        "line": 1,
+        "sha256": "7a993b5ea6c57bef40b89436ab088394ae053a4d4b34d7dfbaa22395db91dfd2"
+      },
+      {
+        "path": "web/src/operator/spendValidation.ts",
+        "line": 1,
+        "sha256": "360a306fa028366c386b9cdfad672d2fee0a78fca7094f888f61b45428d076fc"
+      }
+    ]
+  }
+]

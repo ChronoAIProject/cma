@@ -30,6 +30,23 @@ impl AgentOperationService {
         &self,
         prepared: PreparedAgentOperation,
     ) -> Result<AgentOperationReceipt, AgentOperationError> {
+        let trace_configuration = |stage: &'static str| {
+            if matches!(
+                prepared.input,
+                layer3_adapter::ConversationInput::Configure { .. }
+            ) {
+                use sha2::{Digest, Sha256};
+                tracing::debug!(
+                    target: "layer2_core::sandbox::settings_dispatch",
+                    parent: None,
+                    agent_sha256 = %format_args!("{:x}", Sha256::digest(prepared.target.agent_id.as_str())),
+                    sequence = prepared.operation_sequence,
+                    stage,
+                    "agent configuration dispatch"
+                );
+            }
+        };
+        trace_configuration("started");
         let classification = match self.runtimes.resolve(&prepared.target).await {
             Ok(connection) => match connection
                 .capabilities
@@ -133,6 +150,9 @@ impl AgentOperationService {
             },
             Err(error) => self.classify_runtime_refusal(error.to_string()).await,
         };
+        if matches!(classification, SendClassification::Confirmed) {
+            trace_configuration("confirmed");
+        }
         self.settle_operation(prepared, classification).await
     }
 

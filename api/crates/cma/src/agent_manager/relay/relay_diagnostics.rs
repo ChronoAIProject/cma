@@ -68,6 +68,46 @@ pub(super) struct RelayDiagnostic {
     hop_hash: Option<String>,
 }
 
+pub(super) fn peer_write_entered(request: &Request, epoch: u64) {
+    if request
+        .extensions()
+        .get::<super::http::VerifiedPeer>()
+        .is_none()
+    {
+        return;
+    }
+    let operation = match (request.method().as_str(), request.uri().path()) {
+        ("PATCH", path) if path.starts_with("/api/v1/agents/") => match path.rsplit('/').next() {
+            Some("preferences") => "preferences",
+            Some("settings") => "settings",
+            _ => return,
+        },
+        ("POST", path) if path.starts_with("/api/v1/agents/") && path.ends_with("/skills") => {
+            "skill_install"
+        }
+        ("POST", path) if path.starts_with("/api/v2/agents/") && path.ends_with("/controls") => {
+            "response_control"
+        }
+        _ => return,
+    };
+    let Some(request_id) = layer1_public::rest::request_id_from_headers(request.headers()) else {
+        return;
+    };
+    // A random request UUID can be correlated across the trusted relay hop
+    // without exposing client-provided identifiers, resource IDs or payloads.
+    if !uuid::Uuid::parse_str(request_id).is_ok_and(|id| id.get_version_num() == 4) {
+        return;
+    }
+    tracing::debug!(
+        target: "cma::agent_manager::peer_write",
+        parent: None,
+        request_sha256 = %format!("{:x}", Sha256::digest(request_id)),
+        operation,
+        epoch,
+        "verified peer write entered owner scope"
+    );
+}
+
 impl RelayDiagnostic {
     pub(super) fn from_request(request: &Request) -> Option<Self> {
         let (method, path) = (request.method(), request.uri().path());

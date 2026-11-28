@@ -1,0 +1,250 @@
+[
+  {
+    "id": "cma-user.documents.people-sharing",
+    "role": "user",
+    "feature": "Grant or revoke document access for a person",
+    "entry_point": "Document owner → Share → Add person / Remove",
+    "steps": [
+      "Choose a local test recipient and Can view/Can comment",
+      "Add the person",
+      "Verify that recipient’s access",
+      "Remove the grant and recheck"
+    ],
+    "expected_result": "Read/comment authority is enforced on the exact document and revocation blocks new protected access.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/documents/{id}/shares",
+        "openapi_path": "/api/v1/documents/{id}/shares",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/documents/{id}/shares/{subject}",
+        "openapi_path": "/api/v1/documents/{id}/shares/{subject}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/v1/documents/{id}/shares/{subject}",
+        "openapi_path": "/api/v1/documents/{id}/shares/{subject}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/documents/DocumentSharing.tsx",
+        "line": 20,
+        "sha256": "48bdaed4c9521997d7ce7a24439d58e25fe6d91771ee37d1bc5ef0db00af0376",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.documents.link-sharing",
+    "role": "user",
+    "feature": "Create, open and revoke a document share link",
+    "entry_point": "Document owner → Share → Share links",
+    "steps": [
+      "Create a local document share link with the offered permission",
+      "Copy/open it as the intended viewer",
+      "Revoke it and retry the recipient view"
+    ],
+    "expected_result": "Link authority is limited to the document and chosen permission; revoked links no longer admit protected content.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/documents/{id}/share-links",
+        "openapi_path": "/api/v1/documents/{id}/share-links",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/documents/{id}/share-links",
+        "openapi_path": "/api/v1/documents/{id}/share-links",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "DELETE",
+        "path": "/api/v1/documents/{id}/share-links/{link_id}",
+        "openapi_path": "/api/v1/documents/{id}/share-links/{link_id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/documents/DocumentSharing.tsx",
+        "line": 20,
+        "sha256": "48bdaed4c9521997d7ce7a24439d58e25fe6d91771ee37d1bc5ef0db00af0376",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/documents/shareToken.ts",
+        "line": 5,
+        "sha256": "af109b532e322d4544284c21e011c209def8e4676fea6f94c3bc36d17e4a8563",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/documents/DocumentPage.tsx",
+        "line": 22,
+        "sha256": "201832fd8e30ca5ee532de3ec3d2854c6756cf9cd3b3b4a16aa9030f2c86fb51",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.triggers.browse",
+    "role": "user",
+    "feature": "Browse owned Trigger links",
+    "entry_point": "Sidebar Triggers → /triggers/manage",
+    "steps": [
+      "Open Triggers with publish_triggers capability",
+      "Page through the list",
+      "Open an existing draft or published Trigger"
+    ],
+    "expected_result": "Owned Trigger state and availability are shown; users without publishing capability see a clear unavailable state.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/triggers",
+        "openapi_path": "/api/v1/triggers",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/triggers/{id}",
+        "openapi_path": "/api/v1/triggers/{id}",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/Console.tsx",
+        "line": 53,
+        "sha256": "e921fc348a8c0c68ca6e669e7432a7908750363889733c14acdc82c5931f23f8",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/trigger-publisher/TriggerPublisherPage.tsx",
+        "line": 25,
+        "sha256": "e69590c29dbcc50f39f8bb4e56a05f6933738bcbbc70b6e2d8940cf32278a244",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.triggers.draft",
+    "role": "user",
+    "feature": "Create and edit a Trigger draft",
+    "entry_point": "Triggers → New Trigger / edit wizard",
+    "steps": [
+      "Use a local publisher fixture",
+      "Choose supported profile/inline target and allowed image/model/permission/skill/service options",
+      "Set reuse behavior, content, first/quick messages and presentation",
+      "Save draft and reload"
+    ],
+    "expected_result": "Draft preserves valid selected configuration and revision; unsafe/unavailable choices are refused and draft save does not publish.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "openapi_path": "/api/v1/triggers",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/triggers/{id}",
+        "openapi_path": "/api/v1/triggers/{id}",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/bounds",
+        "openapi_path": "/api/v1/profile-authoring/bounds",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/trigger-publisher/TriggerWizard.tsx",
+        "line": 33,
+        "sha256": "82b5ef66fc0f6a08daf6707660cda4cd2b1b78414a73e7eddbfadafe0fc8b637",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/trigger-publisher/InlineTargetStep.tsx",
+        "line": 14,
+        "sha256": "93196b7a1dec592e6bab86afd4e4941994f57e4888445044be0b4fa646241bbc",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/trigger-publisher/ContentSteps.tsx",
+        "line": 17,
+        "sha256": "18468a02774100d7058f5249dad264f7d7ae91023224825fb5a492d65a98e4c1",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/trigger-publisher/QuickMessageFields.tsx",
+        "line": 7,
+        "sha256": "88c9a7892f61c683a2165f2e57614978631854875d0e8230bedcd84a548e2a71",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  },
+  {
+    "id": "cma-user.triggers.publish",
+    "role": "user",
+    "feature": "Publish a reviewed Trigger revision",
+    "entry_point": "Trigger wizard → Review → Publish",
+    "steps": [
+      "Read target/trust/reuse and first-message disclosures",
+      "Publish the local test draft",
+      "Inspect the immutable published revision and availability"
+    ],
+    "expected_result": "One reviewed revision becomes available; failed or uncertain publication is not reported as published.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/triggers/{id}/publish",
+        "openapi_path": "/api/v1/triggers/{id}/publish",
+        "in_saved_openapi": true
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/triggers/{id}/revisions",
+        "openapi_path": "/api/v1/triggers/{id}/revisions",
+        "in_saved_openapi": true
+      }
+    ],
+    "minimum_runs": 1,
+    "source_refs": [
+      {
+        "path": "web/src/trigger-publisher/TriggerWizard.tsx",
+        "line": 33,
+        "sha256": "82b5ef66fc0f6a08daf6707660cda4cd2b1b78414a73e7eddbfadafe0fc8b637",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/trigger-publisher/TrustDisclosures.tsx",
+        "line": 3,
+        "sha256": "74d25b78d901e3805b672d024e6a4c6c68b30c2a2ef39bc85f1d5872613b63b7",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      },
+      {
+        "path": "web/src/trigger-publisher/InlineTargetReview.tsx",
+        "line": 3,
+        "sha256": "8afc928fb096817e7d33ce393a60e4765b4e557051db5a03397c972dd7ebcf4b",
+        "commit": "e41791ba719724e9cb93b724c601ecd14ac42173"
+      }
+    ]
+  }
+]

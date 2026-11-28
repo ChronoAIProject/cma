@@ -35,6 +35,7 @@ jobs:
       eg: "${{ steps.select.outputs.eg }}"
       web: "${{ steps.select.outputs.web }}"
       approval_contract: "${{ steps.select.outputs.approval_contract }}"
+      two_am_features: "${{ steps.select.outputs.two_am_features }}"
       am_packages: "${{ steps.select.outputs.am_packages }}"
       eg_packages: "${{ steps.select.outputs.eg_packages }}"
       test_tracks: "${{ steps.select.outputs.test_tracks }}"
@@ -151,14 +152,16 @@ jobs:
     with:
       components: "[\"api\"]"
       changed_deployables: "${{ needs.changes.outputs.deployables }}"
+      export_verification_image: true
   eg-images:
     name: "EG images"
     needs:
       - "changes"
-    if: "needs.changes.outputs.eg == 'true'"
+    if: "needs.changes.outputs.eg == 'true' || needs.changes.outputs.two_am_features == 'true'"
     uses: "./.github/workflows/ci-images.yml"
     with:
       components: "[\"cmaeg\"]"
+      export_verification_image: "${{ needs.changes.outputs.two_am_features == 'true' }}"
   web-images:
     name: "WEB images"
     needs:
@@ -176,6 +179,7 @@ jobs:
     with:
       components: "[\"runtime\"]"
       changed_deployables: "${{ needs.changes.outputs.deployables }}"
+      export_verification_image: true
   omarchy:
     name: "Runtime Omarchy"
     needs:
@@ -184,6 +188,26 @@ jobs:
     uses: "./.github/workflows/ci-omarchy.yml"
     with:
       staging_lane_changed: ${{ contains(fromJSON(needs.changes.outputs.deployables), 'cma-runtime-omarchy') }}
+      export_verification_image: true
+  two-am-features:
+    name: "Two Agent Managers"
+    needs:
+      - "changes"
+      - "rust-test-build"
+      - "am-images"
+      - "runtime-images"
+      - "omarchy"
+      - "eg-images"
+    if: "!cancelled() && needs.changes.outputs.two_am_features == 'true'"
+    permissions:
+      contents: "read"
+      actions: "read"
+    uses: "./.github/workflows/ci-two-am.yml"
+    with:
+      am_image_result: "${{ needs.am-images.result }}"
+      runtime_image_result: "${{ needs.runtime-images.result }}"
+      omarchy_image_result: "${{ needs.omarchy.result }}"
+      eg_image_result: "${{ needs.eg-images.result }}"
   gate-repo:
     name: "CI / Repo"
     needs:
@@ -211,6 +235,7 @@ jobs:
       - "am-images"
       - "runtime-images"
       - "omarchy"
+      - "two-am-features"
     if: "always() && ((github.event_name != 'schedule' && github.event_name != 'workflow_dispatch') || github.ref == 'refs/heads/develop')"
     runs-on: "ubuntu-latest"
     timeout-minutes: 5

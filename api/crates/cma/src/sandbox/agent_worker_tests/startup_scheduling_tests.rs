@@ -1,4 +1,30 @@
 use super::*;
+use layer2_core::sandbox::store::SandboxStoreError;
+
+#[tokio::test]
+async fn worker_dispatch_fits_the_default_tokio_stack() {
+    let harness = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
+    let mut agent = harness.admit("startup-stack-budget", Vec::new()).await;
+    // Even the no-op branch used to reserve space for all step constructors.
+    agent.work.step = AgentWorkStep::None;
+    let worker = harness.worker.clone();
+    let now = harness.now;
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .build()
+                .unwrap()
+                .block_on(async move {
+                    let execution = worker.execute_claimed_for_test(agent, now);
+                    assert!(std::mem::size_of_val(&execution) < 64 * 1024);
+                    assert_eq!(Box::pin(execution).await, Err(SandboxStoreError::Conflict));
+                });
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
 
 #[tokio::test]
 async fn fresh_agent_startup_drains_to_ready_with_each_effect_receipted_once() {

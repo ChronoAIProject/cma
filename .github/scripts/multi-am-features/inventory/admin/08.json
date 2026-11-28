@@ -1,0 +1,222 @@
+[
+  {
+    "id": "ADM-042",
+    "role": "admin",
+    "feature": "Automatic pause enablement and idle threshold",
+    "entry_point": "/operations?tab=settings → Platform settings → Inactivity",
+    "steps": [
+      "Enable/disable auto pause and set threshold using hours/minutes/seconds or seconds; test 60–86400 second bounds.",
+      "Read back from the other AM; restore the original local settings via fresh revision CAS."
+    ],
+    "expected_result": "Saved threshold and enabled state are visible from both AMs; active work and Always on protection remain enforced.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "web/src/operator/SettingsFields.tsx",
+        "line": 1,
+        "sha256": "a2adcdd1b487a85f02785c424258bd8692b11180c0ac7e24904985e42d8d730f"
+      },
+      {
+        "path": "sdk/typescript/src/admin/settings.ts",
+        "line": 1,
+        "sha256": "41f9b0157828f26adadd3e19305e246856e3422dd07a544f31bfe8db538c4f86"
+      }
+    ]
+  },
+  {
+    "id": "ADM-043",
+    "role": "admin",
+    "feature": "Measured usage visibility",
+    "entry_point": "/operations?tab=settings → Platform settings → Usage → Show measured usage",
+    "steps": [
+      "Toggle measured_visible locally and reopen personal/admin reports.",
+      "Read back from the other AM; restore the original local settings via fresh revision CAS."
+    ],
+    "expected_result": "Allocated resources stay visible; measured panels follow the saved setting without mislabelling missing measurements.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "web/src/operator/SettingsFields.tsx",
+        "line": 1,
+        "sha256": "a2adcdd1b487a85f02785c424258bd8692b11180c0ac7e24904985e42d8d730f"
+      },
+      {
+        "path": "sdk/typescript/src/admin/settings.ts",
+        "line": 1,
+        "sha256": "41f9b0157828f26adadd3e19305e246856e3422dd07a544f31bfe8db538c4f86"
+      }
+    ]
+  },
+  {
+    "id": "ADM-044",
+    "role": "admin",
+    "feature": "Agent log retention",
+    "entry_point": "/operations?tab=settings → Platform settings → Retention → Agent log retention (days)",
+    "steps": [
+      "Change agent_log_days in a local disposable policy and test unsigned-number validation.",
+      "Read back from the other AM; restore the original local settings via fresh revision CAS."
+    ],
+    "expected_result": "Revisioned retention value persists; invalid input does not save or erase other settings.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "web/src/operator/SettingsFields.tsx",
+        "line": 1,
+        "sha256": "a2adcdd1b487a85f02785c424258bd8692b11180c0ac7e24904985e42d8d730f"
+      },
+      {
+        "path": "sdk/typescript/src/admin/settings.ts",
+        "line": 1,
+        "sha256": "41f9b0157828f26adadd3e19305e246856e3422dd07a544f31bfe8db538c4f86"
+      }
+    ]
+  },
+  {
+    "id": "ADM-045",
+    "role": "admin",
+    "feature": "Per-user Sandbox limit",
+    "entry_point": "/operations?tab=settings → Platform settings → Limits → Sandboxes per user",
+    "steps": [
+      "Set a small local limit; create through both AMs concurrently up to and beyond it.",
+      "Read back from the other AM; restore the original local settings via fresh revision CAS."
+    ],
+    "expected_result": "Both AMs apply one shared limit and refuse excess creation; restore local policy and clean only fixture resources.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "web/src/operator/SettingsFields.tsx",
+        "line": 1,
+        "sha256": "a2adcdd1b487a85f02785c424258bd8692b11180c0ac7e24904985e42d8d730f"
+      },
+      {
+        "path": "sdk/typescript/src/admin/settings.ts",
+        "line": 1,
+        "sha256": "41f9b0157828f26adadd3e19305e246856e3422dd07a544f31bfe8db538c4f86"
+      }
+    ]
+  },
+  {
+    "id": "ADM-046",
+    "role": "admin",
+    "feature": "Visitor Sandbox and daily launch limits",
+    "entry_point": "/operations?tab=settings → Platform settings → Limits → Visitor Sandboxes / Visitor launches per day",
+    "steps": [
+      "Set local visitor limits; exercise boundary and over-limit creation/launch through both AMs.",
+      "Read back from the other AM; restore the original local settings via fresh revision CAS."
+    ],
+    "expected_result": "Visitor limits are shared and enforced without applying admin privilege to visitor requests.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "web/src/operator/SettingsFields.tsx",
+        "line": 1,
+        "sha256": "a2adcdd1b487a85f02785c424258bd8692b11180c0ac7e24904985e42d8d730f"
+      },
+      {
+        "path": "sdk/typescript/src/admin/settings.ts",
+        "line": 1,
+        "sha256": "41f9b0157828f26adadd3e19305e246856e3422dd07a544f31bfe8db538c4f86"
+      }
+    ]
+  }
+]

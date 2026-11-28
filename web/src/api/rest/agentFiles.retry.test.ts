@@ -211,6 +211,23 @@ it('rejects HTML at the file download endpoint without accepting redirects', asy
   );
 });
 
+it('refuses a download whose declared size exceeds 32 MiB', async () => {
+  const fetcher = vi.fn(
+    async () =>
+      new Response('fixture', {
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-length': String(32 * 1024 * 1024 + 1),
+        },
+      }),
+  );
+  vi.stubGlobal('fetch', fetcher);
+
+  await expect(agentFilesClient().download('agent', 'a.txt')).rejects.toMatchObject({
+    code: 'file_download_failed',
+  });
+});
+
 it('includes late headers and metadata cancellation in the four-second preview budget', async () => {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] });
   const cancel = vi.fn();

@@ -11,12 +11,44 @@ import { registerSelectionTests } from './mongo-contract-selection-tests.mjs';
 import { registerShardTests } from './mongo-contract-shards.test.mjs';
 import { registerRegistryRunnerTests } from './mongo-contract-registry-runner-tests.mjs';
 
-import { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, isolatedTests, observationTest, runnerSetupTimeoutMs, fixturePredicate, qualificationPredicate, ordinaryPredicate, fixture } from './mongo-contract-test-fixture.mjs';
+import { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, tc070ControlTest, isolatedTests, observationTest, runnerSetupTimeoutMs, fixturePredicate, qualificationPredicate, ordinaryPredicate, fixture } from './mongo-contract-test-fixture.mjs';
 
 registerRegistryRunnerTests({fixture, requiredPrefixes});
 
+const preparedControls = readFileSync(new URL('./multi-am-features/startup-controls.txt', import.meta.url), 'utf8')
+  .trim().split('\n');
+const preparedFilter = `package(=cma) and (${preparedControls.map(name => `test(=${name})`).join(' or ')})`;
+
 for (const reuse of [false, true]) {
   const mode = reuse ? 'archive' : 'source';
+  test(`${mode}: prepared startup requires a complete listing before making a fixture`, () => {
+    for (const scenario of ['prepared-startup-success', 'prepared-startup-missing', 'prepared-startup-error']) {
+      const f = fixture(scenario, reuse);
+      try {
+        const run = () => execFileSync('bash', [...f.args, '--prepared-startup'], {env: f.env, timeout: 15000, stdio: 'pipe'});
+        const missing = scenario === 'prepared-startup-missing';
+        if (scenario === 'prepared-startup-success') {
+          const count = preparedControls.length;
+          assert.match(run().toString(), new RegExp(`selected ${count}/${count} exact tests`));
+        } else {
+          assert.throws(run, error => missing ? /inventory differs/.test(error.stderr) : error.status === 7);
+        }
+        const calls = f.calls();
+        const cargo = calls.filter(row => row.command === 'cargo');
+        assert.deepEqual(cargo.map(row => row.args[1]), missing ? ['list'] : ['list', 'run']);
+        assert.ok(cargo[0].args.at(-1).startsWith(`${preparedFilter} & `));
+        assert.equal(cargo[0].uri, undefined);
+        assert.equal(calls.some(row => row.command === 'docker'), !missing);
+        if (!missing) {
+          assert.equal(cargo[0].args.at(-1), cargo[1].args.at(-1));
+          assert.match(cargo[1].uri, /^mongodb:\/\/127\.0\.0\.1:[0-9]+\//);
+        }
+        assert.equal(f.containers().length, 0);
+        assert.equal(f.volumes().length, 0);
+      } finally { f.close(); }
+    }
+  });
+
   test(`${mode}: CPU profiles retain the shared runner, selection and failure policy`, () => {
     for (const scenario of ['success', 'cpu-error', 'cpu-empty']) {
       const f = fixture(scenario, reuse);
@@ -94,7 +126,7 @@ for (const reuse of [false, true]) {
           assert.ok(row.args.includes('--no-fail-fast'));
           assert.equal(row.args[row.args.indexOf('--test-threads') + 1], '1');
         }
-        for (const index of [0, -1, -2, -3, -4, -5, -6, -7, -8, 1, 2]) assert.ok(existsSync(`${f.log}.finished-${index}`), 'both partitions must finish, including after one fails');
+        for (const index of [0, -1, -2, -3, -4, -5, -6, -7, -8, -9, 1, 2]) assert.ok(existsSync(`${f.log}.finished-${index}`), 'both partitions must finish, including after one fails');
         const scale = JSON.parse(readFileSync(`${f.log}.selected-0`));
         const owner = JSON.parse(readFileSync(`${f.log}.selected--1`));
         const audit = JSON.parse(readFileSync(`${f.log}.selected--2`));
@@ -110,12 +142,14 @@ for (const reuse of [false, true]) {
         assert.deepEqual(history, [historyTest]);
         const rankedProjection = JSON.parse(readFileSync(`${f.log}.selected--8`));
         assert.deepEqual(rankedProjection, [rankedProjectionTest]);
+        const tc070Control = JSON.parse(readFileSync(`${f.log}.selected--9`));
+        assert.deepEqual(tc070Control, [tc070ControlTest]);
         const ordinary = [1, 2].flatMap(index => JSON.parse(readFileSync(`${f.log}.selected-${index}`)));
         assert.deepEqual(scale, [scaleTest]);
         assert.deepEqual(owner, [ownerTest]);
         assert.deepEqual(audit, [auditTest]);
         assert.equal(ordinary.length, 80);
-        assert.equal(new Set([...scale, ...owner, ...audit, ...diagnostics, ...scan, ...bson, ...firstResponse, ...history, ...rankedProjection, ...ordinary]).size, isolatedTests.length + 80, 'all isolated phases plus ordinary partitions select every mock test exactly once');
+        assert.equal(new Set([...scale, ...owner, ...audit, ...diagnostics, ...scan, ...bson, ...firstResponse, ...history, ...rankedProjection, ...tc070Control, ...ordinary]).size, isolatedTests.length + 80, 'all isolated phases plus ordinary partitions select every mock test exactly once');
         const created = calls.filter(row => row.args[0] === 'run').map(row => row.args[row.args.indexOf('--name') + 1]);
         assert.equal(new Set(created).size, isolatedTests.length + 2);
         for (let index = 0; index < isolatedTests.length; index++) {
@@ -133,8 +167,9 @@ for (const reuse of [false, true]) {
           assert.equal(run.args[run.args.indexOf('--mount') + 1], `type=volume,source=${name}-data,target=/data/db`);
           assert.equal(run.args[run.args.indexOf('--tmpfs') + 1], '/data/configdb:rw,size=16777216');
           assert.equal(run.args.filter(value => value === '--tmpfs').length, 1);
-          assert.equal(run.args[run.args.indexOf('--memory') + 1], '2g');
-          assert.equal(run.args[run.args.indexOf('--memory-swap') + 1], '2g');
+          const memory = name === created[isolatedTests.indexOf(tc070ControlTest)] ? '4g' : '2g';
+          assert.equal(run.args[run.args.indexOf('--memory') + 1], memory);
+          assert.equal(run.args[run.args.indexOf('--memory-swap') + 1], memory);
           assert.equal(run.args[run.args.indexOf('--cpus') + 1], '2');
           assert.equal(run.args[run.args.indexOf('--ulimit') + 1], 'nofile=64000:64000');
           const expectedCache = name === created[isolatedTests.indexOf(bsonCeilingTest)] ? '0.50' : '0.25';
@@ -273,7 +308,7 @@ for (const reuse of [false, true]) {
   });
 
   test(`${mode}: unavailable, malformed, empty or non-ignored selection fails before allocating any fixture`, () => {
-    for (const scenario of ['list-omitted-module','list-selected-helper','list-stale-exception','list-error','list-malformed','list-empty','list-not-ignored','list-no-scale','list-scale-not-ignored','list-duplicate-scale','list-no-owner','list-owner-not-ignored','list-duplicate-owner','list-no-audit','list-audit-not-ignored','list-duplicate-audit','list-no-diagnostics','list-diagnostics-not-ignored','list-duplicate-diagnostics','list-no-scan','list-scan-not-ignored','list-duplicate-scan','list-no-bson','list-bson-not-ignored','list-duplicate-bson','list-no-first-response','list-first-response-not-ignored','list-duplicate-first-response','list-no-history','list-history-not-ignored','list-duplicate-history','list-no-ranked-projection','list-ranked-projection-not-ignored','list-duplicate-ranked-projection','list-no-ordinary']) {
+    for (const scenario of ['list-omitted-module','list-selected-helper','list-stale-exception','list-error','list-malformed','list-empty','list-not-ignored','list-no-scale','list-scale-not-ignored','list-duplicate-scale','list-no-owner','list-owner-not-ignored','list-duplicate-owner','list-no-audit','list-audit-not-ignored','list-duplicate-audit','list-no-diagnostics','list-diagnostics-not-ignored','list-duplicate-diagnostics','list-no-scan','list-scan-not-ignored','list-duplicate-scan','list-no-bson','list-bson-not-ignored','list-duplicate-bson','list-no-first-response','list-first-response-not-ignored','list-duplicate-first-response','list-no-history','list-history-not-ignored','list-duplicate-history','list-no-ranked-projection','list-ranked-projection-not-ignored','list-duplicate-ranked-projection','list-no-tc070-control','list-no-ordinary']) {
       const f = fixture(scenario, reuse);
       try {
         assert.throws(() => execFileSync('bash', f.args, {env:f.env, timeout:5000, stdio:'pipe'}));
@@ -301,7 +336,7 @@ for (const reuse of [false, true]) {
         }
         const empty = scenario === 'scale-empty' ? 0 : scenario === 'owner-empty' ? -1 : scenario === 'audit-empty' ? -2 : scenario === 'diagnostics-empty' ? -3 : scenario === 'scan-empty' ? -4 : scenario === 'bson-empty' ? -5 : scenario === 'first-response-empty' ? -6 : scenario === 'history-empty' ? -7 : scenario === 'ranked-projection-empty' ? -8 : 1;
         assert.equal(readFileSync(`${f.log}.empty-${empty}`, 'utf8'), 'fail');
-        for (const index of [0,-1,-2,-3,-4,-5,-6,-7,-8,1,2].filter(index => index !== empty)) {
+        for (const index of [0,-1,-2,-3,-4,-5,-6,-7,-8,-9,1,2].filter(index => index !== empty)) {
           assert.ok(existsSync(`${f.log}.finished-${index}`));
         }
         assert.equal(f.containers().length, 0);
@@ -373,5 +408,5 @@ test('no nextest profile configures retries, so only the merge-queue flag can', 
   assert.equal(config.split('\n').filter(line => /^\s*(retries|flaky-result)\s*=/.test(line)).length, 0);
 });
 
-registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate});
-registerShardTests({fixture, scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest});
+registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, tc070ControlTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate});
+registerShardTests({fixture, scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, tc070ControlTest});

@@ -89,10 +89,9 @@ for (const width of [1440, 390]) {
     await page.goto(`/agents/${boundary.agent.id}`);
     await page.getByRole('button', { name: 'Show Agent details', exact: true }).click();
     const skills = page.getByRole('region', { name: 'Agent skills', exact: true });
-    await expect(skills.getByText('TypeScript', { exact: true })).toBeVisible();
-    await expect(skills.getByRole('list', { name: 'Agent skill status' })).toContainText(
-      '1.2 · Installed',
-    );
+    const installed = skills.getByRole('list', { name: 'Agent skill status', exact: true });
+    await expect(installed.getByText('TypeScript', { exact: true })).toBeVisible();
+    await expect(installed).toContainText('1.2 · Installed');
     await page.getByRole('button', { name: 'Close Agent details', exact: true }).click();
     noEffects(boundary);
   });

@@ -45,24 +45,29 @@ impl AgentWorker {
         .await
     }
 
-    pub(in crate::sandbox::agent_worker) async fn handle_failure_with_parents(
+    // Keep failure publication out of the successful step's stack frame. A
+    // step can call this path from several independent error branches.
+    #[inline(never)]
+    pub(in crate::sandbox::agent_worker) fn handle_failure_with_parents(
         &self,
         agent: Agent,
         failure: WorkerFailure,
         now: SystemTime,
         parents: Option<PublicationParents>,
-    ) -> Result<(), SandboxStoreError> {
-        if failure.class == super::super::inspection_park::INSPECTION_HANDOFF {
-            return Err(SandboxStoreError::Conflict);
-        }
-        super::super::ledger_telemetry::observe(&failure);
-        if agent.work.step == AgentWorkStep::PublishConnection {
-            self.retry_connection_failure(&agent, failure, now).await
-        } else if failure.retryable || agent.status != AgentStatus::Starting {
-            self.retry(agent, failure, now, parents).await
-        } else {
-            self.fail_startup(agent, failure, now, parents).await
-        }
+    ) -> impl std::future::Future<Output = Result<(), SandboxStoreError>> + Send + '_ {
+        Box::pin(async move {
+            if failure.class == super::super::inspection_park::INSPECTION_HANDOFF {
+                return Err(SandboxStoreError::Conflict);
+            }
+            super::super::ledger_telemetry::observe(&failure);
+            if agent.work.step == AgentWorkStep::PublishConnection {
+                self.retry_connection_failure(&agent, failure, now).await
+            } else if failure.retryable || agent.status != AgentStatus::Starting {
+                self.retry(agent, failure, now, parents).await
+            } else {
+                self.fail_startup(agent, failure, now, parents).await
+            }
+        })
     }
 
     async fn retry(
