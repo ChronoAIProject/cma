@@ -162,6 +162,8 @@ pub fn command_ready_for_claim(
                 .as_ref()
                 .is_some_and(|timeout| timeout.blocks_dispatch())
                 && agent.status == AgentStatus::Ready
+                && (command.receipt.envelope.source.kind != super::AgentSourceKind::Onboarding
+                    || !agent.work.step.is_pending())
                 && agent.conversation.active_turn.is_none()
                 && agent
                     .conversation

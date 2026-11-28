@@ -48,16 +48,16 @@ pub fn bind_command_dispatch(
         if !super::is_bound_trigger_first(command, current) {
             return Err(CommandLedgerError::Conflict);
         }
-    } else if matches!(
-        command.receipt.envelope.actor,
-        super::AgentActor::Channel { .. } | super::AgentActor::Trigger { .. }
-    ) || matches!(
-        command.receipt.envelope.source.kind,
-        super::AgentSourceKind::Channel | super::AgentSourceKind::Trigger
-    ) || command.receipt.envelope.owner
-        != (AgentOwner::Person {
-            subject: current.owner.clone(),
-        })
+    } else if command.receipt.envelope.is_first_message()
+        || matches!(
+            command.receipt.envelope.actor,
+            super::AgentActor::Channel { .. }
+        )
+        || command.receipt.envelope.source.kind == super::AgentSourceKind::Channel
+        || command.receipt.envelope.owner
+            != (AgentOwner::Person {
+                subject: current.owner.clone(),
+            })
     {
         return Err(CommandLedgerError::Conflict);
     }

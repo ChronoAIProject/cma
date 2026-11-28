@@ -312,10 +312,17 @@ pub(in crate::store) async fn apply_catalogue(
         .await
         .map_err(classify_log_insert)?;
 
-    if let Some(launch) = common_launch {
+    let onboarding = store.onboarding_command_admission
+        && matches!(admission.origin, AgentOrigin::Lifecycle { .. })
+        && admission
+            .created_by
+            .as_ref()
+            .and_then(|actor| actor.ordinary_subject())
+            == Some(&admission.owner);
+    if common_launch.is_some() || onboarding {
         Box::pin(crate::store::trigger_first_messages::attach(
             store,
-            launch,
+            common_launch,
             admission,
             &mut creation.agent,
             scope.session(),

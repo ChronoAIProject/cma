@@ -88,6 +88,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             .with_bounded_approval_reads(config.features.bounded_approval_reads)
             .with_fleet_log_percentage(config.agent_log_fleet_percent)
             .with_segment_adoption_enabled(config.features.segment_adoption_enabled)
+            .with_onboarding_command_admission(config.features.onboarding_command_admission)
             .with_bounded_title_reads(config.features.bounded_title_reads)
             .with_access_snapshot_session(config.features.access_snapshot_session)
             .with_resource_list_batch_reads(config.features.resource_list_batch_reads)

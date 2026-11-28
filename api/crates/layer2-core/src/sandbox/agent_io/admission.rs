@@ -18,6 +18,7 @@ pub enum AgentSourceKind {
     UserInterface,
     Api,
     Trigger,
+    Onboarding,
     Channel,
 }
 
@@ -101,6 +102,14 @@ pub struct AgentCommandEnvelope {
 }
 
 impl AgentCommandEnvelope {
+    pub fn is_first_message(&self) -> bool {
+        matches!(self.actor, AgentActor::Trigger { .. })
+            || matches!(
+                self.source.kind,
+                AgentSourceKind::Trigger | AgentSourceKind::Onboarding
+            )
+    }
+
     pub fn is_ordinary_append(&self) -> bool {
         self.continuation.is_none()
             && matches!(
