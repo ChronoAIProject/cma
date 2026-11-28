@@ -27,6 +27,9 @@ pub(super) struct State {
     pub inspections: usize,
     pub exec_mutations: Vec<(String, String, Value)>,
     pub native_annotation_generation: bool,
+    pub relay_outcomes: VecDeque<super::fixture_exec::RelayOutcome>,
+    pub relay_opens: usize,
+    pub relay_requests: usize,
     pub response_gates: VecDeque<ResponseGate>,
     version: u64,
 }
@@ -85,9 +88,18 @@ impl Fixture {
                 };
                 let head = String::from_utf8_lossy(&input[..end]);
                 if head.lines().next().unwrap().contains("/exec?") {
+                    let relay = head.lines().next().unwrap().contains("command=-u");
                     let (reader, writer) = socket.into_split();
                     let reader = std::io::Cursor::new(input).chain(reader);
-                    super::fixture_exec::serve(tokio::io::join(reader, writer), &owned).await;
+                    let socket = tokio::io::join(reader, writer);
+                    if relay {
+                        let state = owned.clone();
+                        tokio::spawn(async move {
+                            super::fixture_exec::serve_relay(socket, &state).await
+                        });
+                    } else {
+                        super::fixture_exec::serve(socket, &owned).await;
+                    }
                     continue;
                 }
                 let length = head

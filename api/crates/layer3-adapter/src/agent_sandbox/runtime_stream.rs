@@ -130,7 +130,7 @@ impl AgentSandboxClient {
                     self.portforward_stream(expected, permit).await?
                 }
                 NativeRuntimeTransport::KubernetesExec => {
-                    exec::open(self, expected, permit).await?
+                    exec::open(self, expected, permit, started + OPEN_TIMEOUT).await?
                 }
                 NativeRuntimeTransport::Direct => {
                     return Err(rejected("direct transport cannot open a Kubernetes stream"));

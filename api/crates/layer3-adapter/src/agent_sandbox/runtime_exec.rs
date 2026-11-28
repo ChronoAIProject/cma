@@ -1,16 +1,38 @@
 //! Fixed stdio relay inside the owned runtime container; credentials use stdin only.
 use super::*;
 use kube::api::AttachParams;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::time::Instant;
 
 pub(super) const READY: &[u8] = b"CMA-EXEC-1\n";
 #[cfg(test)]
 pub(super) const RELAY: &str = crate::runtime_control_relay::SCRIPT;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RelayReadinessFailure {
+    Unreadable,
+    Invalid,
+}
+
+async fn read_ready(
+    stream: &mut (impl AsyncRead + Unpin),
+) -> std::result::Result<(), RelayReadinessFailure> {
+    let mut bytes = [0; READY.len()];
+    stream
+        .read_exact(&mut bytes)
+        .await
+        .map_err(|_| RelayReadinessFailure::Unreadable)?;
+    if bytes != READY {
+        return Err(RelayReadinessFailure::Invalid);
+    }
+    Ok(())
+}
+
 pub(super) async fn open(
     client: &AgentSandboxClient,
     expected: &PodBinding,
     permit: Option<RuntimePermit>,
+    deadline: Instant,
 ) -> Result<RuntimeStream> {
     let mut parameters = AttachParams::default()
         .container("runtime")
@@ -49,13 +71,16 @@ pub(super) async fn open(
         failed: false,
         _permit: permit,
     };
-    let mut ready = [0; READY.len()];
-    stream
-        .read_exact(&mut ready)
-        .await
-        .map_err(|_| unavailable("Kubernetes runtime relay did not become ready"))?;
-    if ready != READY {
-        return Err(rejected("Kubernetes runtime relay readiness is invalid"));
+    match read_ready(&mut stream).await {
+        Ok(()) => super::super::relay_readiness_retry::marker_ready(),
+        Err(RelayReadinessFailure::Unreadable) => {
+            super::super::relay_readiness_retry::marker_failed(deadline);
+            return Err(unavailable("Kubernetes runtime relay did not become ready"));
+        }
+        Err(RelayReadinessFailure::Invalid) => {
+            super::super::relay_readiness_retry::marker_invalid();
+            return Err(rejected("Kubernetes runtime relay readiness is invalid"));
+        }
     }
     Ok(stream)
 }

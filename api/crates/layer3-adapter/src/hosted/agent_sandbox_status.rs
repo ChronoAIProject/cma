@@ -36,10 +36,24 @@ impl AgentSandboxBackend {
                 ));
             }
         }
-        let response = self
+        let generation = request.generation;
+        let exchange = self
             .transport
-            .exchange(handle, RequestFrame::RuntimeStatus(request))
-            .await?;
+            .exchange(handle, RequestFrame::RuntimeStatus(request));
+        let response = match &assigned {
+            Some(assigned) => {
+                crate::agent_sandbox::relay_readiness_retry::bind(
+                    handle,
+                    &assigned.pod,
+                    &assigned.request,
+                    generation,
+                    &assigned.request_sha256,
+                    exchange,
+                )
+                .await?
+            }
+            None => exchange.await?,
+        };
         if let Some(assigned) = assigned {
             crate::file_read_diagnostics::measure(
                 crate::file_read_diagnostics::Stage::StatusPostValidation,
