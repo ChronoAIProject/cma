@@ -472,3 +472,6 @@ async fn quarantine_defers_startup_retirement_without_masking_unresolved_effects
     );
     db.drop().await.unwrap();
 }
+
+#[path = "mongo_tests/pool_rollout.rs"]
+mod pool_rollout;

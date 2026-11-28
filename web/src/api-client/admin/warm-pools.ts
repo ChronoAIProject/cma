@@ -26,6 +26,14 @@ export const warmPoolView = object({
   retirement_status: optional(enumeration('pending', 'drained')),
   resource_name: nullable(text),
   error: nullable(text),
+  reconciliation_failure: optional(
+    object({
+      phase: text,
+      reason: text,
+      observed_at_ms: integer,
+      retry_after_ms: integer,
+    }),
+  ),
   /** The deployment-seeded shared desktop pool; older servers omit it. */
   machine: optional(boolean),
 });

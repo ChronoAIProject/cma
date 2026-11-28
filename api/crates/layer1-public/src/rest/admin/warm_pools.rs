@@ -31,6 +31,14 @@ pub struct ResizeWarmPoolBody {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
+pub struct WarmPoolFailure {
+    pub phase: String,
+    pub reason: String,
+    pub observed_at_ms: i64,
+    pub retry_after_ms: i64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
 pub struct WarmPoolView {
     pub id: String,
     pub revision: u64,
@@ -51,6 +59,8 @@ pub struct WarmPoolView {
     pub retirement_status: Option<String>,
     pub resource_name: Option<String>,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reconciliation_failure: Option<WarmPoolFailure>,
     /// The deployment-seeded shared desktop pool, resized against `machine_image`.
     #[serde(default)]
     pub machine: bool,

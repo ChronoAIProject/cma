@@ -31,6 +31,16 @@ impl NativeWarmPools {
             if !self.store.candidate_protected(&target).await? {
                 return self.retire_claimed(provider, target).await.map(|_| true);
             }
+            if self.matches_fixed_preparation(&target).await? {
+                return reconcile_claimed(
+                    self.store.as_ref(),
+                    provider,
+                    target,
+                    self.target_fencing,
+                )
+                .await
+                .map(|_| true);
+            }
             return self.reconcile_candidate(provider, target).await;
         }
         reconcile_claimed(self.store.as_ref(), provider, target, self.target_fencing)

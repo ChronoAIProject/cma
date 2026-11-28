@@ -234,6 +234,7 @@ fn recorded_claim_pool(
         .map_err(|_| rejected("native retirement Claim authority is invalid"))?;
     Ok(request.pool.uid == binding.uid
         || request.pool.name == binding.name
+        || request.pool.template_name == binding.template_name
         || request.pool.template_uid == binding.template_uid)
 }
 

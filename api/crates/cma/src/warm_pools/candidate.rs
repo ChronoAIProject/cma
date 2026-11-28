@@ -45,6 +45,7 @@ impl NativeWarmPools {
             if target.binding.is_none() {
                 // An uncertain initial configure has only zero-capacity
                 // authority. Recover its exact binding before fencing resize.
+                self.store.authorize_provider_create(&target).await?;
                 let observed = provider
                     .configure_planned(&target.plan, 0)
                     .await
