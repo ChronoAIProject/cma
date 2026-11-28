@@ -31,11 +31,11 @@ pub async fn create(
     mut request: ChannelCreateRequest,
 ) -> Result<CreatedChannel, ManagementError> {
     custom_attachments_allowed(state, &request.sources)?;
-    let claim = crate::connections::binding::expand_create(state, creator, &mut request).await?;
     state
         .records
         .require_channel_create_authority()
         .map_err(ManagementError::Record)?;
+    let claim = crate::connections::binding::expand_create(state, creator, &mut request).await?;
     validate_create_request(&request).map_err(ManagementError::Invalid)?;
     if request.profile.metadata.owner.subject != creator.subject {
         return Err(ManagementError::Invalid(ValidationError::new(

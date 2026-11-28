@@ -66,6 +66,7 @@ class ArchiveHandoffTests(unittest.TestCase):
         reservation = {key: value for key, value in release.items() if key != "build"}
         reservation["schema"] = "cma-version-reservation-v1"
         task = {"mode": "publish", "reservation": reservation, "component": "am"}
+        push_head = "f" * 40
         stamp = {"versionLabel": release["version"], "imageId": "sha256:" + "b" * 64,
                  "buildFingerprint": release["build"]}
 
@@ -81,20 +82,25 @@ class ArchiveHandoffTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary, contextlib.ExitStack() as stack:
             root = Path(temporary)
             output = root / "output"
-            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": release["source"],
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": push_head,
                    "GITHUB_RUN_ID": str(release["run_id"]), "GITHUB_RUN_ATTEMPT": str(release["run_attempt"]),
                    "CD_COMPONENT": "am", "CD_TASKS": json.dumps([task]), "RUNNER_TEMP": str(root),
                    "CD_NATIVE_CI_PRODUCER": "true", "GITHUB_OUTPUT": str(output)}
-            for name in ("event_identity", "GitHub", "snapshot", "Reservations"):
+            for name in ("event_identity", "GitHub", "Reservations"):
                 stack.enter_context(patch.object(staging_cd_produce, name))
-            stack.enter_context(patch.object(staging_cd_produce, "command",
-                                             return_value=f"{release['source']}\n{release['tree']}\n".encode()))
+            snapshot = stack.enter_context(patch.object(staging_cd_produce, "snapshot"))
+            verify = stack.enter_context(patch.object(staging_cd_produce, "verify_source"))
             stack.enter_context(patch.object(staging_cd_produce, "build", side_effect=build_image))
             stack.enter_context(patch.object(staging_cd_produce, "stamp_metadata", side_effect=test_image))
+            self.assertEqual(staging_cd_produce.select_native(env), 0)
+            self.assertEqual(output.read_text(), "build=true\n")
             result = staging_cd_produce.produce(env, root, Mock(), {})
             self.assertEqual(result["imageId"], stamp["imageId"])
+            self.assertEqual(verify.call_args_list[0].args[1:], (push_head, reservation))
+            verify.assert_called_with(root, push_head, reservation)
+            snapshot.assert_called_once_with(root, release["source"], ANY)
             destination = path_for(root / "cma-prepared-release", reservation)
-            self.assertEqual(output.read_text(), f"native_name={artifact_name(release)}\nnative_path={destination}\n")
+            self.assertEqual(output.read_text(), f"build=true\nnative_name={artifact_name(release)}\nnative_path={destination}\n")
             self.assertIsNotNone(load(destination, release))
             self.assertTrue((destination / METADATA).is_file())
 
