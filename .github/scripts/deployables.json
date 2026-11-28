@@ -79,7 +79,7 @@
   "cma-runtime-omarchy": {
     "dockerfile": "api/crates/layer4-runtime/Dockerfile",
     "context": ".",
-    "target": "omarchy",
+    "target": "supervised-omarchy",
     "platforms": [
       "linux/amd64"
     ],
