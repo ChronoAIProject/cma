@@ -22,7 +22,7 @@ export function AgentDeletionNotice({
 }) {
   const [started] = useState(() => new Date().toISOString());
   const [read, setRead] = useState<{ observation?: DeletionObservation; interrupted?: boolean }>();
-  const settled = Boolean(read?.observation?.complete || read?.observation?.agentDeletionFailure);
+  const settled = read?.observation?.complete === true;
   const now = useProvisioningClock(!settled);
   useEffect(() => {
     const controller = new AbortController();
@@ -47,7 +47,7 @@ export function AgentDeletionNotice({
         if (controller.signal.aborted) return;
         if (stopDeletionBlock(request, observation)) throw new Error('Deletion target changed');
         agentEvents = observation.agentEvents;
-        done = Boolean(observation.complete || observation.agentDeletionFailure);
+        done = observation.complete;
         setRead({ observation });
       } catch {
         if (controller.signal.aborted) return;
@@ -68,29 +68,22 @@ export function AgentDeletionNotice({
   }, [client, request]);
 
   if (read?.observation?.complete) return null;
-  const failure = read?.observation?.agentDeletionFailure;
+  const failure = read?.observation?.failure;
   const acceptedAt = provisioningDuration(request.acceptedAt, now);
   const elapsed = acceptedAt ?? provisioningDuration(started, now);
   return (
     <section className="deletion-summary" aria-label="Agent deletion">
       <div>
-        {failure ? (
-          <p role="alert">
-            <strong>Agent deletion failed.</strong> {failure.detail}
+        <p role="status" className="deletion-summary__status">
+          <StateDot state={read?.interrupted ? 'warning' : 'ongoing'} />
+          {read?.interrupted ? 'Checking Agent deletion status' : 'Deleting Agent'}
+        </p>
+        {elapsed ? (
+          <p>
+            {acceptedAt ? 'Elapsed' : 'Watching for'} {elapsed}
           </p>
-        ) : (
-          <>
-            <p role="status" className="deletion-summary__status">
-              <StateDot state={read?.interrupted ? 'warning' : 'ongoing'} />
-              {read?.interrupted ? 'Checking Agent deletion status' : 'Deleting Agent'}
-            </p>
-            {elapsed ? (
-              <p>
-                {acceptedAt ? 'Elapsed' : 'Watching for'} {elapsed}
-              </p>
-            ) : null}
-          </>
-        )}
+        ) : null}
+        {failure ? <p>Cleanup reported a problem. {failure.detail}</p> : null}
       </div>
       <Button size="sm" onClick={onViewStatus} disabled={disabled}>
         View status

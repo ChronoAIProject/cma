@@ -205,8 +205,7 @@ export function DeletionDialog({
           events = next.events;
           agentEvents = next.agentEvents;
           setObservation(next);
-          retirementFailed =
-            next.retirementFailed === true || next.agentDeletionFailure !== undefined;
+          retirementFailed = next.retirementFailed === true;
           setReadError(undefined);
           if ((next.inProgress || retirementFailed) && !request.accepted && !settled()) {
             const accepted = { ...request, accepted: true };

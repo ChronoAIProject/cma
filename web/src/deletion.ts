@@ -46,7 +46,6 @@ export interface DeletionObservation {
   readonly stopsAgent?: boolean;
   readonly blocked?: string;
   readonly failure?: Failure;
-  readonly agentDeletionFailure?: Failure;
   readonly steps: readonly ProvisioningStep[];
   readonly events: readonly SandboxEvent[];
   readonly agentEvents?: readonly AgentEvent[];
@@ -241,15 +240,6 @@ export async function observeDeletion(
     latestFailure !== undefined && !complete && !completed.has(latestFailure.kind.step)
       ? (latestFailure.kind.failure as Failure)
       : undefined;
-  // The same cleanup step can log an error while the worker still retries it.
-  const agentDeletionFailure =
-    accepted &&
-    agent.status === 'failed' &&
-    agent.failure &&
-    failure?.class === agent.failure.class &&
-    failure.detail === agent.failure.detail
-      ? agent.failure
-      : undefined;
   return {
     sandboxId: agent.sandbox.id,
     agent: { status: agent.status, workspaceId: agent.workspace.id, worktreeId: agent.worktree.id },
@@ -260,7 +250,6 @@ export async function observeDeletion(
     events: [],
     agentEvents,
     failure,
-    agentDeletionFailure,
     blocked,
     steps: [
       step('Confirm Agent stopped', closed, accepted),
