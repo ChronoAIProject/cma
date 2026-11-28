@@ -12,7 +12,7 @@ use crate::store::{
     trigger_first_messages,
 };
 use layer2_core::sandbox::{
-    agent_io::{AdmittedAgentCommand, AgentActor, CommandLedgerError},
+    agent_io::{AdmittedAgentCommand, CommandLedgerError},
     store::SandboxStoreError,
     AgentLogEntry, AgentLogKind, FirstMessageDelivery,
 };
@@ -33,7 +33,7 @@ pub(in crate::store) async fn project(
 ) -> Result<Option<Receipt>, TransactionLogError> {
     if !command.status.is_terminal()
         || command.work.dispatch.is_some()
-        || !matches!(command.receipt.envelope.actor, AgentActor::Trigger { .. })
+        || !command.receipt.envelope.is_first_message()
     {
         return Ok(None);
     }

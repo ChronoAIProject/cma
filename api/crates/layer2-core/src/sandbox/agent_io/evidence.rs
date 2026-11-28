@@ -76,10 +76,7 @@ impl CommandEvidence {
             deferred: None,
             prewrite_marker: None,
             dispatch,
-            trigger_first: matches!(
-                command.receipt.envelope.actor,
-                super::AgentActor::Trigger { .. }
-            ),
+            trigger_first: command.receipt.envelope.is_first_message(),
             message: matches!(
                 command.receipt.envelope.command,
                 AgentCommand::Message { .. }

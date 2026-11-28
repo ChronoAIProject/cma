@@ -4,10 +4,22 @@ use crate::ids::{AgentCommandId, AgentId, AgentResponseId, LaunchId};
 use crate::profiles::content_digest;
 use crate::resource_access::{ResourceOwner, ResourcePolicyFence};
 use crate::sandbox::store::{AgentAdmission, SandboxMutationGuard};
-use crate::sandbox::{Agent, FirstMessageDelivery, Sandbox};
+use crate::sandbox::{Agent, AgentOrigin, FirstMessageDelivery, FirstMessagePurpose, Sandbox};
 use crate::trigger_domain::{Launch, LaunchInputProtocol};
 
 use super::super::*;
+
+// Onboarding follows the Agent startup lifecycle. The shared receipt schema
+// requires a timestamp, so use its maximum RFC3339 value for this source.
+const ONBOARDING_QUEUE_DEADLINE: &str = "9999-12-31T23:59:59Z";
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Onboarding {
+    operation_id: String,
+    purpose: FirstMessagePurpose,
+    desktop: bool,
+}
 
 /// Permanent execution identity, stored outside the legacy Agent wire record.
 /// Integrity alone is not execution authority; the store proves this receipt.
@@ -15,8 +27,12 @@ use super::super::*;
 #[serde(deny_unknown_fields)]
 pub struct TriggerFirstMessageBinding {
     schema_version: u16,
-    launch_id: LaunchId,
-    protocol: LaunchInputProtocol,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    launch_id: Option<LaunchId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    protocol: Option<LaunchInputProtocol>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    onboarding: Option<Onboarding>,
     creation_key: String,
     creation_fingerprint: String,
     agent_created_at: String,
@@ -56,6 +72,83 @@ impl TriggerFirstMessageBinding {
             .ok_or(CommandLedgerError::Corrupt)?
             .require_agent_admission(admission)
             .map_err(|_| CommandLedgerError::NotAdmissible)?;
+        if launch.owner != agent.owner {
+            return Err(CommandLedgerError::NotAdmissible);
+        }
+        let (mut binding, request) = Self::prepare_common(
+            admission,
+            agent,
+            parent,
+            policy,
+            owner,
+            AgentActor::Trigger {
+                subject: launch.owner.clone(),
+                launch_id: launch.id.clone(),
+            },
+            AgentCommandSource {
+                kind: AgentSourceKind::Trigger,
+                reference: launch.id.to_string(),
+            },
+            format!("trigger-first:{}", launch.id),
+        )?;
+        binding.launch_id = Some(launch.id.clone());
+        binding.protocol = Some(protocol);
+        binding.require_agent(agent)?;
+        Ok((binding, request))
+    }
+
+    pub fn prepare_onboarding(
+        admission: &AgentAdmission,
+        agent: &Agent,
+        parent: &Sandbox,
+        policy: ResourcePolicyFence,
+        owner: ResourceOwner,
+    ) -> Result<(Self, CommandReservation), CommandLedgerError> {
+        let AgentOrigin::Lifecycle { operation_id } = &admission.origin else {
+            return Err(CommandLedgerError::Invalid);
+        };
+        let actor = admission
+            .created_by
+            .clone()
+            .ok_or(CommandLedgerError::Invalid)?;
+        let first = agent
+            .conversation
+            .first_message
+            .as_ref()
+            .ok_or(CommandLedgerError::Invalid)?;
+        let mut binding_and_request = Self::prepare_common(
+            admission,
+            agent,
+            parent,
+            policy,
+            owner,
+            actor,
+            AgentCommandSource {
+                kind: AgentSourceKind::Onboarding,
+                reference: operation_id.clone(),
+            },
+            format!("onboarding-first:{}", agent.creation_key),
+        )?;
+        binding_and_request.0.onboarding = Some(Onboarding {
+            operation_id: operation_id.clone(),
+            purpose: first.purpose.ok_or(CommandLedgerError::Invalid)?,
+            desktop: first.desktop,
+        });
+        binding_and_request.0.require_agent(agent)?;
+        Ok(binding_and_request)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn prepare_common(
+        admission: &AgentAdmission,
+        agent: &Agent,
+        parent: &Sandbox,
+        policy: ResourcePolicyFence,
+        owner: ResourceOwner,
+        actor: AgentActor,
+        source: AgentCommandSource,
+        authority_id: String,
+    ) -> Result<(Self, CommandReservation), CommandLedgerError> {
         let first = agent
             .conversation
             .first_message
@@ -71,26 +164,41 @@ impl TriggerFirstMessageBinding {
             || !agent.conversation.queued_messages.is_empty()
             || admission.workspace_id != agent.workspace_id
             || admission.profile != agent.profile
-            || launch.owner != agent.owner
             || parent.id != agent.sandbox_id
             || owner
                 != (ResourceOwner::Person {
-                    subject: launch.owner.clone(),
+                    subject: agent.owner.clone(),
                 })
         {
             return Err(CommandLedgerError::NotAdmissible);
         }
         let command = AgentCommand::message(first.text.clone());
-        let binding_key = content_digest(&(
-            launch.id.as_str(),
-            agent.id.as_str(),
-            agent.created_at.as_str(),
-            first.origin_key.as_str(),
-            first.payload_sha256.as_str(),
-        ))
+        let binding_key = if source.kind == AgentSourceKind::Onboarding {
+            content_digest(&("onboarding-first-v1", &source.reference, &agent.owner))
+        } else {
+            content_digest(&(
+                source.reference.as_str(),
+                agent.id.as_str(),
+                agent.created_at.as_str(),
+                first.origin_key.as_str(),
+                first.payload_sha256.as_str(),
+            ))
+        }
         .map_err(|_| CommandLedgerError::Corrupt)?;
-        let at =
-            crate::seconds_from_rfc3339(&admission.event_at).ok_or(CommandLedgerError::Invalid)?;
+        let queue_deadline = if source.kind == AgentSourceKind::Onboarding {
+            ONBOARDING_QUEUE_DEADLINE.to_owned()
+        } else {
+            let admitted_at = crate::seconds_from_rfc3339(&admission.event_at)
+                .ok_or(CommandLedgerError::Invalid)?;
+            crate::rfc3339_at(
+                std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_secs(
+                        admitted_at
+                            .checked_add(300)
+                            .ok_or(CommandLedgerError::Invalid)?,
+                    ),
+            )
+        };
         let request = CommandReservation {
             binding: None,
             envelope: AgentCommandEnvelope {
@@ -99,21 +207,15 @@ impl TriggerFirstMessageBinding {
                 command_id: AgentCommandId::generate(),
                 agent_id: agent.id.clone(),
                 owner,
-                actor: AgentActor::Trigger {
-                    subject: launch.owner.clone(),
-                    launch_id: launch.id.clone(),
-                },
-                source: AgentCommandSource {
-                    kind: AgentSourceKind::Trigger,
-                    reference: launch.id.to_string(),
-                },
+                actor,
+                source,
                 correlation_id: binding_key.clone(),
                 request_fingerprint: command
                     .fingerprint()
                     .map_err(|_| CommandLedgerError::Invalid)?,
                 authorization: AgentAuthorizationRevision {
                     replay_principal: None,
-                    authority_id: format!("trigger-first:{}", launch.id),
+                    authority_id,
                     policy_revision: 1,
                     grant_revision: None,
                 },
@@ -122,12 +224,7 @@ impl TriggerFirstMessageBinding {
             key_sha256: command_key_digest(&binding_key)?,
             response_id: Some(AgentResponseId::generate()),
             admitted_at: admission.event_at.clone(),
-            queue_deadline: crate::rfc3339_at(
-                std::time::SystemTime::UNIX_EPOCH
-                    + std::time::Duration::from_secs(
-                        at.checked_add(300).ok_or(CommandLedgerError::Invalid)?,
-                    ),
-            ),
+            queue_deadline,
             queue_capacity: MAX_COMMAND_QUEUE_CAPACITY,
             expected_agent_revision: agent.revision,
             parent: SandboxMutationGuard::capture(parent),
@@ -138,8 +235,9 @@ impl TriggerFirstMessageBinding {
         request.validate()?;
         let binding = Self {
             schema_version: 1,
-            launch_id: launch.id.clone(),
-            protocol,
+            launch_id: None,
+            protocol: None,
+            onboarding: None,
             creation_key: admission.creation_key.clone(),
             creation_fingerprint: admission
                 .fingerprint()
@@ -159,7 +257,6 @@ impl TriggerFirstMessageBinding {
             key_sha256: request.key_sha256.clone(),
             queue_deadline: request.queue_deadline.clone(),
         };
-        binding.require_agent(agent)?;
         Ok((binding, request))
     }
     pub fn bind_receipt(
@@ -180,8 +277,22 @@ impl TriggerFirstMessageBinding {
     pub fn digest(&self) -> Result<String, CommandLedgerError> {
         content_digest(self).map_err(|_| CommandLedgerError::Corrupt)
     }
-    pub fn launch_id(&self) -> &LaunchId {
-        &self.launch_id
+    pub fn launch_id(&self) -> Option<&LaunchId> {
+        self.launch_id.as_ref()
+    }
+    pub fn is_onboarding(&self) -> bool {
+        self.onboarding.is_some()
+    }
+    pub(in crate::sandbox) fn is_onboarding_setup(&self) -> bool {
+        self.onboarding
+            .as_ref()
+            .is_some_and(|source| source.purpose == FirstMessagePurpose::Setup)
+    }
+    pub fn document_key(&self) -> String {
+        self.launch_id.as_ref().map_or_else(
+            || format!("onboarding:{}", self.agent_id()),
+            ToString::to_string,
+        )
     }
     pub fn agent_id(&self) -> &AgentId {
         &self.receipt.envelope.agent_id
@@ -194,11 +305,14 @@ impl TriggerFirstMessageBinding {
     }
     pub fn require_launch(&self, launch: &Launch) -> Result<(), CommandLedgerError> {
         self.protocol
+            .as_ref()
+            .ok_or(CommandLedgerError::Corrupt)?
             .require_launch(launch)
             .map_err(|_| CommandLedgerError::Corrupt)?;
         if launch.input_binding_sha256.as_ref() != Some(&self.digest()?)
-            || self.launch_id != launch.id
-            || launch.input_protocol.as_ref() != Some(&self.protocol)
+            || self.onboarding.is_some()
+            || self.launch_id.as_ref() != Some(&launch.id)
+            || launch.input_protocol != self.protocol
             || self.receipt.envelope.actor
                 != (AgentActor::Trigger {
                     subject: launch.owner.clone(),
@@ -236,11 +350,42 @@ impl TriggerFirstMessageBinding {
             .first_message
             .as_ref()
             .ok_or(CommandLedgerError::Corrupt)?;
+        let envelope = &self.receipt.envelope;
+        let valid_source = match (&self.launch_id, &self.protocol, &self.onboarding) {
+            (Some(launch_id), Some(_), None) => {
+                envelope.source.kind == AgentSourceKind::Trigger
+                    && envelope.source.reference == launch_id.as_str()
+                    && envelope.actor
+                        == (AgentActor::Trigger {
+                            subject: agent.owner.clone(),
+                            launch_id: launch_id.clone(),
+                        })
+            }
+            (None, None, Some(onboarding)) => {
+                envelope.source.kind == AgentSourceKind::Onboarding
+                    && envelope.source.reference == onboarding.operation_id
+                    && envelope.actor.ordinary_subject() == Some(&agent.owner)
+                    && agent.origin
+                        == (AgentOrigin::Lifecycle {
+                            operation_id: onboarding.operation_id.clone(),
+                        })
+                    && self.creation_fingerprint == agent.creation_fingerprint
+                    && first.purpose == Some(onboarding.purpose)
+                    && first.desktop == onboarding.desktop
+            }
+            _ => false,
+        };
         if self.schema_version != 1
+            || !valid_source
             || self.agent_id() != &agent.id
             || self.agent_created_at != agent.created_at
             || self.workspace_id != agent.workspace_id
-            || self.worktree_id != agent.worktree_id
+            || &self.worktree_id
+                != if self.is_onboarding() {
+                    agent.creation_worktree_id()
+                } else {
+                    &agent.worktree_id
+                }
             || self.sandbox_id != agent.sandbox_id
             || self.profile_digest != agent.profile.digest
             || self.origin_key != agent.creation_key

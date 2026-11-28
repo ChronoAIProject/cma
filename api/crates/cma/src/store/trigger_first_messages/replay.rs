@@ -57,12 +57,46 @@ pub(super) async fn command(
     binding
         .require_command(&command)
         .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+    require_source(store, agent, &binding, session, snapshot)
+        .await
+        .map(|_| ())
+}
+
+/// Re-read the durable source that authorized this first-message reservation.
+pub(super) async fn require_source(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    binding: &TriggerFirstMessageBinding,
+    session: &mut ClientSession,
+    snapshot: bool,
+) -> Result<Option<layer2_core::trigger_domain::Launch>, SandboxStoreError> {
+    let Some(launch_id) = binding.launch_id() else {
+        let row = find(
+            &store.agent_creation_provenance,
+            doc! {"_id":agent.id.as_str()},
+            session,
+            snapshot,
+        )
+        .await?
+        .ok_or(SandboxStoreError::Conflict)?;
+        let provenance = super::super::agent_provenance::read(&row)?;
+        if !binding.is_onboarding()
+            || provenance.agent_created_at != agent.created_at
+            || provenance.creation_fingerprint != agent.creation_fingerprint
+            || provenance.provisioning_origin != agent.origin
+            || provenance.owner != binding.receipt().envelope.owner
+            || provenance.created_by.as_ref() != Some(&binding.receipt().envelope.actor)
+        {
+            return Err(SandboxStoreError::Conflict);
+        }
+        return Ok(None);
+    };
     let database = store.client.database(&store.agents.namespace().db);
     let launches =
         super::super::durability::majority_collection::<Document>(&database, "trigger_launches");
     let row = find(
         &launches,
-        doc! {"_id":binding.launch_id().as_str()},
+        doc! {"_id":launch_id.as_str()},
         session,
         snapshot,
     )
@@ -79,13 +113,14 @@ pub(super) async fn command(
     );
     let row = find(
         &protocols,
-        doc! {"_id":binding.launch_id().as_str()},
+        doc! {"_id":launch_id.as_str()},
         session,
         snapshot,
     )
     .await?;
     super::super::trigger_definitions::require_input_protocol_document(&launch, row)
-        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
+        .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
+    Ok(Some(launch))
 }
 
 async fn find(

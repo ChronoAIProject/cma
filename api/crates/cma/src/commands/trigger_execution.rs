@@ -1,6 +1,5 @@
-use layer2_core::sandbox::agent_io::{AdmittedAgentCommand, AgentActor, AgentSourceKind};
+use layer2_core::sandbox::agent_io::AdmittedAgentCommand;
 
-pub(super) fn is_trigger(command: &AdmittedAgentCommand) -> bool {
-    matches!(command.receipt.envelope.actor, AgentActor::Trigger { .. })
-        || command.receipt.envelope.source.kind == AgentSourceKind::Trigger
+pub(super) fn is_first_message(command: &AdmittedAgentCommand) -> bool {
+    command.receipt.envelope.is_first_message()
 }

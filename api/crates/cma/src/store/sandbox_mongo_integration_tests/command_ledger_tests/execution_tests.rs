@@ -81,7 +81,7 @@ impl OrganizationAuthority for Authority {
     }
 }
 
-struct Runtime(ConversationInputSender);
+struct Runtime(ConversationInputSender, RuntimeCapabilities);
 #[async_trait::async_trait]
 impl AgentRuntimeRegistry for Runtime {
     async fn fence(&self, _: &AgentId, _: u64) -> Result<(), AgentRuntimeError> {
@@ -92,7 +92,7 @@ impl AgentRuntimeRegistry for Runtime {
         _: &AgentRuntimeTarget,
     ) -> Result<AgentRuntimeConnection, AgentRuntimeError> {
         Ok(AgentRuntimeConnection {
-            capabilities: RuntimeCapabilities::new([RuntimeCapability::Conversation]),
+            capabilities: self.1.clone(),
             input: self.0.clone(),
         })
     }
@@ -215,8 +215,13 @@ async fn composed_with_input_history(
         (store, agent)
     };
     let store = Arc::new(store);
-    let (execution, authority, sends) =
-        command_execution(&store, &agent, credentials, input.map(|(sender, _)| sender));
+    let (execution, authority, sends) = command_execution(
+        &store,
+        &agent,
+        credentials,
+        input.map(|(sender, _)| sender),
+        false,
+    );
     (store, agent, parent, execution, authority, sends)
 }
 
@@ -232,6 +237,25 @@ pub(in crate::store) fn fixture_command_execution(
         agent,
         Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         None,
+        false,
+    );
+    (execution, sends)
+}
+
+pub(super) fn fixture_interruptible_command_execution(
+    store: &Arc<MongoSandboxStore>,
+    agent: &Agent,
+    input: ConversationInputSender,
+) -> (
+    Arc<crate::commands::ResourceCommandExecution>,
+    Arc<AtomicUsize>,
+) {
+    let (execution, _, sends) = command_execution(
+        store,
+        agent,
+        Arc::new(FixedSandboxCredentialPrerequisite::Ready),
+        Some(input),
+        true,
     );
     (execution, sends)
 }
@@ -241,6 +265,7 @@ fn command_execution(
     agent: &Agent,
     credentials: Arc<dyn SandboxCredentialPrerequisite>,
     input: Option<ConversationInputSender>,
+    interruptible: bool,
 ) -> (
     Arc<crate::commands::ResourceCommandExecution>,
     Arc<Authority>,
@@ -253,7 +278,7 @@ fn command_execution(
     let authority = Arc::new(Authority(Mutex::new(Ok(caller))));
     let sends = Arc::new(AtomicUsize::new(0));
     let sent = sends.clone();
-    let runtime = Arc::new(Runtime(ConversationInputSender::spawn(4, move |message| {
+    let input = ConversationInputSender::spawn(4, move |message| {
         sent.fetch_add(1, Ordering::SeqCst);
         let input = input.clone();
         async move {
@@ -262,7 +287,12 @@ fn command_execution(
                 None => Ok(()),
             }
         }
-    })));
+    });
+    let mut capabilities = vec![RuntimeCapability::Conversation];
+    if interruptible {
+        capabilities.push(RuntimeCapability::Interrupt);
+    }
+    let runtime = Arc::new(Runtime(input, RuntimeCapabilities::new(capabilities)));
     let profiles = Arc::new(InMemoryProfileStore::default());
     let context = AgentContextService::new(
         SandboxService::new(

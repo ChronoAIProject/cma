@@ -203,7 +203,7 @@ pub(super) async fn reuse_profile_agent(
         if let Some(launch) = common_launch {
             Box::pin(crate::store::trigger_first_messages::attach(
                 store,
-                launch,
+                Some(launch),
                 admission,
                 &mut agent,
                 scope.session(),

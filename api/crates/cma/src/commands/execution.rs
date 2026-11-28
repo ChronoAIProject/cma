@@ -111,7 +111,7 @@ impl AgentCommandExecution for ResourceCommandExecution {
         if matches!(command.receipt.envelope.actor, AgentActor::Channel { .. }) {
             return CommandReadiness::Reject(CommandFailureCode::AuthorityRevoked);
         }
-        if super::trigger_execution::is_trigger(command) {
+        if super::trigger_execution::is_first_message(command) {
             return self
                 .operations
                 .trigger_ready_for_claim(command)
@@ -142,7 +142,7 @@ impl AgentCommandExecution for ResourceCommandExecution {
         if matches!(command.receipt.envelope.actor, AgentActor::Channel { .. }) {
             return CommandAttempt::Reject(CommandFailureCode::AuthorityRevoked);
         }
-        if super::trigger_execution::is_trigger(command) {
+        if super::trigger_execution::is_first_message(command) {
             return match self.operations.execute_trigger_claim(command).await {
                 Ok(_) => CommandAttempt::Finished,
                 Err(error) => classify(error),
