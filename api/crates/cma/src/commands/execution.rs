@@ -77,6 +77,11 @@ impl ResourceCommandExecution {
                 agent_status = ?agent.status, sandbox_status = ?lineage.sandbox.status,
                 error_kind = "agent_not_ready", "Queued command is waiting for its Agent");
         }
+        // Publication is durable work driven by the recovery worker. A queued
+        // append can wait without taking another command claim or owner scope.
+        if command.awaits_connection_publication(&agent, &lineage.sandbox) {
+            return Err(CommandReadiness::WaitingForAttachment);
+        }
         // Ordinary appends behind a live turn need neither an ownership claim
         // nor revival. The driver will re-read durable readiness after waiting.
         if lineage.sandbox.status == SandboxStatus::Active
@@ -194,6 +199,7 @@ pub(super) fn classify(error: AgentOperationError) -> CommandAttempt {
     // The driver rereads binding state before acting on any classification.
     // Errors after an unknown commit therefore only lead to reconciliation.
     match error {
+        RuntimeAttachmentUnavailable(_) => CommandAttempt::RetryAttachment,
         Budget(reason) => CommandAttempt::Reject(Failure::from_budget(reason)),
         SessionCapacityUnavailable => CommandAttempt::Reject(Failure::SessionCapacityUnavailable),
         Connection(layer2_core::sandbox::SandboxCredentialPrerequisiteError::SetupRequired) => {

@@ -196,6 +196,7 @@ impl From<AgentOperationError> for InstanceProblem {
             AgentOperationError::DeliveryAmbiguous { .. } => Self::DeliveryAmbiguous,
             AgentOperationError::LogCapacityExceeded
             | AgentOperationError::Corrupt(_)
+            | AgentOperationError::RuntimeAttachmentUnavailable(_)
             | AgentOperationError::RuntimeUnavailable(_)
             | AgentOperationError::OutcomeUnavailable(_)
             | AgentOperationError::Unavailable(_) => Self::Unavailable,
