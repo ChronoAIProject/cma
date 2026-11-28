@@ -258,7 +258,7 @@ def assemble_prepare(incumbent, candidate, directory, *, max_files, max_bytes):
     scanner = scanner_types()
     union = {}
     with ExitStack() as lifetime:
-        base, old_assets, old_sentinel, _ = load_assets(incumbent, directory, lifetime, scanner, max_bytes)
+        base, old_assets, old_sentinel, incumbent_catalog = load_assets(incumbent, directory, lifetime, scanner, max_bytes)
         # A published promote archive may already contain fallback assets from staging.
         # Its current catalog identifies the paths needed by its own HTML and lazy chunks.
         _, new_assets, new_sentinel, _ = load_assets(
@@ -274,6 +274,7 @@ def assemble_prepare(incumbent, candidate, directory, *, max_files, max_bytes):
             shutil.rmtree(output)
             raise
     return {"prepare": prepare, "incumbent_digest": incumbent.digest, "candidate_digest": candidate.digest,
+            "incumbent_catalog_sha256": incumbent_catalog, "incumbent_assets": json.loads(catalog_bytes(old_assets)),
             "asset_manifest_sha256": inventory, "asset_count": len(union), "asset_bytes": total,
             "layer_digest": "sha256:" + hashed(layer), "assets": json.loads(catalog_bytes(union)),
             "sentinels": {"incumbent": old_sentinel, "candidate": new_sentinel}}

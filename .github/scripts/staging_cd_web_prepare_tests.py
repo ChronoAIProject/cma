@@ -11,7 +11,7 @@ import unittest
 from staging_cd_common import Refusal
 from staging_cd_web_overlay import (
     BASE_LABEL, BUILD_INFO, FALLBACK, HTML, MANIFEST_LABEL, REPOSITORY, assemble,
-    assemble_prepare, hashed,
+    assemble_prepare, catalog_bytes, hashed,
 )
 from staging_cd_web_overlay_tests import fixture_archive, unpack_overlay
 
@@ -46,6 +46,8 @@ class WebPrepareTests(unittest.TestCase):
         self.assertEqual((len(old), len(new), len(union), result["asset_count"]), (136, 202, 287, 287))
         self.assertEqual(digest, recipe["digest"])
         self.assertEqual(result["candidate_digest"], published.digest)
+        self.assertEqual(result["incumbent_assets"], json.loads(catalog_bytes(old)))
+        self.assertEqual(result["incumbent_catalog_sha256"], hashed(catalog_bytes(old)))
         self.assertEqual(result["sentinels"]["incumbent"]["html_sha256"], hashed(original_html))
         labels = config["config"]["Labels"]
         self.assertEqual(labels.pop(BASE_LABEL), REPOSITORY + "@" + incumbent.digest)
