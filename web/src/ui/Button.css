@@ -27,6 +27,7 @@
  * be pressed is still recognisably the primary button — somebody looking for
  * it finds it, and finds out why from the row's own reason line.
  */
+.button[aria-disabled='true'],
 .button:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -59,12 +60,12 @@
  * A press settles the button to 96% (§14a, §29): the one moment a control answers the
  * hand. Hover never moves, and reduced motion keeps the press still.
  */
-.button:active:not(:disabled) {
+.button:active:not(:disabled, [aria-disabled='true']) {
   scale: 0.96;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .button:active:not(:disabled) {
+  .button:active:not(:disabled, [aria-disabled='true']) {
     scale: none;
   }
 }
@@ -74,20 +75,20 @@
   background: var(--dsw-alias-button-primary-fill);
 }
 
-.button--primary:hover:not(:disabled) {
+.button--primary:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--dsw-alias-button-primary-hover);
   box-shadow: var(--dsw-shadow-accent-hover);
 }
 
-.button--primary:active:not(:disabled) {
+.button--primary:active:not(:disabled, [aria-disabled='true']) {
   background: var(--dsw-alias-button-primary-active);
 }
 
-.button--ghost:hover:not(:disabled) {
+.button--ghost:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
-.button--ghost:active:not(:disabled) {
+.button--ghost:active:not(:disabled, [aria-disabled='true']) {
   background: var(--dsw-alias-interactive-bg-active);
 }
 
@@ -97,7 +98,7 @@
   border: 1px solid var(--dsw-alias-border-l3);
 }
 
-.button--outline:hover:not(:disabled) {
+.button--outline:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--dsw-alias-interactive-bg-hover);
   border-color: var(--dsw-alias-border-l4);
 }
@@ -107,7 +108,7 @@
   background: var(--dsw-alias-button-tool-bar-fill);
 }
 
-.button--toolbar:hover:not(:disabled) {
+.button--toolbar:hover:not(:disabled, [aria-disabled='true']) {
   background: var(--dsw-alias-button-tool-bar-hover);
 }
 
@@ -118,7 +119,7 @@
   border: 1px solid var(--dsw-alias-state-error-secondary);
 }
 
-.button--danger:hover:not(:disabled) {
+.button--danger:hover:not(:disabled, [aria-disabled='true']) {
   /* Two flat wash layers make the hover stronger without inventing a colour. */
   background:
     linear-gradient(

@@ -124,24 +124,42 @@ export function RecordControls({
         icon={<IconRefreshOutline16 />}
         onClick={refresh}
       />
-      <Button
-        size="sm"
-        disabled={loading || previous === undefined}
-        aria-label="Previous page"
-        title="Previous page"
+      <PageButton
+        label="Previous page"
         icon={<IconChevronLeftOutline14 />}
-        onClick={previous}
+        navigate={loading ? undefined : previous}
       />
-      <Button
-        size="sm"
-        disabled={loading || next === undefined}
-        aria-label="Next page"
-        title="Next page"
+      <PageButton
+        label="Next page"
         icon={<IconChevronRightOutline14 />}
-        onClick={next}
+        navigate={loading ? undefined : next}
       />
       {position}
     </div>
+  );
+}
+
+function PageButton({
+  label,
+  icon,
+  navigate,
+}: {
+  readonly label: string;
+  readonly icon: ReactNode;
+  readonly navigate?: () => void;
+}) {
+  const unavailable = navigate === undefined;
+  return (
+    <Button
+      size="sm"
+      aria-label={label}
+      title={label}
+      icon={icon}
+      // Keep existing focus while skipping unavailable controls in the tab order.
+      aria-disabled={unavailable || undefined}
+      tabIndex={unavailable ? -1 : undefined}
+      onClick={navigate}
+    />
   );
 }
 
