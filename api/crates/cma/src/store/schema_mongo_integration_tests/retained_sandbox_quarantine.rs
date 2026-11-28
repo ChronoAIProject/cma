@@ -1,5 +1,5 @@
 use layer2_core::sandbox::store::{
-    PageRequest, SandboxStore, SandboxStoreError, SandboxWorkerStore,
+    PageRequest, SandboxStore, SandboxStoreError, SandboxWorkerStore, WorkAuthorityProtocol,
 };
 use layer2_core::sandbox::{SandboxAdminQuery, SandboxAdminStore};
 use mongodb::bson::{doc, Document};
@@ -11,7 +11,7 @@ use crate::store::{
         commit_transaction, start_transaction, CommitOutcome, MongoSandboxStore, SANDBOXES,
     },
     sandbox_mongo_integration_tests::sandbox,
-    sandbox_quarantine::FIELD,
+    sandbox_quarantine::{self, FIELD},
     sandboxes::{read_sandbox, sandbox_document},
     work_schema,
 };
@@ -117,6 +117,40 @@ async fn startup_quarantines_the_v3_machine_origin_and_serves_healthy_sandboxes(
             .unwrap(),
         [healthy.id]
     );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable real MongoDB replica set"]
+async fn quarantine_rechecks_numeric_type_after_a_repair() {
+    let (client, name) = database().await;
+    let db = client.database(&name);
+    let rows = db.collection::<Document>(SANDBOXES);
+    let mut healthy = sandbox("sbx_repaired");
+    healthy.work.authority_protocol = Some(WorkAuthorityProtocol::RenewedV1);
+    let mut repaired = sandbox_document(&healthy, 0).unwrap();
+    repaired.insert("document_schema_version", 3_i32);
+    assert_eq!(read_sandbox(&repaired).unwrap(), healthy);
+    let mut stale = repaired.clone();
+    stale.insert("document_schema_version", 3.0_f64);
+    assert!(
+        matches!(read_sandbox(&stale), Err(SandboxStoreError::Corrupt(reason))
+        if reason == "unsupported ordinary-work envelope")
+    );
+    rows.insert_one(stale.clone()).await.unwrap();
+    let identity = doc! {"_id": healthy.id.as_str()};
+    rows.update_one(
+        identity.clone(),
+        doc! {"$set": {"document_schema_version": 3_i32}},
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(
+        sandbox_quarantine::retained(&rows, stale).await.unwrap(),
+        Some(healthy)
+    );
+    assert_eq!(rows.find_one(identity).await.unwrap().unwrap(), repaired);
     db.drop().await.unwrap();
 }
 
