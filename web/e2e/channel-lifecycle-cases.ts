@@ -74,6 +74,56 @@ async function setup(
   return { state, writes, boundary };
 }
 
+type ChannelLayoutWindow = Window & { channelLifecycleLayoutEvents?: string[] };
+
+async function observeChannelLayout(page: Page, baseURL: string) {
+  await page.addInitScript(() => {
+    const layoutEvents: string[] = [];
+    (window as ChannelLayoutWindow).channelLifecycleLayoutEvents = layoutEvents;
+    window.addEventListener('error', (event) => {
+      if (
+        event.isTrusted &&
+        event.message === 'ResizeObserver loop completed with undelivered notifications.' &&
+        event.error == null &&
+        event.lineno === 0 &&
+        event.colno === 0
+      ) {
+        layoutEvents.push(event.filename);
+      }
+    });
+  });
+
+  const events = () =>
+    page.evaluate(() => (window as ChannelLayoutWindow).channelLifecycleLayoutEvents ?? []);
+  const documentURL = new URL('/event-gateway', baseURL).href;
+  const telemetry = new URL('/api/v1/telemetry/browser', baseURL).href;
+  return async () => {
+    const previous = (await events()).length;
+    let acknowledged = false;
+    const receive: Parameters<Page['route']>[1] = async (route) => {
+      const request = route.request();
+      if (
+        !acknowledged &&
+        request.method() === 'POST' &&
+        request.postData() === '{"kind":"uncaught_error"}'
+      ) {
+        const observed = await events();
+        if (
+          !acknowledged &&
+          observed.length === previous + 1 &&
+          observed[previous] === documentURL
+        ) {
+          acknowledged = true;
+          return route.fulfill({ status: 204 });
+        }
+      }
+      return route.fallback();
+    };
+    await page.route(telemetry, receive);
+    return () => page.unroute(telemetry, receive);
+  };
+}
+
 export function channelLifecycleCases() {
   test('LOCAL paginated channel refresh retains the exact uncertain request and requires fresh record evidence', async ({
     page,
@@ -148,6 +198,7 @@ export function channelLifecycleCases() {
     }, info) => {
       await page.addInitScript((value) => localStorage.setItem('cma:appearance', value), theme);
       await page.setViewportSize({ width: 390, height: 1000 });
+      const allowLayoutDuringRecovery = await observeChannelLayout(page, baseURL!);
       const { state, writes, boundary } = await setup(page, baseURL!);
       for (const width of [390, 1440]) {
         await page.setViewportSize({ width, height: 1000 });
@@ -229,6 +280,7 @@ export function channelLifecycleCases() {
         dialog.getByRole('button', { name: 'Save channel', exact: true }),
       ).toBeDisabled();
       await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+      const endLayoutRecovery = await allowLayoutDuringRecovery();
       state.readStatus = 200;
       state.row = record(true, 5);
       await page.getByRole('button', { name: 'Refresh channel status', exact: true }).click();
@@ -237,6 +289,7 @@ export function channelLifecycleCases() {
       await expect(dialog.getByLabel('Channel name', { exact: true })).toHaveValue(
         'Retained lifecycle draft',
       );
+      await endLayoutRecovery();
       await dialog.getByRole('button', { name: 'Save channel', exact: true }).click();
       await expect(
         dialog.getByRole('button', { name: 'Retry same request', exact: true }),
