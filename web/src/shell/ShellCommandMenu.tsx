@@ -15,6 +15,7 @@ export function ShellCommandMenu({
   enabled,
   navigation,
   onNavigate,
+  onOpenEnvironments,
   onNewAgent,
   canOpenTriggers,
   canOpenOperations,
@@ -25,6 +26,7 @@ export function ShellCommandMenu({
   readonly enabled: boolean;
   readonly navigation: NavigationState;
   readonly onNavigate: (route: AppRoute) => void;
+  readonly onOpenEnvironments: () => void;
   readonly onNewAgent?: () => void;
   readonly canOpenTriggers: boolean;
   readonly canOpenOperations: boolean;
@@ -36,12 +38,13 @@ export function ShellCommandMenu({
       shellCommands({
         items: navigation.status === 'ready' ? navigation.items : [],
         onNavigate,
+        onOpenEnvironments,
         onNewAgent,
         canOpenTriggers,
         canOpenOperations,
         onAppearance: setAppearance,
       }),
-    [navigation, onNavigate, onNewAgent, canOpenTriggers, canOpenOperations],
+    [navigation, onNavigate, onOpenEnvironments, onNewAgent, canOpenTriggers, canOpenOperations],
   );
   if (!enabled) return null;
   return <CommandMenu open={open} onClose={() => onOpenChange(false)} commands={commands} />;
