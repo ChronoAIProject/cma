@@ -64,6 +64,8 @@ async function submitV2ControlAttempt(
       throw new Error(
         'This response is no longer active. Its recorded outcome is available in the conversation.',
       );
+    if (command.type === 'cancel' && !observed.runtime_support.cancel)
+      throw new Error('This Agent’s runtime does not support stopping this response.');
     intent = session.journal.retainControl({
       key,
       responseId: target.responseId,

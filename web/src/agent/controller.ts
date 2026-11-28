@@ -29,9 +29,10 @@ import {
 } from './transport/approvalProjectionObserver';
 import { followV2Agent } from './transport/replay';
 import { useAgentActions } from './actions';
-import { lifecycleCommands } from './lifecycleCommands';
+import { lifecycleCommands, sameStopResponse } from './lifecycleCommands';
 import { useAgentActionError, useAgentIdentityChange } from './actionError';
 import { useControlStatus } from './transport/controlStatus';
+import { useFirstReplyStop } from './transport/firstReplyStop';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
 import { usePresentedAgent, usePresentedRetainedInputs } from './presentation';
 import { useAgentSummary } from './useAgentSummary';
@@ -77,6 +78,7 @@ export function useAgentController(
     state.status === 'ready' &&
     state.detail.id === agentId &&
     state.conversation.activeRunId !== undefined;
+  const responseTarget = activeTurn ? state.conversation.responseBinding : undefined;
   const [pending, setPending] = useState<AgentCommand>();
   const [actionError, setActionError, recoverInputError] = useAgentActionError();
   const [streamError, setStreamError] = useState<string>();
@@ -419,7 +421,11 @@ export function useAgentController(
     onIdentityChange,
     recoverInputError,
   );
-  const controlNotice = useControlStatus(v2, onIdentityChange);
+  const controlStatus = useControlStatus(v2, responseTarget, onIdentityChange);
+  const responseControls = useFirstReplyStop(
+    state,
+    controlReadiness.responseControlAvailability(state, agentId, suspended),
+  );
   const queuedInputs = useQueuedInputs(
     v2,
     controlReady,
@@ -431,13 +437,15 @@ export function useAgentController(
       ? state.conversation.messages
       : undefined,
   );
+  const lifecycle = lifecycleCommands(client, command);
   return {
     retained,
     ...retainedInputs,
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
-    controlNotice,
+    controlNotice: controlStatus.notice,
+    stopRequest: controlStatus.stopRequest,
     controlBaselineReady: controlReady,
-    responseControls: controlReadiness.responseControlAvailability(state, agentId, suspended),
+    responseControls,
     controlsUnavailable: controlReadiness.controlsUnavailable(state, v2 !== undefined, suspended),
     recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
     state: presented,
@@ -470,6 +478,14 @@ export function useAgentController(
         : (content, onAccepted, onReceiptObserved, onRefused, onOrdinaryInput) =>
             run(content, onAccepted, onReceiptObserved, onRefused, 'interrupt', onOrdinaryInput),
     approve: (approvalId, decision) => run({ id: approvalId, decision }),
-    ...lifecycleCommands(client, command),
+    ...lifecycle,
+    interrupt: async () => {
+      if (sameStopResponse(state, stateRef.current)) await lifecycle.interrupt();
+    },
+    interruptForControl: async () => {
+      if (!sameStopResponse(state, stateRef.current))
+        throw new Error('This response is no longer active.');
+      await lifecycle.interruptForControl();
+    },
   };
 }
