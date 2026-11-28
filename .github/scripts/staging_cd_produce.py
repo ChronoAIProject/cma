@@ -36,8 +36,7 @@ def select_native(env):
     def run(_masker, _diagnostics):
         tasks = planned(env)
         require(env["CD_COMPONENT"] in COMPONENTS, "Reserved native producer component differs")
-        single_publish = len(tasks) == 1 and tasks[0][0] == "publish"
-        select = single_publish and (env["CD_COMPONENT"] == "am" or tasks[0][1]["source"] == env["GITHUB_SHA"])
+        select = len(tasks) == 1 and tasks[0][0] == "publish"
         if select:
             verify_source(Path.cwd(), env["GITHUB_SHA"], tasks[0][1])
         step_output(env, "build", "true" if select else "false")
@@ -60,12 +59,10 @@ def produce(env, root, diagnostics, progress, *, timings=None, cache_metrics=Non
         return "no-single-reservation"
     reservation = pending[0]
     historical_web = reservation["component"] == "web" and env.get("CD_WEB_CONTINUITY_RAW") == "true"
-    historical_native_am = native and reservation["component"] == "am"
-    if reservation["source"] != env["GITHUB_SHA"] and not (historical_web or historical_native_am):
-        return "historical-reservation"
-
     if native:
         verify_source(root, env["GITHUB_SHA"], reservation)
+    elif reservation["source"] != env["GITHUB_SHA"] and not historical_web:
+        return "historical-reservation"
 
     token = env.get("GH_TOKEN")
     api = GitHub(token, local_tags=local_tag_reader(root))

@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from datetime import date
 from pathlib import Path
-from unittest.mock import ANY, Mock, patch
+from unittest.mock import ANY, Mock, call, patch
 
 import staging_cd_publish
 import staging_cd_produce
@@ -17,7 +17,8 @@ from staging_cd_build_cargo_keys import CargoKey
 from staging_cd_common import Refusal
 from staging_cd_native_archive import METADATA, artifact_name
 from staging_cd_release_archive import ARCHIVE, LEGACY_SCHEMA, MANIFEST, load, path_for, seal
-from staging_cd_receipts_tests import fixture_identity, fixture_receipt
+from staging_cd_receipts_tests import fixture_identity, fixture_receipt, fixture_runtime_receipt
+from staging_cd_reservations import ReservationSuperseded
 
 
 class ArchiveHandoffTests(unittest.TestCase):
@@ -62,11 +63,17 @@ class ArchiveHandoffTests(unittest.TestCase):
         self.check_prepared_release(overlap=False)
 
     def test_tested_native_archive_writes_the_upload_outputs(self):
-        release = fixture_identity(component="am")
+        for component in ("am", "runtime", "runtime-omarchy"):
+            for historical in (False, True):
+                with self.subTest(component=component, historical=historical):
+                    self.check_native_upload(component, historical=historical)
+
+    def check_native_upload(self, component, *, historical):
+        release = fixture_identity(component=component)
         reservation = {key: value for key, value in release.items() if key != "build"}
         reservation["schema"] = "cma-version-reservation-v1"
-        task = {"mode": "publish", "reservation": reservation, "component": "am"}
-        push_head = "f" * 40
+        task = {"mode": "publish", "reservation": reservation, "component": component}
+        push_head = "f" * 40 if historical else release["source"]
         stamp = {"versionLabel": release["version"], "imageId": "sha256:" + "b" * 64,
                  "buildFingerprint": release["build"]}
 
@@ -84,13 +91,14 @@ class ArchiveHandoffTests(unittest.TestCase):
             output = root / "output"
             env = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": push_head,
                    "GITHUB_RUN_ID": str(release["run_id"]), "GITHUB_RUN_ATTEMPT": str(release["run_attempt"]),
-                   "CD_COMPONENT": "am", "CD_TASKS": json.dumps([task]), "RUNNER_TEMP": str(root),
+                   "CD_COMPONENT": component, "CD_TASKS": json.dumps([task]), "RUNNER_TEMP": str(root),
                    "CD_NATIVE_CI_PRODUCER": "true", "GITHUB_OUTPUT": str(output)}
             for name in ("event_identity", "GitHub", "Reservations"):
                 stack.enter_context(patch.object(staging_cd_produce, name))
+            authority = staging_cd_produce.Reservations.return_value
             snapshot = stack.enter_context(patch.object(staging_cd_produce, "snapshot"))
             verify = stack.enter_context(patch.object(staging_cd_produce, "verify_source"))
-            stack.enter_context(patch.object(staging_cd_produce, "build", side_effect=build_image))
+            build = stack.enter_context(patch.object(staging_cd_produce, "build", side_effect=build_image))
             stack.enter_context(patch.object(staging_cd_produce, "stamp_metadata", side_effect=test_image))
             self.assertEqual(staging_cd_produce.select_native(env), 0)
             self.assertEqual(output.read_text(), "build=true\n")
@@ -103,6 +111,57 @@ class ArchiveHandoffTests(unittest.TestCase):
             self.assertEqual(output.read_text(), f"build=true\nnative_name={artifact_name(release)}\nnative_path={destination}\n")
             self.assertIsNotNone(load(destination, release))
             self.assertTrue((destination / METADATA).is_file())
+            build.assert_called_once()
+            self.assertEqual(authority.require_current.call_args_list,
+                             [call(reservation, build_started=False), call(reservation, build_started=True)])
+
+            output.unlink()
+            next_task = dict(task, reservation=dict(reservation, source="7" * 40))
+            batch = dict(env, CD_TASKS=json.dumps([task, next_task]))
+            self.assertEqual(staging_cd_produce.select_native(batch), 0)
+            self.assertEqual(staging_cd_produce.produce(batch, root, Mock(), {}), "no-single-reservation")
+            self.assertEqual(output.read_text(), "build=false\n")
+
+            authority.require_current.side_effect = ReservationSuperseded()
+            self.assertEqual(staging_cd_produce.produce(env, root, Mock(), {}), "reservation-superseded")
+            self.assertEqual(output.read_text(), "build=false\n")
+            build.assert_called_once()
+
+    def test_native_runtime_transfer_miss_rebuilds_the_reserved_source(self):
+        for component in ("runtime", "runtime-omarchy"):
+            receipt = fixture_runtime_receipt(component=component)
+            release = receipt["identity"]
+            reservation = {key: value for key, value in release.items() if key != "build"}
+            reservation["schema"] = "cma-version-reservation-v1"
+            task = {"mode": "publish", "reservation": reservation, "component": component}
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as temporary, \
+                    contextlib.ExitStack() as stack:
+                root = Path(temporary)
+                env = {"GITHUB_EVENT_NAME": "push", "GITHUB_SHA": "f" * 40,
+                       "GITHUB_RUN_ID": str(release["run_id"]), "GITHUB_RUN_ATTEMPT": str(release["run_attempt"]),
+                       "CD_COMPONENT": component, "CD_TASKS": json.dumps([task]), "RUNNER_TEMP": str(root),
+                       "CD_RECEIPTS_PATH": str(root / "receipts.json"), "CD_NATIVE_IMAGE_ARTIFACT": "12"}
+                stack.enter_context(patch.dict(os.environ, env, clear=True))
+                for name in ("event_identity", "GitHub", "Registry"):
+                    stack.enter_context(patch.object(staging_cd_publish, name))
+                authority = stack.enter_context(patch.object(staging_cd_publish, "Reservations")).return_value
+                snapshot = stack.enter_context(patch.object(staging_cd_publish, "snapshot"))
+                stack.enter_context(patch.object(staging_cd_publish, "identity", return_value=(release, None, None)))
+                transfer = stack.enter_context(patch.object(staging_cd_publish, "fetch_native", return_value=None))
+                fallback_image = root / ARCHIVE
+                build = stack.enter_context(patch.object(staging_cd_publish, "build",
+                                                         return_value=(fallback_image, release)))
+                publish = stack.enter_context(patch.object(staging_cd_publish, "publish", return_value=receipt))
+
+                self.assertEqual(staging_cd_publish.main(), 0)
+                self.assertEqual(transfer.call_args.args[:2], (release, "12"))
+                self.assertEqual(snapshot.call_args.args[1], reservation["source"])
+                self.assertEqual(build.call_args.args[1], reservation)
+                self.assertEqual(build.call_args.kwargs["source"], snapshot.call_args.args[2])
+                self.assertEqual(authority.require_current.call_args_list,
+                                 [call(reservation, build_started=True), call(reservation, build_started=False)])
+                self.assertEqual(publish.call_args.args[:2], (fallback_image, release))
+                self.assertFalse(publish.call_args.kwargs["qualified"])
 
     def check_prepared_release(self, *, overlap, reuse=False):
         receipt = fixture_receipt(component="am")
