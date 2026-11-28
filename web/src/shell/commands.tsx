@@ -135,6 +135,7 @@ export function shellCommands({
       id: 'go:environments',
       group: 'Go to',
       label: 'Environments',
+      preferredQueries: ['environment', 'environments'],
       icon: <IconRightUpOutline16 />,
       run: onOpenEnvironments,
     },
