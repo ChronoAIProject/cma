@@ -399,6 +399,7 @@ impl AgentOperationService {
                     )
                 {
                     self.runtimes.recover_missing_attachment(target).await;
+                    return Err(AgentOperationError::RuntimeAttachmentUnavailable(error));
                 }
                 return Err(runtime_error(error));
             }

@@ -5,8 +5,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use layer2_core::sandbox::store::{
-    SandboxMaintenanceStore, SandboxReconciliationStore, SandboxRuntimeLossOutcome,
-    SandboxRuntimeLossRequest, SandboxStore, SandboxStoreError,
+    ReconciliationSandbox, SandboxMaintenanceStore, SandboxReconciliationStore,
+    SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest, SandboxStoreError,
 };
 use layer2_core::sandbox::{AgentService, Sandbox, SandboxPolicySource, SandboxStatus};
 use layer2_core::{rfc3339_at, seconds_from_rfc3339, SandboxId};
@@ -54,14 +54,10 @@ mod telemetry;
 mod transient;
 
 pub(crate) trait ReconciliationStore:
-    SandboxReconciliationStore + SandboxMaintenanceStore + SandboxStore
+    SandboxReconciliationStore + SandboxMaintenanceStore
 {
 }
-
-impl<T> ReconciliationStore for T where
-    T: SandboxReconciliationStore + SandboxMaintenanceStore + SandboxStore
-{
-}
+impl<T: SandboxReconciliationStore + SandboxMaintenanceStore> ReconciliationStore for T {}
 
 pub(crate) struct SandboxReconciler {
     store: Arc<dyn ReconciliationStore>,
@@ -188,7 +184,11 @@ impl SandboxReconciler {
         {
             return Ok(());
         }
-        if let Some(current) = self.store.get_sandbox(&id).await? {
+        let current = self.store.reconciliation_sandbox(&id).await?;
+        if matches!(current, ReconciliationSandbox::Quarantined) {
+            return Ok(());
+        }
+        if let ReconciliationSandbox::Present(current) = current {
             current
                 .validate()
                 .map_err(|error| corrupt(&error.to_string()))?;
@@ -436,7 +436,9 @@ impl SandboxReconciler {
             measure(
                 Stage::DurableRead,
                 async {
-                    if self.store.get_sandbox(&sandbox.id).await?.as_ref() != Some(sandbox) {
+                    if !matches!(self.store.reconciliation_sandbox(&sandbox.id).await?,
+                        ReconciliationSandbox::Present(current) if current.as_ref() == sandbox)
+                    {
                         return Err(SandboxStoreError::Conflict);
                     }
                     Ok(())
@@ -446,35 +448,6 @@ impl SandboxReconciler {
             .await?;
         }
         Ok(true)
-    }
-
-    async fn binding_result<T>(
-        &self,
-        sandbox: &Sandbox,
-        result: layer3_adapter::Result<T>,
-    ) -> Result<T, SandboxStoreError> {
-        let error = match result {
-            Ok(value) => return Ok(value),
-            Err(error) => error,
-        };
-        if error.is_native_home_identity_refusal() {
-            let current = measure(
-                Stage::DurableRead,
-                self.store.get_sandbox(&sandbox.id),
-                diagnostics::store_outcome,
-            )
-            .await?;
-            if current.is_some_and(|row| {
-                row.revision > sandbox.revision
-                    && (row.runtime != sandbox.runtime
-                        || row.lifecycle.suspended_runtime != sandbox.lifecycle.suspended_runtime
-                        || row.lifecycle.home != sandbox.lifecycle.home)
-            }) {
-                return Err(SandboxStoreError::Conflict);
-            }
-            return Err(transient::native_home_identity(error));
-        }
-        Err(provider_error(error))
     }
 }
 
