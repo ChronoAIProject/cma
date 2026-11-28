@@ -92,7 +92,9 @@ pub struct MongoSandboxStore {
     pub(super) runtime_migration_authority:
         Option<std::sync::Arc<dyn layer2_core::sandbox::RuntimeMigrationAuthority>>,
     pub(super) renewable_work: bool,
+    pub(super) workspace_authority_retry: bool,
     pub(super) segment_adoption_enabled: bool,
+    pub(super) onboarding_command_admission: bool,
     pub(super) bounded_approval_reads: bool,
     pub(super) runtime_loss_bounded_proof_enabled: bool,
     pub(super) bounded_close_retries: bool,

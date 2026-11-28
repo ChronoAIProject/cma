@@ -51,7 +51,7 @@ impl AgentCommandWorker {
         command: &AdmittedAgentCommand,
         code: CommandFailureCode,
     ) -> Result<Duration, CommandLedgerError> {
-        let writes_agent = matches!(command.receipt.envelope.actor, AgentActor::Trigger { .. });
+        let writes_agent = command.receipt.envelope.is_first_message();
         let Some(scope) = self.scope(command, writes_agent).await else {
             return Ok(UNCLAIMED_RECHECK_DELAY);
         };

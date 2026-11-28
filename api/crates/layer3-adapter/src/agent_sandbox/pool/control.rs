@@ -51,6 +51,32 @@ pub trait NativePoolControl: Send + Sync {
             "native pool retirement is unavailable".into(),
         ))
     }
+    /// Recover the exact original binding, or prove its definitions and dependants absent.
+    async fn recover_retirement_binding(
+        &self,
+        plan: &NativePoolConfiguration,
+    ) -> Result<Option<NativePoolBinding>> {
+        let mut matches = self
+            .inventory()
+            .await?
+            .into_iter()
+            .map(|status| status.binding)
+            .filter(|binding| {
+                binding.config_sha256 == plan.config_sha256
+                    && binding.spec == plan.spec
+                    && binding.pod_policy == plan.pod_policy
+            });
+        let binding = matches.next().ok_or_else(|| {
+            crate::AdapterError::Unsupported("native retirement absence is unavailable".into())
+        })?;
+        if matches.next().is_some() {
+            return Err(crate::AdapterError::Rejected(
+                "native retirement binding is ambiguous".into(),
+            ));
+        }
+        Ok(Some(binding))
+    }
+
     async fn inventory_claims(&self) -> Result<Vec<NativePoolClaim>> {
         Err(crate::AdapterError::Unsupported(
             "native claim inventory is unavailable".into(),
@@ -154,6 +180,13 @@ impl NativePoolControl for AgentSandboxPools {
     ) -> Result<bool> {
         self.retire_pool(binding, retained_homes).await
     }
+    async fn recover_retirement_binding(
+        &self,
+        plan: &NativePoolConfiguration,
+    ) -> Result<Option<NativePoolBinding>> {
+        self.recover_retirement_binding(plan).await
+    }
+
     async fn inventory_claims(&self) -> Result<Vec<NativePoolClaim>> {
         self.inventory_claims().await
     }

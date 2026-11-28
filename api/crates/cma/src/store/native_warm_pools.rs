@@ -11,10 +11,15 @@ use mongodb::{
 };
 
 use super::durability::majority_collection;
-use crate::warm_pools::{OperatorReplicas, PoolTarget, PoolTargetStore, RetirementScan};
+use crate::warm_pools::{
+    OperatorReplicas, PoolFailure, PoolTarget, PoolTargetStore, RetirementScan,
+};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
 mod activation;
+mod create_cutover;
+mod failure;
+mod fixed_prewarm;
 mod released;
 mod retirement;
 #[cfg(test)]
@@ -242,30 +247,74 @@ impl PoolTargetStore for MongoNativeWarmPools {
     }
 
     async fn insert(&self, target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
-        match self.targets.insert_one(&target).await {
-            Ok(_) => Ok(target),
-            Err(_) => {
-                // Includes a lost acknowledgement: the key remains authoritative.
-                if let Some(existing) = self.find(&target.id).await? {
-                    return Ok(existing);
-                }
-                let mut filter = self.scope();
-                filter.insert("plan.config_sha256", &target.plan.config_sha256);
-                if self
-                    .targets
-                    .find_one(filter)
-                    .await
-                    .map_err(|_| WarmPoolError::Unavailable)?
-                    .is_some()
-                {
-                    Err(WarmPoolError::Conflict)
-                } else {
-                    Err(WarmPoolError::Unavailable)
-                }
-            }
-        }
+        self.insert_target(target, false).await
     }
 
+    async fn insert_with_create_fence(
+        &self,
+        target: PoolTarget,
+    ) -> Result<PoolTarget, WarmPoolError> {
+        self.insert_target(target, true).await
+    }
+
+    async fn authorize_provider_create(&self, target: &PoolTarget) -> Result<(), WarmPoolError> {
+        let mut filter = fence(target);
+        filter.extend(doc! {"retiring": {"$ne": true}, "binding": mongodb::bson::Bson::Null});
+        self.check_fenced_write(
+            self.targets
+                .update_one(
+                    filter,
+                    doc! {"$set": {"provider_create_never_dispatched": false}},
+                )
+                .await,
+        )
+        .await
+    }
+
+    async fn prepare_fixed_pool(
+        &self,
+        active: &PoolTarget,
+        target: Option<PoolTarget>,
+        generation: i64,
+    ) -> Result<(), WarmPoolError> {
+        self.record_fixed_preparation(active, target, generation)
+            .await
+    }
+    async fn activate_fixed_pools(
+        &self,
+        targets: &[PoolTarget],
+        provider: &dyn layer3_adapter::agent_sandbox::NativePoolControl,
+        target_fencing: bool,
+        generation: i64,
+    ) -> Result<(), WarmPoolError> {
+        self.select_fixed_preparations(targets, provider, target_fencing, generation)
+            .await
+    }
+    async fn fixed_preparation(&self, target: &PoolTarget) -> Result<Option<bool>, WarmPoolError> {
+        self.read_fixed_preparation(target).await
+    }
+    async fn begin_fixed_preparation(
+        &self,
+        target: &PoolTarget,
+        active: &PoolTarget,
+        generation: i64,
+    ) -> Result<bool, WarmPoolError> {
+        self.authorize_fixed_effect(target, active, generation)
+            .await
+    }
+    async fn withdraw_fixed_preparation(&self, target: &PoolTarget) -> Result<(), WarmPoolError> {
+        self.clear_withdrawn_fixed_preparation(target).await
+    }
+    async fn pool_creates_fenced(&self, epoch: uuid::Uuid) -> Result<bool, WarmPoolError> {
+        self.create_cutover_is_current(epoch).await
+    }
+    async fn remove_unbound_retired(
+        &self,
+        target: &PoolTarget,
+        epoch: uuid::Uuid,
+    ) -> Result<(), WarmPoolError> {
+        self.retire_after_create_cutover(target, epoch).await
+    }
     async fn resize(
         &self,
         id: &str,
@@ -275,7 +324,7 @@ impl PoolTargetStore for MongoNativeWarmPools {
         let mut filter = self.scope();
         filter.extend(doc! {"_id":id,"revision":body.expected_revision as i64,"retiring":{"$ne":true},"retired":{"$ne":true},"lease_until":{"$lte":DateTime::now()}});
         let mut fields = doc! {"target_replicas":i64::from(body.target_replicas),
-        "error":mongodb::bson::Bson::Null,"reconcile_after":DateTime::from_millis(0)};
+        "error":mongodb::bson::Bson::Null,"reconciliation_failure":mongodb::bson::Bson::Null,"reconcile_after":DateTime::from_millis(0)};
         if operator_choice {
             // Same fenced write as the count, so the decision is never ahead of it.
             filter.insert("machine", true);
@@ -356,24 +405,58 @@ impl PoolTargetStore for MongoNativeWarmPools {
     }
 
     async fn finish(&self, target: &PoolTarget, success: bool) -> Result<(), WarmPoolError> {
-        let mut fields = doc! {"lease":mongodb::bson::Bson::Null,"lease_until":DateTime::from_millis(0),
-        "reconcile_after":DateTime::from_millis(DateTime::now().timestamp_millis()+15_000),
-        "error": if success { mongodb::bson::Bson::Null } else { "Native warm pool reconciliation is unavailable; the recorded target will retry.".into() }};
-        let mut update = doc! {};
-        if success {
-            fields.insert("applied_revision", target.revision);
-            update.insert(
-                "$unset",
-                doc! {"preparation.pending_revision": "", "preparation.effect_until": ""},
-            );
-        }
-        update.insert("$set", fields);
-        self.check_fenced_write(self.targets.update_one(fence(target), update).await)
-            .await
+        let failure = (!success).then_some(PoolFailure::apply(
+            "unavailable",
+            "The native warm pool could not reconcile. Check provider availability and the recorded pool binding. Reconciliation retries automatically.",
+        ));
+        self.finish_attempt(target, failure).await
+    }
+
+    async fn finish_with_failure(
+        &self,
+        target: &PoolTarget,
+        failure: PoolFailure,
+    ) -> Result<(), WarmPoolError> {
+        self.finish_attempt(target, Some(failure)).await
     }
 }
 
 impl MongoNativeWarmPools {
+    async fn insert_target(
+        &self,
+        target: PoolTarget,
+        fenced: bool,
+    ) -> Result<PoolTarget, WarmPoolError> {
+        let mut row = mongodb::bson::serialize_to_document(&target)
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        if fenced && target.binding.is_none() {
+            row.insert("provider_create_never_dispatched", true);
+        }
+        let targets = majority_collection::<Document>(&self.database, COLLECTION);
+        match targets.insert_one(row).await {
+            Ok(_) => Ok(target),
+            Err(_) => {
+                // Includes a lost acknowledgement: the key remains authoritative.
+                if let Some(existing) = self.find(&target.id).await? {
+                    return Ok(existing);
+                }
+                let mut filter = self.scope();
+                filter.insert("plan.config_sha256", &target.plan.config_sha256);
+                if self
+                    .targets
+                    .find_one(filter)
+                    .await
+                    .map_err(|_| WarmPoolError::Unavailable)?
+                    .is_some()
+                {
+                    Err(WarmPoolError::Conflict)
+                } else {
+                    Err(WarmPoolError::Unavailable)
+                }
+            }
+        }
+    }
+
     async fn claim_matching(
         &self,
         id: Option<&str>,

@@ -81,6 +81,11 @@ impl RuntimeServices {
                 .clone()
                 .map(|image| (image, config.runtime.native_machine_warm_pool_target)),
         )
+        .with_fixed_pool_prewarm(
+            config.runtime.pool_rollout.fixed_prewarm.clone(),
+            config.runtime.pool_rollout.fixed_prewarm_generation,
+        )
+        .with_unbound_retirement_fencing(config.runtime.pool_rollout.pool_create_cutover_epoch)
         .with_runtime_versions()
         .with_target_fencing(config.agent_manager_replicas.is_some())
         .with_default_pool_holds(stores.sandbox_model.default_pool_holds.clone())

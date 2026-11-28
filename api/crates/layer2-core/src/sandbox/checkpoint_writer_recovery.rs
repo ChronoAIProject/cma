@@ -1,6 +1,6 @@
 use super::{
     Sandbox, SandboxImageRotationPhase, SandboxLifecycleOperation, SandboxModelError,
-    SandboxPausePhase,
+    SandboxPausePhase, TypedFailure,
 };
 
 impl Sandbox {
@@ -14,7 +14,29 @@ impl Sandbox {
     ) -> Result<(), SandboxModelError> {
         self.require_lifecycle_authority(holder, fence)?;
         let mut next = self.clone();
-        let authority = match next.lifecycle.operation.as_mut() {
+        next.renew_checkpoint_writer_authority()?;
+        next.retry_lifecycle(ready_at, holder, fence, at)?;
+        *self = next;
+        Ok(())
+    }
+
+    pub fn park_runtime_update_after_writer_resume(
+        &mut self,
+        failure: TypedFailure,
+        holder: &str,
+        fence: u64,
+        at: String,
+    ) -> Result<(), SandboxModelError> {
+        self.require_lifecycle_authority(holder, fence)?;
+        let mut next = self.clone();
+        next.renew_checkpoint_writer_authority()?;
+        next.park_failed_runtime_update(failure, holder, fence, at)?;
+        *self = next;
+        Ok(())
+    }
+
+    fn renew_checkpoint_writer_authority(&mut self) -> Result<(), SandboxModelError> {
+        let authority = match self.lifecycle.operation.as_mut() {
             Some(SandboxLifecycleOperation::Pause {
                 phase,
                 authority,
@@ -59,8 +81,6 @@ impl Sandbox {
                 SandboxModelError::invalid_value("sandbox.checkpoint_writer_recovery")
             })?;
         authority.writer_resume_token = Some(authority.expected_writer_resume_token());
-        next.retry_lifecycle(ready_at, holder, fence, at)?;
-        *self = next;
         Ok(())
     }
 }

@@ -25,6 +25,7 @@ fn view() -> WarmPoolView {
         retirement_status: None,
         resource_name: None,
         error: None,
+        reconciliation_failure: None,
         machine: false,
         current_runtime: None,
     }

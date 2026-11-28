@@ -89,6 +89,7 @@ impl FeatureFlags {
             credential_retirement_receipts: flag(lookup, gates::CREDENTIAL_RETIREMENT_RECEIPTS)?,
             retirement_reauthorization: flag(lookup, gates::RETIREMENT_REAUTHORIZATION)?,
             workspace_prepare_observations: flag(lookup, gates::WORKSPACE_PREPARE_OBSERVATIONS)?,
+            workspace_authority_retry: flag(lookup, "CHRONO_WORKSPACE_AUTHORITY_RETRY_ENABLED")?,
             reviewed_sandbox_retirement_enabled: flag(
                 lookup,
                 "CHRONO_REVIEWED_SANDBOX_RETIREMENT_ENABLED",
@@ -262,6 +263,7 @@ impl FeatureFlags {
             incremental_text: tail.incremental_text,
             v2_ui_transport: tail.v2_ui_transport,
             trigger_command_admission: tail.trigger_command_admission,
+            onboarding_command_admission: tail.onboarding_command_admission,
             github_repository_preflight: tail.github_repository_preflight,
             github_connection_approval: tail.github_connection_approval,
             github_connection_recovery: tail.github_connection_recovery,

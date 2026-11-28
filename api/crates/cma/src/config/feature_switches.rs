@@ -93,6 +93,7 @@ const SUPPORTED: &[&str] = &[
     "CHRONO_USAGE_SNAPSHOT_CURSORS_ENABLED",
     "CHRONO_V2_UI_TRANSPORT_ENABLED",
     "CHRONO_VISITOR_TWO_SANDBOX_DEFAULTS_ENABLED",
+    "CHRONO_WORKSPACE_AUTHORITY_RETRY_ENABLED",
 ];
 
 /// Read the optional bundle once, then let each existing reader parse its

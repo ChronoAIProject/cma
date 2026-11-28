@@ -1,12 +1,82 @@
 //! Ordinary worker writes retain the claim captured before the effect.
 
 use layer2_core::sandbox::store::{ClaimedWork, SandboxStoreError, WorkAuthority};
+use layer2_core::sandbox::Workspace;
 use mongodb::bson::{doc, Document};
+use tokio::time::Instant;
 
 use super::sandbox_mongo::MongoSandboxStore;
 use super::work_claim_authority::without_ledger_maintenance;
 
 pub(super) mod workspace;
+
+pub(super) fn workspace_deadline(
+    workspace: &Workspace,
+) -> Result<Option<Instant>, SandboxStoreError> {
+    let chain = WorkAuthority::current()?;
+    if !chain.iter().any(|authority| {
+        matches!(authority.claimed(), ClaimedWork::Workspace(claimed)
+            if claimed.id == workspace.id
+                && claimed.owner == workspace.owner
+                && claimed.sandbox_id == workspace.sandbox_id
+                && claimed.work.step == workspace.work.step
+                && claimed.work.lease.as_ref().is_some_and(|lease| workspace.work.owns(&lease.holder, lease.fence)))
+    }) {
+        return Ok(None);
+    }
+    chain
+        .iter()
+        .map(WorkAuthority::deadline)
+        .try_fold(None, |shortest, deadline| {
+            deadline.map(|until| Some(shortest.map_or(until, |old: Instant| old.min(until))))
+        })
+}
+
+pub(super) async fn retry_workspace_write<T, F>(
+    deadline: Option<Instant>,
+    stage: &'static str,
+    mut write: impl FnMut() -> F,
+) -> Result<T, SandboxStoreError>
+where
+    F: std::future::Future<Output = Result<T, FenceError>>,
+{
+    let Some(deadline) = deadline else {
+        return write().await.map_err(FenceError::into_domain);
+    };
+    tokio::time::timeout_at(deadline, async {
+        for attempt in 0..super::sandbox_mongo::TRANSACTION_ATTEMPTS {
+            super::contention::backoff(attempt).await;
+            WorkAuthority::current()?;
+            match write().await {
+                Err(FenceError::Driver(error))
+                    if attempt + 1 < super::sandbox_mongo::TRANSACTION_ATTEMPTS
+                        && super::sandbox_mongo::is_transient(&error) =>
+                {
+                    tracing::debug!(
+                        stage,
+                        attempt = attempt + 1,
+                        remaining_ms = deadline
+                            .saturating_duration_since(Instant::now())
+                            .as_millis() as u64,
+                        "Retrying known-aborted Workspace transaction"
+                    );
+                }
+                Err(FenceError::Driver(error)) => {
+                    // The shared transaction opener wraps a durable fence
+                    // refusal in a driver custom error.
+                    return Err(error
+                        .get_custom::<SandboxStoreError>()
+                        .cloned()
+                        .unwrap_or_else(|| FenceError::Driver(error).into_domain()));
+                }
+                result => return result.map_err(FenceError::into_domain),
+            }
+        }
+        unreachable!("the final transaction attempt returns its result")
+    })
+    .await
+    .map_err(|_| SandboxStoreError::Conflict)?
+}
 
 pub(super) fn sandbox(filter: Document, id: &str) -> Result<Document, SandboxStoreError> {
     constrain(without_ledger_maintenance(filter), id, true)

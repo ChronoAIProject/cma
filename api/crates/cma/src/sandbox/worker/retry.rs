@@ -2,7 +2,7 @@
 use super::{support::WorkerFailure, SandboxWorker};
 use crate::sandbox::work_retry::{sandbox_class, RetryTelemetry};
 use layer2_core::sandbox::work_retry::{work_retry_policy, WorkRetryDecision};
-use layer2_core::sandbox::Sandbox;
+use layer2_core::sandbox::{Sandbox, SandboxLifecycleOperation, SandboxStatus};
 use layer3_adapter::{RuntimeHandle, RuntimeProvisionRequest, RuntimeStatus};
 use std::time::{Duration, SystemTime};
 
@@ -39,6 +39,14 @@ impl SandboxWorker {
         .await
     }
 
+    pub(super) fn is_image_rotation(sandbox: &Sandbox) -> bool {
+        sandbox.status == SandboxStatus::Rotating
+            && matches!(
+                sandbox.lifecycle.operation,
+                Some(SandboxLifecycleOperation::ImageRotation { .. })
+            )
+    }
+
     pub(super) fn retry_decision(
         &self,
         sandbox: &Sandbox,
@@ -56,7 +64,7 @@ impl SandboxWorker {
         } else {
             base
         };
-        if !self.config.work_retry_policy_enabled {
+        if !self.config.work_retry_policy_enabled && !Self::is_image_rotation(sandbox) {
             return WorkRetryDecision {
                 delay: floor,
                 parked: false,
@@ -81,7 +89,7 @@ impl SandboxWorker {
         decision: WorkRetryDecision,
         now: SystemTime,
     ) -> Option<RetryTelemetry> {
-        self.config.work_retry_policy_enabled.then(|| {
+        (self.config.work_retry_policy_enabled || Self::is_image_rotation(sandbox)).then(|| {
             RetryTelemetry::sandbox(
                 sandbox,
                 failure.retry_kind(),

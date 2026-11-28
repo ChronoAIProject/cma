@@ -156,6 +156,11 @@ impl super::sandbox_mongo::MongoSandboxStore {
         self.renewable_work = enabled;
         self
     }
+
+    pub(crate) fn with_workspace_authority_retry(mut self, enabled: bool) -> Self {
+        self.workspace_authority_retry = enabled;
+        self
+    }
 }
 
 /// Generic lineage helpers can share a collection parameter without widening

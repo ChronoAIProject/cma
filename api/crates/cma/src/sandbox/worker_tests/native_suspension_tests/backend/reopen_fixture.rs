@@ -62,3 +62,19 @@ impl NativeBackend {
         Ok(())
     }
 }
+
+impl NativeBackend {
+    pub(super) fn credential_delivery_fault(&self) -> layer3_adapter::Result<()> {
+        if self.fail_credential_transiently.load(Ordering::SeqCst) {
+            return Err(AdapterError::Unavailable(
+                "fixture credential delivery unavailable".into(),
+            ));
+        }
+        if self.reject_credential.load(Ordering::SeqCst) {
+            return Err(AdapterError::Rejected(
+                "fixture credential delivery rejected".into(),
+            ));
+        }
+        Ok(())
+    }
+}

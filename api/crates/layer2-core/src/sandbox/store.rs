@@ -1,11 +1,9 @@
+use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-
-use crate::ids::{AgentId, SandboxId, SubjectId, WorkspaceId, WorktreeId};
 mod sandbox_events;
-pub use sandbox_events::SandboxEventStore;
-
 use async_trait::async_trait;
+pub use sandbox_events::SandboxEventStore;
 
 use super::{
     Agent, AgentLogEntry, AgentLogKind, Sandbox, SandboxEvent, SandboxEventKind, SandboxStatus,
@@ -36,7 +34,7 @@ pub use sandbox_worker::SandboxWorkerStore;
 mod work_authority;
 mod work_lease;
 mod work_snapshot;
-pub use work_authority::{ClaimedWork, WorkAuthority};
+pub use work_authority::{ClaimedWork, WorkAuthority, WorkAuthorityFailure};
 pub use work_lease::{
     WorkAuthorityProtocol, WorkLeaseGrant, WORK_LEASE_SECONDS, WORK_RENEW_SECONDS,
 };
@@ -411,6 +409,8 @@ pub struct InMemorySandboxStore {
     managed_runtime_version: Option<String>,
     #[cfg(test)]
     managed_machine_runtime_version: Option<String>,
+    #[cfg(test)]
+    desktop_runtime_version: Option<String>,
     state: Arc<Mutex<State>>,
     profiles: crate::profiles::InMemoryProfileStore,
 }

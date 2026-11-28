@@ -53,7 +53,7 @@ pub(in crate::store) async fn ensure_indexes(
 
 fn document(binding: &TriggerFirstMessageBinding) -> Result<Document, SandboxStoreError> {
     Ok(doc! {
-        "_id": binding.launch_id().as_str(), "document_schema_version":DOCUMENT_SCHEMA_VERSION,
+        "_id": binding.document_key(), "document_schema_version":DOCUMENT_SCHEMA_VERSION,
         "agent_id":binding.agent_id().as_str(), "command_id":binding.receipt().envelope.command_id.as_str(),
         "record":record_bson(binding).map_err(SandboxStoreError::Corrupt)?,
     })

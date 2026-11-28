@@ -433,6 +433,7 @@ pub(super) struct Planner {
     pub(super) inventory_drift: Arc<AtomicBool>,
     pub(super) bound_drift: Arc<AtomicBool>,
     pub(super) superseded_target: Arc<AtomicBool>,
+    pub(super) retirement_absent: Arc<AtomicBool>,
     pub(super) retirement_calls: Arc<Mutex<Vec<RetirementCall>>>,
 }
 
@@ -459,6 +460,22 @@ impl Planner {
 
 #[async_trait]
 impl NativePoolControl for Planner {
+    async fn recover_retirement_binding(
+        &self,
+        plan: &NativePoolConfiguration,
+    ) -> layer3_adapter::Result<Option<NativePoolBinding>> {
+        if self.retirement_absent.load(Ordering::SeqCst) {
+            return Ok(None);
+        }
+        Ok(self
+            .inventory
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|entry| entry.binding.config_sha256 == plan.config_sha256)
+            .map(|entry| entry.binding.clone()))
+    }
+
     async fn begin_retirement(&self, binding: &NativePoolBinding) -> layer3_adapter::Result<()> {
         self.retirement_calls
             .lock()

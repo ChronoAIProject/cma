@@ -40,6 +40,7 @@ pub(super) struct NativeBackend {
     pub reopen_release: Arc<Notify>,
     pub hold_delete: Arc<AtomicBool>,
     pub reject_credential: Arc<AtomicBool>,
+    pub fail_credential_transiently: Arc<AtomicBool>,
     pub recovery_plan: Arc<Mutex<serde_json::Value>>,
     pub recovery_code: Arc<Mutex<Option<&'static str>>>,
     pub recovery_response: Arc<Mutex<Option<Vec<u8>>>>,
@@ -383,12 +384,8 @@ impl HostedBackend for NativeBackend {
                 retryable: false,
             }));
         }
-        if matches!(request, RequestFrame::Credential(_))
-            && self.reject_credential.load(Ordering::SeqCst)
-        {
-            return Err(layer3_adapter::AdapterError::Rejected(
-                "fixture credential delivery rejected".into(),
-            ));
+        if matches!(request, RequestFrame::Credential(_)) {
+            self.credential_delivery_fault()?;
         }
         let mut response = self
             .inner

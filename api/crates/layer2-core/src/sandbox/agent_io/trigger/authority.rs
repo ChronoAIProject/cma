@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::resource_access::{ResourceOwner, ResourcePolicyFence};
 use crate::sandbox::{Agent, AgentOperationError, AgentOperationStore, Sandbox, SandboxStatus};
+
 use crate::trigger_domain::Launch;
 
 use super::super::{AdmittedAgentCommand, CommandLedgerError};
@@ -20,14 +21,18 @@ pub struct TriggerExecutionProof {
 impl TriggerExecutionProof {
     pub fn checked(
         binding: TriggerFirstMessageBinding,
-        launch: &Launch,
+        launch: Option<&Launch>,
         command: &AdmittedAgentCommand,
         agent: Agent,
         parent: Sandbox,
         owner: ResourceOwner,
         policy: ResourcePolicyFence,
     ) -> Result<Self, CommandLedgerError> {
-        binding.require_launch(launch)?;
+        match launch {
+            Some(launch) => binding.require_launch(launch)?,
+            None if binding.is_onboarding() => {}
+            None => return Err(CommandLedgerError::Corrupt),
+        }
         binding.require_command(command)?;
         binding.require_agent(&agent)?;
         binding.require_parent(&parent, &owner)?;

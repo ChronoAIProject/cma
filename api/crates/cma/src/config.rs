@@ -379,6 +379,11 @@ impl Config {
             );
         }
         let agent_manager_replicas = AgentManagerReplicas::from_lookup(&mut lookup)?;
+        if runtime.pool_rollout.fixed_prewarm_generation.is_some()
+            && agent_manager_replicas.is_none()
+        {
+            return Err("fixed-pin prewarm requires CHRONO_AGENT_MANAGER_REPLICAS_ENABLED for provider target fencing".into());
+        }
         if features.agent_shared_observation && agent_manager_replicas.is_none() {
             return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGENT_MANAGER_REPLICAS_ENABLED".into());
         }

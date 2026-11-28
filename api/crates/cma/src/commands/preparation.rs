@@ -13,7 +13,7 @@ impl ResourceCommandExecution {
         if matches!(command.receipt.envelope.actor, AgentActor::Channel { .. }) {
             return Err(Error::Rejected(CommandFailureCode::AuthorityRevoked));
         }
-        if super::trigger_execution::is_trigger(command)
+        if super::trigger_execution::is_first_message(command)
             || !matches!(
                 command.receipt.envelope.command,
                 AgentCommand::Message { .. }
