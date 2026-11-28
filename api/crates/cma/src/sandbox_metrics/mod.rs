@@ -128,6 +128,14 @@ impl MetricsWorkers {
                 tokio::select!{_ = crate::shutdown::signalled(signal)=>{},_ = layer2_core::diagnostic_context::DiagnosticContext::background("metrics").scope(worker.reports(slot))=>{}}
             }));
         }
+        let worker = self.clone();
+        let signal = shutdown.subscribe();
+        shutdown.push(tokio::spawn(async move {
+            tokio::select! {
+                _ = crate::shutdown::signalled(signal) => {},
+                _ = worker.retire_reports() => {},
+            }
+        }));
         if self.store.view_policy.enabled && self.store.view_policy.warm_enabled {
             let worker = self.clone();
             let signal = shutdown.subscribe();

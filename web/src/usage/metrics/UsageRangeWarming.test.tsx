@@ -214,6 +214,16 @@ it('does not create or poll unselected ranges after a foreground compatibility f
   expect(api.report).not.toHaveBeenCalled();
 });
 
+it('warms only the daily preview while a selected seven-day report is pending', async () => {
+  const api = metricsClient(true);
+  const latest = vi.fn(async ({ window }: { window: string }) => ready(window, true));
+  Object.assign(api, { latest });
+  const selected = { ...defaultSelection, range: '7d' as const };
+  renderHook(() => useWarmUsageRanges(api, selected, true, owner, true, true));
+  await flush();
+  expect(latest.mock.calls.map(([query]) => query.window)).toEqual(['24h']);
+});
+
 it('keeps an exact ready refresh when the next view replica declines', async () => {
   vi.useFakeTimers();
   vi.spyOn(Math, 'random').mockReturnValue(0);
