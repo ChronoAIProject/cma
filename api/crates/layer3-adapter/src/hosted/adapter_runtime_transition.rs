@@ -103,7 +103,20 @@ impl HostedAdapter {
         {
             let mut states = self.states.lock().await;
             if let Some(state) = states.get(&request.handle) {
-                if state.provision != previous_identity && state.provision != next_identity {
+                // Suspension on one replica invalidates only that replica's cache.
+                // The provider still checks the exact predecessor or successor.
+                let cached_before_predecessor = !upgrade
+                    && state.provision.sandbox_id == previous_identity.sandbox_id
+                    && state.provision.generation < previous_identity.generation
+                    && state.provision.image_sha256 == previous_identity.image_sha256
+                    && state.provision.runtime_contract == previous_identity.runtime_contract
+                    && state.home_volume == request.spec.home_volume
+                    && state.home_directory == request.spec.home_directory
+                    && state.own_credential == request.spec.own_credential;
+                if state.provision != previous_identity
+                    && state.provision != next_identity
+                    && !cached_before_predecessor
+                {
                     return Err(AdapterError::Rejected(
                         "resume conflicts with another runtime generation".into(),
                     ));
