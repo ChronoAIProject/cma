@@ -227,7 +227,11 @@ fn unavailable() -> Response {
 mod tests {
     use super::*;
     use crate::auth::{Administrator, Creator, CreatorAuthState, CreatorAuthenticator};
-    use axum::{body::Body, routing::post, Json, Router};
+    use axum::{
+        body::Body,
+        routing::{get, post},
+        Form, Json, Router,
+    };
     use tower::ServiceExt;
 
     #[derive(Clone)]
@@ -262,17 +266,26 @@ mod tests {
                 "/oauth/introspect",
                 post({
                     let issuer = origin.clone();
-                    move || {
+                    move |Form(fields): Form<std::collections::BTreeMap<String, String>>| {
                         let issuer = issuer.clone();
                         async move {
+                            let permissions = if fields.get("token").is_some_and(|token| token == "fixture-member") {
+                                vec!["cma-eg:channels:create", "cma-eg:admin"]
+                            } else {
+                                Vec::new()
+                            };
                             Json(serde_json::json!({
                                 "active": true, "sub": "fixture-verified", "iss": issuer,
-                                "token_type": "access", "exp": 4102444800_u64, "permissions": [],
+                                "token_type": "access", "exp": 4102444800_u64, "permissions": permissions,
                             }))
                         }
                     }
                 }),
-            );
+            )
+            .route("/api/v1/users/me", get(|| async {
+                Json(serde_json::json!({"subject": "fixture-verified", "user_type": "person"}))
+            }))
+            .route("/api/v1/orgs/{owner}/authorization", get(|| async { StatusCode::NOT_FOUND }));
         let server = tokio::spawn(async move { axum::serve(listener, mock).await.unwrap() });
         let writer = Arc::new(Writer {
             endpoint: format!("{origin}{PATH}"),
@@ -304,14 +317,32 @@ mod tests {
             )
             .with_state(auth)
             .layer(axum::middleware::from_fn_with_state(writer, audit));
-        for (path, authenticated, expected) in [
-            ("/v1/channels", true, StatusCode::FORBIDDEN),
-            ("/v1/admin/change", true, StatusCode::FORBIDDEN),
-            ("/v1/channels", false, StatusCode::UNAUTHORIZED),
+        for (path, bearer, expected) in [
+            (
+                "/v1/channels",
+                Some("Bearer fixture-user"),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "/v1/admin/change",
+                Some("Bearer fixture-user"),
+                StatusCode::FORBIDDEN,
+            ),
+            (
+                "/v1/channels",
+                Some("Bearer fixture-member"),
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                "/v1/admin/change",
+                Some("Bearer fixture-member"),
+                StatusCode::UNAUTHORIZED,
+            ),
+            ("/v1/channels", None, StatusCode::UNAUTHORIZED),
         ] {
             let mut request = Request::post(path).header("x-cmaeg-owner", "unverified-owner");
-            if authenticated {
-                request = request.header("authorization", "Bearer fixture-user");
+            if let Some(bearer) = bearer {
+                request = request.header("authorization", bearer);
             }
             let response = app
                 .clone()
@@ -333,7 +364,7 @@ mod tests {
             assert!(
                 matches!(recorded.last(), Some(Event::Finish { status, .. }) if *status == expected.as_u16())
             );
-            if authenticated {
+            if bearer.is_some() {
                 assert!(
                     matches!(recorded.as_slice(), [_, Event::Bind { identity, .. }, _]
                     if identity.subject == "fixture-verified" && identity.scope == Scope::Personal && identity.organization.is_none())

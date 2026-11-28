@@ -46,16 +46,9 @@ where
                 .await
                 .map_err(service_error)?;
             require_permission(&principal, permission).await?;
-            let creator = auth
-                .service_creator(principal.subject.clone(), &parts.headers)
-                .await?;
-            crate::request_audit::bind(
-                &principal.subject,
-                creator.organization.then_some(creator.subject.as_str()),
-                Credential::Bearer,
-            )
-            .await?;
-            return Ok(creator);
+            return auth
+                .service_creator(&principal.subject, &parts.headers)
+                .await;
         }
         auth.authenticate(&parts.headers).await
     }
@@ -73,16 +66,7 @@ impl CreatorAuthenticator {
         if let Some(service) = &self.service {
             let principal = service.authenticate(headers).await.map_err(service_error)?;
             require_permission(&principal, "cma-eg:channels:read").await?;
-            let creator = self
-                .service_creator(principal.subject.clone(), headers)
-                .await?;
-            crate::request_audit::bind(
-                &principal.subject,
-                creator.organization.then_some(creator.subject.as_str()),
-                Credential::Bearer,
-            )
-            .await?;
-            return Ok(creator);
+            return self.service_creator(&principal.subject, headers).await;
         }
         let token = bearer(headers).ok_or(CreatorAuthError::NotAuthenticated)?;
         let owner = selected_owner(headers)?;
