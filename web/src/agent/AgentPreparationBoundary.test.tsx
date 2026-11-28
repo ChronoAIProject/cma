@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { CmaClientProvider } from '../api/context';
 import type { AgentLifecycleOperationView } from '../api/client';
@@ -72,10 +72,12 @@ function fixture() {
   const connection = vi.spyOn(connections, 'readAgentConnections');
   function Host({
     started = false,
+    environmentReady = false,
     failure,
     sandboxFailure,
   }: {
     readonly started?: boolean;
+    readonly environmentReady?: boolean;
     readonly failure?: Failure;
     readonly sandboxFailure?: Failure;
   }) {
@@ -86,7 +88,9 @@ function fixture() {
         ? { ...detail, status: 'failed' as const, failure }
         : started
           ? AGENT_DETAIL
-          : detail,
+          : environmentReady
+            ? { ...detail, status: 'ready' as const }
+            : detail,
       workspace: workspaceFixture(),
       conversation: conversationFromTranscript(
         started ? AGENT_TRANSCRIPT : { ...AGENT_TRANSCRIPT, turns: [] },
@@ -134,6 +138,26 @@ function fixture() {
   };
 }
 
+it('shows confirmed Agent and worktree progress when reopened before the first reply without an operation receipt', () => {
+  sessionStorage.removeItem(journal);
+  const h = fixture();
+  render(<h.Host environmentReady />);
+
+  expect(screen.getByRole('heading', { name: 'Cloud computer ready' })).toBeVisible();
+  expect(screen.getByText('Checking whether your original message has started.')).toBeVisible();
+  const history = screen.getByRole('region', { name: 'Recorded setup progress' });
+  expect(history).toBeVisible();
+  expect(within(history).getByText('Creating worktree').closest('li')).toHaveTextContent('Done');
+  expect(within(history).getByText('Preparing the agent').closest('li')).toHaveTextContent('Done');
+
+  const phases = screen.getByRole('list', { name: 'Agent setup steps' });
+  expect(within(phases).getAllByText('Not reported')).toHaveLength(4);
+  expect(within(phases).queryByText('Waiting')).toBeNull();
+  expect(phases.querySelector('.statedot__ping')).toBeNull();
+  expect(h.read).not.toHaveBeenCalled();
+  expect(h.send).not.toHaveBeenCalled();
+});
+
 it.each(['failure', 'sandboxFailure'] as const)(
   'shows a recorded %s without a browser creation receipt',
   async (field) => {
@@ -165,7 +189,8 @@ it('uses one bound preparation view and transfers only the follow-up into the mo
   ).toBeVisible();
   expect(screen.getAllByRole('heading', { name: 'New agent' })).toHaveLength(1);
   expect(screen.getByRole('region', { name: 'Original request' }).textContent).toBe(original);
-  expect(screen.getAllByText('Setup details')).toHaveLength(1);
+  expect(screen.getByRole('list', { name: 'Agent setup steps' })).toBeVisible();
+  expect(screen.getAllByRole('region', { name: 'Agent provisioning progress' })).toHaveLength(1);
   expect(screen.getByLabelText('Follow-up draft')).toHaveValue(text);
   expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
   expect(view.container.querySelectorAll('.agent-mascot__artwork')).toHaveLength(1);

@@ -187,14 +187,14 @@ function PreparationHost(
           incarnation: ready?.conversation.agentIncarnation,
         }}
         message={intent?.body.initial_message}
-        details={
-          followup.details ?? (
+        recordedProgress={
+          !matched ? (
             <ProvisioningProgress
               title="Recorded setup progress"
               steps={agentProgress(detail, ready?.sandboxEvents ?? [])}
               failure={setupFailure ? undefined : detail.failure}
             />
-          )
+          ) : undefined
         }
         notices={
           <>

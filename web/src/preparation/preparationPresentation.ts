@@ -71,6 +71,8 @@ export function derivePreparationView(facts: PreparationFacts) {
   const action = stage === 'ready' && agentReady ? 'ready' : (setupActions[stage] ?? 'rest');
   return {
     stage,
+    receipt: facts.receipt,
+    operation,
     title: facts.canonicalTitle?.trim() || 'New agent',
     label: labels[stage],
     visual: { action, label: labels[stage] },
@@ -84,7 +86,9 @@ export function derivePreparationView(facts: PreparationFacts) {
     notStarted: accepted && stage !== 'failed' && facts.initialTask === 'not-started',
     error:
       stage === 'failed'
-        ? (facts.setupFailure ?? operation?.error ?? 'Review the environment before trying again.')
+        ? (facts.setupFailure ??
+          operation?.error ??
+          'The Agent could not finish setup. Review the setup before trying again.')
         : facts.readError,
   };
 }
