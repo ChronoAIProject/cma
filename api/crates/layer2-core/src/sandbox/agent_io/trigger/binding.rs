@@ -9,6 +9,10 @@ use crate::trigger_domain::{Launch, LaunchInputProtocol};
 
 use super::super::*;
 
+// Onboarding follows the Agent startup lifecycle. The shared receipt schema
+// requires a timestamp, so use its maximum RFC3339 value for this source.
+const ONBOARDING_QUEUE_DEADLINE: &str = "9999-12-31T23:59:59Z";
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Onboarding {
@@ -181,8 +185,20 @@ impl TriggerFirstMessageBinding {
             ))
         }
         .map_err(|_| CommandLedgerError::Corrupt)?;
-        let at =
-            crate::seconds_from_rfc3339(&admission.event_at).ok_or(CommandLedgerError::Invalid)?;
+        let queue_deadline = if source.kind == AgentSourceKind::Onboarding {
+            ONBOARDING_QUEUE_DEADLINE.to_owned()
+        } else {
+            let admitted_at = crate::seconds_from_rfc3339(&admission.event_at)
+                .ok_or(CommandLedgerError::Invalid)?;
+            crate::rfc3339_at(
+                std::time::SystemTime::UNIX_EPOCH
+                    + std::time::Duration::from_secs(
+                        admitted_at
+                            .checked_add(300)
+                            .ok_or(CommandLedgerError::Invalid)?,
+                    ),
+            )
+        };
         let request = CommandReservation {
             binding: None,
             envelope: AgentCommandEnvelope {
@@ -208,12 +224,7 @@ impl TriggerFirstMessageBinding {
             key_sha256: command_key_digest(&binding_key)?,
             response_id: Some(AgentResponseId::generate()),
             admitted_at: admission.event_at.clone(),
-            queue_deadline: crate::rfc3339_at(
-                std::time::SystemTime::UNIX_EPOCH
-                    + std::time::Duration::from_secs(
-                        at.checked_add(300).ok_or(CommandLedgerError::Invalid)?,
-                    ),
-            ),
+            queue_deadline,
             queue_capacity: MAX_COMMAND_QUEUE_CAPACITY,
             expected_agent_revision: agent.revision,
             parent: SandboxMutationGuard::capture(parent),

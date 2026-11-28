@@ -6,6 +6,7 @@ use layer2_core::sandbox::{
 };
 use layer2_core::{RuntimeCapabilities, RuntimeCapability};
 use layer3_adapter::{ConversationInput, ConversationInputSender, PromptResponse, TurnStopReason};
+use std::time::{Duration, SystemTime};
 
 struct Fixture {
     client: Client,
@@ -23,6 +24,15 @@ struct Fixture {
 
 impl Fixture {
     async fn new(purpose: FirstMessagePurpose, desktop: bool, lose_ack: bool) -> Self {
+        Self::with_preparation_age(purpose, desktop, lose_ack, Duration::ZERO).await
+    }
+
+    async fn with_preparation_age(
+        purpose: FirstMessagePurpose,
+        desktop: bool,
+        lose_ack: bool,
+        preparation_age: Duration,
+    ) -> Self {
         let (client, database) = database("onboarding_first_message").await;
         crate::store::migrations::prepare_bindings_for_test(&client.database(&database)).await;
         let store = MongoSandboxStore::open(&client, &database)
@@ -34,7 +44,7 @@ impl Fixture {
         store.create_sandbox(sandbox).await.unwrap();
         store.create_workspace(workspace.clone()).await.unwrap();
         let mut request = agent_admission(&workspace, "", "onboarding");
-        request.event_at = layer2_core::now_rfc3339();
+        request.event_at = layer2_core::rfc3339_at(SystemTime::now() - preparation_age);
         request.created_by = Some(ResourceActor::Human {
             subject: workspace.owner.clone(),
         });
@@ -155,6 +165,22 @@ impl Fixture {
             FirstMessageDispatchOutcome::CommonCommand(_)
         ));
         assert_eq!(sends.load(Ordering::SeqCst), 0);
+        let worker =
+            AgentCommandWorker::new(store.clone(), execution.clone(), "onboarding-worker".into())
+                .unwrap();
+        // The command already exists while startup work owns preparation.
+        worker
+            .run_one(&source.receipt.envelope.command_id)
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .get_command(&source.receipt.envelope.command_id)
+                .await
+                .unwrap(),
+            Some(source.clone())
+        );
+        assert_eq!(sends.load(Ordering::SeqCst), 0);
         agent.work = AgentWorkState::new(AgentWorkStep::None, now);
         agent.revision += 1;
         store
@@ -165,9 +191,7 @@ impl Fixture {
             )
             .await
             .unwrap();
-        let worker =
-            AgentCommandWorker::new(store.clone(), execution.clone(), "onboarding-worker".into())
-                .unwrap();
+
         let access = Arc::new(ResourceAccessService::new(
             store.clone(),
             Arc::new(Authority),
@@ -431,6 +455,41 @@ async fn onboarding_first_message_reconciles_lost_native_receipt_across_workers(
     let result = f.store.get_command(id).await.unwrap().unwrap();
     assert_eq!(result.receipt, f.source.receipt);
     assert_eq!(result.status, AgentResponseStatus::Completed);
+    assert_eq!(f.sends.load(Ordering::SeqCst), 1);
+    f.close().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn onboarding_first_message_survives_slow_startup() {
+    let f = Fixture::with_preparation_age(
+        FirstMessagePurpose::Setup,
+        true,
+        false,
+        Duration::from_secs(360),
+    )
+    .await;
+    let mut assembly = AgentMessageAssembly::default();
+    f.start(&mut assembly).await;
+    f.update(
+        &mut assembly,
+        ConversationUpdate::TurnEnded(PromptResponse::new(TurnStopReason::EndTurn)),
+    )
+    .await;
+    let observed = f.observe().await;
+    assert_eq!(
+        observed.response.receipt,
+        CommandStatusView::from_record(&f.source).receipt
+    );
+    assert_eq!(observed.response.status, AgentResponseStatus::Completed);
+    assert_eq!(
+        f.store
+            .agent_commands
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        1
+    );
     assert_eq!(f.sends.load(Ordering::SeqCst), 1);
     f.close().await;
 }
