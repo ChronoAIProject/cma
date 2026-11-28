@@ -224,15 +224,19 @@ impl super::Bridge {
         let admission = typed::TypedAdmission::with_alternative_work::<crate::ConversationUpdate>(
             frame, policy, 512, working,
         )?;
+        let prompt_id = frame
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .and_then(crate::PromptIdentity::parse);
+        let agent_correlation_digest = &self.agent_correlation_digest;
         let update = admission.initialize(|| {
-            crate::hosted::acp_turn::scoped_turn_outcome(
-                crate::hosted::acp_turn::turn_outcome_with_policy(frame, true),
-                true,
-                frame
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(crate::PromptIdentity::parse),
-            )
+            let outcome = crate::hosted::acp_turn::turn_outcome_with_policy(frame, true);
+            crate::hosted::acp_credit_diagnostic::trace_credit_refusal(
+                &outcome,
+                agent_correlation_digest,
+                prompt_id.as_ref(),
+            );
+            crate::hosted::acp_turn::scoped_turn_outcome(outcome, true, prompt_id)
         });
         Ok(Some(crate::RuntimeOutputUpdate::from_admitted(
             update.into_shared()?,
@@ -251,13 +255,19 @@ impl super::Bridge {
                     crate::AdapterError::Rejected(text("terminal has no admitted owner"))
                 });
         }
+        let prompt_id = frame
+            .get("id")
+            .and_then(serde_json::Value::as_str)
+            .and_then(crate::PromptIdentity::parse);
+        let outcome =
+            crate::hosted::acp_turn::turn_outcome_with_policy(&**frame, self.json_pools.is_some());
+        crate::hosted::acp_credit_diagnostic::trace_credit_refusal(
+            &outcome,
+            &self.agent_correlation_digest,
+            prompt_id.as_ref(),
+        );
         Ok(crate::hosted::acp_turn::scoped_turn_outcome(
-            crate::hosted::acp_turn::turn_outcome_with_policy(&**frame, self.json_pools.is_some()),
-            true,
-            frame
-                .get("id")
-                .and_then(serde_json::Value::as_str)
-                .and_then(crate::PromptIdentity::parse),
+            outcome, true, prompt_id,
         ))
     }
 

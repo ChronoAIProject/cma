@@ -23,7 +23,7 @@ pub fn public_agent_turn_failure(failure: &TypedFailure) -> TypedFailure {
         "upstream_timeout" => ("upstream_timeout", "The upstream model service timed out.", true),
         "upstream_unavailable" => ("upstream_unavailable", "The upstream model service is temporarily unavailable.", true),
         "upstream_rate_limited" => ("upstream_rate_limited", "The upstream model service is limiting requests. Wait before sending another message.", true),
-        "insufficient_credits" => ("insufficient_credits", "The model request failed with HTTP 402 because its billing account has insufficient credits. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.", false),
+        "insufficient_credits" => ("insufficient_credits", "The model request failed with HTTP 402 because the model billing account has insufficient credits. Earlier files, tool results, and partial output remain available. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue. This failed turn will not be replayed automatically.", false),
         "owner_budget_exhausted" => ("owner_budget_exhausted", BudgetError::OwnerExhausted.guidance(), false),
         "turn_budget_exhausted" => ("turn_budget_exhausted", BudgetError::TurnExhausted.guidance(), false),
         "budget_unavailable" => ("budget_unavailable", BudgetError::Unavailable.guidance(), false),

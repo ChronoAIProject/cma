@@ -73,7 +73,7 @@ export function failureMessage(category: unknown): FailureMessage {
     case 'insufficient_credits':
       return {
         detail:
-          'The Agent run failed because the model billing account has insufficient credits (402). Ask the Sandbox owner to top up the account used for model requests, then review the conversation before sending another message.',
+          'The Agent run ended because the model billing account has insufficient credits (402). Earlier files, tool results, and partial output remain available. Ask the Sandbox owner to top up the account used for model requests, then send a new message to continue.',
         nextStep,
         technicalDetails: { category, httpStatus: 402 },
       };
