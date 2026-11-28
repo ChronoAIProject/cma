@@ -9,6 +9,7 @@ use layer2_core::sandbox::{
     WorkspaceWorkStep,
 };
 use layer2_core::{WorkspaceId, WorkspaceProfileId};
+use mongodb::event::command::CommandEvent;
 
 fn workspace(parent: &Sandbox) -> Workspace {
     Workspace {
@@ -193,12 +194,15 @@ async fn workspace_pin_fault(fault: PinFault) {
     .await;
     f.clear().await;
     let starts = f.starts();
-    let stored = f
-        .independent
-        .get_workspace(&child.id)
-        .await
-        .unwrap()
-        .unwrap();
+    let stored = if matches!(fault, PinFault::UnknownApplied) {
+        read_workspace_after_commit_reply(&f, &child.id).await
+    } else {
+        f.independent
+            .get_workspace(&child.id)
+            .await
+            .unwrap()
+            .unwrap()
+    };
     f.drop_database().await;
 
     match fault {
@@ -230,6 +234,44 @@ async fn workspace_pin_fault(fault: PinFault) {
             ));
         }
     }
+}
+
+async fn read_workspace_after_commit_reply(f: &Fixture, id: &WorkspaceId) -> Workspace {
+    // The injected write concern error leaves the commit's majority visibility
+    // uncertain. Anchor the independent read to the server's commit reply.
+    let operation_time = f
+        .events
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|event| match event {
+            CommandEvent::Succeeded(event)
+                if event.command_name == "commitTransaction"
+                    && event.reply.contains_key("writeConcernError") =>
+            {
+                event.reply.get_timestamp("operationTime").ok()
+            }
+            _ => None,
+        })
+        .max()
+        .expect("applied commit reply must carry an operation time");
+    let mut session = f
+        .admin
+        .start_session()
+        .causal_consistency(true)
+        .await
+        .unwrap();
+    session.advance_operation_time(operation_time);
+    let row = f
+        .independent
+        .workspaces
+        .find_one(doc! {"_id":id.as_str()})
+        .max_time(Duration::from_secs(5))
+        .session(&mut session)
+        .await
+        .unwrap()
+        .unwrap();
+    crate::store::workspaces::read_workspace(&row).unwrap()
 }
 
 async fn workspace_parent_read_and_write_abort_preserve_fresh_transaction_retry_case(
