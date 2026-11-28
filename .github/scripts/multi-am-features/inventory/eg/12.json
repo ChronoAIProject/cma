@@ -1,0 +1,255 @@
+[
+  {
+    "id": "EG-056",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Custom events and durable response recovery",
+    "entry_point": "Custom producer -> /v1/channels/{channel_id}/events",
+    "steps": [
+      "Submit a fixture custom event with its configured grouping and execution mode.",
+      "In local two-AM runs reconnect/recover its existing response after an interrupted observation."
+    ],
+    "expected_result": "Accepted event is associated with the exact AM response; recovery reads/replays existing work and does not submit a new turn. Unsupported durability modes are refused.",
+    "writes": true,
+    "api": [
+      "POST /v1/channels/{channel_id}/events"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "web/src/services/channelForm/customExecution.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "d74c40abf7cc9a0f956507275199cb7490df069486ba3105993e91b8cc8bc161"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/recovery.rs",
+        "line": 2,
+        "anchor": "No recovery operation",
+        "sha256": "97f0ad28088f8f98a78769adabd08e96ee2822ddbc653729ed9d5e3ec842affb"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/frozen.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "27473adad845075cf752201a079d1827b2c303d850310f8caded4bd59bbc8dba"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11058,
+        "anchor": "\"operationId\": \"receiveCustomEvent\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-057",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Binding, conversation creation, follow-up and unbind",
+    "entry_point": "EG consumer -> allowlisted AM provider",
+    "steps": [
+      "Run two messages with the same partition and another message with a different partition.",
+      "Locally remove a disposable binding and verify future work cannot reuse it."
+    ],
+    "expected_result": "Conversation continuity follows the partition and binding generation; cleanup is authorized and different owners/partitions cannot share context.",
+    "writes": true,
+    "api": [
+      "PUT /api/v1/cmaeg/bindings/{binding_id}",
+      "PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+      "DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+      "DELETE /api/v1/cmaeg/bindings/{binding_id}",
+      "POST /api/v2/responses"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/providers/client.rs",
+        "line": 182,
+        "anchor": "pub async fn ensure_conversation",
+        "sha256": "c9aeb7385f96415e925876aff28c28eaec932c69f502d28588c173d93198e537"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/binding.rs",
+        "line": 11,
+        "anchor": "pub async fn bind",
+        "sha256": "0bc5f383ea0bcbe9c997d159081c41356609a117988c1ca84b7990fe94a03a35"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/conversation.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "608974519f7a82dd9071b7c22271cb9848d3821bc78d0a171f9c4f046149d3bc"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/management_auth.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e63e2fe05964c6739b53b08afb0fdf9aacaa5c07845b5a936c0c0064a081650e"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/registry.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "12230785748fe97f5333b0d340533d56c226eb784b42832915fbae7c2626a5fe"
+      }
+    ]
+  },
+  {
+    "id": "EG-058",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Durable gateway records and cross-AM Agent channel attribution",
+    "entry_point": "EG management -> AM gateway records; Agent channel-usage API",
+    "steps": [
+      "Create/use a disposable channel and follow its durable record through both AMs.",
+      "Read Agent channel-use summary and manager history after attach/use/detach."
+    ],
+    "expected_result": "Durable identity, revision and authorized channel-use history agree across AMs; ordinary shared readers receive only the safe summary.",
+    "writes": true,
+    "api": [
+      "AM /api/v1/gateway/channel-records",
+      "AM /api/v1/gateway/connection-records",
+      "AM /api/v1/gateway/interaction-records",
+      "GET /api/v1/agents/{id}/channel-usage",
+      "GET /api/v1/agents/{id}/channel-usage/history"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/gateway-records.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "d724d8db6271c79f139de94c1ab6308c9dc95425c3f89e8f6f04bbc6256f81b4"
+      },
+      {
+        "path": "sdk/typescript/src/gateway-interactions.ts",
+        "line": 1,
+        "anchor": null,
+        "sha256": "f32e9eaea1b069106a99773426e011dfe023d59643bb1ac6f2c20f3f18e4cd17"
+      },
+      {
+        "path": "sdk/typescript/src/agents/channel-usage.ts",
+        "line": 45,
+        "anchor": "Ordinary shared readers",
+        "sha256": "0379ef10fdb2c69106bfc0d6ea753bd13fbc34bcb69f23776644141fa04ca7bf"
+      },
+      {
+        "path": "api/crates/cmaeg/src/records/client.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "c9bf6ea9e8248731bbde706635dfdc140156ad31c5c8047ad5e5677bf31362fc"
+      }
+    ]
+  },
+  {
+    "id": "EG-059",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Provider conformance, worker credential classification and preparation",
+    "entry_point": "EG provider discovery / AM preparation APIs",
+    "steps": [
+      "Inspect configured provider Agent-card/capabilities.",
+      "In fixtures exercise worker-key classification and exact binding-generation preparation."
+    ],
+    "expected_result": "Only allowlisted providers and authorized keys proceed; discovery is not misreported as live response success, and preparation does not silently create a second turn.",
+    "writes": true,
+    "api": [
+      "GET provider-advertised Agent card",
+      "POST /api/v1/cmaeg/worker-credentials/classify",
+      "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections",
+      "POST /api/v1/cmaeg/bindings/{binding_id}/preparations"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/providers/worker_classifier.rs",
+        "line": 10,
+        "anchor": "pub const PATH",
+        "sha256": "030bc86ef240993e97034e097d841e12893f1f34ffa9e01675cd32695f2af206"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/registry.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "12230785748fe97f5333b0d340533d56c226eb784b42832915fbae7c2626a5fe"
+      },
+      {
+        "path": "api/crates/cmaeg/src/providers/probe.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "f6a829b521b5bef40fb2904fd8a632a245deeaca40da6472ca637a0ec71b7e62"
+      }
+    ]
+  },
+  {
+    "id": "EG-060",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Read and attest event context",
+    "entry_point": "Agent tools -> event context; AM retained-event attestation",
+    "steps": [
+      "Use the exact admitted event reference to read its public context.",
+      "Verify matching activity/attestation; locally try a mismatched consumer or event."
+    ],
+    "expected_result": "Only the authorized event/source/target context is returned; attestation is boolean and read-only and never renews an execution lease or starts a response.",
+    "writes": false,
+    "api": [
+      "GET /v1/events/{event_ref}/context",
+      "POST /v1/events/{event_ref}/context",
+      "POST /v1/event-attestations"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/mcp/tools.rs",
+        "line": 114,
+        "anchor": "readEventContext",
+        "sha256": "31a5f7cdf1d0db8e3e4efea29450fa80f14a96f7362c9a80f4f99c1d00d91339"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12015,
+        "anchor": "\"operationId\": \"readEventContext\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12067,
+        "anchor": "\"operationId\": \"verifyEventContext\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 11900,
+        "anchor": "\"operationId\": \"attestRetainedEvent\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  }
+]

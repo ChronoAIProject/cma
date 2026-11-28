@@ -1,0 +1,201 @@
+[
+  {
+    "id": "ADM-037",
+    "role": "admin",
+    "feature": "Runtime inventory independent of application inventory",
+    "entry_point": "SDK admin.readRuntimeInventory",
+    "steps": [
+      "Read native runtime inventory and observed_at on requests served by both AMs.",
+      "Compare starting/ready/unavailable and generations with existing observer evidence."
+    ],
+    "expected_result": "read_runtime_inventory controls this read independently; absence/unavailability is not reported as a ready runtime.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/runtime-inventory",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_runtime_inventory"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin.rs",
+        "line": 1,
+        "sha256": "a97e319cf2b1cf7c868c268ee056deb7ff75045b5e584016ee3895ac16ca060f"
+      }
+    ]
+  },
+  {
+    "id": "ADM-038",
+    "role": "admin",
+    "feature": "Cross-owner profile inventory",
+    "entry_point": "SDK admin.listProfiles; not a mounted Operations tab",
+    "steps": [
+      "List agent/workspace/sandbox profiles by kind, visibility and owner.",
+      "Traverse pages and verify readable summary and revision identities."
+    ],
+    "expected_result": "read_all_sandboxes permits cross-owner inventory without granting profile authorship.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/profiles",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_profiles"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/profiles.rs",
+        "line": 1,
+        "sha256": "d45750c65fd56cbecbfb14b031f9f0d8783c0c66b398c3814b982d5aff8fbee9"
+      },
+      {
+        "path": "api/crates/layer2-core/src/sandbox/admin.rs",
+        "line": 1,
+        "sha256": "b892d0a79d82b92fd214ebaa3971b8e43e282f089cfb98d923811871806f478a"
+      }
+    ]
+  },
+  {
+    "id": "ADM-039",
+    "role": "admin",
+    "feature": "Retire another owner’s profile and protect deployment defaults",
+    "entry_point": "SDK admin.retireProfile",
+    "steps": [
+      "Create disposable profiles of each kind locally.",
+      "Retire each through the admin route and verify subsequent inventory/use behavior.",
+      "Attempt retirement of built-in deployment defaults and an unauthorized caller."
+    ],
+    "expected_result": "control_any_sandbox can retire allowed profiles; protected default IDs are refused, with audit and no credential/authoring escalation.",
+    "writes": true,
+    "api": [
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/profiles/{kind}/{id}/retire",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_profiles_by_kind_by_id_retire"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/profiles",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_profiles"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/admin/index.ts",
+        "line": 1,
+        "sha256": "572e6f65ef8cace0e7484854cbc2724b6833bce16bcc8f5cb56c1be8093601ab"
+      },
+      {
+        "path": "api/crates/layer2-core/src/sandbox/admin.rs",
+        "line": 1,
+        "sha256": "b892d0a79d82b92fd214ebaa3971b8e43e282f089cfb98d923811871806f478a"
+      }
+    ]
+  },
+  {
+    "id": "ADM-040",
+    "role": "admin",
+    "feature": "Read platform settings and current revision",
+    "entry_point": "/operations?tab=settings → Platform settings",
+    "steps": [
+      "Open settings and inspect saved revision, current values and write-availability flags.",
+      "Refresh after a read error without discarding the prior draft."
+    ],
+    "expected_result": "configure_platform gates settings; absent/ineligible spend controls remain explicitly unavailable.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "sdk/typescript/src/admin/settings.ts",
+        "line": 1,
+        "sha256": "41f9b0157828f26adadd3e19305e246856e3422dd07a544f31bfe8db538c4f86"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/settings.rs",
+        "line": 1,
+        "sha256": "b76c092d02710c905acfd08738835734057176c52b9b009f094af63d2017b50e"
+      }
+    ]
+  },
+  {
+    "id": "ADM-041",
+    "role": "admin",
+    "feature": "Save settings with revision CAS and conflict review",
+    "entry_point": "/operations?tab=settings → Platform settings → Save settings",
+    "steps": [
+      "Read the same local revision through both AMs.",
+      "Save one benign fixture change, then submit the other stale draft.",
+      "Use Load current values or Review retained draft; simulate an uncertain response and read before any next write."
+    ],
+    "expected_result": "Only one revision wins; conflict/uncertainty preserves the draft and prevents blind replay or overwriting changed owner/model lists.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_settings"
+      },
+      {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "in_captured_openapi": true,
+        "operation_id": "put_api_v1_admin_settings"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/operator/PlatformSettings.tsx",
+        "line": 1,
+        "sha256": "fc2f9380cc46c949fe01e1d387e1eee408685c117e367be8fdc51a7429ad410b"
+      },
+      {
+        "path": "web/src/operator/settingsDraft.ts",
+        "line": 1,
+        "sha256": "b93cea5ea87b636abcabf112e501a15102e0f15728f00a3669ea1b3540a2bd34"
+      },
+      {
+        "path": "web/src/operator/spendBudget.ts",
+        "line": 1,
+        "sha256": "7a993b5ea6c57bef40b89436ab088394ae053a4d4b34d7dfbaa22395db91dfd2"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/admin/settings.rs",
+        "line": 1,
+        "sha256": "b76c092d02710c905acfd08738835734057176c52b9b009f094af63d2017b50e"
+      }
+    ]
+  }
+]

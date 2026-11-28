@@ -194,10 +194,19 @@ def determine_ci(root, event, event_name, repository):
     result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
     # A Web consumer change can require the shared Rust test archive without
     # changing Agent Manager's product test or image scope.
+    paths = changed_paths(root, result['base'], result['head'])
     result['approval_contract'] = result['am'] or any(
         path in APPROVAL_CONTRACT_INPUTS or path.startswith(APPROVAL_CONTRACT_DIRECTORIES)
         for path in paths
     )
+    pull = event.get('pull_request', {})
+    fixture_pr = event_name == 'pull_request' and not full and pull['head']['repo']['full_name'] == repository
+    verification = event_name in VERIFICATION_EVENTS and repository == 'ChronoAIProject/cma'
+    result['two_am_features'] = verification or (fixture_pr and any(
+        path.startswith('.github/scripts/multi-am-features/')
+        or path in {'.github/workflows/ci-two-am.yml', '.github/workflows/ci-pr-am.yml'}
+        for path in paths
+    ))
     return result
 
 
@@ -227,7 +236,7 @@ def main():
             keys = ('repo', 'am', 'eg', 'web', 'am_packages', 'eg_packages', 'test_tracks',
                     'deployables', 'base', 'head', 'reasons')
             if args.ci:
-                keys += ('approval_contract',)
+                keys += ('approval_contract', 'two_am_features')
             for key in keys:
                 value = result[key] if isinstance(result[key], str) else json.dumps(result[key], separators=(',', ':'))
                 output.write(f"{key}={value}\n")

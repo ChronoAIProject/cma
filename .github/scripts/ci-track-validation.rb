@@ -31,8 +31,10 @@ STAGING_IMAGE_FALLBACK = "steps.staging-image.outputs.adopted != 'true'"
 STAGING_READ_ONLY = {'contents' => 'read', 'actions' => 'read', 'issues' => 'read'}.freeze
 
 
-MERGE_GROUP_EXPORT = "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || " \
-  "github.event.pull_request.head.repo.full_name == github.repository)"
+NATIVE_IMAGE_EVENTS = "github.event_name == 'push' || github.event_name == 'merge_group' || " \
+  "github.event.pull_request.head.repo.full_name == github.repository"
+VERIFICATION_IMAGE_EVENT = "inputs.export_verification_image && github.ref == 'refs/heads/develop' && " \
+  "(github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')"
 API_CACHE_READERS = "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || " \
   "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || " \
   "github.event_name == 'merge_group')"
@@ -40,15 +42,24 @@ API_CACHE_READERS = "matrix.component == 'api' && ((github.event_name == 'push' 
 # A queue entry tests the exact commit develop becomes, so its tested images
 # are retained for exact-source CD reuse; fork PR runs still retain nothing.
 def check_merge_group_artifacts(documents)
-  [['ci-images', 'images', ['Export tested native image', 'Retain tested native image']],
-   ['ci-omarchy', 'omarchy', ['Export tested Omarchy image', 'Retain tested Omarchy image']]].each do |file, job, names|
+  [['ci-images', 'images', 'native', " && (matrix.component == 'api' || matrix.component == 'runtime' || matrix.component == 'cmaeg')"],
+   ['ci-omarchy', 'omarchy', 'Omarchy', '']].each do |file, job, kind, component_filter|
     steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
-    names.each do |name|
-      found = steps.select { |s| s['name'] == name }
-      require_check(found.length == 1 && found.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (#{MERGE_GROUP_EXPORT})" && !found.first.key?('continue-on-error'),
-        "#{name} must retain push, same-repository PR and merge-group images only")
-    end
+    export, retain = %w[Export Retain].map { |action| steps.select { |s| s['name'] == "#{action} tested #{kind} image" } }
+    require_check(export.length == 1 && retain.length == 1, "#{file} must export and retain the tested image once")
+    export, retain = export.first, retain.first
+    condition = "#{STAGING_IMAGE_FALLBACK} && success() && (#{NATIVE_IMAGE_EVENTS} || (#{VERIFICATION_IMAGE_EVENT}#{component_filter}))"
+    require_check(export['id'] == 'native-image-export' && export['if'].gsub(/\s+/, ' ') == condition &&
+      !export.key?('continue-on-error'), "#{file} must export only from eligible tested runs")
+    expected_retention = file == 'ci-images' ? IMAGE_RETAIN_IF : "success() && steps.native-image-export.outcome == 'success'"
+    require_check(retain['if'].to_s.split.join(' ') == expected_retention &&
+      !retain.key?('continue-on-error'), "#{file} must only retain a successful native image export")
   end
+  jobs = documents.fetch('ci').fetch('jobs')
+  selected = jobs.select { |_, config| config.dig('with', 'export_verification_image') }.keys.sort
+  require_check(selected == %w[am-images eg-images omarchy runtime-images] &&
+    jobs.dig('eg-images', 'with', 'export_verification_image') == "${{ needs.changes.outputs.two_am_features == 'true' }}",
+    'develop verification must export the two-AM fixture images')
   images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
   prepare = images.select { |s| s['name'] == 'Prepare API Cargo cache identity' }
   require_check(prepare.length == 1 && prepare.first['if'] == "#{STAGING_IMAGE_FALLBACK} && (#{API_CACHE_READERS})",
@@ -232,7 +243,7 @@ def validate(documents, actions)
   require_check(jobs.keys.none? { |key| key.start_with?('trigger-') }, 'Trigger job retained')
   required = {
     'gate-repo' => ['CI / Repo', %w[changes repo version-label]],
-    'gate-am' => ['CI / Agent Manager', %w[changes rust-test-build approval-contract am am-images runtime-images omarchy]],
+    'gate-am' => ['CI / Agent Manager', %w[changes rust-test-build approval-contract am am-images runtime-images omarchy two-am-features]],
     'gate-eg' => ['CI / Event Gateway', %w[changes rust-test-build eg eg-images runtime-images omarchy]],
     'gate-web' => ['CI / Web', %w[changes web web-images]]
   }
@@ -256,10 +267,12 @@ def validate(documents, actions)
     gate_key = "gate-#{track}"
     check_name, prerequisites = required.fetch(gate_key)
     prerequisites -= %w[runtime-images omarchy] if track == 'eg'
+    prerequisites += ['eg-fixture-image'] if track == 'am'
     selector = track_jobs.fetch('changes')
     require_check(track_jobs.keys.first == 'changes' && selector['name'] == "#{number}.1 Select changes" &&
       selector['uses'] == './.github/workflows/ci-track-selection.yml', 'each workflow selects before validating')
-    require_check(track_jobs.keys.sort == (prerequisites + [gate_key]).sort, 'product validation task missing or duplicated')
+    require_check(track_jobs.keys.sort == (prerequisites + [gate_key]).sort,
+      'product validation task missing or duplicated')
     gate = track_jobs.fetch(gate_key)
     require_check(gate['name'] == check_name && gate['if'] == 'always()' && gate['needs'].sort == prerequisites.sort &&
       gate.fetch('steps').last.fetch('run') == "python3 -B .github/scripts/ci_tracks/gate.py #{track} --split",
@@ -280,6 +293,37 @@ def validate(documents, actions)
   select_workflow = documents.fetch('ci-track-selection')
   require_check(select_workflow.fetch('jobs').fetch('changes') == jobs.fetch('changes').reject { |key, _| key == 'if' },
     'pull requests and post-merge CI must use identical selection')
+  two_am = documents.fetch('ci-two-am')
+  two_am_permissions = {'contents' => 'read', 'actions' => 'read'}
+  require_check(two_am['permissions'] == two_am_permissions &&
+    two_am.fetch('on', two_am[true]).keys == ['workflow_call'], 'two-AM fixture must remain a read-only reusable workflow')
+  feature_steps = two_am.fetch('jobs').fetch('features').fetch('steps')
+  browser_build = feature_steps.find { |step| step['working-directory'] == 'web' }
+  require_check(browser_build && !browser_build.key?('if') && !browser_build.key?('continue-on-error') &&
+    browser_build.dig('env', 'CHRONO_BUILD_SHA') == '${{ github.sha }}' &&
+    browser_build.fetch('run', '').lines.map(&:strip) == ['npm ci --no-audit --no-fund', 'npm run build',
+      'npm exec -- playwright install --with-deps chromium'],
+    'both two-AM fixtures must build the checked-out Web and install Chromium')
+  startup = two_am.fetch('jobs').fetch('startup-controls')
+  startup_steps = startup.fetch('steps')
+  require_check(!startup.key?('if') && !startup.key?('continue-on-error') &&
+    startup.dig('env', 'CMA_NEXTEST_REUSE') == '1' &&
+    startup_steps[1]['uses'] == './.github/actions/rust-archive' &&
+    startup_steps[2]['run'] == 'bash .github/scripts/mongo-contract-tests.sh --prepared-startup' &&
+    !startup_steps[2].key?('if') && !startup_steps[2].key?('continue-on-error'),
+    'two-AM startup controls must run from the shared Rust archive')
+  [[jobs, 'eg-images'], [documents.fetch('ci-pr-am').fetch('jobs'), 'eg-fixture-image']].each do |caller, gateway_image|
+    suite = caller.fetch('two-am-features')
+    require_check(suite['uses'] == './.github/workflows/ci-two-am.yml' &&
+      suite['permissions'] == two_am_permissions &&
+      suite['needs'] == %w[changes rust-test-build am-images runtime-images omarchy] + [gateway_image] &&
+      suite['if'] == "!cancelled() && needs.changes.outputs.two_am_features == 'true'" && !suite.key?('continue-on-error') &&
+      suite['with'] == {'am_image_result' => '${{ needs.am-images.result }}',
+                        'runtime_image_result' => '${{ needs.runtime-images.result }}',
+                        'omarchy_image_result' => '${{ needs.omarchy.result }}',
+                        'eg_image_result' => "\${{ needs.#{gateway_image}.result }}"},
+                  'two-AM verification must use its own archive, exact images and trusted CI events')
+  end
   check_version_label(ci, "!cancelled() && (#{verification_ref})")
   check_version_label(documents.fetch('ci-pr-repo'))
   selector = jobs.fetch('changes').fetch('steps').find { |step| step['id'] == 'select' }
@@ -287,7 +331,9 @@ def validate(documents, actions)
     !selector.key?('if') && !selector.key?('continue-on-error'), 'CI-specific selection must be required')
   %w[am eg web].each do |track|
     [track, "#{track}-images"].each do |key|
-      require_check(jobs.fetch(key)['if'] == "needs.changes.outputs.#{track} == 'true'", 'product selection differs')
+      expected = "needs.changes.outputs.#{track} == 'true'"
+      expected += " || needs.changes.outputs.two_am_features == 'true'" if key == 'eg-images'
+      require_check(jobs.fetch(key)['if'] == expected, 'product selection differs')
     end
   end
   %w[am eg].each do |track|

@@ -8,6 +8,8 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::Sandbox;
 use mongodb::bson::doc;
+use mongodb::error::{ErrorKind, WriteFailure};
+use sha2::{Digest, Sha256};
 
 use super::native_retirement_action::RetirementAction;
 use super::sandbox_mongo::{
@@ -197,6 +199,21 @@ async fn recover(
             }
             Err(ApplyError::Driver(error)) if is_transient(&error) => {
                 let _ = session.abort_guarded().await;
+                let write_conflict = match error.kind.as_ref() {
+                    ErrorKind::Command(error) => error.code == 112,
+                    ErrorKind::Write(WriteFailure::WriteError(error)) => error.code == 112,
+                    _ => false,
+                };
+                if write_conflict && retirement.is_none() {
+                    tracing::debug!(
+                        target: "cma::agent_manager::writer_publication",
+                        parent: None,
+                        sandbox_sha256 = %format_args!("{:x}", Sha256::digest(request.sandbox_id.as_str().as_bytes())),
+                        operation = "runtime_loss",
+                        failure = "known_aborted_cas",
+                        "Runtime loss transaction aborted before rebuilding recovery"
+                    );
+                }
                 last_transient = Some(error.to_string());
                 continue;
             }

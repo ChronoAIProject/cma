@@ -41,6 +41,9 @@ impl Fixture {
         let uri = std::env::var(key).expect("disposable replica set");
         let mut options = mongodb::options::ClientOptions::parse(uri).await.unwrap();
         options.app_name = app;
+        Self::with_mongo_options(options, enabled).await
+    }
+    async fn with_mongo_options(options: mongodb::options::ClientOptions, enabled: bool) -> Self {
         let client = mongodb::Client::with_options(options).unwrap();
         let name = format!("cma_open_ready_worker_{}", uuid::Uuid::new_v4().simple());
         let store = Arc::new(

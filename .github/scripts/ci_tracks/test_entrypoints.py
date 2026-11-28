@@ -114,6 +114,7 @@ class EntrypointTests(unittest.TestCase):
             with patch.dict(os.environ, dict(self.environment, GITHUB_EVENT_NAME=name)), \
                     patch('sys.argv', ['selection', '--ci']), redirect_stdout(io.StringIO()), \
                     patch.object(selection, 'determine', return_value=base), \
+                    patch.object(selection, 'changed_paths', return_value=['web/src/main.tsx']), \
                     patch.object(selection, 'snapshot') as snapshot, \
                     patch.object(selection, 'workspace', return_value=Workspace(metadata(self.root), self.root)):
                 snapshot.return_value.__enter__.return_value = self.root
@@ -123,6 +124,7 @@ class EntrypointTests(unittest.TestCase):
                 self.assertEqual(outputs[track], 'true')
             self.assertEqual(json.loads(outputs['test_tracks']), dict(repo=True, am=True, eg=True, web=True))
             self.assertEqual(json.loads(outputs['deployables']), ['cma-web'])
+            self.assertEqual(outputs['two_am_features'], 'false')
             self.assertIn('layer4-runtime', json.loads(outputs['eg_packages']))
             self.output.unlink()
 
