@@ -12,9 +12,9 @@ impl ReportingStore {
         if !self.lease(SLOT, &holder, SWEEP_SECONDS).await? {
             return Ok(());
         }
-        let result = self.prune_one(at, &holder).await;
-        let release = self.release(SLOT, &holder).await;
-        result.and(release)
+        // On failure every replica waits out this lease before retrying.
+        self.prune_one(at, &holder).await?;
+        self.release(SLOT, &holder).await
     }
 
     async fn prune_one(&self, at: u64, holder: &str) -> Result<()> {

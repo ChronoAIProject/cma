@@ -87,6 +87,25 @@ async fn retained_cleanup_charges_bytes_until_child_deletion_is_acknowledged() {
             .report_complete
     );
 
+    // While the failed worker's cleanup lease is still held, another worker
+    // cannot immediately retry the same delete.
+    store.prune_cache(now()).await.unwrap();
+    assert!(store
+        .collection(JOBS)
+        .find_one(filter.clone())
+        .await
+        .unwrap()
+        .unwrap()
+        .get_bool("reserved")
+        .unwrap());
+    store
+        .collection(CONTROL)
+        .update_one(
+            doc! {"_id":super::super::retirement::SLOT},
+            doc! {"$set":{"lease_until":0_i64}},
+        )
+        .await
+        .unwrap();
     store.prune_cache(now()).await.unwrap();
     let released = store
         .collection(JOBS)
