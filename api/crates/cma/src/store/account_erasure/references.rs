@@ -448,13 +448,13 @@ async fn settings(
         if let Ok(entries) = metadata.get_document_mut("entries") {
             let erased: Vec<_> = entries
                 .iter()
-                .filter_map(|(key, value)| {
-                    (field_mentions(value.as_document(), "actor", subjects)
-                        || (key == "owner_overrides" && owners_changed)
-                        || (key == "spend_controls"
-                            && was_enabled != settings.model_budget.enabled))
-                        .then(|| key.clone())
+                .filter(|(key, value)| {
+                    field_mentions(value.as_document(), "actor", subjects)
+                        || (key.as_str() == "owner_overrides" && owners_changed)
+                        || (key.as_str() == "spend_controls"
+                            && was_enabled != settings.model_budget.enabled)
                 })
+                .map(|(key, _)| key.clone())
                 .collect();
             for key in erased {
                 entries.remove(key);
