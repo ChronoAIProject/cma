@@ -127,6 +127,12 @@ impl Supervisor {
 }
 
 impl Supervisor {
+    pub(crate) fn desktop_state(&self) -> Option<crate::desktop_process::DesktopState> {
+        self.desktop_process
+            .as_ref()
+            .map(crate::desktop_process::DesktopSession::status)
+    }
+
     pub(crate) fn desktop_generation(
         &self,
     ) -> Option<

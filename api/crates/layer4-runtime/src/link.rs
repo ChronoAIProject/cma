@@ -100,6 +100,8 @@ async fn liveness() -> &'static str {
 struct Readiness {
     status: &'static str,
     phase: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    desktop: Option<&'static str>,
 }
 
 async fn readiness(State(supervisor): State<Arc<Supervisor>>) -> Json<Readiness> {
@@ -113,6 +115,9 @@ async fn readiness(State(supervisor): State<Arc<Supervisor>>) -> Json<Readiness>
     Json(Readiness {
         status: "ready",
         phase,
+        desktop: supervisor
+            .desktop_state()
+            .map(crate::desktop_process::DesktopState::as_str),
     })
 }
 

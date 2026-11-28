@@ -88,17 +88,28 @@ if [[ -n "$rfb_socket" ]]; then
 fi
 wayvnc --config /dev/null --output HEADLESS-1 --max-fps 30 "${rfb_listener[@]}" >/tmp/cma-wayvnc.log 2>&1 &
 children+=("$!")
-for ((i=0;i<100;i++)); do
-  kill -0 "${children[1]}"
-  if python3 -c 'import socket,sys
-if sys.argv[1]:
-    with socket.socket(socket.AF_UNIX) as stream:
-        stream.settimeout(.1)
-        stream.connect(sys.argv[1])
-else:
-    socket.create_connection(("127.0.0.1",5900),.1).close()' "$rfb_socket" 2>/dev/null; then break; fi
-  sleep 0.1
-done
+python3 -c 'import os,socket,sys,time
+rfb,pid=sys.argv[1],int(sys.argv[2])
+deadline=time.monotonic()+10
+while True:
+    os.kill(pid,0)
+    try:
+        if open(f"/proc/{pid}/stat").read().rsplit(")",1)[1].split()[0] in ("Z","X"):
+            sys.exit(1)
+    except OSError:
+        pass
+    try:
+        if rfb:
+            with socket.socket(socket.AF_UNIX) as stream:
+                stream.settimeout(.1)
+                stream.connect(rfb)
+        else:
+            socket.create_connection(("127.0.0.1",5900),.1).close()
+        break
+    except OSError:
+        if time.monotonic()>=deadline:
+            sys.exit(1)
+        time.sleep(.05)' "$rfb_socket" "${children[1]}"
 # FLTK must use X11 even though the compositor's client environment is Wayland.
 env -u WAYLAND_DISPLAY FLTK_BACKEND=x11 vncviewer -display :99 -Shared -SecurityTypes None -FullScreen=0 \
   -RemoteResize=0 -ShortcutModifiers= -AcceptClipboard=0 -SendClipboard=0 \

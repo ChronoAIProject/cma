@@ -109,7 +109,12 @@ fn unavailable(retryable: bool) -> Response {
         "the desktop display service is unavailable",
         retryable,
     );
-    if !retryable {
+    if retryable {
+        response.headers_mut().insert(
+            axum::http::header::RETRY_AFTER,
+            axum::http::HeaderValue::from_static("1"),
+        );
+    } else {
         response.headers_mut().insert(
             DESKTOP_STATE_HEADER,
             axum::http::HeaderValue::from_static(DESKTOP_STATE_FAILED),

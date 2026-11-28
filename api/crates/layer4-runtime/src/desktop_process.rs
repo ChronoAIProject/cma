@@ -12,6 +12,7 @@ const TOKEN_FILE_ENV: &str = "CMA_DESKTOP_TOKEN_FILE";
 
 #[cfg(target_os = "linux")]
 pub(crate) mod guardian;
+pub(crate) mod legacy;
 #[cfg(any(target_os = "linux", test))]
 mod restart_budget;
 #[cfg(target_os = "linux")]
@@ -82,12 +83,33 @@ impl DesktopGeneration {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DesktopState {
+    Starting,
+    Ready,
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Restarting,
+    Failed,
+}
+
+impl DesktopState {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Starting => "starting",
+            Self::Ready => "ready",
+            Self::Restarting => "restarting",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 pub(crate) enum DesktopSession {
-    Legacy(Box<DesktopProcess>),
+    Legacy(Box<legacy::LegacyDesktop>),
     #[cfg(target_os = "linux")]
     Supervised(Box<supervision::Supervision>),
 }
 
+#[derive(Debug)]
 pub(crate) struct DesktopUnavailable {
     pub(crate) retryable: bool,
 }
@@ -102,22 +124,54 @@ impl DesktopSession {
                 child,
             ))));
         }
-        Ok(Self::Legacy(Box::new(child)))
+        Ok(Self::Legacy(Box::new(legacy::LegacyDesktop::new(child))))
+    }
+
+    pub(crate) fn status(&self) -> DesktopState {
+        match self {
+            Self::Legacy(process) => process.status(),
+            #[cfg(target_os = "linux")]
+            Self::Supervised(process) => process.status(),
+        }
     }
 
     pub(crate) fn generation(&self) -> std::result::Result<DesktopGeneration, DesktopUnavailable> {
         match self {
-            Self::Legacy(process) => {
-                Ok(DesktopGeneration::legacy(process.websocket_token().into()))
-            }
+            Self::Legacy(process) => process.generation(),
             #[cfg(target_os = "linux")]
             Self::Supervised(process) => process.generation(),
         }
     }
 
+    pub(crate) async fn start_background_with_probe<Fut>(
+        &self,
+        budget: std::time::Duration,
+        connect: impl FnMut() -> Fut + Send + 'static,
+    ) where
+        Fut: std::future::Future<Output = bool> + Send + 'static,
+    {
+        match self {
+            Self::Legacy(process) => process.start_background_with_probe(budget, connect),
+            #[cfg(target_os = "linux")]
+            Self::Supervised(process) => {
+                let _ = connect;
+                process.start_background(budget).await;
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn wait_initial_ready(&self) -> bool {
+        match self {
+            Self::Legacy(process) => process.wait_initial_ready().await,
+            #[cfg(target_os = "linux")]
+            Self::Supervised(process) => process.wait_initial_ready().await,
+        }
+    }
+
     pub(crate) async fn shutdown(&self) {
         match self {
-            Self::Legacy(_) => {}
+            Self::Legacy(process) => process.shutdown().await,
             #[cfg(target_os = "linux")]
             Self::Supervised(process) => process.shutdown().await,
         }
@@ -300,6 +354,34 @@ impl DesktopProcess {
         &self.token
     }
 
+    pub(crate) fn has_exited_unreaped(&self) -> bool {
+        #[cfg(unix)]
+        {
+            let Some(pid) = self.child.id() else {
+                return true;
+            };
+            // Inspect exit status with WNOWAIT so the process remains unreaped
+            // and its process-group ID cannot be reused before Drop signals it.
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            let result = unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    pid as libc::id_t,
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            };
+            if result != 0 {
+                return std::io::Error::last_os_error().raw_os_error() == Some(libc::ECHILD);
+            }
+            info.si_signo != 0
+        }
+        #[cfg(not(unix))]
+        {
+            self.child.id().is_none()
+        }
+    }
+
     #[cfg(target_os = "linux")]
     fn display_directory(&self) -> (&GenerationDirectory, i32) {
         let files = self
@@ -369,70 +451,4 @@ impl Drop for GenerationDirectory {
 }
 
 #[cfg(all(test, unix))]
-pub(crate) mod tests {
-    use super::*;
-    use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
-
-    pub(crate) async fn child_with_open_output(
-    ) -> (DesktopProcess, BufReader<tokio::process::ChildStdout>) {
-        let mut command = Command::new("/bin/bash");
-        command
-            .args(["-c", "sleep 120 & echo started; wait"])
-            .stdout(std::process::Stdio::piped());
-        let mut desktop = DesktopProcess::spawn(command).unwrap();
-        let mut output = BufReader::new(desktop.child.stdout.take().unwrap());
-        let mut line = String::new();
-        output.read_line(&mut line).await.unwrap();
-        assert_eq!(line, "started\n");
-        (desktop, output)
-    }
-
-    pub(crate) async fn assert_child_output_closed(
-        mut output: BufReader<tokio::process::ChildStdout>,
-    ) {
-        let mut rest = Vec::new();
-        tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            output.read_to_end(&mut rest),
-        )
-        .await
-        .expect("desktop background child retained its output pipe")
-        .unwrap();
-    }
-
-    #[tokio::test]
-    async fn dropping_desktop_closes_output_held_by_its_background_child() {
-        let (desktop, output) = child_with_open_output().await;
-        drop(desktop);
-        assert_child_output_closed(output).await;
-    }
-
-    #[test]
-    fn desktop_supervision_requires_an_explicit_boolean() {
-        let key = "CHRONO_RUNTIME_DESKTOP_SUPERVISION_ENABLED";
-        let base = std::collections::BTreeMap::from([
-            ("CHRONO_SANDBOX_ID".into(), "desktop-fixture".into()),
-            ("CHRONO_RUNTIME_HOME".into(), "/home/cma".into()),
-        ]);
-        assert!(
-            !RuntimeConfig::from_values(base.clone())
-                .unwrap()
-                .desktop_supervision_enabled
-        );
-        for (value, enabled) in [("false", false), ("true", true)] {
-            let mut env = base.clone();
-            env.insert(key.into(), value.into());
-            assert_eq!(
-                RuntimeConfig::from_values(env)
-                    .unwrap()
-                    .desktop_supervision_enabled,
-                enabled
-            );
-        }
-        for value in ["1", "TRUE", " true", ""] {
-            let mut env = base.clone();
-            env.insert(key.into(), value.into());
-            assert!(RuntimeConfig::from_values(env).is_err());
-        }
-    }
-}
+pub(crate) mod tests;
