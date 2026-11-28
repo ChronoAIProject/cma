@@ -3,6 +3,7 @@
 require_relative "workflow-yaml"
 require_relative "backend-ci-contract"
 require_relative "ledger-ci-contract"
+require_relative "staging-desktop-fixture-contract"
 
 module CIContract
   ROOT = File.expand_path("../..", __dir__)
@@ -203,12 +204,14 @@ module CIContract
     end
     publications = %w[web am eg runtime runtime_omarchy].map { |component| "release_#{component}" }
     allowed = %w[publish:images staging-release:publish omarchy-package-bundle:bundle web-prepare-publish:publish staging-cd:protected_web
-      staging-web-continuity:protected staging-web-continuity-epoch:release staging-cd:release_journey_probe] +
+      staging-web-continuity:protected staging-web-continuity-epoch:release staging-cd:release_journey_probe
+      staging-desktop-fixture-publish:publish] +
       publications.map { |id| "staging-cd:#{id}" }
     require!(grants.sort == allowed.sort,
       "only the reviewed release entry points may grant package write")
     omarchy_package_bundle_authority(inputs.fetch("omarchy-package-bundle"))
     check_web_prepare_publication_authority(inputs.fetch("web-prepare-publish"))
+    StagingDesktopFixtureContract.check(inputs.fetch("staging-desktop-fixture-publish"), method(:require!))
     staging = inputs.fetch("staging-cd")
     staging_events = staging["on"] || staging[true]
     require!(staging_events == { "push" => { "branches" => ["develop"] } },

@@ -1,0 +1,62 @@
+name: Publish staging Desktop fixture
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: Supervised staging Desktop variant
+        required: true
+        type: choice
+        options: [debian, omarchy]
+      source:
+        description: Full source commit on the first-parent develop history
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: staging-desktop-fixture-publication
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
+    environment: chrono-ai-staging
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: 26
+          package-manager-cache: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e
+      - name: Prepare native image qualification tools
+        env:
+          CD_COMPONENT: runtime
+        run: |
+          bash .github/scripts/staging_cd_transport.sh
+          bash .github/scripts/install-image-gitleaks.sh
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Qualify and publish the same OCI archive
+        env:
+          DESKTOP_VARIANT: ${{ inputs.variant }}
+          DESKTOP_SOURCE: ${{ inputs.source }}
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          python3 -B .github/scripts/staging_cd_desktop_fixture.py \
+            --variant "$DESKTOP_VARIANT" --source "$DESKTOP_SOURCE" \
+            --receipt "$RUNNER_TEMP/desktop-publication.json"
+      - name: Retain the immutable publication receipt
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: staging-desktop-publication
+          path: ${{ runner.temp }}/desktop-publication.json
+          if-no-files-found: error
