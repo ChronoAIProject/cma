@@ -77,6 +77,8 @@
           "machine_config_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
           "default_claim_pool_id": null,
           "machine_claim_pool_id": "wp_contract_desktop",
+          "default_capacity_pool_id": null,
+          "machine_capacity_pool_id": "wp_contract_desktop",
           "runtime_versions": [
             {
               "image": "registry/desktop@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",

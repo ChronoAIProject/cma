@@ -181,7 +181,24 @@ fn default_pool_authority_requires_exact_live_binding_and_excludes_duplicates() 
     old.plan.pod_policy.service_account = "prior-policy".into();
     old.binding.as_mut().unwrap().uid = "prior-pool".into();
     let inventory = render(&[old, original.clone()], std::slice::from_ref(&live), true);
-    assert_eq!(inventory.claims, [Some(original.id.clone()), None]);
+    assert_eq!(inventory.claims, [None, None]);
+    assert_eq!(inventory.capacity_pools, [Some(original.id.clone()), None]);
+    let ready = NativePoolStatus {
+        ready_replicas: 1,
+        ..live.clone()
+    };
+    let unobserved = NativePoolStatus {
+        observed: false,
+        ..ready.clone()
+    };
+    assert_eq!(
+        render(std::slice::from_ref(&original), &[ready], true).claims,
+        [Some(original.id.clone()), None]
+    );
+    assert_eq!(
+        render(std::slice::from_ref(&original), &[unobserved], true).claims,
+        [None, None]
+    );
     assert_eq!(inventory.items[0].current_runtime, Some(true));
     assert_eq!(inventory.items[0].ready_replicas, Some(0));
     assert_eq!(inventory.items[1].current_runtime, Some(false));
@@ -195,6 +212,7 @@ fn default_pool_authority_requires_exact_live_binding_and_excludes_duplicates() 
     );
     assert_eq!(duplicated.items.len(), 1);
     assert_eq!(duplicated.claims, [None, None]);
+    assert_eq!(duplicated.capacity_pools, [None, None]);
     assert_eq!(
         render(std::slice::from_ref(&original), &[], false).claims,
         [None, None]
@@ -204,7 +222,39 @@ fn default_pool_authority_requires_exact_live_binding_and_excludes_duplicates() 
         .default_holds
         .hold(false, released.agent.uri.clone());
     assert_eq!(
-        render(std::slice::from_ref(&original), &[live], true).claims,
+        render(std::slice::from_ref(&original), &[live], true).capacity_pools,
         [None, None]
     );
+}
+
+#[test]
+fn native_default_pool_keeps_cold_template_authority_at_zero() {
+    let mut original = target();
+    original.plan.spec.image = super::deployment_image(original.plan.spec.image.uri);
+    original.plan.spec.home.mode = layer3_adapter::HomeVolumeMode::NativeVctFullHomeV2;
+    original.target_replicas = 0;
+    let (service, _) = super::resize::service(original.clone(), original.plan.clone());
+    let provider = Provider {
+        calls: Arc::default(),
+        original: original.plan.clone(),
+        refuse_replaced_uid: AtomicBool::new(false),
+        retired: AtomicBool::new(false),
+    };
+    let live = NativePoolStatus {
+        binding: provider.binding(),
+        desired_replicas: 0,
+        ready_replicas: 0,
+        observed: true,
+    };
+    original.binding = Some(live.binding.clone());
+    let inventory = service.inventory_view(
+        &service.released_images(),
+        std::slice::from_ref(&original),
+        &[live],
+        true,
+        [Some(original.plan.config_sha256.as_str()), None],
+    );
+    assert_eq!(inventory.claims, [Some(original.id.clone()), None]);
+    assert_eq!(inventory.capacity_pools, [Some(original.id), None]);
+    assert_eq!(inventory.items[0].ready_replicas, Some(0));
 }

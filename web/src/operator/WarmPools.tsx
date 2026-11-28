@@ -106,6 +106,7 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
             image={data.default_image}
             configSha={data.default_config_sha256}
             claimPoolId={data.default_claim_pool_id}
+            capacityPoolId={data.default_capacity_pool_id}
             showMatchingSize
             available={data.available}
             pools={data.items.filter((pool) => pool.machine !== true)}
@@ -128,6 +129,7 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
             image={data.machine_image}
             configSha={data.machine_config_sha256}
             claimPoolId={data.machine_claim_pool_id}
+            capacityPoolId={data.machine_capacity_pool_id}
             available={data.available}
             pools={data.items.filter((pool) => pool.machine === true)}
             empty="No shared desktop pool is recorded for this image yet."

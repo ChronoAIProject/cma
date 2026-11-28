@@ -39,6 +39,8 @@ impl WarmPoolAdministration for Pools {
             machine_config_sha256: None,
             default_claim_pool_id: None,
             machine_claim_pool_id: None,
+            default_capacity_pool_id: None,
+            machine_capacity_pool_id: None,
             runtime_versions: vec![],
         })
     }

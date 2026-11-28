@@ -84,6 +84,8 @@ impl WarmPoolAdministration for Pools {
             machine_config_sha256: Some("e".repeat(64)),
             default_claim_pool_id: None,
             machine_claim_pool_id: Some(desktop_view().id),
+            default_capacity_pool_id: None,
+            machine_capacity_pool_id: Some(desktop_view().id),
             runtime_versions: vec![WarmPoolRuntimeVersion {
                 image: desktop_view().image,
                 version: "1.2.3".into(),

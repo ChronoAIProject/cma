@@ -12,6 +12,7 @@ export function WarmPoolRuntime({
   image,
   configSha,
   claimPoolId,
+  capacityPoolId,
   showMatchingSize = false,
   available,
   pools,
@@ -26,6 +27,7 @@ export function WarmPoolRuntime({
   readonly image: string | null | undefined;
   readonly configSha: string | null | undefined;
   readonly claimPoolId: string | null | undefined;
+  readonly capacityPoolId: string | null | undefined;
   readonly showMatchingSize?: boolean;
   readonly available: boolean;
   readonly pools: readonly WarmPoolView[];
@@ -41,8 +43,9 @@ export function WarmPoolRuntime({
   const previous = pools.filter((pool) => !isCurrent(pool));
   const claimPool =
     available && claimPoolId ? current.find((pool) => pool.id === claimPoolId) : undefined;
-  const spareDisabled = claimPool?.target_replicas === 0;
-  const ready = claimPool?.observed ? claimPool.ready_replicas : null;
+  const capacityPool = available ? current.find((pool) => pool.id === capacityPoolId) : undefined;
+  const spareDisabled = capacityPool?.target_replicas === 0;
+  const ready = capacityPool?.observed ? capacityPool.ready_replicas : null;
   const previousNeedsAttention = previous.some(
     (pool) =>
       pool.target_replicas > 0 ||

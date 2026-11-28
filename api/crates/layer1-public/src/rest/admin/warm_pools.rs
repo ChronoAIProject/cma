@@ -79,6 +79,11 @@ pub struct WarmPoolList {
     pub default_claim_pool_id: Option<String>,
     #[serde(default)]
     pub machine_claim_pool_id: Option<String>,
+    /// Inventory-confirmed default pools whose capacity can be reported even when a claim is ineligible.
+    #[serde(default)]
+    pub default_capacity_pool_id: Option<String>,
+    #[serde(default)]
+    pub machine_capacity_pool_id: Option<String>,
     /// Registry-verified release labels keyed by the full immutable image.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub runtime_versions: Vec<WarmPoolRuntimeVersion>,

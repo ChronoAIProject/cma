@@ -10,6 +10,7 @@ use layer1_public::rest::admin::warm_pools::{WarmPoolError, WarmPoolList, WarmPo
 pub(super) struct InventoryView {
     pub(super) items: Vec<WarmPoolView>,
     pub(super) claims: [Option<String>; 2],
+    pub(super) capacity_pools: [Option<String>; 2],
 }
 
 impl NativeWarmPools {
@@ -59,6 +60,7 @@ impl NativeWarmPools {
             ],
         );
         let [default_claim_pool_id, machine_claim_pool_id] = inventory.claims;
+        let [default_capacity_pool_id, machine_capacity_pool_id] = inventory.capacity_pools;
         Ok(WarmPoolList {
             items: inventory.items,
             default_image: released.agent.uri,
@@ -70,6 +72,8 @@ impl NativeWarmPools {
             machine_config_sha256,
             default_claim_pool_id,
             machine_claim_pool_id,
+            default_capacity_pool_id,
+            machine_capacity_pool_id,
             runtime_versions,
         })
     }
@@ -134,7 +138,11 @@ impl NativeWarmPools {
                 && current == Some(true)
                 && Some(target.plan.config_sha256.as_str()) == default_plans[lane]
             {
-                claimed[lane].push((target.id.as_str(), status.is_some() && unique));
+                let bound = status.filter(|_| unique);
+                let claimable = bound.is_some_and(|status| {
+                    status.binding.spec.home.is_native_vct() || status.has_ready_spare()
+                });
+                claimed[lane].push((target.id.as_str(), bound.is_some(), claimable));
             }
             if target
                 .binding
@@ -150,8 +158,12 @@ impl NativeWarmPools {
 
         InventoryView {
             items,
-            claims: claimed.map(|lane| match lane.as_slice() {
-                [(id, true)] => Some((*id).to_owned()),
+            claims: claimed.each_ref().map(|lane| match lane.as_slice() {
+                [(id, true, true)] => Some((*id).to_owned()),
+                _ => None,
+            }),
+            capacity_pools: claimed.each_ref().map(|lane| match lane.as_slice() {
+                [(id, true, _)] => Some((*id).to_owned()),
                 _ => None,
             }),
         }

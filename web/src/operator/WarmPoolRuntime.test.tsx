@@ -7,7 +7,7 @@ import { operatorClient, warmPool } from './testFixtures';
 const desktopImage = `registry.example/cma-runtime-omarchy@sha256:${'b'.repeat(64)}`;
 const previousDesktopImage = `registry.example/cma-runtime-omarchy@sha256:${'c'.repeat(64)}`;
 
-function renderPools(available: boolean, target: number, observed = true) {
+function renderPools(available: boolean, target: number, observed = true, claimable = true) {
   const client = operatorClient();
   const standard = { ...warmPool, id: 'standard', current_runtime: true };
   const desktop = {
@@ -38,9 +38,11 @@ function renderPools(available: boolean, target: number, observed = true) {
     default_image: standard.image,
     default_config_sha256: standard.config_sha256,
     default_claim_pool_id: available ? standard.id : null,
+    default_capacity_pool_id: available ? standard.id : null,
     machine_image: desktop.image,
     machine_config_sha256: desktop.config_sha256,
-    machine_claim_pool_id: available ? desktop.id : null,
+    machine_claim_pool_id: available && claimable ? desktop.id : null,
+    machine_capacity_pool_id: available ? desktop.id : null,
     runtime_versions: [
       { image: standard.image, version: '1.2.3' },
       { image: desktop.image, version: '2.3.4' },
@@ -94,6 +96,13 @@ describe('warm pool runtime sections', () => {
     expect(standard.getByText('Ready capacity unknown for new default-size Agents.')).toBeVisible();
     expect(standard.queryByText('Used for new default-size Agents')).toBeNull();
     expect(standard.queryByText('No ready spare')).toBeNull();
+  });
+
+  it('warns about confirmed zero when the legacy allocator skips the default pool', async () => {
+    renderPools(true, 3, true, false);
+    const desktop = within(await screen.findByRole('region', { name: 'Shared desktop runtime' }));
+    expect(desktop.getByText('No ready spare')).toBeVisible();
+    expect(desktop.queryByText('Used for new default-size Agents')).toBeNull();
   });
 
   it.each([
