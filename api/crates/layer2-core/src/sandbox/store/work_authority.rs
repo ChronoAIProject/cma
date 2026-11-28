@@ -186,9 +186,11 @@ impl WorkAuthority {
                         // Let work holding that row proceed under the current grant.
                         tokio::select! {
                             biased;
-                            _ = tokio::time::sleep_until(deadline) => return Err(SandboxStoreError::Conflict),
+                            _ = tokio::time::sleep_until(deadline) => {
+                                return Err(WorkAuthorityFailure::Authority(SandboxStoreError::Conflict));
+                            }
                             renewal = self.heartbeat(&mut renew) => next = renewal?,
-                            result = &mut work => return result,
+                            result = &mut work => return result.map_err(WorkAuthorityFailure::Execution),
                         }
                     }
                     result = &mut work => return result.map_err(WorkAuthorityFailure::Execution),
