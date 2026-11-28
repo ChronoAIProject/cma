@@ -149,3 +149,80 @@ async fn ownership_fence_rechecks_member_and_exact_epoch_after_known_abort() {
 mod cancellation;
 #[path = "fence_mongo_tests_cases.rs"]
 mod cases;
+
+#[tokio::test]
+#[ignore = "requires disposable replica set via CHRONO_TEST_MONGODB_FAILPOINT_URI"]
+async fn connection_recovery_survives_same_member_renewal_contention() {
+    use layer2_core::sandbox::store::{
+        AgentConnectionRecoveryCandidate, AgentConnectionRecoveryOutcome, AgentWorkerStore,
+    };
+    use layer2_core::sandbox::AgentWorkStep;
+
+    let f = Fixture::new().await;
+    let renewing = f
+        .independent
+        .acquire(&AgentId("another-renewing-agent".into()), "original")
+        .await
+        .unwrap()
+        .unwrap();
+    let request = AgentConnectionRecoveryCandidate::from_agent(&f.agent)
+        .unwrap()
+        .restart_request(layer2_core::now_rfc3339());
+    let before = f.snapshot().await;
+
+    // Hold the exact shared member row as a renewal would. The Agent owner
+    // rows differ, so this isolates the member-fence contention.
+    let mut held = f.independent.client.start_session().await.unwrap();
+    start_transaction(&mut held).await.unwrap();
+    let write = f
+        .independent
+        .members
+        .update_one(
+            doc! {"_id": "original"},
+            doc! {"$inc": {"renewal_revision": 1_i64}},
+        )
+        .session(&mut held)
+        .await
+        .unwrap();
+    assert_eq!(write.matched_count, 1);
+    let start = tokio::time::Instant::now();
+    let (scheduled, committed) = tokio::join!(
+        f.authority
+            .run(f.store.schedule_agent_connection_recovery(request.clone())),
+        async {
+            tokio::time::sleep(Duration::from_millis(400)).await;
+            commit_transaction(&mut held).await
+        },
+    );
+    let elapsed = start.elapsed();
+    // A real renewal must still make progress on the same member and token.
+    let renewed = f.independent.renew(&renewing.token).await;
+    let repeated = f
+        .authority
+        .run(f.store.schedule_agent_connection_recovery(request))
+        .await;
+    let after = f.snapshot().await;
+    let owner = f.independent.owner(&f.agent.id).await.unwrap().unwrap();
+    let commands = f.clear().await;
+    f.cleanup().await;
+
+    assert!(matches!(committed, CommitOutcome::Committed));
+    assert_eq!(
+        scheduled.unwrap().unwrap(),
+        AgentConnectionRecoveryOutcome::Scheduled
+    );
+    assert!(elapsed >= Duration::from_millis(400));
+    assert_eq!(
+        repeated.unwrap().unwrap(),
+        AgentConnectionRecoveryOutcome::AlreadyScheduled
+    );
+    assert_eq!(after.0.work.step, AgentWorkStep::PublishConnection);
+    assert_eq!(after.0.revision, before.0.revision + 1);
+    assert_eq!(after.0.conversation, before.0.conversation);
+    assert_eq!((after.1, after.2), (before.1 + 1, before.2 + 1));
+    assert_eq!(owner.token, f.authority.token);
+    assert_eq!(renewed.unwrap().token, renewing.token);
+    let attempts = starts(&commands).len();
+    assert!((2..=TRANSACTION_ATTEMPTS).contains(&attempts));
+    assert_fresh(&commands, attempts);
+}
