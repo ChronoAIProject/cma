@@ -94,11 +94,13 @@ async fn budget_usage_stop_settles_once_and_top_up_accepts_only_new_input() {
     assert_eq!(charged.reserved, 0);
     assert_eq!(charged.spent, policy.turn_limit);
     let ready = store.get_agent(&agent.id).await.unwrap().unwrap();
+    let refused = live_request(&ready, &parent, "refused");
+    let reset_at = policy
+        .next_reset_at(layer2_core::seconds_from_rfc3339(&refused.admitted_at).unwrap())
+        .unwrap();
     assert_eq!(
-        store
-            .reserve_command(live_request(&ready, &parent, "refused"))
-            .await,
-        Err(CommandLedgerError::Budget(BudgetError::OwnerExhausted))
+        store.reserve_command(refused).await,
+        Err(CommandLedgerError::OwnerBudgetExhausted { reset_at })
     );
     let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
     assert_eq!(

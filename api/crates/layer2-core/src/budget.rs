@@ -78,13 +78,7 @@ impl BudgetPolicy {
     }
 
     pub fn day(&self, now: u64) -> Result<u64, BudgetError> {
-        let zone =
-            jiff::tz::TimeZone::get(&self.day_timezone).map_err(|_| BudgetError::Unavailable)?;
-        let date =
-            jiff::Timestamp::from_second(i64::try_from(now).map_err(|_| BudgetError::Unavailable)?)
-                .map_err(|_| BudgetError::Unavailable)?
-                .to_zoned(zone)
-                .date();
+        let date = self.zoned(now)?.date();
         let month =
             time::Month::try_from(date.month() as u8).map_err(|_| BudgetError::Unavailable)?;
         let date = time::Date::from_calendar_date(i32::from(date.year()), month, date.day() as u8)
@@ -93,6 +87,38 @@ impl BudgetPolicy {
             .map_err(|_| BudgetError::Unavailable)?;
         u64::try_from(date.to_julian_day() - epoch.to_julian_day())
             .map_err(|_| BudgetError::Unavailable)
+    }
+
+    /// The start of the next accounting day, as seconds since the Unix epoch.
+    pub fn next_reset_at(&self, now: u64) -> Result<u64, BudgetError> {
+        let current = self.zoned(now)?;
+        let zone = current.time_zone();
+        let tomorrow = current
+            .date()
+            .tomorrow()
+            .map_err(|_| BudgetError::Unavailable)?;
+        let midnight = zone.to_ambiguous_timestamp(tomorrow.at(0, 0, 0, 0));
+        let reset = if matches!(midnight.offset(), jiff::tz::AmbiguousOffset::Gap { .. }) {
+            // The clock can jump across midnight. The day starts at the transition.
+            let before = midnight.earlier().map_err(|_| BudgetError::Unavailable)?;
+            zone.following(before)
+                .next()
+                .ok_or(BudgetError::Unavailable)?
+                .timestamp()
+        } else {
+            midnight.earlier().map_err(|_| BudgetError::Unavailable)?
+        };
+        u64::try_from(reset.as_second()).map_err(|_| BudgetError::Unavailable)
+    }
+
+    fn zoned(&self, now: u64) -> Result<jiff::Zoned, BudgetError> {
+        let zone =
+            jiff::tz::TimeZone::get(&self.day_timezone).map_err(|_| BudgetError::Unavailable)?;
+        Ok(
+            jiff::Timestamp::from_second(i64::try_from(now).map_err(|_| BudgetError::Unavailable)?)
+                .map_err(|_| BudgetError::Unavailable)?
+                .to_zoned(zone),
+        )
     }
 
     pub fn value_usage(&self, input: u64, output: u64) -> Result<u64, BudgetError> {

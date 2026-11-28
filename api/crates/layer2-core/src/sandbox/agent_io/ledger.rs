@@ -119,6 +119,8 @@ pub enum CommandReservationResult {
 pub enum CommandLedgerError {
     #[error(transparent)]
     Budget(crate::budget::BudgetError),
+    #[error("owner budget is exhausted")]
+    OwnerBudgetExhausted { reset_at: u64 },
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
     #[error("active session capacity is unavailable")]
@@ -154,6 +156,7 @@ impl CommandLedgerError {
     pub const fn code(&self) -> &'static str {
         match self {
             Self::Budget(reason) => reason.code(),
+            Self::OwnerBudgetExhausted { .. } => crate::budget::BudgetError::OwnerExhausted.code(),
             Self::AdmissionPaused => "admission_paused",
             Self::SessionCapacityUnavailable => "session_capacity_unavailable",
             Self::Invalid => "invalid_agent_command",

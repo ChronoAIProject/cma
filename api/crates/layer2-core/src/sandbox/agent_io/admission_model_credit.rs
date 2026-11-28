@@ -218,6 +218,7 @@ fn admission_refused(
         ) => false,
         Err(
             CommandLedgerError::Budget(_)
+            | CommandLedgerError::OwnerBudgetExhausted { .. }
             | CommandLedgerError::AdmissionPaused
             | CommandLedgerError::SessionCapacityUnavailable
             | CommandLedgerError::Invalid

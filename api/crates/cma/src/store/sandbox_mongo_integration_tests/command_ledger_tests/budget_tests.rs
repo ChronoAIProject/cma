@@ -1,6 +1,6 @@
 use super::*;
 use layer2_core::budget::{
-    BudgetError, BudgetPolicy, BudgetSettings, CloudObservation, CloudSpendPolicy,
+    BudgetPolicy, BudgetSettings, CloudObservation, CloudSpendPolicy, OwnerBudget,
     OwnerBudgetPolicy, PlatformBudgetPolicy, PlatformPeriodLedger,
 };
 
@@ -232,7 +232,9 @@ async fn model_budget_reserves_once_and_replay_survives_exhaustion_and_restart()
         store
             .reserve_command(request(&agent, &parent, "budget-refused"))
             .await,
-        Err(CommandLedgerError::Budget(BudgetError::OwnerExhausted))
+        Err(CommandLedgerError::OwnerBudgetExhausted {
+            reset_at: layer2_core::seconds_from_rfc3339("2026-09-06T00:00:00Z").unwrap(),
+        })
     );
     let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
     let replay = record(reopened.reserve_command(first).await.unwrap());
@@ -274,11 +276,78 @@ async fn concurrent_model_budget_reservations_serialize_across_store_instances()
     let refused = first.err().or(second.err()).unwrap();
     assert_eq!(
         refused,
-        CommandLedgerError::Budget(BudgetError::OwnerExhausted)
+        CommandLedgerError::OwnerBudgetExhausted {
+            reset_at: layer2_core::seconds_from_rfc3339("2026-09-06T00:00:00Z").unwrap(),
+        }
     );
     assert_eq!(
         store.agent_commands.count_documents(doc! {}).await.unwrap(),
         1
+    );
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn owner_budget_refusal_announces_the_utc_rollover_that_allows_new_work() {
+    let (client, name) = database("budget_utc_rollover").await;
+    let (store, agent, parent) = fixture(&name, &client).await;
+    let policy = configure(&store, &agent.owner).await;
+    let reset = "2026-09-06T00:00:00Z";
+    let before = "2026-09-05T23:59:59Z";
+    let reset_at = layer2_core::seconds_from_rfc3339(reset).unwrap();
+    let owner = OwnerBudget {
+        day: policy.day(reset_at - 1).unwrap(),
+        spent: policy.owner_day_limit,
+        reserved: 0,
+        token_units: Some([policy.input_token_units, policy.output_token_units]),
+        day_timezone: Some(policy.day_timezone.clone()),
+    };
+    let owner_key = format!("owner:{}", agent.owner);
+    store
+        .model_budget
+        .insert_one(doc! {
+            "_id": &owner_key, "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+            "record": mongodb::bson::serialize_to_document(&owner).unwrap(),
+        })
+        .await
+        .unwrap();
+    let mut input = request(&agent, &parent, "budget-window-boundary");
+    input.admitted_at = before.into();
+    input.queue_deadline = "2026-09-06T00:02:00Z".into();
+    assert_eq!(
+        store.reserve_command(input.clone()).await,
+        Err(CommandLedgerError::OwnerBudgetExhausted { reset_at }),
+    );
+    assert_eq!(
+        store.agent_commands.count_documents(doc! {}).await.unwrap(),
+        0
+    );
+    assert_eq!(
+        store.model_budget.count_documents(doc! {}).await.unwrap(),
+        1
+    );
+
+    input.admitted_at = reset.into();
+    let admitted = record(store.reserve_command(input.clone()).await.unwrap());
+    assert_eq!(
+        record(store.reserve_command(input).await.unwrap()),
+        admitted
+    );
+    assert_eq!(
+        store.agent_commands.count_documents(doc! {}).await.unwrap(),
+        1
+    );
+    let stored = store
+        .model_budget
+        .find_one(doc! { "_id": &owner_key })
+        .await
+        .unwrap()
+        .unwrap();
+    let charged: OwnerBudget = crate::store::sandbox_mongo::read_record(&stored).unwrap();
+    assert_eq!(
+        (charged.day, charged.spent, charged.reserved),
+        (owner.day + 1, 0, policy.turn_limit)
     );
     client.database(&name).drop().await.unwrap();
 }

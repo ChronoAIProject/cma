@@ -154,22 +154,7 @@ pub(in crate::store) async fn apply_with_cause(
             request.binding.is_some(),
             session,
         )
-        .await
-        .map_err(|error| match error {
-            super::super::agent_conversation_store::ApplyError::Driver(error) => {
-                ApplyError::Driver(error)
-            }
-            super::super::agent_conversation_store::ApplyError::Domain(
-                layer2_core::sandbox::store::SandboxStoreError::Budget(reason),
-            ) => ApplyError::Domain(CommandLedgerError::Budget(reason)),
-            super::super::agent_conversation_store::ApplyError::Domain(
-                layer2_core::sandbox::store::SandboxStoreError::AdmissionPaused,
-            ) => ApplyError::Domain(CommandLedgerError::AdmissionPaused),
-            super::super::agent_conversation_store::ApplyError::Domain(
-                layer2_core::sandbox::store::SandboxStoreError::SessionCapacityUnavailable,
-            ) => ApplyError::Domain(CommandLedgerError::SessionCapacityUnavailable),
-            _ => ApplyError::Domain(CommandLedgerError::Unavailable),
-        })?;
+        .await?;
     }
 
     // Real writes serialize resource retirement and policy changes against the observation. These

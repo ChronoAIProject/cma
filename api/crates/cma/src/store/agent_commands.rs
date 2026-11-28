@@ -54,6 +54,27 @@ impl From<mongodb::error::Error> for ApplyError {
     }
 }
 
+impl From<super::agent_conversation_store::ApplyError> for ApplyError {
+    fn from(error: super::agent_conversation_store::ApplyError) -> Self {
+        use super::agent_conversation_store::ApplyError as ConversationError;
+        use layer2_core::sandbox::store::SandboxStoreError;
+
+        match error {
+            ConversationError::Driver(error) => Self::Driver(error),
+            ConversationError::Domain(SandboxStoreError::Budget(reason)) => {
+                CommandLedgerError::Budget(reason).into()
+            }
+            ConversationError::Domain(SandboxStoreError::AdmissionPaused) => {
+                CommandLedgerError::AdmissionPaused.into()
+            }
+            ConversationError::Domain(SandboxStoreError::SessionCapacityUnavailable) => {
+                CommandLedgerError::SessionCapacityUnavailable.into()
+            }
+            _ => CommandLedgerError::Unavailable.into(),
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl AgentCommandStore for MongoSandboxStore {
     async fn reserve_interrupting_message(

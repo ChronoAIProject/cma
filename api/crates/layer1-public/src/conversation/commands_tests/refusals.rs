@@ -9,6 +9,31 @@ use std::time::Duration;
 use tower::ServiceExt;
 
 #[tokio::test]
+async fn owner_budget_reset_preserves_the_problem_shape() {
+    let reset_at = layer2_core::seconds_from_rfc3339("2026-12-01T00:00:00Z").unwrap();
+    let response = crate::conversation::commands::admission_failure(
+        CommandLedgerError::OwnerBudgetExhausted { reset_at }.into(),
+    );
+    assert_eq!(response.status(), StatusCode::PAYMENT_REQUIRED);
+    assert_eq!(
+        response.headers()["content-type"],
+        "application/problem+json"
+    );
+    assert!(response.headers().get("retry-after").is_none());
+
+    let bytes = axum::body::to_bytes(response.into_body(), 4096)
+        .await
+        .unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["code"], "owner_budget_exhausted");
+    assert_eq!(value.as_object().unwrap().len(), 5);
+    assert!(value["detail"]
+        .as_str()
+        .unwrap()
+        .contains("2026-12-01T00:00:00Z"));
+}
+
+#[tokio::test]
 async fn shared_agui_and_responses_command_refusal_preserves_operator_pause() {
     let response = crate::conversation::commands::admission_failure(CommandAdmissionError::Ledger(
         CommandLedgerError::AdmissionPaused,
