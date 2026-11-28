@@ -30,6 +30,86 @@ mod capacity_planning_tests;
 #[path = "agent_message_recovery_tests.rs"]
 mod message_recovery_tests;
 
+#[tokio::test]
+async fn accepted_text_publishes_before_terminal_and_survives_recorder_replacement() {
+    for reason in [TurnStopReason::EndTurn, TurnStopReason::Cancelled] {
+        let (store, agent) = ready_agent(None).await;
+        let store = Arc::new(store);
+        let mutation = begin_turn(&store, agent);
+        let agent = mutation.agent.clone();
+        store.commit_agent_conversation(mutation).await.unwrap();
+        let recorder = DurableAgentUpdateRecorder::with_incremental_output_policy(
+            store.clone(),
+            Arc::default(),
+            None,
+            false,
+            false,
+            None,
+            true,
+        );
+        let chunk = |text: &str| {
+            ConversationUpdate::Said(SessionUpdate::AgentMessageChunk(
+                ContentChunk::new(ContentBlock::from(text)).message_id(MessageId::new("answer")),
+            ))
+        };
+        let first = recorder
+            .record_update(
+                &agent.id,
+                1,
+                &mut AgentMessageAssembly::default(),
+                chunk("é"),
+                NOW.into(),
+            )
+            .await
+            .unwrap();
+        assert!(!first.turn_closed);
+        assert_eq!(first.appended.len(), 1);
+        assert_eq!(
+            first.appended[0].kind,
+            AgentLogKind::AgentMessageDelta {
+                offset: 0,
+                content: "é".into(),
+            }
+        );
+        let replacement = DurableAgentUpdateRecorder::new(store.clone());
+        let mut assembly = AgentMessageAssembly::default();
+        let second = replacement
+            .record_update(&agent.id, 1, &mut assembly, chunk(" clair"), NOW.into())
+            .await
+            .unwrap();
+        assert_eq!(second.appended.len(), 1);
+        assert_eq!(
+            second.appended[0].kind,
+            AgentLogKind::AgentMessageDelta {
+                offset: 2,
+                content: " clair".into(),
+            }
+        );
+        let terminal = replacement
+            .record_update(
+                &agent.id,
+                1,
+                &mut assembly,
+                ConversationUpdate::TurnEnded(PromptResponse::new(reason)),
+                NOW.into(),
+            )
+            .await
+            .unwrap();
+        assert!(terminal.turn_closed);
+        let messages = store
+            .agent_log(&agent.id, agent.conversation.last_seq, 50)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter_map(|row| match row.kind {
+                AgentLogKind::AgentMessage { content } => Some(content),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(messages, ["é clair"]);
+    }
+}
+
 async fn ready_agent(
     first_message: Option<&str>,
 ) -> (super::InMemorySandboxStore, crate::sandbox::Agent) {

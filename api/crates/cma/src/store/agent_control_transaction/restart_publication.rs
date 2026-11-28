@@ -29,7 +29,7 @@ use mongodb::{
 
 pub(super) enum RecordedRestart {
     Segmented(Box<Recorded>),
-    Legacy(Box<AgentLogEntry>),
+    Legacy(Vec<AgentLogEntry>),
 }
 
 impl RecordedRestart {
@@ -43,20 +43,27 @@ impl RecordedRestart {
                 .matches(store, session)
                 .await
                 .map_err(store_error)?,
-            Self::Legacy(entry) => {
-                let row = store
-                    .agent_log
-                    .find_one(doc! {"_id": log_id(&entry.agent_id, entry.seq)})
-                    .read_concern(ReadConcern::snapshot())
-                    .session(session)
-                    .await
-                    .map_err(unavailable)?;
-                row.as_ref()
-                    .map(read_entry)
-                    .transpose()
-                    .map_err(store_error)?
-                    .as_ref()
-                    == Some(entry.as_ref())
+            Self::Legacy(entries) => {
+                for entry in entries {
+                    let row = store
+                        .agent_log
+                        .find_one(doc! {"_id": log_id(&entry.agent_id, entry.seq)})
+                        .read_concern(ReadConcern::snapshot())
+                        .session(&mut *session)
+                        .await
+                        .map_err(unavailable)?;
+                    if row
+                        .as_ref()
+                        .map(read_entry)
+                        .transpose()
+                        .map_err(store_error)?
+                        .as_ref()
+                        != Some(entry)
+                    {
+                        return Err(unknown_control("restart publication is absent"));
+                    }
+                }
+                true
             }
         };
         if !matches {
@@ -90,7 +97,7 @@ pub(super) async fn record<'session>(
     }
 
     let session = scope.release();
-    let interruption = if let Some(entry) = input.logs.first() {
+    let interruption = if !input.logs.is_empty() {
         let summary = trusted_summary_at_head(store, input.current, row, session)
             .await
             .map_err(log_error)?
@@ -124,7 +131,7 @@ pub(super) async fn record<'session>(
                 .map_err(SandboxStoreError::Corrupt)
                 .map_err(domain_error)?,
         );
-        Some((entry, prepared.documents))
+        Some(prepared.documents)
     } else {
         carry_integrity_for_revision(row, input.current, input.next, &mut update.fields)
             .map_err(domain_error)?;
@@ -145,7 +152,7 @@ pub(super) async fn record<'session>(
     if applied.matched_count != 1 {
         return Err(ApplyError::Domain(AgentControlStoreError::Conflict));
     }
-    let Some((entry, documents)) = interruption else {
+    let Some(documents) = interruption else {
         return Ok((None, session));
     };
     for document in documents {
@@ -157,10 +164,7 @@ pub(super) async fn record<'session>(
             .await
             .map_err(ApplyError::Driver)?;
     }
-    Ok((
-        Some(RecordedRestart::Legacy(Box::new(entry.clone()))),
-        session,
-    ))
+    Ok((Some(RecordedRestart::Legacy(input.logs.to_vec())), session))
 }
 
 fn domain_error(error: SandboxStoreError) -> ApplyError {

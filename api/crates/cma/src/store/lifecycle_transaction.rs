@@ -272,7 +272,12 @@ pub(super) async fn apply_lifecycle(
             )
             .await?,
         );
-        let batch = materialize_logs(stored, change, &mutation.appended_at)?;
+        let mut batch = materialize_logs(stored, change, &mutation.appended_at)?;
+        let mut next = change.agent.clone();
+        if stored.conversation.active_turn != next.conversation.active_turn {
+            integrity_write::finish_published_text(store, stored, &mut next, &mut batch, session)
+                .await?;
+        }
 
         let row = rows
             .iter_mut()
@@ -287,19 +292,22 @@ pub(super) async fn apply_lifecycle(
                     "lifecycle scan did not produce semantic checkpoint".into(),
                 )))?;
         let next_semantic = semantic
-            .after_append(&batch, &change.agent)
+            .after_append(&batch, &next)
             .map_err(ApplyError::Domain)?;
         integrity_by_id.insert(
             stored.id.clone(),
-            prepare_append(
-                stored,
-                &complete,
-                &batch,
-                change.agent.revision,
-                next_semantic,
-                AppendCapacity::StopOrFailure,
-            )
-            .map_err(ApplyError::Domain)?,
+            (
+                prepare_append(
+                    stored,
+                    &complete,
+                    &batch,
+                    next.revision,
+                    next_semantic,
+                    AppendCapacity::StopOrFailure,
+                )
+                .map_err(ApplyError::Domain)?,
+                next,
+            ),
         );
         logs.extend(batch);
     }
@@ -321,13 +329,13 @@ pub(super) async fn apply_lifecycle(
         if segment_receipts.contains_key(&stored.id) {
             continue;
         }
-        let integrity = integrity_by_id
+        let (integrity, next) = integrity_by_id
             .remove(&stored.id)
             .ok_or(ApplyError::Domain(SandboxStoreError::Corrupt(
                 "lifecycle integrity receipt missing".into(),
             )))?;
         encoded_logs.extend(integrity.documents);
-        advance_agent(store, stored, change, integrity.integrity, session).await?;
+        advance_agent(store, stored, &next, integrity.integrity, session).await?;
     }
     for entry in &encoded_logs {
         store

@@ -70,26 +70,27 @@ mod worker_supervision;
 
 use std::sync::Arc;
 
-use diagnostic_request::with_request_context;
+pub(crate) use projections::{rest_links, rest_router, REST_LINKS};
 use startup::serve;
 
 use axum::{
     body::Body,
     extract::{Request, State},
-    http::{header, HeaderMap, HeaderValue, Method},
+    http::{header, HeaderMap, HeaderName, HeaderValue, Method},
     middleware::Next,
     response::Response,
-    routing::any,
     Router,
 };
-use layer1_public::rest::HttpProblem;
+use tower_http::{
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+    trace::{DefaultOnRequest, DefaultOnResponse, TraceLayer},
+};
+use tracing::Level;
 
 pub(crate) const REQUEST_BODY_LIMIT_BYTES: usize = 2 * 1024 * 1024;
-pub(crate) const REST_LINKS: HeaderValue = HeaderValue::from_static(
-    "<https://spec.chrono-ai.fun/cma/1.0/conf/rest-core>; rel=\"profile\", <https://spec.chrono-ai.fun/cma/1.0/conf/responses-chat>; rel=\"profile\", </openapi.json>; rel=\"service-desc\"",
-);
 
 const DEFAULT_LOG_FILTER: &str = "info";
+const X_REQUEST_ID: HeaderName = HeaderName::from_static("x-request-id");
 
 fn main() {
     let mut arguments = std::env::args_os().skip(1);
@@ -330,22 +331,6 @@ async fn run() {
     }
 }
 
-fn rest_router(resource_routes: Router) -> Router {
-    layer1_public::rest::router()
-        .merge(resource_routes)
-        .route("/api/v1", any(|| async { HttpProblem::NotFound }))
-        .route("/api/v1/", any(|| async { HttpProblem::NotFound }))
-        .route("/api/v1/{*path}", any(|| async { HttpProblem::NotFound }))
-        .method_not_allowed_fallback(|| async { HttpProblem::MethodNotAllowed })
-        .layer(axum::middleware::from_fn(rest_links))
-}
-
-async fn rest_links(request: Request, next: Next) -> Response {
-    let mut response = next.run(request).await;
-    response.headers_mut().append(header::LINK, REST_LINKS);
-    response
-}
-
 fn with_cors(router: Router, origins: Vec<HeaderValue>) -> Router {
     router.layer(axum::middleware::from_fn_with_state(
         Arc::new(CorsPolicy { origins }),
@@ -466,6 +451,23 @@ fn add_preflight_vary(headers: &mut HeaderMap) {
     ] {
         headers.append(header::VARY, HeaderValue::from_static(value));
     }
+}
+
+fn with_request_context(router: Router) -> Router {
+    router
+        .layer(axum::middleware::from_fn(telemetry::http::observe))
+        .layer(PropagateRequestIdLayer::new(X_REQUEST_ID))
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(diagnostic_request::request_span)
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        )
+        .layer(axum::middleware::from_fn(diagnostic_request::scope))
+        .layer(SetRequestIdLayer::new(X_REQUEST_ID, MakeRequestUuid))
+        .layer(axum::middleware::from_fn(
+            diagnostic_request::discard_unusable_request_id,
+        ))
 }
 
 #[cfg(test)]

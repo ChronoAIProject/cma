@@ -22,7 +22,7 @@ impl crate::sandbox::AgentReadService {
             .log(caller, id, after, limit)
             .await?
             .into_iter()
-            .map(Into::into)
+            .filter_map(|entry| super::AgentEvent::try_from(entry).ok())
             .collect())
     }
 }

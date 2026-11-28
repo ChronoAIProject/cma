@@ -38,7 +38,7 @@ async fn failure_prefix_byte_boundary_publishes_exactly_and_retains_one_over() {
         .iter()
         .map(|entry| log_document(entry).unwrap().to_vec().unwrap().len())
         .sum();
-    let remaining = 64 * 1024 * 1024 + 512 * 1024 - bytes;
+    let remaining = crate::store::agent_log_integrity::STOP_AGENT_LOG_BYTES - bytes;
     let exact = run(Capacity::Bytes(remaining), true).await;
     assert_eq!(
         exact
@@ -220,9 +220,12 @@ async fn run(capacity: Capacity, visible: bool) -> Vec<AgentLogEntry> {
             .sum();
         assert_eq!(total, before_bytes + appended);
         if visible {
-            assert_eq!(total, 64 * 1024 * 1024 + 512 * 1024);
+            assert_eq!(
+                total,
+                crate::store::agent_log_integrity::STOP_AGENT_LOG_BYTES
+            );
         } else {
-            assert!(total <= 64 * 1024 * 1024 + 512 * 1024);
+            assert!(total <= crate::store::agent_log_integrity::STOP_AGENT_LOG_BYTES);
         }
     }
     client.database(&name).drop().await.unwrap();

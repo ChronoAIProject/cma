@@ -247,6 +247,7 @@ impl AgentLogCheckpoint {
                 ));
             }
             AgentLogKind::SkillInstallationChanged { .. }
+            | AgentLogKind::AgentMessageDelta { .. }
             | AgentLogKind::WorkStepCompleted { .. }
             | AgentLogKind::WorkStepFailed { .. }
             | AgentLogKind::ToolCallStarted { .. }

@@ -130,6 +130,9 @@ impl Source {
     }
 }
 
+#[path = "incremental_text_replay_tests.rs"]
+mod incremental_text_replay_tests;
+
 pub(super) async fn retained_completed_response(f: &Fixture) -> String {
     use layer3_adapter::{ConversationUpdate, PromptIdentity, PromptResponse, TurnStopReason};
 

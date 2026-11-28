@@ -81,18 +81,8 @@ pub(super) fn change(
     }
     let mut expected = value.before;
     match (&value.tool, value.message_ordinal) {
-        (None, Some(message))
-            if message == expected.messages && value.item_ordinal == expected.items =>
-        {
-            expected.messages += 1;
-            expected.items += 1;
-            let nonempty = value
-                .after
-                .nonempty_messages
-                .checked_sub(expected.nonempty_messages)
-                .filter(|n| *n <= 1)
-                .ok_or_else(|| corrupt("invalid message counter change"))?;
-            expected.nonempty_messages += nonempty;
+        (None, Some(_)) if value.valid_message_change() => {
+            return Ok(());
         }
         (Some(t), None) => {
             tool(t, &t.call_id, index)?;
@@ -107,7 +97,7 @@ pub(super) fn change(
                 ));
             }
             if t.start_sequence == value.source_sequence {
-                if value.item_ordinal != expected.items {
+                if value.item_ordinal != expected.items || expected.text.is_open() {
                     return Err(corrupt("invalid tool item ordinal"));
                 }
                 expected.items += 1;

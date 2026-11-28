@@ -5,7 +5,7 @@ use layer2_core::resource_access::{
 };
 use layer2_core::sandbox::agent_io::*;
 use layer2_core::sandbox::{
-    AgentContextService, AgentOperationError, AgentOperationService, SandboxStatus,
+    AgentContextService, AgentOperationError, AgentOperationService, AgentStatus, SandboxStatus,
 };
 
 pub(crate) struct ResourceCommandExecution {
@@ -65,7 +65,7 @@ impl ResourceCommandExecution {
                 CommandFailureCode::AgentUnavailable,
             ));
         }
-        if agent.status != layer2_core::sandbox::AgentStatus::Ready
+        if agent.status != AgentStatus::Ready
             && matches!(
                 command.receipt.envelope.command,
                 AgentCommand::Message { .. }
@@ -76,6 +76,15 @@ impl ResourceCommandExecution {
                 agent_id = %agent.id, sandbox_id = %lineage.sandbox.id,
                 agent_status = ?agent.status, sandbox_status = ?lineage.sandbox.status,
                 error_kind = "agent_not_ready", "Queued command is waiting for its Agent");
+        }
+        // Ordinary appends behind a live turn need neither an ownership claim
+        // nor revival. The driver will re-read durable readiness after waiting.
+        if lineage.sandbox.status == SandboxStatus::Active
+            && agent.status == AgentStatus::Working
+            && agent.conversation.active_turn.is_some()
+            && command.receipt.envelope.is_ordinary_append()
+        {
+            return Err(CommandReadiness::WaitingForActiveTurn);
         }
         if !matches!(
             command.receipt.envelope.command,

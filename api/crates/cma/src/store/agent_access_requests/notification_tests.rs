@@ -347,8 +347,7 @@ async fn mongo_notification_turn_reselection_fences_an_inflight_old_admission_sn
         matches!(result, Err(crate::store::agent_commands::ApplyError::Driver(error)) if is_transient(&error))
     );
     let _ = in_flight.abort_transaction().await;
-    // A delayed fresh transaction acknowledges its abort without admitting
-    // the old notification observation.
+    // A fresh transaction rejects the old observation and acknowledges its abort.
     assert_eq!(
         store.reserve_command(request).await,
         Err(CommandLedgerError::KnownAborted)

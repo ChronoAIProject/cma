@@ -4,6 +4,71 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
+async fn checkpoint_paces_a_proven_abort_and_keeps_the_exact_receipt() {
+    use mongodb::{event::command::CommandEvent, event::EventHandler};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    let name = format!("cma_checkpoint_pacing_{}", uuid::Uuid::new_v4().simple());
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.app_name = Some(name.clone());
+    let commands = Arc::new(Mutex::new((None, None)));
+    let observed = commands.clone();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        let mut commands = observed.lock().unwrap();
+        match event {
+            CommandEvent::Failed(event) if event.command_name == "update" => {
+                commands.0 = Some(Instant::now());
+            }
+            CommandEvent::Started(event)
+                if event
+                    .command
+                    .get_bool("startTransaction")
+                    .is_ok_and(|start| start)
+                    && commands.0.is_some() =>
+            {
+                commands.1.get_or_insert_with(Instant::now);
+            }
+            _ => {}
+        }
+    }));
+    let client = Client::with_options(options).unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let current = working(&store, "sbx_checkpoint_pacing").await;
+    let checkpoint = partial(&current, "retained partial");
+    admin
+        .database("admin")
+        .run_command(doc! {
+            "configureFailPoint": "failCommand", "mode": { "times": 1_i32 },
+            "data": { "failCommands": ["update"], "appName": &name,
+                      "errorCode": 112_i32, "errorLabels": ["TransientTransactionError"] },
+        })
+        .await
+        .unwrap();
+    let result = store
+        .commit_agent_message_update(current.clone(), None, checkpoint.clone(), None)
+        .await;
+    admin
+        .database("admin")
+        .run_command(doc! { "configureFailPoint": "failCommand", "mode": "off" })
+        .await
+        .unwrap();
+    let (failure, retry) = *commands.lock().unwrap();
+    let retry_delay = retry.unwrap().duration_since(failure.unwrap());
+    assert!(retry_delay >= Duration::from_millis(10), "{retry_delay:?}");
+    assert_eq!(result.unwrap(), checkpoint.outcome);
+    assert_eq!(
+        store.agent_message_checkpoint(&current.id).await.unwrap(),
+        Some(checkpoint),
+    );
+    assert_eq!(store.get_agent(&current.id).await.unwrap(), Some(current),);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
 async fn checkpoint_reconciles_ambiguous_quiet_and_boundary_commits_without_duplicate_logs() {
     let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
     let handle = recorder.handle();
