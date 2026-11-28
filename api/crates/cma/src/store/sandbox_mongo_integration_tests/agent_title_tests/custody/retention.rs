@@ -201,7 +201,7 @@ async fn purge_allowed(f: &Fixture) -> bool {
             .unwrap()
             .unwrap();
     let allowed =
-        crate::store::agent_title_effect::purge::require_finality(&f.a, &[row], &mut session)
+        crate::store::agent_title_effect::purge::require_finality(&f.a, &[row], None, &mut session)
             .await
             .is_ok();
     session.abort_transaction().await.unwrap();

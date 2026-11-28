@@ -420,14 +420,17 @@ async fn purge_in_transaction(
         .try_collect::<Vec<_>>()
         .await
         .map_err(PurgeError::Driver)?;
-    super::agent_title_effect::purge::require_finality(store, &agent_documents, session)
-        .await
-        .map_err(|error| match error {
-            super::agent_log_integrity::TransactionLogError::Driver(error) => {
-                PurgeError::Driver(error)
-            }
-            super::agent_log_integrity::TransactionLogError::Domain(_) => PurgeError::Conflict,
-        })?;
+    super::agent_title_effect::purge::require_finality(
+        store,
+        &agent_documents,
+        Some(&sandbox),
+        session,
+    )
+    .await
+    .map_err(|error| match error {
+        super::agent_log_integrity::TransactionLogError::Driver(error) => PurgeError::Driver(error),
+        super::agent_log_integrity::TransactionLogError::Domain(_) => PurgeError::Conflict,
+    })?;
     let agent_ids = agent_documents
         .iter()
         .filter_map(|document| document.get_str("_id").ok())

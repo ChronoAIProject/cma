@@ -1,0 +1,372 @@
+{
+  "schema": "multi-am-writer-regressions-v2",
+  "source": "8535d8fb7fc3152b77e43f8875d510876827da4e",
+  "requirements_sha256": "85b7409e19fc178fcf3e2ffbb037ac8f2137d94644744f7bc7d85bbec0ee9d7d",
+  "verdict": "INCOMPLETE",
+  "cases": [
+    {
+      "id": "SW01",
+      "issues": "#2157",
+      "feature": "Rename",
+      "requirement": "Request is authorized and executed under current owning AM authority; server-internal CAS conflict re-reads and retries boundedly; acknowledged title remains after reload and owner move. A stale explicit expected revision receives the established typed stale-client response.",
+      "status": "COMPLETE",
+      "trigger": "PATCH Agent preferences with a genuinely changed title while owner lifecycle/log publication advances the Agent",
+      "required_assertions": [
+        {"case": "writer.competing_renames", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
+        {"case": "writer.rename_publication_retry", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
+        {
+          "case": "user.rename_cas",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
+          ],
+          "routing": "non_owner"
+        },
+        {
+          "case": "writer.held_rename",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart"
+          ],
+          "routing": "non_owner"
+        },
+        {
+          "case": "writer.held_title_survives_restart",
+          "minimum_runs": 1,
+          "phases": [
+            "after_restart"
+          ],
+          "routing": "non_owner"
+        }
+      ]
+    },
+    {
+      "id": "SW02",
+      "issues": "#2157",
+      "feature": "Settings and system prompt",
+      "requirement": "Current owner executes both durable admission and runtime effect; policy/idle/runtime/setting revisions revalidated. No false success from unchanged settings. Non-idle and unauthorized cases remain refused.",
+      "status": "COMPLETE",
+      "trigger": "Changed supported settings/system prompt on eligible idle Agent, via both normal and authorized cross-owner entrypoints",
+      "required_assertions": [
+        {
+          "case": "user.system_prompt_roundtrip",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
+          ],
+          "routing": "non_owner"
+        },
+        {
+          "case": "user.session_settings_roundtrip",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
+          ],
+          "routing": "non_owner"
+        },
+        {
+          "case": "admin.system_prompt_roundtrip",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
+          ],
+          "routing": "non_owner"
+        },
+        {
+          "case": "admin.session_settings_roundtrip",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
+          ],
+          "routing": "non_owner"
+        },
+        {
+          "case": "writer.busy_configuration_refused",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
+          ],
+          "routing": "non_owner"
+        },
+        {
+          "case": "writer.unauthorized_configuration_refused",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
+          ],
+          "routing": "non_owner"
+        },
+        {"case": "writer.competing_system_prompts", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
+        {"case": "writer.configuration_publication_retry", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"}
+      ]
+    },
+    {
+      "id": "SW03",
+      "issues": "#2157",
+      "feature": "Skill installation",
+      "requirement": "Existing owner route and authority scope survive; bounded intent CAS retry succeeds or returns bounded availability outcome, never duplicates installation. Do not presume missing route: /skills is already allowlisted in exact4eaf.",
+      "status": "COMPLETE",
+      "trigger": "New eligible skill intent through POST /skills while ordinary publication races",
+      "required_assertions": [
+        {
+          "case": "writer.skill_installs_once",
+          "minimum_runs": 1,
+          "phases": ["before_restart", "after_restart"],
+          "routing": "non_owner"
+        },
+        {"case": "writer.skill_publication_retry", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"}
+      ]
+    },
+    {
+      "id": "SW04",
+      "issues": "#2147",
+      "feature": "Send, interrupt, queued cancellation, Stop, delete, revive/Open",
+      "requirement": "Admission is executed under current owner or explicitly reviewed non-routable CAS contract. Immutable command/idempotency receipt is unique; effect runs once; old owner cannot publish after epoch change. Cleanup uses public owner path.",
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "The journey binds the original held command to both ingresses, the successor and final replay. The same-source non-owner Cancel control requires one effect. Exact-image old-epoch barriers, Event Gateway ingress, and hosted execution remain pending.",
+      "trigger": "Use each actual Agent mutation route on non-owner ingress; include queued response cancellation during stream output and owner move",
+      "required_assertions": [
+        {
+          "case": "plain_send_and_interrupt_non_owner",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        },
+        {
+          "case": "actual_owner_kill_and_recovery",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        },
+        {
+          "case": "plain_send_and_interrupt_after_restart",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        },
+        {
+          "case": "plain_public_stop_retire",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        },
+        {"case": "ownerless_pause_revive_open", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "retirement_retains_terminal_evidence", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "writer.shared_conversation_ingress", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
+        {
+          "case": "writer.queued_edit_cancel",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
+          ],
+          "routing": "non_owner"
+        }
+      ]
+    },
+    {
+      "id": "SW05",
+      "issues": "#2152/#2156",
+      "feature": "Startup publication",
+      "requirement": "Bounded reread checks current holder, work lease, parent, runtime and owner; retries publication only. Agent reaches Ready without waiting for the 18-minute old work lease and without rerunning native preparation.",
+      "status": "COMPLETE",
+      "trigger": "Inject known-aborted ownership-fence conflict with byte-identical durable Agent at intent or completion publication after native work has completed",
+      "required_assertions": [
+        {"case": "prepared_create_on_b", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_owner_fence_conflict", "minimum_runs": 1, "phases": [], "routing": "journey"}
+      ]
+    },
+    {
+      "id": "SW06",
+      "issues": "#2152/#2156",
+      "feature": "Startup refusal boundaries",
+      "requirement": "Reject changed authority/intent, preserve unknown outcome, do not claim retryable known-abort or repeat native effects.",
+      "status": "COMPLETE",
+      "trigger": "During publication retry change owner epoch, parent identity, runtime, work step or lease; separately inject Unavailable/unknown commit",
+      "required_assertions": [
+        {"case": "prepared_worktree_schema_refusal", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_work_lease_refusal", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_commit_acknowledgement_loss", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_owner_epoch_refusal", "minimum_runs": 1, "phases": [], "routing": "journey"}
+      ]
+    },
+    {
+      "id": "SW07",
+      "issues": "#2147",
+      "feature": "Connection recovery, runtime-loss reconciliation and sandbox lifecycle",
+      "requirement": "Background path re-reads/rebuilds plan after known CAS conflict within a finite budget, preserving exact parent/Agent/log/ownership fences and all-or-none transition. No endless identical scheduler error or partially advanced hierarchy.",
+      "status": "COMPLETE",
+      "trigger": "Two AM workers race an Agent log/metadata mutation with connection repair or atomic multi-Agent sandbox transition",
+      "required_assertions": [
+        {"case": "native_runtime_loss_preserves_agents", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "two_agent_pause_all_or_none", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "two_agent_revival_restores_both", "minimum_runs": 1, "phases": [], "routing": "journey"}
+      ]
+    },
+    {
+      "id": "SW08",
+      "issues": "LEAD05:40",
+      "feature": "Metadata writers",
+      "requirement": "Each runs on owner where routable; non-routable known conflict has bounded fresh snapshot retry. Immutable title-effect custody prevents LLM/native replay; optional pacing hints may be safely superseded. Fences remain present.",
+      "status": "COMPLETE",
+      "trigger": "Title claim/completion, suggestions, resource-access lineage guards or provenance backfill overlap stream/lifecycle publication",
+      "required_assertions": [
+        {"case": "provenance_progress_known_abort", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "provenance_progress_unknown_commit", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "writer.automatic_title_custody", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
+        {"case": "writer.agent_access_request_denial", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "both"},
+        {"case": "writer.suggestions_publish_once", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"},
+        {"case": "writer.suggestions_expire_after_rename", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "non_owner"}
+      ]
+    },
+    {
+      "id": "SW09",
+      "issues": "#2161",
+      "feature": "Always-on and admission replay",
+      "requirement": "Successful toggle never makes readers503; original immutable admission still replays to same identity; altered original payload is rejected. Preserve permissions, stale revision checks, owner relinquishment and provenance. Routing alone is insufficient to fix immutable fingerprint mismatch.",
+      "status": "COMPLETE",
+      "trigger": "For lifecycle-origin AND trigger-origin Sandbox enable then revoke Always-on, read Sandbox/Agent and replay original creation admission; try changed original request",
+      "required_assertions": [
+        {
+          "case": "admin.sandbox_always_on_cross_am",
+          "minimum_runs": 3,
+          "phases": [
+            "before_restart",
+            "after_restart"
+          ],
+          "routing": "non_owner"
+        },
+        {
+          "case": "trigger_origin_always_on_and_replay",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        },
+        {
+          "case": "writer.lifecycle_owner_relinquishment_browser",
+          "minimum_runs": 1,
+          "phases": ["before_restart", "after_restart"],
+          "routing": "both",
+          "browser": true
+        }
+      ]
+    },
+    {
+      "id": "SW10",
+      "issues": "LEAD05:40",
+      "feature": "Sharing/access/artifact metadata",
+      "requirement": "No raw conflict for internal contention; fresh authorization and policy snapshot checked on retry, immutable receipt recovered on unknown outcome, denied/revoked caller never admitted. Some share redemption retry already exists; preserve it.",
+      "status": "COMPLETE",
+      "trigger": "Agent-target share create/revoke/redemption, access request transitions and artifact publication concurrent with owner revision change",
+      "required_assertions": [
+        {"case": "writer.artifact_unknown_publication", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "both"},
+        {"case": "writer.artifact_committed_without_acknowledgement", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "both"},
+        {"case": "writer.share_revoked_before_redemption_retry", "minimum_runs": 1, "phases": ["before_restart", "after_restart"], "routing": "both"},
+        {
+          "case": "writer.share_and_artifact_receipts",
+          "minimum_runs": 1,
+          "phases": ["before_restart", "after_restart"],
+          "routing": "both"
+        },
+        {
+          "case": "writer.organization_share_membership",
+          "minimum_runs": 1,
+          "phases": ["before_restart", "after_restart"],
+          "routing": "both"
+        },
+        {
+          "case": "writer.agent_access_request_denial",
+          "minimum_runs": 1,
+          "phases": ["before_restart", "after_restart"],
+          "routing": "both"
+        },
+        {
+          "case": "writer.agent_access_request_approval",
+          "minimum_runs": 1,
+          "phases": ["before_restart", "after_restart"],
+          "routing": "both"
+        }
+      ]
+    },
+    {
+      "id": "SW11",
+      "issues": "LEAD05:40",
+      "feature": "Local destructive/admin matrix",
+      "requirement": "Exact capture/retention/title-finality guards remain enforced. Known contention re-evaluates safely and boundedly; terminal cleanup never deletes a live Agent or bypasses retained evidence. Local topology only.",
+      "status": "INCOMPLETE_NOT_EXECUTION_PASS",
+      "remaining": "The fixture binds pause and revival to the retained home, checks accepted title custody through retirement, and requires permanent creation provenance after worker purge. Same-source controls exercise checkpoint and purge publication retries and unresolved title custody on Mongo. The unresolved title case requires Runtime deferral before expiry and actual purge afterward. Exact-image checkpoint capture, publication contention and hosted execution remain pending.",
+      "trigger": "Checkpoint publication, runtime maintenance, retirement and eligible purge with active/terminated Agent writers",
+      "required_assertions": [
+        {"case": "pause_preserves_retained_home_authority", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "revival_reattaches_retained_home", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "retirement_retains_terminal_evidence", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "unresolved_title_retirement_defers_purge", "minimum_runs": 1, "phases": [], "routing": "journey"}
+      ]
+    },
+    {
+      "id": "SW12",
+      "issues": "#2159/#2146",
+      "feature": "Readiness and HPA",
+      "requirement": "Never-Ready manager acquires no Agent; shared readiness predicate drops immediately on termination; serving peer owns any touched Agent within approved drain bound. Existing native65 PASS is not an integrated image PASS.",
+      "status": "COMPLETE",
+      "trigger": "Reuse existing never-Ready third-AM and early SIGTERM/delete tests plus final exact-image HPA2->3->2 journey",
+      "required_assertions": [
+        {
+          "case": "owner_drain_and_readiness",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        },
+        {
+          "case": "ready_autoscaler_two_three_two",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        },
+        {
+          "case": "never_ready_third_manager",
+          "minimum_runs": 1,
+          "phases": [],
+          "routing": "journey"
+        }
+      ]
+    },
+    {
+      "id": "SW13",
+      "status": "COMPLETE",
+      "issues": "#2168/#2156",
+      "feature": "Prepared startup with renewed parent schemas",
+      "requirement": "Supported parent1/3/4 publication succeeds; no repeated schema-filterConflict, no18minute lease stall. Unknown Worktree schema, cleanup and paused parents still refuse. Record request/ingress/owner/epoch and distinguish targetenabled from actualpreparedhit.",
+      "trigger": "Claim an actual prepared Sandbox under replica feature mode, retain prepared-hit plus Sandbox/Workspace envelope evidence, immediately open through actual web route while Starting, reach Ready and Send/reply. Compare plain create; exercise each ingress/current owner in integrated twoAM matrix.",
+      "required_assertions": [
+        {"case": "cold_comparison_on_a", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "cold_comparison_on_b", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_create_on_a", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_create_on_b", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_1_1", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_1_3", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_3_1", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_3_3", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_4_1", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_envelope_4_3", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_parent_pause_refusal", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_worktree_schema_refusal", "minimum_runs": 1, "phases": [], "routing": "journey"},
+        {"case": "prepared_worktree_cleanup_refusal", "minimum_runs": 1, "phases": [], "routing": "journey"}
+      ]
+    }
+  ],
+  "common": [
+    "Use the existing sole two-AM topology. Exercise changed values, not equality/no-op success.",
+    "For each interactive case record request ID, ingress AM, current durable owning AM, exact epoch, expected permission, response code, latency and final durable state.",
+    "Repeat from both ingress AMs including explicit non-owner ingress, and before/after the suite's existing actual owner restart. Preserve primary failure separately from cleanup/restoration failure.",
+    "No raw record revision changed response; no duplicate effect, lost acknowledged update, sequence gap or old-epoch publication. Typed stale client revision/authorization refusals remain valid negative cases.",
+    "Inject only known-aborted conflict for bounded retry tests. Unknown commit must reconcile the original receipt or stay unresolved; it must not replay a native effect."
+  ]
+}

@@ -11,7 +11,7 @@ export function prepareProbe(destination, scripts = '.github/scripts', stableWir
   assert(start > 0 && end > start);
   assert(source.slice(start, end).includes("['apply_patch', 'applypatch', 'codex-execve-wrapper', 'codex-linux-sandbox']"));
   source = "import { codexAliases } from './omarchy-codex-aliases.mjs';\n" + source.slice(0, start)
-    + '  const aliasRoot = await codexAliases(agentHome, artifacts.codexVersion);\n' + source.slice(end);
+    + '  const aliasRoot = await codexAliases(agentHome, artifacts.codexVersion, onStage);\n' + source.slice(end);
   const exclusion = "exclusions: ['.cma/agents/ci-agent/home/tmp/arg0', '.codex/tmp/arg0']";
   assert.equal(source.split(exclusion).length, 2);
   // Historical 0.165 images required the archive path directly. New images

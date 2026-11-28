@@ -1,8 +1,11 @@
 """Exercise the synthetic login redirect as an HTTP boundary."""
+import base64
 import contextlib
+import hashlib
 import http.client
 from http.server import ThreadingHTTPServer
 import io
+import json
 from pathlib import Path
 import secrets
 import sys
@@ -12,7 +15,7 @@ import unittest
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent / 'owner'))
-from identity import Identity
+from identity import Identity, scope_plan
 
 
 class IndependentActorTests(unittest.TestCase):
@@ -20,8 +23,10 @@ class IndependentActorTests(unittest.TestCase):
         self.credentials = {key: secrets.token_urlsafe(32) for key in (
             'bearer', 'admin_bearer', 'outsider_bearer', 'refresh_token', 'client_id', 'client_secret')}
         self.credentials['expires_at'] = int(time.time()) + 3600
+        self.credentials['deployment_id'] = 'cma-ci-123456789abc'
         class Handler(Identity):
             config = self.credentials
+            keys = {}
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -31,12 +36,12 @@ class IndependentActorTests(unittest.TestCase):
         self.server.shutdown(); self.server.server_close(); self.thread.join(timeout=5)
         self.assertFalse(self.thread.is_alive())
 
-    def request(self, method, path, *, token=None, form=None):
-        import json
+    def request(self, method, path, *, token=None, form=None, data=None):
         client = http.client.HTTPConnection(*self.server.server_address, timeout=5)
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                client.request(method, path, body=urlencode(form) if form else None,
+                body = urlencode(form) if form else json.dumps(data) if data else None
+                client.request(method, path, body=body,
                                headers={'Authorization': 'Bearer ' + token} if token else {})
                 response = client.getresponse(); body = json.loads(response.read())
                 return response.status, body
@@ -66,12 +71,79 @@ class IndependentActorTests(unittest.TestCase):
             'client_id': self.credentials['client_id'], 'client_secret': self.credentials['client_secret']})
         self.assertEqual(status, 401); self.assertFalse(body['active'])
 
+    def test_gateway_introspection_checks_separate_client_and_actor_permissions(self):
+        gateway = {key: secrets.token_urlsafe(32) for key in ('client_id', 'client_secret')}
+        self.credentials['gateway_client'] = gateway
+        form = {**gateway, 'token_type_hint': 'access_token'}
+        path = '/oauth/introspect'
+        for actor, permissions in [('bearer', ['cma-eg:channels:read']),
+                                   ('admin_bearer', ['cma-eg:channels:read']), ('outsider_bearer', [])]:
+            status, value = self.request('POST', path, form={**form, 'token': self.credentials[actor]})
+            self.assertEqual(status, 200)
+            self.assertTrue(value['active'])
+            self.assertEqual(value['iss'], 'https://identity.localhost.direct')
+            self.assertEqual(value['resource'], ['https://identity.localhost.direct/api/v1/proxy/s/cma-event-gateway'])
+            self.assertEqual(value['permissions'], permissions)
+        self.assertEqual(self.request('POST', path, form={**form, 'token': 'unknown-fixture-input'}),
+                         (200, {'active': False}))
+        self.assertEqual(self.request('POST', path, form={**form, 'token': self.credentials['bearer'],
+                             'client_id': self.credentials['client_id']}), (401, {'active': False}))
+
+    def test_organization_membership_is_current_and_bound_to_the_exact_actor(self):
+        admin = self.credentials['admin_bearer']
+        recipient = self.credentials['outsider_bearer']
+        control = '/fixture/organization-membership'
+        authorization = '/api/v1/orgs/fixture-organization/authorization'
+        self.assertEqual(self.request('GET', '/api/v1/orgs', token=recipient), (200, {'orgs': []}))
+        self.assertEqual(self.request('POST', control, token=recipient, data={'member': True})[0], 403)
+        self.assertEqual(self.request('POST', control, token=admin, data={'member': 'true'})[0], 400)
+        self.assertEqual(self.request('POST', control, token=admin, data={'member': True}), (200, {'member': True}))
+        status, membership = self.request('GET', authorization, token=recipient)
+        self.assertEqual(status, 200)
+        self.assertEqual(membership['id'], 'fixture-organization')
+        self.assertEqual(membership['your_role'], 'member')
+        self.assertEqual(self.request('GET', authorization, token=admin)[0], 404)
+        self.assertEqual(self.request('POST', control, token=admin, data={'member': False}), (200, {'member': False}))
+        self.assertEqual(self.request('GET', authorization, token=recipient)[0], 404)
+        self.assertEqual(self.request('GET', '/api/v1/orgs', token=recipient), (200, {'orgs': []}))
+
+    def test_scope_key_uses_disposable_deployment_and_ornn_revocation(self):
+        token = self.credentials['bearer']
+        endpoint = '/api/v1/api-keys'
+        selected = ['fixture-ornn']
+        body = {'name': 'cma:another-deployment:fixture-sandbox', 'scopes': 'proxy read',
+                'expires_at': '2099-01-01T00:00:00Z', 'allowed_service_ids': selected,
+                'allowed_node_ids': ['fixture-node'], 'allow_all_services': False,
+                'allow_all_nodes': False, 'allow_auto_connected_services': False,
+                'scope_plan_digest': scope_plan(selected)['normalized_grant_digest']}
+        self.assertEqual(self.request('POST', endpoint, token=token, data=body)[0], 400)
+        body['name'] = 'cma:' + self.credentials['deployment_id'] + ':fixture-sandbox'
+        status, created = self.request('POST', endpoint, token=token, data=body)
+        self.assertEqual(status, 200)
+        credential = created['full_key']
+        self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=credential), (200, {'granted': True}))
+        self.assertEqual(self.request('GET', '/fixture/llm-grant', token=credential)[0], 401)
+        self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=token)[0], 401)
+        self.assertEqual(self.request('DELETE', endpoint + '/' + created['id'], token=token)[0], 200)
+        self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=credential)[0], 401)
+        selected = ['fixture-llm']
+        body.update(allowed_service_ids=selected, scope_plan_digest=scope_plan(selected)['normalized_grant_digest'])
+        status, created = self.request('POST', endpoint, token=token, data=body)
+        self.assertEqual(status, 200)
+        model_key = created['full_key']
+        self.assertEqual(self.request('GET', '/fixture/llm-grant', token=model_key), (200, {'granted': True}))
+        self.assertEqual(self.request('GET', '/fixture/ornn-grant', token=model_key)[0], 401)
+        self.assertEqual(self.request('DELETE', endpoint + '/' + created['id'], token=token)[0], 200)
+        self.assertEqual(self.request('GET', '/fixture/llm-grant', token=model_key)[0], 401)
+
 
 class LoginRedirectTests(unittest.TestCase):
     def setUp(self):
         class Handler(Identity):
-            config = {'client_id': 'test-client'}
+            config = {'client_id': 'test-client', **{key: secrets.token_urlsafe(32) for key in (
+                'client_secret', 'bearer', 'admin_bearer', 'refresh_token')}}
             codes = {}
+        self.config = Handler.config
         self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
@@ -83,19 +155,22 @@ class LoginRedirectTests(unittest.TestCase):
         self.thread.join(timeout=5)
         self.assertFalse(self.thread.is_alive())
 
-    def authorize(self, **changes):
-        params = {'client_id': 'test-client', 'redirect_uri': 'https://api.localhost.direct/auth/callback',
-                  'response_type': 'code', 'code_challenge_method': 'S256',
-                  'state': 'fixture-state', 'code_challenge': 'x' * 43, **changes}
+    def request(self, method, path, *, headers=None, body=None):
         connection = http.client.HTTPConnection(*self.server.server_address, timeout=5)
         try:
             with contextlib.redirect_stdout(io.StringIO()):
-                connection.request('GET', '/authorize?' + urlencode(params))
+                connection.request(method, path, headers=headers or {}, body=body)
                 response = connection.getresponse()
-                body = response.read()
-            return response.status, dict(response.getheaders()), body
+                return response.status, dict(response.getheaders()), response.read()
         finally:
             connection.close()
+
+    def authorize(self, *, token=None, **changes):
+        params = {'client_id': 'test-client', 'redirect_uri': 'https://api.localhost.direct/auth/callback',
+                  'response_type': 'code', 'code_challenge_method': 'S256',
+                  'state': 'fixture-state', 'code_challenge': 'x' * 43, **changes}
+        return self.request('GET', '/authorize?' + urlencode(params),
+                            headers={'Authorization': 'Bearer ' + token} if token else None)
 
     def test_state_is_encoded_and_callback_is_fixed(self):
         state = 'fixture\r\nLocation: https://unrelated.invalid'
@@ -114,6 +189,25 @@ class LoginRedirectTests(unittest.TestCase):
             status, headers, _ = self.authorize(redirect_uri=destination)
             self.assertEqual(status, 400)
             self.assertNotIn('Location', headers)
+
+    def test_recipient_sign_in_is_bound_to_its_authorization_code(self):
+        verifier = secrets.token_urlsafe(32)
+        challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).decode().rstrip('=')
+        self.assertEqual(self.authorize(token=self.config['bearer'], code_challenge=challenge)[0], 401)
+        for token_key in ('admin_bearer', 'bearer'):
+            token = self.config[token_key] if token_key == 'admin_bearer' else None
+            status, headers, _ = self.authorize(token=token, code_challenge=challenge)
+            self.assertEqual(status, 302)
+            code = parse_qs(urlsplit(headers['Location']).query)['code'][0]
+            body = urlencode({'client_id': self.config['client_id'], 'client_secret': self.config['client_secret'],
+                              'grant_type': 'authorization_code', 'code': code, 'code_verifier': verifier,
+                              'redirect_uri': 'https://api.localhost.direct/auth/callback'})
+            status, _, raw = self.request('POST', '/token', body=body)
+            self.assertEqual(status, 200)
+            receipt = json.loads(raw)
+            self.assertEqual(receipt['access_token'], self.config[token_key])
+            self.assertEqual('refresh_token' in receipt, token_key == 'bearer')
+            self.assertEqual(self.request('POST', '/token', body=body)[0], 400)
 
 
 if __name__ == '__main__':

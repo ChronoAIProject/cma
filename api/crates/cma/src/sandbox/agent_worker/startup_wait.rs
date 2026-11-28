@@ -94,12 +94,16 @@ impl AgentWorker {
             let remaining = budget.saturating_sub(started.elapsed());
             if ready || remaining.is_zero() {
                 let result = if ready {
-                    self.bind_workspace(current.clone(), parents.clone(), at)
-                        .await
+                    box_wait_publication(|| {
+                        self.bind_workspace(current.clone(), parents.clone(), at)
+                    })
+                    .await
                 } else {
                     // The bounded observation already paced this expected wait.
-                    self.defer_workspace(current.clone(), parents.clone(), at, false)
-                        .await
+                    box_wait_publication(|| {
+                        self.defer_workspace(current.clone(), parents.clone(), at, false)
+                    })
+                    .await
                 };
                 let known_abort = match result {
                     Ok(AgentWorkPublication::Published) => return Ok(()),
@@ -107,9 +111,15 @@ impl AgentWorker {
                     Err(SandboxStoreError::Conflict) => false,
                     Err(error) => return Err(error),
                 };
-                return self
-                    .recover_workspace_wait(current, parents, now + started.elapsed(), known_abort)
-                    .await;
+                return box_wait_publication(|| {
+                    self.recover_workspace_wait(
+                        current,
+                        parents,
+                        now + started.elapsed(),
+                        known_abort,
+                    )
+                })
+                .await;
             }
             tokio::select! {
                 _ = &mut changed => {},
@@ -288,6 +298,13 @@ impl AgentWorker {
         })
         .await
     }
+}
+
+// Keep each publication constructor off the observation frame. The store
+// still polls the selected publication under the original work authority.
+#[inline(never)]
+fn box_wait_publication<F: Future>(start: impl FnOnce() -> F) -> Pin<Box<F>> {
+    Box::pin(start())
 }
 
 fn workspace_can_bind(parents: &PublicationParents) -> bool {

@@ -108,6 +108,7 @@ actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h
 end
 validate(documents, actions)
 check_repo_secret_gate(root)
+check_verification_archive_scan_paths(documents)
 workflows = Dir.glob(File.join(root, '.github/workflows/*.{yml,yaml}')).to_h do |file|
   [File.basename(file, File.extname(file)), WorkflowYAML.load_file(file)]
 end
@@ -218,21 +219,16 @@ report_steps.call(copy) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n eviden
 check_artifact_downloads(copy, actions)
 before_queue = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
 mutations = [
+ ->(d) { d['ci-two-am']['jobs']['startup-controls']['steps'][2]['continue-on-error'] = true },
+ ->(d) { d['ci-two-am']['jobs']['startup-controls']['steps'][2]['run'] = 'true' },
+ ->(d) { d['ci-pr-am']['jobs']['two-am-features']['needs'].delete('rust-test-build') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['if'] = 'true' },
   ->(d) { d['ci-images']['jobs']['images']['steps'].reject! { |s| s['name'] == 'Runtime vulnerability gate' } },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Runtime vulnerability gate' }['continue-on-error'] = true },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Runtime vulnerability gate' }['run'] += ' || true' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['name'] == 'Omarchy vulnerability gate' } },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Omarchy vulnerability gate' }['env']['BASE_SHA'] = '' },
-  ->(d) { d['ci-images']['jobs']['images']['steps'].reject! { |s| s['name'] == 'Scan tested image as staging publication does' } },
-  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['continue-on-error'] = true },
-  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['if'] = "github.event_name == 'merge_group'" },
-  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Scan tested image as staging publication does' }['run'] += ' || true' },
-  ->(d) { steps = d['ci-images']['jobs']['images']['steps']; scan = steps.index { |s| s['name'] == 'Scan tested image as staging publication does' }; steps.insert(steps.index { |s| s['name'] == 'Retain tested native image' } + 1, steps.delete_at(scan)) },
-  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['name'] == 'Install pinned image secret scanner' } },
-  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Scan tested Omarchy image as staging publication does' }['timeout-minutes'] = 120 },
-  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-scan-input' }['if'] = 'success()' },
-  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Export tested Omarchy image' }['run'].sub!('test "$OMARCHY_SCAN_STARTED" = true', 'true') },
+  *image_scan_workflow_mutations,
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'API allocator qualification' } },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
@@ -250,6 +246,7 @@ mutations = [
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Retain tested native image' }['if'] = 'success()' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Export tested Omarchy image' }['if'] = 'success()' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Retain tested Omarchy image' }['if'] = before_queue },
+  ->(d) { d['ci-two-am']['jobs']['features']['steps'].find { |s| s['working-directory'] == 'web' }['if'] = "matrix.fixture == 'prepared'" },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Prepare API Cargo cache identity' }['if'] = "matrix.component == 'api'" },
   ->(d) { d['ci-repo']['jobs']['structure']['steps'].reject! { |s| s['name'] == 'Synthetic authority and observer regressions' } },
   ->(d) { d['ci-repo']['jobs']['structure']['if'] = 'false' },

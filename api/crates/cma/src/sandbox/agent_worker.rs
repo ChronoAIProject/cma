@@ -289,28 +289,54 @@ impl AgentWorker {
 
     async fn execute(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         let started = tokio::time::Instant::now();
-        let claimed = agent.clone();
-        let result = if matches!(
+        if matches!(
             agent.work.step,
             AgentWorkStep::RemoveHome
                 | AgentWorkStep::RemoveWorktree
                 | AgentWorkStep::EnsureProcessClosed
         ) {
+            return self.execute_with_retired_cleanup(agent, now, started).await;
+        }
+        let claimed = agent.clone();
+        let result = self.execute_step(agent, now).await;
+        self.finish_execution(&claimed, result, now, started).await
+    }
+
+    // Keep the cleanup path's parent records and publication futures out of
+    // the common poll frame, including when the selected step is startup.
+    fn execute_with_retired_cleanup(
+        &self,
+        agent: Agent,
+        now: SystemTime,
+        started: tokio::time::Instant,
+    ) -> impl Future<Output = Result<(), SandboxStoreError>> + Send + '_ {
+        Box::pin(async move {
+            let claimed = agent.clone();
             let preflight = self.prepare_retired_cleanup(&agent).await;
             let at = now + started.elapsed();
-            match preflight {
+            let result = match preflight {
                 Ok(Some(parents)) => self.complete_retired_cleanup(&agent, parents, at).await,
                 Ok(None) => self.execute_step(agent, at).await,
                 Err(error) => return self.finish_cleanup_preflight(&agent, error, at).await,
-            }
-        } else {
-            self.execute_step(agent, now).await
-        };
-        let result = self
-            .finish_capacity_attempt(&claimed, result, now + started.elapsed())
-            .await;
-        self.finish_cleanup_attempt(&claimed, result, now + started.elapsed())
-            .await
+            };
+            self.finish_execution(&claimed, result, now, started).await
+        })
+    }
+
+    fn finish_execution<'a>(
+        &'a self,
+        claimed: &'a Agent,
+        result: Result<(), SandboxStoreError>,
+        now: SystemTime,
+        started: tokio::time::Instant,
+    ) -> impl Future<Output = Result<(), SandboxStoreError>> + Send + 'a {
+        Box::pin(async move {
+            let result = self
+                .finish_capacity_attempt(claimed, result, now + started.elapsed())
+                .await;
+            self.finish_cleanup_attempt(claimed, result, now + started.elapsed())
+                .await
+        })
     }
 
     #[cfg(test)]
@@ -322,37 +348,52 @@ impl AgentWorker {
         self.execute(agent, now).await
     }
 
-    /// Keep the per-step futures behind individual heap boundaries. The
-    /// combined match future otherwise contains every startup and cleanup
-    /// state machine and overflows the default test/runtime thread stack before
-    /// the selected step is even polled.
     fn execute_step(
         &self,
         agent: Agent,
         now: SystemTime,
     ) -> Pin<Box<dyn Future<Output = Result<(), SandboxStoreError>> + Send + '_>> {
         match agent.work.step {
-            AgentWorkStep::InstallSkill => Box::pin(self.install_skill(agent, now)),
-            AgentWorkStep::WaitForWorkspace => Box::pin(self.wait_for_workspace(agent, now)),
-            AgentWorkStep::AddWorktree => Box::pin(self.add_worktree(agent, now)),
-            AgentWorkStep::MaterializeHome => Box::pin(self.materialize_home(agent, now)),
-            AgentWorkStep::OpenConversation => Box::pin(self.open_conversation(agent, now)),
-            AgentWorkStep::PublishReady => Box::pin(self.publish_ready(agent, now)),
-            AgentWorkStep::PublishConnection => Box::pin(self.publish_connection(agent, now)),
+            AgentWorkStep::InstallSkill => self.box_step(agent, now, Self::install_skill),
+            AgentWorkStep::WaitForWorkspace => self.box_step(agent, now, Self::wait_for_workspace),
+            AgentWorkStep::AddWorktree => self.box_step(agent, now, Self::add_worktree),
+            AgentWorkStep::MaterializeHome => self.box_step(agent, now, Self::materialize_home),
+            AgentWorkStep::OpenConversation => self.box_step(agent, now, Self::open_conversation),
+            AgentWorkStep::PublishReady => self.box_step(agent, now, Self::publish_ready),
+            AgentWorkStep::PublishConnection => self.box_step(agent, now, Self::publish_connection),
             AgentWorkStep::DispatchFirstMessage => {
-                Box::pin(self.dispatch_first_message(agent, now))
+                self.box_step(agent, now, Self::dispatch_first_message)
             }
-            AgentWorkStep::FenceInteraction => Box::pin(self.fence_interaction(agent, now)),
-            AgentWorkStep::CloseProcess => Box::pin(self.close_process(agent, now)),
-            AgentWorkStep::PublishStopped => Box::pin(self.publish_stopped(agent, now)),
-            AgentWorkStep::EnsureProcessClosed => Box::pin(self.ensure_process_closed(agent, now)),
-            AgentWorkStep::RemoveHome => Box::pin(self.remove_home(agent, now)),
-            AgentWorkStep::RemoveWorktree => Box::pin(self.remove_worktree(agent, now)),
-            AgentWorkStep::PublishDeleted => Box::pin(self.publish_deleted(agent, now)),
-            AgentWorkStep::RestartConversation => Box::pin(self.restart_conversation(agent, now)),
-            AgentWorkStep::RestartTeardown => Box::pin(self.restart_teardown(agent, now)),
+            AgentWorkStep::FenceInteraction => self.box_step(agent, now, Self::fence_interaction),
+            AgentWorkStep::CloseProcess => self.box_step(agent, now, Self::close_process),
+            AgentWorkStep::PublishStopped => self.box_step(agent, now, Self::publish_stopped),
+            AgentWorkStep::EnsureProcessClosed => {
+                self.box_step(agent, now, Self::ensure_process_closed)
+            }
+            AgentWorkStep::RemoveHome => self.box_step(agent, now, Self::remove_home),
+            AgentWorkStep::RemoveWorktree => self.box_step(agent, now, Self::remove_worktree),
+            AgentWorkStep::PublishDeleted => self.box_step(agent, now, Self::publish_deleted),
+            AgentWorkStep::RestartConversation => {
+                self.box_step(agent, now, Self::restart_conversation)
+            }
+            AgentWorkStep::RestartTeardown => self.box_step(agent, now, Self::restart_teardown),
             AgentWorkStep::None => Box::pin(async { Err(SandboxStoreError::Conflict) }),
         }
+    }
+
+    // An unoptimized dispatcher that builds every future inline reserves
+    // stack space for all of them even though it polls only the selected step.
+    #[inline(never)]
+    fn box_step<'a, F>(
+        &'a self,
+        agent: Agent,
+        now: SystemTime,
+        step: impl FnOnce(&'a Self, Agent, SystemTime) -> F,
+    ) -> Pin<Box<dyn Future<Output = Result<(), SandboxStoreError>> + Send + 'a>>
+    where
+        F: Future<Output = Result<(), SandboxStoreError>> + Send + 'a,
+    {
+        Box::pin(step(self, agent, now))
     }
 }
 

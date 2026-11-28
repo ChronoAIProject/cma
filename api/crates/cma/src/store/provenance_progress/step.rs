@@ -5,6 +5,7 @@ use layer2_core::{
     AgentId,
 };
 use mongodb::{bson::doc, options::ReturnDocument, ClientSession};
+use sha2::{Digest, Sha256};
 
 use super::{
     model::{Control, Counts, Phase, CONTROL},
@@ -49,7 +50,7 @@ impl MongoSandboxStore {
                 .await
                 .map_err(|_| unavailable())?;
             let result = execute(self, &database, owner, &mut session).await;
-            let progress = match result {
+            let (progress, previous_revision) = match result {
                 Ok(progress) => progress,
                 Err(Failure::Observation {
                     control,
@@ -77,7 +78,13 @@ impl MongoSandboxStore {
                 let _ = session.abort_guarded().await;
                 return Ok(Some(progress));
             }
-            match commit_transaction(&mut session).await {
+            let outcome = commit_transaction(&mut session).await;
+            if let Some(revision) = previous_revision {
+                if let Some(mongodb::bson::Bson::Binary(session_id)) = session.id().get("id") {
+                    trace_commit(&session_id.bytes, revision, &outcome);
+                }
+            }
+            match outcome {
                 CommitOutcome::Committed => return Ok(Some(progress)),
                 CommitOutcome::Retry(_) => continue,
                 // Never replay an unknown insertion as a retained observation.
@@ -88,6 +95,18 @@ impl MongoSandboxStore {
         }
         Err(unavailable())
     }
+}
+
+fn trace_commit(session_id: &[u8], previous_revision: i64, outcome: &CommitOutcome) {
+    let outcome = match outcome {
+        CommitOutcome::Committed => "committed",
+        CommitOutcome::Retry(_) => "retry",
+        CommitOutcome::Unknown(_) => "unknown",
+        CommitOutcome::Failed(_) => "failed",
+    };
+    tracing::debug!(target: "provenance_commit", parent: None,
+        session_sha256 = %format_args!("{:x}", Sha256::digest(session_id)),
+        previous_revision, outcome, "Provenance progress commit resolved");
 }
 
 enum Failure {
@@ -158,9 +177,9 @@ async fn execute(
     database: &Database,
     owner: &str,
     session: &mut ClientSession,
-) -> std::result::Result<ProvenanceBackfillProgress, Failure> {
+) -> std::result::Result<(ProvenanceBackfillProgress, Option<i64>), Failure> {
     let Some((before, mut control)) = claim(database, owner, session).await? else {
-        return Ok(ProvenanceBackfillProgress::Busy);
+        return Ok((ProvenanceBackfillProgress::Busy, None));
     };
     let next = store
         .agents
@@ -186,7 +205,7 @@ async fn execute(
             .session(&mut *session)
             .await?;
         persist(database, &before, &control, owner, session).await?;
-        return Ok(ProvenanceBackfillProgress::SweepFinished);
+        return Ok((ProvenanceBackfillProgress::SweepFinished, None));
     };
     let id = AgentId(next.get_str("_id").map_err(|_| corrupt())?.into());
     let outcome = match apply(store, &id, session).await {
@@ -214,7 +233,7 @@ async fn execute(
     control.counts.observe(outcome)?;
     control.cursor = Some(id.to_string());
     persist(database, &before, &control, owner, session).await?;
-    Ok(ProvenanceBackfillProgress::Advanced)
+    Ok((ProvenanceBackfillProgress::Advanced, Some(before.revision)))
 }
 
 async fn persist(

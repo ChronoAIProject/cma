@@ -274,20 +274,6 @@ impl FeatureFlags {
             document_revocation_reserve: tail.document_revocation_reserve,
         };
         usage_cursors::validate(&flags)?;
-        if flags.agent_shared_observation && !flags.agui_bounded_replay {
-            return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGUI_BOUNDED_REPLAY_ENABLED".into());
-        }
-        if flags.sandbox_batched_reads && !flags.sandbox_snapshot_reads {
-            return Err("CHRONO_SANDBOX_BATCHED_READS_ENABLED requires CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED".into());
-        }
-        if flags.coordinated_ingress
-            && !(flags.retained_json
-                && flags.bounded_raw_output
-                && flags.bounded_permission_state
-                && flags.bounded_live_fragments)
-        {
-            return Err("CHRONO_INGRESS_COORDINATOR_ENABLED requires JSON retention, raw output, permission and live fragment bounds".into());
-        }
         gates::validate_startup(&flags)?;
         Ok(flags)
     }

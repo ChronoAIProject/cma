@@ -5,6 +5,9 @@ on:
       staging_lane_changed:
         default: false
         type: boolean
+      export_verification_image:
+        default: false
+        type: boolean
   push:
     branches: [develop]
     # Keep this list aligned with the pinned dependency stage, which defines the archive key.
@@ -193,7 +196,13 @@ jobs:
       -
         name: "Prepare private Omarchy scan input"
         id: "omarchy-scan-input"
-        if: "success() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')))"
+        if: >-
+          success() &&
+          (github.event_name == 'merge_group' ||
+           (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) ||
+           (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/tl/release/')) ||
+           (inputs.export_verification_image && github.ref == 'refs/heads/develop' &&
+            (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')))
         timeout-minutes: 11
         run: |
           if timeout 10m python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-ci-scan-input"; then
@@ -284,20 +293,25 @@ jobs:
           retention-days: 90
       -
         name: "Export tested Omarchy image"
-        if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
+        if: >-
+          steps.staging-image.outputs.adopted != 'true' && success() &&
+          (github.event_name == 'push' || github.event_name == 'merge_group' ||
+           github.event.pull_request.head.repo.full_name == github.repository ||
+           (inputs.export_verification_image && github.ref == 'refs/heads/develop' &&
+            (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')))
+        id: native-image-export
         timeout-minutes: 31
         env:
           OMARCHY_SCAN_STARTED: "${{ steps.omarchy-scan-start.outputs.ready }}"
         run: |
-          if [ "$GITHUB_EVENT_NAME" = push ] && [[ "$GITHUB_REF" != refs/heads/tl/release/* ]]; then
+          if [[ "$GITHUB_EVENT_NAME" = push && "$GITHUB_REF" != refs/heads/tl/release/* ]]; then
             timeout 10m python3 .github/scripts/export-ci-native-image.py runtime-omarchy "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"
           else
-            test "$OMARCHY_SCAN_STARTED" = true
-            python3 -B .github/scripts/omarchy-ci-scan.py promote "$GITHUB_SHA"
+            test "$OMARCHY_SCAN_STARTED" = true && python3 -B .github/scripts/omarchy-ci-scan.py promote "$GITHUB_SHA"
           fi
       -
         name: "Retain tested Omarchy image"
-        if: "steps.staging-image.outputs.adopted != 'true' && (success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository))"
+        if: "success() && steps.native-image-export.outcome == 'success'"
         timeout-minutes: 10
         uses: "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9"
         with:

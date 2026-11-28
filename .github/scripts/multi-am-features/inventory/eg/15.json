@@ -1,0 +1,249 @@
+[
+  {
+    "id": "EG-071",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Legacy Console channel/event inspection and address linking",
+    "entry_point": "/console -> channel record -> event detail",
+    "steps": [
+      "Inspect a test channel record, endpoints/settings/source/event status.",
+      "Locally link a known missing channel address to its record using the guarded form."
+    ],
+    "expected_result": "Correct owner data and bounded event details appear; only secret-presence metadata is shown; linking does not invent a new channel.",
+    "writes": true,
+    "api": [
+      "GET /console",
+      "GET /console/channels/{record_id}",
+      "GET /console/channels/{record_id}/events/{event_key}",
+      "POST /console/channels/{record_id}/link"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/console/pages/overview.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "e2f866cbfb88b4f08827cc2fe97fb1ab132d4b90a8e3cafc8c024818d355cdd7"
+      },
+      {
+        "path": "api/crates/cmaeg/src/console/pages/channel.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "628570d6d6ba7d6b0da298275b3425400f885d69a363b2375990573871e192e9"
+      },
+      {
+        "path": "api/crates/cmaeg/src/console/pages/event.rs",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b4dfc8abeda3aa28fff040e917fee9ef16beaa4e2aecc8dd7ef88a12d9bc2e77"
+      }
+    ]
+  },
+  {
+    "id": "EG-072",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Legacy Console attach/detach source with preview",
+    "entry_point": "/console/channels/{record_id} -> source forms",
+    "steps": [
+      "Attach a supported source to a disposable channel with the expected version.",
+      "Read detach impact/blocking references, confirm once, and read the resulting record."
+    ],
+    "expected_result": "CSRF, owner and revision checks apply; blocking routing references are explicit and only the selected test source changes.",
+    "writes": true,
+    "api": [
+      "POST /console/channels/{record_id}/sources",
+      "GET /console/channels/{record_id}/sources/{source_id}/detach",
+      "POST /console/channels/{record_id}/sources/{source_id}/detach"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/src/console/pages/forms.rs",
+        "line": 12,
+        "anchor": "ATTACH_PATH",
+        "sha256": "c9cca5a83a0cc9d344424bfe98152b4e4a513d9ba89c49057ec0d1dd42be531a"
+      },
+      {
+        "path": "api/crates/cmaeg/src/console/pages/detach.rs",
+        "line": 15,
+        "anchor": "DETACH_PATH",
+        "sha256": "88c248c526c47ba172c6c5906960fc5693b0356abdf3e9089ff01fbeabf24c44"
+      }
+    ]
+  },
+  {
+    "id": "EG-073",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "GitHub capabilities and owner App integration inventory",
+    "entry_point": "EG API /v1/github/capabilities and /apps",
+    "steps": [
+      "Read GitHub capabilities as an authorized creator.",
+      "List/paginate/get only the test-owned integration records."
+    ],
+    "expected_result": "Supported features and owner-scoped app state are explicit; capability presence does not imply a configured live integration.",
+    "writes": false,
+    "api": [
+      "GET /v1/github/capabilities",
+      "GET /v1/github/apps",
+      "GET /v1/github/apps/{app_ref}"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13133,
+        "anchor": "\"operationId\": \"getGitHubCapabilities\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12585,
+        "anchor": "\"operationId\": \"listGitHubAppIntegrations\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12703,
+        "anchor": "\"operationId\": \"getGitHubAppIntegration\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-074",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "Create/update/verify/retire GitHub App integration and webhook credential",
+    "entry_point": "EG GitHub owner API",
+    "steps": [
+      "Create a local fixture integration with stable idempotency key; update and verify its allowed configuration.",
+      "Exercise webhook-secret replacement and retire only that test integration."
+    ],
+    "expected_result": "Version/idempotency and owner rules protect the record; verification and retirement have explicit states, and secrets are never included in evidence.",
+    "writes": true,
+    "api": [
+      "POST /v1/github/apps",
+      "PATCH /v1/github/apps/{app_ref}",
+      "POST /v1/github/apps/{app_ref}/verification",
+      "PUT /v1/github/apps/{app_ref}/webhook-secret",
+      "POST /v1/github/apps/{app_ref}/retirement"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12638,
+        "anchor": "\"operationId\": \"createGitHubAppIntegration\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12746,
+        "anchor": "\"operationId\": \"updateGitHubAppIntegration\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12925,
+        "anchor": "\"operationId\": \"verifyGitHubAppIntegration\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12988,
+        "anchor": "\"operationId\": \"setGitHubWebhookSecret\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 12862,
+        "anchor": "\"operationId\": \"retireGitHubAppIntegration\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  },
+  {
+    "id": "EG-075",
+    "role": "eg",
+    "actor_roles": [
+      "user",
+      "admin"
+    ],
+    "feature": "GitHub installation binding and verification",
+    "entry_point": "EG GitHub installation-binding API",
+    "steps": [
+      "Bind a permitted local/test installation to the integration.",
+      "Get and verify the exact binding; exercise a denied installation locally."
+    ],
+    "expected_result": "Only the permitted installation/owner binds and verification status is explicit.",
+    "writes": true,
+    "api": [
+      "POST /v1/github/installation-bindings",
+      "GET /v1/github/installation-bindings/{binding_id}",
+      "POST /v1/github/installation-bindings/{binding_id}/verification"
+    ],
+    "minimum_runs": 3,
+    "execution_lane": "local_two_am_matrix",
+    "cross_replica_assertion": "Repeat N>=3 through the sole caller lane and retain request/event/report/bot IDs plus serving EG, serving AM and owning AM attribution where that step uses them. Show observations on both AMs for AM-backed features; N>=3 alone does not prove distribution. Mark non-AM browser/EG-only steps AM-not-applicable. Preserve retries, duplicate/unknown outcomes, record-revision conflicts and provision 500s per feature; no direct-AM substitution for a platform bot journey.",
+    "source_refs": [
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 1,
+        "anchor": null,
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13213,
+        "anchor": "\"operationId\": \"bindGitHubInstallation\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13281,
+        "anchor": "\"operationId\": \"getGitHubInstallationBinding\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      },
+      {
+        "path": "api/crates/cmaeg/openapi/v1.json",
+        "line": 13326,
+        "anchor": "\"operationId\": \"verifyGitHubInstallationBinding\"",
+        "sha256": "b39ddfaea426ffe3a445f4f710d259b4efa56f296a9bb49bfe8f3465b77b8e10"
+      }
+    ]
+  }
+]

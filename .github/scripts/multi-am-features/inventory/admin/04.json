@@ -1,0 +1,191 @@
+[
+  {
+    "id": "ADM-022",
+    "role": "admin",
+    "feature": "Measured CPU, memory and disk charts and grouping",
+    "entry_point": "Account menu → Operations; /operations → measured usage charts",
+    "steps": [
+      "With measured_visible enabled in a local fixture or already enabled deployment, inspect all three metrics.",
+      "Select Total, By owner and By Sandbox; inspect coverage, source health and unknown mappings."
+    ],
+    "expected_result": "Measured values remain separate from allocated billing quantities; missing coverage is not presented as zero and series retain report identity.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}/series",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report_series"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/MetricCharts.tsx",
+        "line": 1,
+        "sha256": "da03692006bef539f52db77d67ebce4f24c2ffe59f3eab2e9dbc5f36b341bde4"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricSummary.tsx",
+        "line": 1,
+        "sha256": "a306167f7b65e76502f173f873e49d7ae30ac152144a178c0cee6593af3e416f"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricsDashboard.tsx",
+        "line": 1,
+        "sha256": "6e12f406a04e08c552c7f5fe025248189af66fa79fcd771e56bc6ed137fb4615"
+      }
+    ]
+  },
+  {
+    "id": "ADM-023",
+    "role": "admin",
+    "feature": "Sandbox usage details and owner drill-down",
+    "entry_point": "Account menu → Operations; /operations → usage row → details",
+    "steps": [
+      "Open a row and inspect status, runtime image, allocated capacity and period totals.",
+      "Inspect measured series where enabled; choose View this owner’s usage and return."
+    ],
+    "expected_result": "Detail belongs to the selected report and Sandbox; owner drill-down changes the authorized owner scope and does not leak a previous principal’s report.",
+    "writes": true,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}/sandboxes/{sandbox}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report_sandboxes_by_sandbox"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}/series",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report_series"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/view",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_view"
+      },
+      {
+        "method": "POST",
+        "path": "/api/v1/admin/usage/metrics/reports",
+        "in_captured_openapi": true,
+        "operation_id": "post_api_v1_admin_usage_metrics_reports"
+      },
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/MetricDetail.tsx",
+        "line": 1,
+        "sha256": "c9a3a96752170305b7aa9905e2bc1163b92daaaaf89f0d80a9bfd86726620ea6"
+      },
+      {
+        "path": "web/src/usage/metrics/MetricsDashboard.tsx",
+        "line": 1,
+        "sha256": "6e12f406a04e08c552c7f5fe025248189af66fa79fcd771e56bc6ed137fb4615"
+      }
+    ]
+  },
+  {
+    "id": "ADM-024",
+    "role": "admin",
+    "feature": "Allocation lifecycle interval history",
+    "entry_point": "Account menu → Operations; /operations → Sandbox usage details → Lifecycle history",
+    "steps": [
+      "Open lifecycle history for an owned and a locally created other-owner Sandbox.",
+      "Traverse Next and First history page; close/reopen after an injected local failure."
+    ],
+    "expected_result": "Authorized intervals display time, resource allocation and duration; cross-owner permission is checked on the existing non-admin history route.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/usage/sandboxes/{id}/events",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_usage_sandboxes_by_id_events"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/MetricDetail.tsx",
+        "line": 1,
+        "sha256": "c9a3a96752170305b7aa9905e2bc1163b92daaaaf89f0d80a9bfd86726620ea6"
+      },
+      {
+        "path": "web/src/usage/UsageHistory.tsx",
+        "line": 1,
+        "sha256": "b743d503015396d284a790dbadf3ca6e3e152e63710285df211068fb168405a7"
+      },
+      {
+        "path": "api/crates/layer1-public/src/rest/sandbox_usage.rs",
+        "line": 1,
+        "sha256": "ac4a53c0c01410eede1a924110e4fb4613dff7233cf4f2b8480acad84d7ece45"
+      }
+    ]
+  },
+  {
+    "id": "ADM-025",
+    "role": "admin",
+    "feature": "Infrastructure diagnostics excluded from owner usage",
+    "entry_point": "Account menu → Operations; /operations → measured report → Infrastructure diagnostics",
+    "steps": [
+      "Expand the diagnostics in an admin report with infrastructure data.",
+      "Inspect unassigned pool, unattributed resources, observation time and unproven identities."
+    ],
+    "expected_result": "Infrastructure quantities are labelled and excluded from owner totals; no unavailable metric is invented.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "web/src/usage/metrics/MetricSummary.tsx",
+        "line": 1,
+        "sha256": "a306167f7b65e76502f173f873e49d7ae30ac152144a178c0cee6593af3e416f"
+      }
+    ]
+  },
+  {
+    "id": "ADM-026",
+    "role": "admin",
+    "feature": "Admin report owner search API",
+    "entry_point": "SDK adminUsageMetrics.owners; no dedicated current Operations control",
+    "steps": [
+      "Create a completed admin report locally or reuse an authorized report.",
+      "Query owners by search with bounded cursor pagination on both AMs."
+    ],
+    "expected_result": "Owner pages remain tied to the report, authorized principal and complete frozen cohort.",
+    "writes": false,
+    "api": [
+      {
+        "method": "GET",
+        "path": "/api/v1/admin/usage/metrics/reports/{report}/owners",
+        "in_captured_openapi": true,
+        "operation_id": "get_api_v1_admin_usage_metrics_reports_by_report_owners"
+      }
+    ],
+    "minimum_runs": 3,
+    "source_refs": [
+      {
+        "path": "sdk/typescript/src/usage-metrics/index.ts",
+        "line": 1,
+        "sha256": "c53711aea78073239b9cf44657ed2ba38136eab0e4c02fbb024350c036f15c51"
+      }
+    ]
+  }
+]
