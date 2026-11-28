@@ -14,7 +14,18 @@ export function sandboxDeletionReason(
   if (sandbox.status === 'retired') return 'This Sandbox has been deleted.';
   if (sandbox.status === 'retiring') return 'Deletion is already in progress.';
   if (context.stale) return 'Checking the current Sandbox status.';
+  const operation = sandbox.lifecycle?.operation;
+  const result = sandbox.lifecycle?.result;
+  const canRetireStalledRotation =
+    sandbox.status === 'rotating' &&
+    operation?.purpose === 'image_rotation' &&
+    result?.code === 'runtime_update_stalled' &&
+    result.state === 'recoverable_pending' &&
+    result.continuing &&
+    result.startedAt === operation.startedAt &&
+    result.actions.includes('retire');
   const canCancelOperation =
+    canRetireStalledRotation ||
     sandboxRetirementDuringRevive(sandbox) ||
     (sandbox.status === 'rotating' && sandboxHasParkedRuntimeUpdate(sandbox));
   if (

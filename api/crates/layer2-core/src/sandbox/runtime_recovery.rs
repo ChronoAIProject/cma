@@ -35,12 +35,23 @@ impl Sandbox {
                 ))
     }
 
-    /// Reset runtime authority while preserving checkpoint history and lifecycle purpose.
+    #[cfg(test)]
     pub(crate) fn recover_runtime_loss(
         &mut self,
         recovered_agents: &[Agent],
         retain_runtime: bool,
         at: String,
+    ) -> Result<(), SandboxModelError> {
+        self.recover_runtime_loss_with_policy(recovered_agents, retain_runtime, at, false)
+    }
+
+    /// Reset runtime authority while preserving checkpoint history and lifecycle purpose.
+    pub(crate) fn recover_runtime_loss_with_policy(
+        &mut self,
+        recovered_agents: &[Agent],
+        retain_runtime: bool,
+        at: String,
+        rotation_recovery: bool,
     ) -> Result<(), SandboxModelError> {
         self.validate()?;
         if !self.requires_runtime_loss_recovery() || crate::seconds_from_rfc3339(&at).is_none() {
@@ -69,7 +80,7 @@ impl Sandbox {
                 next.lifecycle.suspended_runtime =
                     Some(Box::new(self.runtime.clone().ok_or_else(invalid_recovery)?));
             }
-            next.recover_retained_home(self, recovered_agents, &at)?;
+            next.recover_retained_home(self, recovered_agents, &at, rotation_recovery)?;
             next.updated_at = at;
             next.revision = self.revision.checked_add(1).ok_or_else(invalid_recovery)?;
             next.validate()?;
@@ -131,6 +142,9 @@ impl Sandbox {
                             *phase = SandboxImageRotationPhase::CheckpointVerification;
                             *checkpoint_epoch = Some(epoch);
                         }
+                        if rotation_recovery {
+                            next.sync_rotation_request_start(&at, target_runtime_version);
+                        }
                         next.lifecycle.paused_notice = Some(notice);
                     }
                     _ => {
@@ -161,6 +175,7 @@ impl Sandbox {
         previous: &Sandbox,
         agents: &[Agent],
         at: &str,
+        rotation_recovery: bool,
     ) -> Result<(), SandboxModelError> {
         match &previous.lifecycle.operation {
             Some(SandboxLifecycleOperation::ImageRotation {
@@ -190,6 +205,9 @@ impl Sandbox {
                         .latest
                         .as_ref()
                         .map(|checkpoint| checkpoint.epoch);
+                }
+                if rotation_recovery {
+                    self.sync_rotation_request_start(at, target_runtime_version);
                 }
                 if let Some(source) = &mut self.lifecycle.home_recovery {
                     source.resume_pause = resume_pause;
@@ -229,6 +247,18 @@ impl Sandbox {
             "Your sandbox runtime was interrupted. Your saved environment and original conversations are being reconnected.".into(),
         );
         Ok(())
+    }
+
+    fn sync_rotation_request_start(&mut self, at: &str, target: &str) {
+        if let Some(request) = self
+            .lifecycle
+            .runtime_update
+            .as_mut()
+            .and_then(|state| state.request.as_mut())
+            .filter(|request| request.completed_at.is_none() && request.target_version == target)
+        {
+            request.started_at = Some(at.into());
+        }
     }
 }
 

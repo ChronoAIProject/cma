@@ -228,10 +228,10 @@ mod unpublished_recovery_reservation;
 mod unpublished_recovery_state;
 mod unpublished_recovery_transition;
 pub use unpublished_recovery::{
-    apply_unpublished_runtime_recovery, SandboxRecoveryConversationProof,
-    SandboxUnpublishedRecoveryMutation, SandboxUnpublishedRecoveryProof,
-    SandboxUnpublishedRecoveryRequest, SandboxUnpublishedRecoverySnapshot,
-    SandboxUnpublishedRecoveryVerifier,
+    apply_unpublished_runtime_recovery, apply_unpublished_runtime_recovery_with_policy,
+    SandboxRecoveryConversationProof, SandboxUnpublishedRecoveryMutation,
+    SandboxUnpublishedRecoveryProof, SandboxUnpublishedRecoveryRequest,
+    SandboxUnpublishedRecoverySnapshot, SandboxUnpublishedRecoveryVerifier,
 };
 pub use unpublished_recovery_state::{
     SandboxUnpublishedRecoveryQuiescence, SandboxUnpublishedRecoveryState,

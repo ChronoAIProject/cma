@@ -118,6 +118,7 @@ pub(crate) struct FeatureFlags {
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
     pub reopen_output_refusal_enabled: bool,
+    pub runtime_rotation_recovery_enabled: bool,
     pub cleanup_continuation_enabled: bool,
     pub owner_stop_settlement_enabled: bool,
     pub owner_agent_restart_enabled: bool,

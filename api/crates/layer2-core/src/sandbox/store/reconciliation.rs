@@ -148,6 +148,16 @@ pub fn apply_sandbox_runtime_loss(
     agents: &[(Agent, u64)],
     request: &SandboxRuntimeLossRequest,
 ) -> Result<SandboxRuntimeLossApplication, SandboxStoreError> {
+    apply_sandbox_runtime_loss_with_policy(current, agents, request, false)
+}
+
+#[doc(hidden)]
+pub fn apply_sandbox_runtime_loss_with_policy(
+    current: &Sandbox,
+    agents: &[(Agent, u64)],
+    request: &SandboxRuntimeLossRequest,
+    rotation_recovery: bool,
+) -> Result<SandboxRuntimeLossApplication, SandboxStoreError> {
     if let Some(outcome) = precheck_sandbox_runtime_loss(current, request)? {
         return Ok(SandboxRuntimeLossApplication::Complete(outcome));
     }
@@ -198,10 +208,11 @@ pub fn apply_sandbox_runtime_loss(
         .collect::<Vec<_>>();
     let mut sandbox = current.clone();
     sandbox
-        .recover_runtime_loss(
+        .recover_runtime_loss_with_policy(
             &recovered,
             request.retain_runtime,
             request.observed_at.clone(),
+            rotation_recovery,
         )
         .map_err(|error| corrupt(&error.to_string()))?;
     if current.status != SandboxStatus::Retiring {

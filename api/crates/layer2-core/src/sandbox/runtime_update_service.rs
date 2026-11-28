@@ -103,7 +103,10 @@ impl SandboxRuntimeUpdateService {
                     .explicit_recovery_target(sandbox, pinned, latest)
                     .is_some();
         }
-        if !sandbox.supports_retained_runtime_update() {
+        let parked_rotation = self.store.runtime_rotation_recovery_enabled()
+            && sandbox.status == SandboxStatus::Rotating
+            && super::lifecycle_result::runtime_update_parked(sandbox, true);
+        if !sandbox.supports_retained_runtime_update() && !parked_rotation {
             return false;
         }
         if let Some(request) = sandbox
@@ -144,9 +147,8 @@ impl SandboxRuntimeUpdateService {
         requested: Option<&'a str>,
         latest: &'a str,
     ) -> Option<&'a str> {
-        // A fresh Agent reopen recovery must use the current qualified release,
-        // including when the original target already matches that release.
-        if agent_reopen(sandbox) {
+        // Reopen recovery uses the current qualified release for the retained lane.
+        if sandbox.managed_reopen(self.store.runtime_rotation_recovery_enabled()) {
             return self.store.managed_runtime_target(sandbox, latest);
         }
         requested.or_else(|| self.store.managed_runtime_target(sandbox, latest))
@@ -195,16 +197,26 @@ impl SandboxRuntimeUpdateService {
             .managed_runtime_lane()
             .and_then(|lane| lane.version_in(&release))
             .unwrap_or_default();
-        let target = sandbox
-            .automatic_unpublished_recovery_target_for_release(latest)
+        let target = self
+            .automatic_recovery_target(&sandbox, latest)
             .ok_or(SandboxRuntimeUpdateError::NotAvailable)?;
-        if sandbox.has_managed_runtime_image() && !self.target_is_qualified(&sandbox, target) {
-            return Err(SandboxRuntimeUpdateError::NotAvailable);
-        }
-        let released_runtime = sandbox.has_managed_runtime_image().then_some(release);
+        let released_runtime = sandbox.has_managed_runtime_image().then(|| release.clone());
         self.recover_unpublished(&sandbox, target, true, released_runtime)
             .await
             .map_err(store_error)
+    }
+
+    pub fn automatic_recovery_target<'a>(
+        &self,
+        sandbox: &'a Sandbox,
+        latest: &'a str,
+    ) -> Option<&'a str> {
+        let target = sandbox.automatic_unpublished_recovery_target_for_release(
+            latest,
+            self.store.runtime_rotation_recovery_enabled(),
+        )?;
+        (!sandbox.has_managed_runtime_image() || self.target_is_qualified(sandbox, target))
+            .then_some(target)
     }
 
     async fn recover_unpublished(
@@ -288,9 +300,12 @@ impl SandboxRuntimeUpdateService {
             if !pinned && target_version != latest {
                 return Err(SandboxRuntimeUpdateError::TargetChanged);
             }
+            let managed_recovery = self.store.runtime_rotation_recovery_enabled()
+                && sandbox.managed_reopen(true)
+                && sandbox.unpublished_recovery_candidate();
             if !pinned
                 && (!self.target_is_qualified(&sandbox, latest)
-                    || !sandbox.managed_desktop_runtime_confirmed())
+                    || (!managed_recovery && !sandbox.managed_desktop_runtime_confirmed()))
             {
                 return Err(SandboxRuntimeUpdateError::NotAvailable);
             }
@@ -359,34 +374,52 @@ async fn superseded_release(released: &layer3_adapter::ReleasedRuntime) {
 
 impl Sandbox {
     /// Discovery and the fresh admission read apply the same image policy.
-    pub fn automatic_unpublished_recovery_target_for_release(&self, latest: &str) -> Option<&str> {
+    pub(super) fn automatic_unpublished_recovery_target_for_release<'a>(
+        &'a self,
+        latest: &'a str,
+        rotation_recovery: bool,
+    ) -> Option<&'a str> {
         if self.lifecycle.unpublished_recovery_attempted
             || self.lifecycle.unpublished_recovery.is_some()
         {
             return None;
         }
         let target = self.automatic_unpublished_recovery_target()?;
-        let eligible = if !self.has_managed_runtime_image() {
-            self.validate_custom_recovery_target(target).is_ok()
-        } else {
-            target == latest
-        };
-        eligible.then_some(target)
+        if !self.has_managed_runtime_image() {
+            return self
+                .validate_custom_recovery_target(target)
+                .is_ok()
+                .then_some(target);
+        }
+        if rotation_recovery && self.can_advance_unpublished_reopen() && !latest.is_empty() {
+            return Some(latest);
+        }
+        (target == latest).then_some(target)
     }
-}
 
-fn agent_reopen(sandbox: &Sandbox) -> bool {
-    sandbox.managed_runtime_lane() == Some(ReleasedLane::Agent)
-        && matches!(
-            sandbox.lifecycle.operation,
-            Some(SandboxLifecycleOperation::ImageRotation {
-                phase: SandboxImageRotationPhase::ConversationReopen,
-                ..
-            }) | Some(SandboxLifecycleOperation::Revive {
-                phase: SandboxRevivePhase::ConversationReopen,
-                ..
+    pub(super) fn can_advance_unpublished_reopen(&self) -> bool {
+        self.managed_reopen(true)
+            && !self.requires_retained_runtime_transition()
+            && self.lifecycle.runtime_migration_admission.is_none()
+            && self.runtime_update_request().is_none_or(|request| {
+                request.completed_at.is_some() || request.retained_transition.is_none()
             })
-        )
+    }
+
+    fn managed_reopen(&self, all_managed_lanes: bool) -> bool {
+        self.managed_runtime_lane()
+            .is_some_and(|lane| all_managed_lanes || lane == ReleasedLane::Agent)
+            && matches!(
+                self.lifecycle.operation,
+                Some(SandboxLifecycleOperation::ImageRotation {
+                    phase: SandboxImageRotationPhase::ConversationReopen,
+                    ..
+                }) | Some(SandboxLifecycleOperation::Revive {
+                    phase: SandboxRevivePhase::ConversationReopen,
+                    ..
+                })
+            )
+    }
 }
 
 fn scoped_explicit_retry(sandbox: &Sandbox) -> bool {

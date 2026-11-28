@@ -224,6 +224,15 @@ impl SandboxStore for InMemorySandboxStore {
     }
 
     #[cfg(test)]
+    fn desktop_runtime_target_is_qualified(&self, target: &str) -> bool {
+        self.desktop_runtime_version.as_deref() == Some(target)
+    }
+
+    fn runtime_rotation_recovery_enabled(&self) -> bool {
+        self.runtime_rotation_recovery_enabled
+    }
+
+    #[cfg(test)]
     fn managed_runtime_target_is_held(&self, target: &str) -> bool {
         self.lock().held_runtime_target.as_deref() == Some(target)
     }
@@ -244,7 +253,7 @@ impl SandboxStore for InMemorySandboxStore {
         if let Some(expected) = &state.expected_recovery_release {
             assert_eq!(request.released_runtime.as_ref(), Some(expected));
         }
-        unpublished_recovery::admit(&mut state, request)
+        unpublished_recovery::admit(&mut state, request, self.runtime_rotation_recovery_enabled)
     }
 
     async fn create_sandbox(&self, sandbox: Sandbox) -> Result<(), SandboxStoreError> {
@@ -446,6 +455,11 @@ impl AgentStore for InMemorySandboxStore {
 mod sandbox_events;
 
 impl InMemorySandboxStore {
+    pub fn with_runtime_rotation_recovery(mut self, enabled: bool) -> Self {
+        self.runtime_rotation_recovery_enabled = enabled;
+        self
+    }
+
     pub fn with_managed_runtime_version(mut self, version: String) -> Self {
         self.managed_runtime_version = Some(version);
         self

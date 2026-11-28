@@ -61,6 +61,8 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
         crate::store::suggestion_control::SuggestionControl::new(&sandbox_model, target)
     });
     sandbox_model.runtime_image_origin_enabled = config.features.runtime_image_origin_enabled;
+    sandbox_model.runtime_rotation_recovery_enabled =
+        config.features.runtime_rotation_recovery_enabled;
     sandbox_model.managed_machine_updates = config.features.managed_machine_updates;
     sandbox_model.desktop_verified_runtime_image = config.desktop_verified_runtime_image.clone();
     let sandbox_model = sandbox_model

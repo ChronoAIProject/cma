@@ -150,7 +150,8 @@ impl SandboxWorker {
         } else {
             None
         };
-        let recorded_failure = if failure.is_retryable() {
+        let park_rotation = self.should_park_rotation(&sandbox, decision);
+        let recorded_failure = if failure.is_retryable() && !park_rotation {
             next.retry_lifecycle(
                 rfc3339_at(now + decision.delay),
                 &lease.holder,
@@ -231,6 +232,20 @@ impl SandboxWorker {
             telemetry.published();
         }
         Ok(())
+    }
+
+    pub(super) fn should_park_rotation(
+        &self,
+        sandbox: &Sandbox,
+        decision: layer2_core::sandbox::work_retry::WorkRetryDecision,
+    ) -> bool {
+        decision.parked
+            && self.rotation_recovery_enabled(sandbox)
+            && sandbox.runtime_update_request().is_some_and(|request| {
+                request.completed_at.is_none()
+                    && sandbox.admitted_runtime_update_target()
+                        == Some(request.target_version.as_str())
+            })
     }
 
     pub(super) async fn lifecycle_state_matches(

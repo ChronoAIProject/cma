@@ -1,6 +1,6 @@
 use super::*;
 use crate::sandbox::{
-    apply_unpublished_runtime_recovery, SandboxUnpublishedRecoveryRequest,
+    apply_unpublished_runtime_recovery_with_policy, SandboxUnpublishedRecoveryRequest,
     SandboxUnpublishedRecoverySnapshot,
 };
 use layer3_adapter::recovery_diagnostics::{Observation, Reason, Stage};
@@ -92,9 +92,11 @@ fn load(
 pub(super) fn admit(
     state: &mut State,
     request: SandboxUnpublishedRecoveryRequest,
+    rotation_recovery: bool,
 ) -> Result<Sandbox, SandboxStoreError> {
     let current = snapshot(state, &request.snapshot.sandbox.id)?;
-    let mutation = apply_unpublished_runtime_recovery(&current, &request)?;
+    let mutation =
+        apply_unpublished_runtime_recovery_with_policy(&current, &request, rotation_recovery)?;
     super::maintenance::validate_event_stream(state, &current.sandbox.id)?;
     let mut candidate = state.clone();
     let sandbox = mutation.sandbox;

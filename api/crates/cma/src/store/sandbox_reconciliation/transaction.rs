@@ -1,7 +1,7 @@
 use layer2_core::sandbox::store::{
-    apply_sandbox_runtime_loss, precheck_runtime_loss_agents, precheck_sandbox_runtime_loss,
-    SandboxRuntimeLossApplication, SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
-    SandboxStoreError,
+    apply_sandbox_runtime_loss_with_policy, precheck_runtime_loss_agents,
+    precheck_sandbox_runtime_loss, SandboxRuntimeLossApplication, SandboxRuntimeLossOutcome,
+    SandboxRuntimeLossRequest, SandboxStoreError,
 };
 use layer2_core::sandbox::{Agent, AgentLogEntry, Sandbox, SandboxEvent};
 use mongodb::bson::doc;
@@ -122,8 +122,13 @@ pub(super) async fn apply(
         .map(|(agent, source)| (agent.clone(), source.through()))
         .collect::<Vec<_>>();
     validate_retirement_children(&current, &evidence, retirement)?;
-    let mutation = match apply_sandbox_runtime_loss(&current, &evidence, request)
-        .map_err(ApplyError::Domain)?
+    let mutation = match apply_sandbox_runtime_loss_with_policy(
+        &current,
+        &evidence,
+        request,
+        store.runtime_rotation_recovery_enabled,
+    )
+    .map_err(ApplyError::Domain)?
     {
         SandboxRuntimeLossApplication::Complete(outcome) => {
             return Ok(RecoveryApplication::Complete(outcome))

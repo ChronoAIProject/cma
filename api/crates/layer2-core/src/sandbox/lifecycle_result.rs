@@ -10,6 +10,28 @@ pub use admission::SandboxLifecycleAdmission;
 pub const LIFECYCLE_RESULT_SECONDS: u64 = 90;
 
 impl super::SandboxService {
+    /// Rotations need no additional admission reads for the owner's inventory.
+    pub fn rotation_lifecycle_result(
+        &self,
+        caller: &crate::Caller,
+        sandbox: &Sandbox,
+    ) -> Option<SandboxLifecycleResult> {
+        if sandbox.owner != caller.subject
+            || sandbox.status != SandboxStatus::Rotating
+            || !self.store.runtime_rotation_recovery_enabled()
+        {
+            return None;
+        }
+        SandboxLifecycleResult::observe_with_policy(
+            sandbox,
+            None,
+            None,
+            SystemTime::now(),
+            caller.require(crate::Capability::DeleteOwnSandbox).is_ok(),
+            true,
+        )
+    }
+
     pub async fn lifecycle_result(
         &self,
         caller: &crate::Caller,
@@ -42,12 +64,13 @@ impl super::SandboxService {
         } else {
             None
         };
-        Ok(SandboxLifecycleResult::observe_with_admission(
+        Ok(SandboxLifecycleResult::observe_with_policy(
             sandbox,
             retirement.as_deref(),
             failed_admission.as_ref(),
             SystemTime::now(),
             caller.require(crate::Capability::DeleteOwnSandbox).is_ok(),
+            self.store.runtime_rotation_recovery_enabled(),
         ))
     }
 }
@@ -108,6 +131,24 @@ impl SandboxLifecycleResult {
         now: SystemTime,
         owner_can_retire: bool,
     ) -> Option<Self> {
+        Self::observe_with_policy(
+            sandbox,
+            retirement_admitted_at,
+            failed_admission,
+            now,
+            owner_can_retire,
+            false,
+        )
+    }
+
+    fn observe_with_policy(
+        sandbox: &Sandbox,
+        retirement_admitted_at: Option<&str>,
+        failed_admission: Option<&SandboxLifecycleAdmission>,
+        now: SystemTime,
+        owner_can_retire: bool,
+        rotation_recovery: bool,
+    ) -> Option<Self> {
         if sandbox.status == SandboxStatus::Retiring {
             let exhausted = sandbox.retirement_retry_exhausted();
             let mut result = retirement_admitted_at
@@ -164,10 +205,15 @@ impl SandboxLifecycleResult {
             } else {
                 return None;
             };
-            let parked = runtime_update_parked(sandbox);
+            let parked = runtime_update_parked(sandbox, rotation_recovery);
             let mut result = Self::from_admission(operation_id, started_at, now, parked)?;
             if parked {
                 result.code = Some("runtime_update_parked");
+            } else if rotation_recovery
+                && result.state == SandboxLifecycleResultState::RecoverablePending
+                && stalled_runtime_rotation(sandbox)
+            {
+                result.code = Some("runtime_update_stalled");
             }
             result
         };
@@ -261,7 +307,25 @@ fn retirement_admissible(sandbox: &Sandbox) -> bool {
         && sandbox.validate_retirement_archive_successor(&next).is_ok()
 }
 
-fn runtime_update_parked(sandbox: &Sandbox) -> bool {
+fn stalled_runtime_rotation(sandbox: &Sandbox) -> bool {
+    use super::work_retry::{WORK_RETRY_EXTERNAL_BUDGET, WORK_RETRY_PROBE_INTERVAL};
+    sandbox.status == SandboxStatus::Rotating
+        && matches!(
+            sandbox.lifecycle.operation,
+            Some(SandboxLifecycleOperation::ImageRotation { .. })
+        )
+        && sandbox.lifecycle.checkpoint_capture.is_none()
+        && sandbox.work.step == SandboxWorkStep::RunLifecycleOperation
+        && sandbox.work.lease.is_none()
+        && sandbox.work.attempts >= WORK_RETRY_EXTERNAL_BUDGET
+        && crate::seconds_from_rfc3339(&sandbox.updated_at)
+            .zip(crate::seconds_from_rfc3339(&sandbox.work.ready_at))
+            .is_some_and(|(updated, ready)| {
+                ready.saturating_sub(updated) >= WORK_RETRY_PROBE_INTERVAL.as_secs()
+            })
+}
+
+pub(super) fn runtime_update_parked(sandbox: &Sandbox, rotation_recovery: bool) -> bool {
     let Some(request) = sandbox.runtime_update_request() else {
         return false;
     };
@@ -282,6 +346,23 @@ fn runtime_update_parked(sandbox: &Sandbox) -> bool {
             Some(SandboxLifecycleOperation::ImageRotation { authority, .. }),
         ) => {
             started_at == authority.requested_at
+                || (rotation_recovery
+                    && sandbox
+                        .lifecycle
+                        .interruption
+                        .as_ref()
+                        .is_some_and(|interruption| {
+                            interruption.detected_at == authority.requested_at
+                        })
+                    && matches!(
+                        (
+                            crate::seconds_from_rfc3339(&request.requested_at),
+                            crate::seconds_from_rfc3339(started_at),
+                            crate::seconds_from_rfc3339(&authority.requested_at),
+                        ),
+                        (Some(requested), Some(started), Some(recovery))
+                            if requested <= started && started < recovery
+                    ))
                 || (!request.automatic
                     && sandbox
                         .lifecycle

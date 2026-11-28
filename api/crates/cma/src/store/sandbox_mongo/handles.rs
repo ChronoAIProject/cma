@@ -32,6 +32,7 @@ impl MongoSandboxStore {
             segment_adoption_enabled: false,
             bounded_approval_reads: false,
             runtime_loss_bounded_proof_enabled: false,
+            runtime_rotation_recovery_enabled: false,
             bounded_close_retries: false,
             retry_single_marker_enabled: false,
             retry_audits: Default::default(),

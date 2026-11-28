@@ -65,8 +65,13 @@ pub(in crate::store::sandbox_reconciliation) async fn apply_scoped(
             legacy.push(agent);
         }
     }
-    let mutation = match apply_sandbox_runtime_loss(&current, &evidence, request)
-        .map_err(ApplyError::Domain)?
+    let mutation = match apply_sandbox_runtime_loss_with_policy(
+        &current,
+        &evidence,
+        request,
+        store.runtime_rotation_recovery_enabled,
+    )
+    .map_err(ApplyError::Domain)?
     {
         SandboxRuntimeLossApplication::Complete(outcome) => {
             // Legacy source is still fully validated before a terminal result.

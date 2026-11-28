@@ -1,6 +1,7 @@
 //! The ordinary and lifecycle publishers use the same durable retry policy.
 use super::{support::WorkerFailure, SandboxWorker};
 use crate::sandbox::work_retry::{sandbox_class, RetryTelemetry};
+use layer2_core::sandbox::store::SandboxStore;
 use layer2_core::sandbox::work_retry::{work_retry_policy, WorkRetryDecision};
 use layer2_core::sandbox::Sandbox;
 use layer3_adapter::{RuntimeHandle, RuntimeProvisionRequest, RuntimeStatus};
@@ -39,6 +40,15 @@ impl SandboxWorker {
         .await
     }
 
+    pub(super) fn rotation_recovery_enabled(&self, sandbox: &Sandbox) -> bool {
+        self.dependencies.store.runtime_rotation_recovery_enabled()
+            && sandbox.status == layer2_core::sandbox::SandboxStatus::Rotating
+            && matches!(
+                sandbox.lifecycle.operation,
+                Some(layer2_core::sandbox::SandboxLifecycleOperation::ImageRotation { .. })
+            )
+    }
+
     pub(super) fn retry_decision(
         &self,
         sandbox: &Sandbox,
@@ -56,7 +66,7 @@ impl SandboxWorker {
         } else {
             base
         };
-        if !self.config.work_retry_policy_enabled {
+        if !self.config.work_retry_policy_enabled && !self.rotation_recovery_enabled(sandbox) {
             return WorkRetryDecision {
                 delay: floor,
                 parked: false,
@@ -81,14 +91,16 @@ impl SandboxWorker {
         decision: WorkRetryDecision,
         now: SystemTime,
     ) -> Option<RetryTelemetry> {
-        self.config.work_retry_policy_enabled.then(|| {
-            RetryTelemetry::sandbox(
-                sandbox,
-                failure.retry_kind(),
-                decision,
-                now + decision.delay,
-            )
-        })
+        (self.config.work_retry_policy_enabled || self.rotation_recovery_enabled(sandbox)).then(
+            || {
+                RetryTelemetry::sandbox(
+                    sandbox,
+                    failure.retry_kind(),
+                    decision,
+                    now + decision.delay,
+                )
+            },
+        )
     }
 }
 

@@ -243,3 +243,132 @@ fn parked_runtime_update_keeps_retirement_and_aggregate_failure_precedence() {
         Some("lifecycle_failed_admission_unavailable")
     );
 }
+
+#[test]
+fn runtime_loss_rotation_syncs_start_and_recognizes_legacy_parked_rows() {
+    let lost_at = crate::rfc3339_at(at(60));
+    for retained_home in [false, true] {
+        let mut before = if retained_home {
+            let mut value = native();
+            admit(&mut value);
+            value
+        } else {
+            let mut value = lifecycle_test_support::sandbox();
+            value.lifecycle.checkpoints.latest = Some(lifecycle_test_support::checkpoint(1, NOW));
+            value
+                .begin_image_rotation(
+                    "image-v2".into(),
+                    crate::sandbox::SandboxRotationIdentity::capture(&value, &[]).unwrap(),
+                    NOW.into(),
+                )
+                .unwrap();
+            value.lifecycle.runtime_update = native_rotation_request();
+            value
+        };
+        before.validate().unwrap();
+        for enabled in [false, true] {
+            let mut recovered = before.clone();
+            recovered
+                .recover_runtime_loss_with_policy(&[], retained_home, lost_at.clone(), enabled)
+                .unwrap();
+            assert_eq!(
+                recovered
+                    .runtime_update_request()
+                    .unwrap()
+                    .started_at
+                    .as_deref(),
+                Some(if enabled { lost_at.as_str() } else { NOW })
+            );
+            assert_eq!(recovered.lifecycle.home, before.lifecycle.home);
+            assert_eq!(
+                recovered.lifecycle.checkpoints,
+                before.lifecycle.checkpoints
+            );
+            assert_eq!(
+                recovered
+                    .lifecycle
+                    .operation
+                    .as_ref()
+                    .unwrap()
+                    .authority()
+                    .requested_at,
+                lost_at
+            );
+        }
+
+        // Simulate a pre-flag row recovered by the store from the old start timestamp.
+        before
+            .recover_runtime_loss_with_policy(&[], retained_home, lost_at.clone(), false)
+            .unwrap();
+        before.lifecycle.interruption = Some(crate::sandbox::SandboxInterruption {
+            cause: crate::sandbox::SandboxInterruptionCause::RuntimeUnavailable,
+            detected_at: lost_at.clone(),
+            memory_limit_mib: before.profile.content.memory_mib,
+        });
+        let fence = before
+            .work
+            .claim(HOLDER.into(), &lost_at, crate::rfc3339_at(at(180)))
+            .unwrap();
+        before
+            .park_failed_runtime_update(
+                TypedFailure {
+                    class: "terminal_validation".into(),
+                    detail: "Synthetic refusal".into(),
+                },
+                HOLDER,
+                fence,
+                lost_at.clone(),
+            )
+            .unwrap();
+        let prior = SandboxLifecycleResult::observe(&before, None, at(960), true).unwrap();
+        assert!(prior.continuing);
+        let enabled =
+            SandboxLifecycleResult::observe_with_policy(&before, None, None, at(960), true, true)
+                .unwrap();
+        assert_eq!(enabled.code, Some("runtime_update_parked"));
+        assert!(enabled.actions.contains(&SandboxLifecycleAction::Retire));
+        before.lifecycle.interruption = None;
+        let unrelated =
+            SandboxLifecycleResult::observe_with_policy(&before, None, None, at(960), true, true)
+                .unwrap();
+        assert_eq!(unrelated.code, Some("lifecycle_wait_exceeded"));
+    }
+}
+
+fn native_rotation_request() -> Option<crate::sandbox::SandboxRuntimeUpdateState> {
+    let mut value = native();
+    admit(&mut value);
+    value.lifecycle.runtime_update
+}
+
+#[test]
+fn only_a_stalled_rotation_reports_the_new_owner_retirement_projection() {
+    let mut value = native();
+    admit(&mut value);
+    value.work.attempts = 3;
+    value.work.ready_at = crate::rfc3339_at(at(1800));
+    let project = |row: &Sandbox, owner, enabled| {
+        SandboxLifecycleResult::observe_with_policy(row, None, None, at(960), owner, enabled)
+            .unwrap()
+    };
+    assert_eq!(
+        project(&value, true, false).code,
+        Some("lifecycle_wait_exceeded")
+    );
+    let result = project(&value, true, true);
+    assert_eq!(result.code, Some("runtime_update_stalled"));
+    assert!(result.actions.contains(&SandboxLifecycleAction::Retire));
+    assert!(!project(&value, false, true)
+        .actions
+        .contains(&SandboxLifecycleAction::Retire));
+
+    let due_at = value.work.ready_at.clone();
+    value
+        .work
+        .claim(HOLDER.into(), &due_at, crate::rfc3339_at(at(1900)))
+        .unwrap();
+    assert_eq!(
+        project(&value, true, true).code,
+        Some("lifecycle_wait_exceeded")
+    );
+}
