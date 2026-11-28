@@ -172,8 +172,13 @@ impl ProviderHostedControlTransport {
             })
             .await?;
         let mut cancelled = lease.slot.cancellation();
+        let cancellation = async {
+            // Release the watch read guard before select drops the lease.
+            // Dropping the last slot owner writes to this same watch channel.
+            let _ = cancelled.wait_for(|cancelled| *cancelled).await;
+        };
         tokio::select! { biased;
-            _ = cancelled.wait_for(|cancelled| *cancelled) => Err(cancelled_exchange()),
+            _ = cancellation => Err(cancelled_exchange()),
             result = self.native_http_once(endpoint, method, url, body, limit, lease) => result,
         }
     }
