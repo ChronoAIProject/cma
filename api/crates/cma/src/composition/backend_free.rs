@@ -54,8 +54,9 @@ pub(crate) async fn compose(
             .with_model_request_budget_writes_enabled(config.model_request_budget_writes)
             .with_platform_spend_writes_enabled(config.platform_spend_writes),
     );
-    settings
-        .current()
+    stores
+        .settings
+        .read_for_startup()
         .await
         .map_err(|error| error.to_string())?;
     let standing = Arc::new(ErasingSnapshot::new(stores.accounts.clone()));

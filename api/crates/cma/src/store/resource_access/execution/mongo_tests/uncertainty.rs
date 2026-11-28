@@ -50,6 +50,7 @@ async fn ambiguous_commits_preserve_frozen_members_and_replay_the_exact_final_re
     let reopened = MongoResourceExecutionStore {
         sandbox: fixture.sandbox.clone(),
         collections: Collections::new(&fixture.sandbox),
+        write_erasure_keys: false,
     };
     let resumed = reopened
         .revocation(&operation.key.operation_id)
@@ -167,7 +168,11 @@ async fn missing_activated_latch_fails_closed_instead_of_selecting_legacy() {
         fixture.store.activation().await,
         Err(ExecutionError::Corrupt)
     ));
-    assert!(fixture.sandbox.open_resource_execution().await.is_err());
+    assert!(fixture
+        .sandbox
+        .open_resource_execution(false)
+        .await
+        .is_err());
     assert!(matches!(
         fixture
             .sandbox

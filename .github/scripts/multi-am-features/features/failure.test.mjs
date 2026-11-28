@@ -5,7 +5,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createHash} from 'node:crypto';
 import {runInNewContext} from 'node:vm';
-import {journeyFailureSummary, lifecycleFailureSummary, lifecyclePollFailure, retainFailure, withRestoration} from '../failure.mjs';
+import {journeyFailureSummary, lifecycleFailureSummary, lifecyclePollFailure, provenanceRequestFailure,
+  retainFailure, withRestoration} from '../failure.mjs';
 import {NonOwnerRouter} from '../routing.mjs';
 import {pollLifecycleOperation} from '../cma/lifecycle_operation.mjs';
 
@@ -40,6 +41,24 @@ test('lifecycle polling publishes only recognized failure types and status', () 
     {manager: 'b', kind: 'request_timeout'});
   const unknown = new TypeError('private body', {cause: {code: 'private_cause'}});
   assert.deepEqual(lifecyclePollFailure(unknown, 'b'), {manager: 'b', kind: 'unknown'});
+});
+
+test('provenance failure retains only the known request metadata and problem code', () => {
+  const response = {status: 503, timing: {am: 'b', method: 'PATCH',
+    route: '/api/v1/agents/{id}/preferences', request_id: 'private'}, body: {
+    code: 'agent_owner_unavailable', detail: 'private details',
+  }};
+  const requestFailure = provenanceRequestFailure(response);
+  const summary = journeyFailureSummary({steps: [{name: 'provenance_progress_known_abort',
+    verdict: 'FAIL', error: 'api_status_503', provenance_request_failure: requestFailure}]});
+  assert.deepEqual(summary.provenance_request_failure, {
+    manager: 'b', method: 'PATCH', route: '/api/v1/agents/{id}/preferences', status: 503,
+    problem_code: 'agent_owner_unavailable',
+  });
+  assert.equal(provenanceRequestFailure({...response, body: {code: 'private'}}).problem_code, undefined);
+  assert.equal(provenanceRequestFailure({...response, timing: {...response.timing,
+    route: '/api/v1/agents/private/preferences'}}), undefined);
+  assert.equal(provenanceRequestFailure({...response, status: 200}), undefined);
 });
 
 test('the two-Manager read summary identifies the transcript transport failure', () => {

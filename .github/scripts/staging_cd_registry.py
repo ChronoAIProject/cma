@@ -20,6 +20,7 @@ JOURNEY_REPOSITORY = "ghcr.io/chronoaiproject/cma-journey-probe"
 JOURNEY_TAG = r"sha256-[0-9a-f]{64}"
 REPOSITORIES = frozenset("ghcr.io/chronoaiproject/" + name for name in DEPLOYABLES.values()) | {JOURNEY_REPOSITORY}
 RUNTIME_REPOSITORIES = frozenset("ghcr.io/chronoaiproject/" + DEPLOYABLES[key] for key in RUNTIME_TARGETS)
+STAGING_DESKTOP_TAG_PREFIX = "staging-desktop-sha256-"
 RUNTIME_POINTER_TAGS = {"staging": "staging-current", "production": "production-current"}
 
 
@@ -86,8 +87,9 @@ class Registry:
 
     def manifest(self, repository, reference, *, absent=False, settle=False):
         auxiliary = repository == WEB_REPOSITORY and matches(WEB_AUXILIARY, reference)
+        desktop = repository in RUNTIME_REPOSITORIES and matches(STAGING_DESKTOP_TAG_PREFIX + r"[0-9a-f]{64}", reference)
         tagged = (matches(JOURNEY_TAG, reference) if repository == JOURNEY_REPOSITORY
-                  else auxiliary or matches(SEMVER, reference))
+                  else auxiliary or desktop or matches(SEMVER, reference))
         require(tagged or matches(r"sha256:[0-9a-f]{64}", reference),
                 "Registry reference is not immutable")
         return self._manifest(repository, reference, absent=absent, settle=settle)
@@ -128,7 +130,9 @@ class Registry:
         require(headers.get("Docker-Content-Digest") == digest
                 and (not reference.startswith("sha256:") or reference == digest)
                 and (not reference.startswith("sha256-") or reference == "sha256-" + digest[7:])
-                and (not reference.startswith("asset-sha256-") or reference == "asset-sha256-" + digest[7:]),
+                and (not reference.startswith("asset-sha256-") or reference == "asset-sha256-" + digest[7:])
+                and (not reference.startswith(STAGING_DESKTOP_TAG_PREFIX)
+                     or reference == STAGING_DESKTOP_TAG_PREFIX + digest[7:]),
                 "Registry returned a different manifest digest")
         body = json.loads(data)
         require(isinstance(body, dict) and body.get("schemaVersion") == 2

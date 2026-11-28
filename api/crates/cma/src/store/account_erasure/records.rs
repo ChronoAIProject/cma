@@ -109,6 +109,7 @@ async fn run(
     if cursor.allocation_absent != Some(receipt.allocation_absent)
         || cursor.observer_absent != Some(receipt.observer_absent)
         || cursor.usage_projections_absent != Some(receipt.usage_projections_absent)
+        || cursor.execution_namespaces != receipt.execution_namespaces
     {
         // A persisted absence marker cannot hide a namespace created later.
         cursor.operation = 0;
@@ -118,6 +119,9 @@ async fn run(
         cursor.allocation_absent = Some(receipt.allocation_absent);
         cursor.observer_absent = Some(receipt.observer_absent);
         cursor.usage_projections_absent = Some(receipt.usage_projections_absent);
+        cursor
+            .execution_namespaces
+            .clone_from(&receipt.execution_namespaces);
     }
     if !cursor.indexes_ready {
         super::indexes::ensure_with_receipt(db, &receipt).await?;
@@ -256,6 +260,11 @@ async fn run(
                         .any(|context| batches::matches(entry, *rule, row, context))
             });
             if destructive {
+                if super::resource_execution::managed(entry.collection) {
+                    super::resource_execution::erase(db, entry.collection, row, contexts, batch)
+                        .await?;
+                    continue;
+                }
                 if entry.collection == "sandbox_billing_state" && guards::unsettled_billing(row) {
                     let context = contexts
                         .iter()

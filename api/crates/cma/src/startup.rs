@@ -14,7 +14,7 @@ use tokio::{net::TcpListener, sync::watch};
 
 use crate::{
     agent_manager,
-    composition::{self, ControlPlaneComposition},
+    composition::{self, ControlPlaneComposition, StartupComposition},
     config::{Config, StartupConfig},
     image_manager_retirement, read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
@@ -71,9 +71,9 @@ async fn serve_inner(
     #[cfg(feature = "qualification-hooks")]
     let qualification =
         qualification.map(|options| (options, cma_qualification::Registry::default()));
-    let mut composition = observe(
+    let composition = observe(
         "composition",
-        ControlPlaneComposition::build(
+        StartupComposition::build(
             &config,
             #[cfg(feature = "qualification-hooks")]
             qualification.as_ref().map(|(_, registry)| registry.clone()),
@@ -81,6 +81,21 @@ async fn serve_inner(
         |_| None,
     )
     .await?;
+    let mut composition = match composition {
+        StartupComposition::Execution(composition) => *composition,
+        StartupComposition::ReleaseQuarantined(router) => {
+            let app = with_request_context(with_cors(router, config.cors_origins.clone()));
+            let listener = bind(config.bind).await?;
+            listening(&config);
+            let (http_stop, http_signal) = watch::channel(false);
+            let mut server =
+                http_server(listener, app, config.http_connection_max_age, http_signal);
+            return tokio::select! {
+                result = &mut server => http_result(result),
+                () = shutdown::shutdown_signal() => drain_http(http_stop, server).await,
+            };
+        }
+    };
     composition.worker_observations = composition
         .worker_observations
         .with_task_audit(task_cohorts, config.task_audit.clone());

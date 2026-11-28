@@ -13,6 +13,7 @@ pub(crate) struct StoreReleasedRuntime {
     current: RwLock<ReleasedRuntime>,
     refreshed: tokio::sync::Mutex<()>,
     machine: bool,
+    quarantined: bool,
 }
 
 impl std::fmt::Debug for StoreReleasedRuntime {
@@ -30,11 +31,12 @@ impl StoreReleasedRuntime {
         pins: ReleasedRuntime,
         required: bool,
     ) -> Result<Option<Self>, StoreError> {
-        let source = Self {
+        let mut source = Self {
             lanes: MongoReleasedRuntimes::open(database, deployment),
             machine: pins.machine.is_some(),
             current: RwLock::new(pins),
             refreshed: tokio::sync::Mutex::new(()),
+            quarantined: false,
         };
         if !required {
             // Legacy roles may lack the optional collection. The required pool
@@ -42,33 +44,40 @@ impl StoreReleasedRuntime {
             let read = source
                 .lanes
                 .lanes
+                .clone_with_type::<mongodb::bson::Document>()
                 .find_one(doc! {"_id": source.lanes.id(ReleasedLane::Agent)})
+                .projection(doc! {"_id": 1})
                 .await;
             match read {
                 Ok(None) => source.require_never_enabled(database, deployment).await?,
-                Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 13) => {
-                    source.require_never_enabled(database, deployment).await?
+                Err(error) if matches!(error.kind.as_ref(), mongodb::error::ErrorKind::Command(command) if command.code == 13) =>
+                {
+                    source.require_never_enabled(database, deployment).await?;
+                    return Ok(None);
                 }
                 Err(_) => {
                     return Err(StoreError::Unavailable(
                         "read durable runtime authority".into(),
                     ))
                 }
-                Ok(Some(_)) => {
-                    source
-                        .refresh()
-                        .await
-                        .map_err(|error| StoreError::Unavailable(error.to_string()))?;
-                    return Ok(Some(source));
-                }
+                Ok(Some(_)) => {}
             }
-            return Ok(None);
         }
-        source
-            .refresh()
-            .await
-            .map_err(|error| StoreError::Unavailable(error.to_string()))?;
+        match source.refresh().await {
+            Ok(release) if !required && release.lane_revisions.is_none() => return Ok(None),
+            Ok(_) => {}
+            Err(SandboxStoreError::Corrupt(reason)) => {
+                // These reasons are fixed decoder and authority validation messages.
+                tracing::error!(collection = COLLECTION, %reason, "Runtime release authority quarantined");
+                source.quarantined = true;
+            }
+            Err(error) => return Err(StoreError::Unavailable(error.to_string())),
+        }
         Ok(Some(source))
+    }
+
+    pub(crate) fn is_quarantined(&self) -> bool {
+        self.quarantined
     }
 
     async fn require_never_enabled(
@@ -94,6 +103,11 @@ impl StoreReleasedRuntime {
     }
 
     pub(crate) async fn refresh(&self) -> Result<ReleasedRuntime, SandboxStoreError> {
+        if self.quarantined {
+            return Err(SandboxStoreError::Corrupt(
+                "runtime release authority quarantined at startup".into(),
+            ));
+        }
         let _refresh = self.refreshed.lock().await;
         let old = self.snapshot();
         let agent = self.lanes.load(ReleasedLane::Agent).await?;
@@ -151,7 +165,7 @@ impl ReleasedRuntimeSource for StoreReleasedRuntime {
     }
 
     fn require_current(&self, released: &ReleasedRuntime) -> Result<(), StaleReleasedRuntime> {
-        if self.snapshot() == *released {
+        if !self.quarantined && self.snapshot() == *released {
             Ok(())
         } else {
             Err(StaleReleasedRuntime)

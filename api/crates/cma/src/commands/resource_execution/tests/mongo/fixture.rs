@@ -125,7 +125,7 @@ impl Fixture {
             .activate_resource_execution_after_drain(generation(1), &digest('d'))
             .await
             .unwrap();
-        let store = sandbox.open_resource_execution().await.unwrap();
+        let store = sandbox.open_resource_execution(false).await.unwrap();
         let policy = ResourceExecutionPolicy::enforce(store.clone(), true)
             .await
             .unwrap();
@@ -238,7 +238,7 @@ impl Fixture {
         MongoSandboxStore::open(&self.client, &self.name)
             .await
             .unwrap()
-            .open_resource_execution()
+            .open_resource_execution(false)
             .await
             .unwrap()
     }

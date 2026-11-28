@@ -130,6 +130,7 @@ async fn semantic_stream(
     paged: bool,
     shared: bool,
     terminal: bool,
+    refresh_barrier: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> (Fixture, axum::response::Response) {
     let (base, store) = fixtures::conversation_fixture().await;
     fixtures::insert_agent(
@@ -142,12 +143,15 @@ async fn semantic_stream(
     let access = Arc::new(ResourceAccessService::new(store.clone(), authority.clone()));
     let commands = AgentCommandService::new(store.clone(), access.clone(), authority);
     let reads = base.reads.with_resource_access(access.clone());
-    let state = super::super::ResponsesV2State::new(
+    let mut state = super::super::ResponsesV2State::new(
         crate::agent_page::AgentPageOrigin::test(),
         commands,
         reads,
     )
     .with_paged_events(paged);
+    if let Some(start) = refresh_barrier {
+        state = state.with_replay_refresh_barrier(0, start);
+    }
     let f = Fixture {
         router: super::super::router(state.clone()),
         store,
@@ -213,9 +217,56 @@ async fn semantic_stream(
 }
 
 #[tokio::test(start_paused = true)]
+async fn replay_refresh_barrier_keeps_sse_heartbeats_running() {
+    isolated_test(async {
+        for paged in [false, true] {
+            let (start, barrier) = tokio::sync::watch::channel(false);
+            let (_f, response) = semantic_stream(paged, false, false, Some(barrier)).await;
+            let mut body = response.into_body().into_data_stream();
+            assert_eq!(
+                events(&body.next().await.unwrap().unwrap())[0]["type"],
+                "response.created"
+            );
+            let initial = snapshot(Kind::ResponsesV2).1;
+
+            for _ in 0..2 {
+                let heartbeat = tokio::time::timeout(Duration::from_secs(16), body.next())
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                assert!(heartbeat.starts_with(b":"), "{heartbeat:?}");
+                assert_eq!(snapshot(Kind::ResponsesV2).1, initial);
+            }
+
+            start.send_replace(true);
+            assert!(tokio::time::timeout(Duration::from_secs(1), body.next())
+                .await
+                .is_err());
+            assert!(snapshot(Kind::ResponsesV2).1[0] > initial[0]);
+        }
+    })
+    .await;
+}
+
+#[tokio::test]
+#[should_panic(expected = "replay fixture must explicitly release refreshes")]
+async fn replay_refresh_barrier_requires_explicit_release() {
+    let (start, barrier) = tokio::sync::watch::channel(false);
+    let (_f, response) = semantic_stream(true, false, false, Some(barrier)).await;
+    let mut body = response.into_body().into_data_stream();
+    assert_eq!(
+        events(&body.next().await.unwrap().unwrap())[0]["type"],
+        "response.created"
+    );
+    drop(start);
+    body.next().await;
+}
+
+#[tokio::test(start_paused = true)]
 async fn legacy_and_paged_closes_preserve_failed_terminal_and_authorization_evidence() {
     for paged in [false, true] {
-        let (_f, response) = semantic_stream(paged, false, true).await;
+        let (_f, response) = semantic_stream(paged, false, true, None).await;
         let evidence = response.extensions().get::<Contract>().unwrap().clone();
         let mut body = response.into_body().into_data_stream();
         assert_eq!(
@@ -235,7 +286,7 @@ async fn legacy_and_paged_closes_preserve_failed_terminal_and_authorization_evid
             CloseReason::NormalTerminal
         );
 
-        let (f, response) = semantic_stream(paged, true, true).await;
+        let (f, response) = semantic_stream(paged, true, true, None).await;
         let command_id = layer2_core::ids::AgentCommandId(
             response.headers()["x-cma-command-id"]
                 .to_str()
@@ -272,7 +323,7 @@ async fn legacy_and_paged_closes_preserve_failed_terminal_and_authorization_evid
 #[tokio::test(start_paused = true)]
 async fn legacy_and_paged_snapshot_failure_cannot_become_normal_eof() {
     for paged in [false, true] {
-        let (f, response) = semantic_stream(paged, false, false).await;
+        let (f, response) = semantic_stream(paged, false, false, None).await;
         let evidence = response.extensions().get::<Contract>().unwrap().clone();
         let mut body = response.into_body().into_data_stream();
         assert_eq!(

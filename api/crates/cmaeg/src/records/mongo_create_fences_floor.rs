@@ -2,7 +2,7 @@
 use super::{create_fences::CREATE_FENCES, failure, schema, RecordError, MIGRATIONS, RECORDS};
 use futures_util::TryStreamExt;
 use mongodb::{
-    bson::{doc, Document},
+    bson::{doc, Bson, Document},
     options::{Acknowledgment, ReadConcern, ValidationAction, ValidationLevel, WriteConcern},
     Database,
 };
@@ -22,7 +22,7 @@ async fn validator_phase(db: &Database) -> Result<Option<i32>, RecordError> {
         .map_err(failure)?;
     row.map(|row| {
         row.get_i32("version").map_err(|_| {
-            RecordError::Unavailable("Channel validator migration phase is unreadable".into())
+            RecordError::Malformed("Channel validator migration phase is unreadable".into())
         })
     })
     .transpose()
@@ -168,18 +168,31 @@ pub(crate) async fn verify_runtime(db: &Database, issuer: &str) -> Result<bool, 
 }
 
 pub(super) async fn installed(db: &Database) -> Result<bool, RecordError> {
-    Ok(db
+    let marker = db
         .collection::<Document>(MIGRATIONS)
-        .find_one(doc! {"_id": MARKER, "version": 1})
+        .find_one(doc! {"_id": MARKER})
         .read_concern(ReadConcern::majority())
         .await
-        .map_err(failure)?
-        .is_some())
+        .map_err(failure)?;
+    match marker {
+        None => Ok(false),
+        Some(row) if matches!(row.get("version"), Some(Bson::Int32(1) | Bson::Int64(1))) => {
+            Ok(true)
+        }
+        Some(_) => Err(RecordError::Malformed(
+            "Channel create fence migration marker is incompatible".into(),
+        )),
+    }
 }
 
 pub(crate) async fn verify(db: &Database, issuer: &str) -> Result<bool, RecordError> {
     if !installed(db).await? {
-        return Ok(false);
+        return match validator_phase(db).await? {
+            None | Some(IDLE | LEGACY_UPGRADE) => Ok(false),
+            _ => Err(RecordError::Malformed(
+                "Channel create fence migration marker or validator phase is incompatible".into(),
+            )),
+        };
     }
     let fences = db.collection::<Document>(CREATE_FENCES);
     let row = fences
@@ -191,11 +204,14 @@ pub(crate) async fn verify(db: &Database, issuer: &str) -> Result<bool, RecordEr
         || !row.is_some_and(|row| {
             row.get_str("issuer").ok() == Some(issuer) && row.get_i32("version").ok() == Some(1)
         })
-        || !fence_indexes_match(db).await?
-        || !channel_validator_is_strict(db).await?
     {
-        return Err(RecordError::Unavailable(
+        return Err(RecordError::Malformed(
             "Channel create fence writer floor is incompatible".into(),
+        ));
+    }
+    if !fence_indexes_match(db).await? || !channel_validator_is_strict(db).await? {
+        return Err(RecordError::Unavailable(
+            "Channel create fence catalog is incompatible".into(),
         ));
     }
     Ok(true)

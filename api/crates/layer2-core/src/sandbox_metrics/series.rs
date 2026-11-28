@@ -142,6 +142,85 @@ pub fn complete(
     out
 }
 
+/// A fold-local buffer for completing successive Sandboxes on the same grid.
+#[derive(Default)]
+pub struct Completion {
+    key: Option<(Range, u64, Option<bool>)>,
+    empty: Vec<Bucket>,
+    buckets: Vec<Bucket>,
+}
+
+impl Completion {
+    #[inline]
+    pub fn complete(
+        &mut self,
+        sparse: &BTreeMap<u64, Bucket>,
+        expectations: &[allocation::Expectation],
+        metric: Metric,
+        range: Range,
+        step: u64,
+    ) -> &[Bucket] {
+        if let [interval] = expectations {
+            if range.seconds() == 0 || interval.from > range.from || interval.to < range.to {
+                complete_into(&mut self.buckets, sparse, expectations, metric, range, step);
+                return &self.buckets;
+            }
+            let state = if metric == Metric::Disk {
+                interval.home
+            } else {
+                interval.running
+            };
+            let key = (range, step, state);
+            if self.key != Some(key) {
+                complete_into(
+                    &mut self.empty,
+                    &BTreeMap::new(),
+                    expectations,
+                    metric,
+                    range,
+                    step,
+                );
+                self.key = Some(key);
+            }
+            self.buckets.clone_from(&self.empty);
+            if self.overlay(sparse, range, step, state) {
+                return &self.buckets;
+            }
+        }
+        complete_into(&mut self.buckets, sparse, expectations, metric, range, step);
+        &self.buckets
+    }
+
+    #[inline]
+    fn overlay(
+        &mut self,
+        sparse: &BTreeMap<u64, Bucket>,
+        range: Range,
+        step: u64,
+        state: Option<bool>,
+    ) -> bool {
+        let first = range.from / step;
+        for (&at, measured) in sparse.range(range.from..range.to) {
+            if at != range.from && !at.is_multiple_of(step) {
+                continue;
+            }
+            let target = &mut self.buckets[(at / step - first) as usize];
+            if (measured.from, measured.to) != (target.from, target.to) {
+                return false;
+            }
+            let expected = target.expected_seconds;
+            let unknown = if state.is_none() {
+                target.unknown_mapping_seconds
+            } else {
+                0.
+            };
+            *target = measured.clone();
+            complete_measurement(target, expected, unknown);
+        }
+        true
+    }
+}
+
 /// Reuse the caller's allocation when folding multiple Sandboxes on one grid.
 pub fn complete_into(
     out: &mut Vec<Bucket>,
@@ -220,10 +299,19 @@ pub fn complete_into(
                 None => unknown += duration,
             }
         }
-        b.unknown_mapping_seconds = (expected - b.expected_seconds).max(0.) + unknown;
-        b.expected_seconds = b.expected_seconds.max(expected);
-        b.finish_time();
+        complete_measurement(&mut b, expected, unknown);
         out.push(b);
         at += step;
     }
 }
+
+#[inline]
+fn complete_measurement(bucket: &mut Bucket, expected: f64, unknown: f64) {
+    bucket.unknown_mapping_seconds = (expected - bucket.expected_seconds).max(0.) + unknown;
+    bucket.expected_seconds = bucket.expected_seconds.max(expected);
+    bucket.finish_time();
+}
+
+#[cfg(test)]
+#[path = "series_completion_tests.rs"]
+mod completion_tests;

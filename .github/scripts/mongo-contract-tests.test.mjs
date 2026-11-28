@@ -11,13 +11,27 @@ import { registerSelectionTests } from './mongo-contract-selection-tests.mjs';
 import { registerShardTests } from './mongo-contract-shards.test.mjs';
 import { registerRegistryRunnerTests } from './mongo-contract-registry-runner-tests.mjs';
 
-import { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, tc070ControlTest, isolatedTests, observationTest, runnerSetupTimeoutMs, fixturePredicate, qualificationPredicate, ordinaryPredicate, fixture } from './mongo-contract-test-fixture.mjs';
+import { scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, tc070ControlTest, responseReplayTest, isolatedTests, observationTest, runnerSetupTimeoutMs, fixturePredicate, qualificationPredicate, ordinaryPredicate, fixture } from './mongo-contract-test-fixture.mjs';
 
 registerRegistryRunnerTests({fixture, requiredPrefixes});
 
 const preparedControls = readFileSync(new URL('./multi-am-features/startup-controls.txt', import.meta.url), 'utf8')
   .trim().split('\n');
 const preparedFilter = `package(=cma) and (${preparedControls.map(name => `test(=${name})`).join(' or ')})`;
+
+function runCoordinator(f, scenario, expectedStatus) {
+  try {
+    execFileSync('bash', f.args, {env: f.env, timeout: runnerSetupTimeoutMs, stdio: 'pipe'});
+  } catch (error) {
+    if (error.code === 'ETIMEDOUT') {
+      throw new Error(`Mock Mongo runner exceeded its ${runnerSetupTimeoutMs} ms setup deadline in ${scenario}`, {cause: error});
+    }
+    if (expectedStatus === 0 || error.status !== expectedStatus) throw error;
+    return String(error.stderr);
+  }
+  assert.equal(expectedStatus, 0, `${scenario} should exit with coordinator status ${expectedStatus}`);
+  return '';
+}
 
 for (const reuse of [false, true]) {
   const mode = reuse ? 'archive' : 'source';
@@ -91,12 +105,10 @@ for (const reuse of [false, true]) {
   });
 
   test(`${mode}: isolated contracts run alone before concurrent Mongo partitions, preserves failures and removes only owned fixtures`, () => {
-    for (const scenario of ['entropy-error', 'entropy-malformed', 'success', 'scale-error', 'owner-error', 'audit-error', 'diagnostics-error', 'scan-error', 'bson-error', 'first-response-error', 'history-error', 'ranked-projection-error', 'test-error']) {
+    for (const scenario of ['entropy-error', 'entropy-malformed', 'success', 'scale-error', 'owner-error', 'audit-error', 'diagnostics-error', 'scan-error', 'bson-error', 'first-response-error', 'history-error', 'ranked-projection-error', 'tc070-control-error', 'response-replay-error', 'test-error']) {
       const f = fixture(scenario, reuse);
       try {
-        const run = () => execFileSync('bash', f.args, { env: f.env, timeout: runnerSetupTimeoutMs, stdio: 'pipe' });
-        let stderr = '';
-        if (scenario === 'success') run(); else assert.throws(run, error => { stderr = String(error.stderr); return true; });
+        const stderr = runCoordinator(f, scenario, scenario === 'success' ? 0 : 1);
         if (scenario.startsWith('entropy-')) { assert.deepEqual(f.calls().map(row => [row.command,row.args[1]]), [['cargo','list']]); continue; }
         assert.equal(stderr.includes('per-test budget of nextest profile mongo-ordinary'), scenario === 'test-error',
           'only a failed ordinary partition names the budget remedy');
@@ -110,8 +122,10 @@ for (const reuse of [false, true]) {
           const predicate = action === 'list' ? qualificationPredicate
             : isolatedTest ? `package(=cma) and test(=${isolatedTest})` : ordinaryPredicate;
           const selection = `${predicate} & ${fixturePredicate} & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
-          const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')] : ['--workspace', '--locked'];
-          const operation = action === 'list' ? ['--message-format', 'json'] : ['--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', ...(cargo.indexOf(row) < isolatedTests.length ? ['--success-output', 'final', ...(isolatedTest === rankedProjectionTest ? ['--profile', 'mongo-ordinary'] : [])] : ['--partition', row.args[row.args.indexOf('--partition')+1], '--profile', 'mongo-ordinary'])];
+          const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')]
+            : isolatedTest === responseReplayTest ? ['--locked', '-p', 'cma'] : ['--workspace', '--locked'];
+          const budgeted = [rankedProjectionTest, responseReplayTest].includes(isolatedTest);
+          const operation = action === 'list' ? ['--message-format', 'json'] : ['--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', ...(cargo.indexOf(row) < isolatedTests.length ? ['--success-output', 'final', ...(budgeted ? ['--profile', 'mongo-ordinary'] : [])] : ['--partition', row.args[row.args.indexOf('--partition')+1], '--profile', 'mongo-ordinary'])];
           assert.deepEqual(row.args, ['nextest', action, ...build, ...operation, '--run-ignored', 'only', '-E', selection]);
           if (action === 'list') assert.equal(row.uri, undefined, 'listing must discard caller Mongo URI too');
         }
@@ -126,7 +140,7 @@ for (const reuse of [false, true]) {
           assert.ok(row.args.includes('--no-fail-fast'));
           assert.equal(row.args[row.args.indexOf('--test-threads') + 1], '1');
         }
-        for (const index of [0, -1, -2, -3, -4, -5, -6, -7, -8, -9, 1, 2]) assert.ok(existsSync(`${f.log}.finished-${index}`), 'both partitions must finish, including after one fails');
+        for (const index of [...isolatedTests.map((_, index) => -index), 1, 2]) assert.ok(existsSync(`${f.log}.finished-${index}`), 'both partitions must finish, including after one fails');
         const scale = JSON.parse(readFileSync(`${f.log}.selected-0`));
         const owner = JSON.parse(readFileSync(`${f.log}.selected--1`));
         const audit = JSON.parse(readFileSync(`${f.log}.selected--2`));
@@ -144,12 +158,14 @@ for (const reuse of [false, true]) {
         assert.deepEqual(rankedProjection, [rankedProjectionTest]);
         const tc070Control = JSON.parse(readFileSync(`${f.log}.selected--9`));
         assert.deepEqual(tc070Control, [tc070ControlTest]);
+        const responseReplay = JSON.parse(readFileSync(`${f.log}.selected--10`));
+        assert.deepEqual(responseReplay, [responseReplayTest]);
         const ordinary = [1, 2].flatMap(index => JSON.parse(readFileSync(`${f.log}.selected-${index}`)));
         assert.deepEqual(scale, [scaleTest]);
         assert.deepEqual(owner, [ownerTest]);
         assert.deepEqual(audit, [auditTest]);
         assert.equal(ordinary.length, 80);
-        assert.equal(new Set([...scale, ...owner, ...audit, ...diagnostics, ...scan, ...bson, ...firstResponse, ...history, ...rankedProjection, ...tc070Control, ...ordinary]).size, isolatedTests.length + 80, 'all isolated phases plus ordinary partitions select every mock test exactly once');
+        assert.equal(new Set([...scale, ...owner, ...audit, ...diagnostics, ...scan, ...bson, ...firstResponse, ...history, ...rankedProjection, ...tc070Control, ...responseReplay, ...ordinary]).size, isolatedTests.length + 80, 'all isolated phases plus ordinary partitions select every mock test exactly once');
         const created = calls.filter(row => row.args[0] === 'run').map(row => row.args[row.args.indexOf('--name') + 1]);
         assert.equal(new Set(created).size, isolatedTests.length + 2);
         for (let index = 0; index < isolatedTests.length; index++) {
@@ -221,7 +237,7 @@ for (const reuse of [false, true]) {
     for (const scenario of ['volume-list-error', 'foreign-volume', 'volume-create-error', 'run-error', 'volume-owner-mismatch']) {
       const f = fixture(scenario, reuse);
       try {
-        assert.throws(() => execFileSync('bash', f.args, {env: f.env, timeout: runnerSetupTimeoutMs, stdio: 'pipe'}));
+        runCoordinator(f, scenario, 1);
         const calls = f.calls();
         assert.equal(calls.filter(row => row.command === 'cargo' && row.args[1] === 'run').length, 0);
         assert.equal(f.containers().length, 0);
@@ -281,8 +297,7 @@ for (const reuse of [false, true]) {
     for (const scenario of ['batches', 'batches-error']) {
       const f = fixture(scenario, reuse);
       try {
-        const run = () => execFileSync('bash', f.args, {env:f.env, timeout:30000, stdio:'pipe'});
-        if (scenario === 'batches') run(); else assert.throws(run);
+        runCoordinator(f, scenario, scenario === 'batches' ? 0 : 1);
         const calls = f.calls();
         assert.equal(calls.filter(row => row.command === 'cargo' && row.args[1] === 'list').length, 1);
         const cargo = calls.filter(row => row.command === 'cargo' && row.args[1] === 'run');
@@ -302,13 +317,13 @@ for (const reuse of [false, true]) {
         assert.equal(f.containers().length, 0);
         assert.equal(f.volumes().length, 0);
         assert.ok(existsSync(f.foreignVolume));
-        for (const index of [0,-1,-2,-3,-4,-5,-6,-7,-8,1,2,3,4,5]) assert.ok(existsSync(`${f.log}.finished-${index}`));
+        for (const index of [...isolatedTests.map((_, index) => -index), 1, 2, 3, 4, 5]) assert.ok(existsSync(`${f.log}.finished-${index}`));
       } finally { f.close(); }
     }
   });
 
   test(`${mode}: unavailable, malformed, empty or non-ignored selection fails before allocating any fixture`, () => {
-    for (const scenario of ['list-omitted-module','list-selected-helper','list-stale-exception','list-error','list-malformed','list-empty','list-not-ignored','list-no-scale','list-scale-not-ignored','list-duplicate-scale','list-no-owner','list-owner-not-ignored','list-duplicate-owner','list-no-audit','list-audit-not-ignored','list-duplicate-audit','list-no-diagnostics','list-diagnostics-not-ignored','list-duplicate-diagnostics','list-no-scan','list-scan-not-ignored','list-duplicate-scan','list-no-bson','list-bson-not-ignored','list-duplicate-bson','list-no-first-response','list-first-response-not-ignored','list-duplicate-first-response','list-no-history','list-history-not-ignored','list-duplicate-history','list-no-ranked-projection','list-ranked-projection-not-ignored','list-duplicate-ranked-projection','list-no-tc070-control','list-no-ordinary']) {
+    for (const scenario of ['list-omitted-module','list-selected-helper','list-stale-exception','list-error','list-malformed','list-empty','list-not-ignored','list-no-scale','list-scale-not-ignored','list-duplicate-scale','list-no-owner','list-owner-not-ignored','list-duplicate-owner','list-no-audit','list-audit-not-ignored','list-duplicate-audit','list-no-diagnostics','list-diagnostics-not-ignored','list-duplicate-diagnostics','list-no-scan','list-scan-not-ignored','list-duplicate-scan','list-no-bson','list-bson-not-ignored','list-duplicate-bson','list-no-first-response','list-first-response-not-ignored','list-duplicate-first-response','list-no-history','list-history-not-ignored','list-duplicate-history','list-no-ranked-projection','list-ranked-projection-not-ignored','list-duplicate-ranked-projection','list-no-tc070-control','list-tc070-control-not-ignored','list-duplicate-tc070-control','list-no-response-replay','list-response-replay-not-ignored','list-duplicate-response-replay','list-no-ordinary']) {
       const f = fixture(scenario, reuse);
       try {
         assert.throws(() => execFileSync('bash', f.args, {env:f.env, timeout:5000, stdio:'pipe'}));
@@ -322,7 +337,9 @@ for (const reuse of [false, true]) {
 
 
   test(`${mode}: zero-test runs fail despite an environment that allows empty selections`, () => {
-    for (const scenario of ['scale-empty', 'owner-empty', 'audit-empty', 'diagnostics-empty', 'scan-empty', 'bson-empty', 'first-response-empty', 'history-empty', 'ranked-projection-empty', 'ordinary-empty']) {
+    const emptyModes = ['scale', 'owner', 'audit', 'diagnostics', 'scan', 'bson', 'first-response', 'history', 'ranked-projection', 'tc070-control', 'response-replay'];
+    for (const [mode, empty] of [...emptyModes.map((name, index) => [name, -index]), ['ordinary', 1]]) {
+      const scenario = `${mode}-empty`;
       const f = fixture(scenario, reuse);
       try {
         const env = {...f.env, NEXTEST_NO_TESTS: 'pass'};
@@ -334,9 +351,8 @@ for (const reuse of [false, true]) {
           assert.equal(row.args.filter(value => value === '--no-tests').length, 1);
           assert.equal(row.args[row.args.indexOf('--no-tests')+1], 'fail');
         }
-        const empty = scenario === 'scale-empty' ? 0 : scenario === 'owner-empty' ? -1 : scenario === 'audit-empty' ? -2 : scenario === 'diagnostics-empty' ? -3 : scenario === 'scan-empty' ? -4 : scenario === 'bson-empty' ? -5 : scenario === 'first-response-empty' ? -6 : scenario === 'history-empty' ? -7 : scenario === 'ranked-projection-empty' ? -8 : 1;
         assert.equal(readFileSync(`${f.log}.empty-${empty}`, 'utf8'), 'fail');
-        for (const index of [0,-1,-2,-3,-4,-5,-6,-7,-8,-9,1,2].filter(index => index !== empty)) {
+        for (const index of [...isolatedTests.map((_, index) => -index), 1, 2].filter(index => index !== empty)) {
           assert.ok(existsSync(`${f.log}.finished-${index}`));
         }
         assert.equal(f.containers().length, 0);
@@ -371,8 +387,8 @@ test('archive: only ordinary partitions retry once, and only when the merge-queu
         assert.equal(row.flakyResultEnv, undefined, `${setting}: NEXTEST_FLAKY_RESULT never reaches a run`);
         const partition = row.args.includes('--partition') ? row.args[row.args.indexOf('--partition') + 1] : null;
         const selection = row.args[row.args.indexOf('-E') + 1];
-        const rankedProjection = selection.startsWith(`package(=cma) and test(=${rankedProjectionTest})`);
-        const expected = partition || rankedProjection ? ['--profile', 'mongo-ordinary'] : [];
+        const budgeted = [rankedProjectionTest, responseReplayTest].some(name => selection.startsWith(`package(=cma) and test(=${name})`));
+        const expected = partition || budgeted ? ['--profile', 'mongo-ordinary'] : [];
         if (setting === '1' && partition) {
           const stem = partition.replace(/[:/]/g, '-');
           expected.push('--retries', '1', '--flaky-result', 'pass', '--tool-config-file', `cma-flaky-retry:${reports}/nextest-${stem}.toml`);
@@ -408,5 +424,5 @@ test('no nextest profile configures retries, so only the merge-queue flag can', 
   assert.equal(config.split('\n').filter(line => /^\s*(retries|flaky-result)\s*=/.test(line)).length, 0);
 });
 
-registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, tc070ControlTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate});
-registerShardTests({fixture, scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, tc070ControlTest});
+registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, tc070ControlTest, responseReplayTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate});
+registerShardTests({fixture, scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, historyTest, rankedProjectionTest, tc070ControlTest, responseReplayTest});

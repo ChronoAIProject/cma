@@ -21,6 +21,7 @@ mod routes;
 mod runtime;
 mod runtime_inventory;
 mod runtime_migration;
+mod runtime_quarantine;
 mod state;
 mod stores;
 mod suggestion_control;
@@ -42,14 +43,14 @@ use layer2_core::{
     sandbox::{AgentContextService, HierarchyReadService, SandboxService, WorkspaceService},
     ActivityService, OperationStore, PlatformSettingsService, UserDirectory,
 };
-pub(crate) use state::ControlPlaneComposition;
+pub(crate) use state::{ControlPlaneComposition, StartupComposition};
 use std::sync::Arc;
 impl ControlPlaneComposition {
     async fn assemble(
         config: &Config,
+        stores: Arc<MongoStores>,
         #[cfg(feature = "qualification-hooks")] qualification: Option<cma_qualification::Registry>,
     ) -> Result<Self, String> {
-        let stores = stores::connect(config).await?;
         let creation_outcomes = creation_outcomes::open(config, &stores).await?;
         let (deletions, standing) = account_deletion::compose(config, &stores).await?;
         let activity = ActivityService::new(stores.activity.clone());

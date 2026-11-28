@@ -3,6 +3,16 @@ import {isDeepStrictEqual as equal} from 'node:util';
 import {assertOwner, check, hash, id, other, poll} from '../cma/core.mjs';
 import {withRestoration} from '../failure.mjs';
 
+function progressControl(adapter, lineage) {
+  return async (action, fields = {}) => {
+    try {
+      return await adapter.provenanceBackfill({action, ...lineage, ...fields});
+    } catch (cause) {
+      throw new Error(`provenance_progress_control_${action}_failed`, {cause});
+    }
+  };
+}
+
 export async function provenanceKnownAbort({adapter, api, record, recordFailure}) {
   const {agentId, sandboxId, operationId} = record;
   check(id(agentId) && id(sandboxId) && id(operationId), 'provenance_progress_lineage_required');
@@ -13,7 +23,7 @@ export async function provenanceKnownAbort({adapter, api, record, recordFailure}
   const patch = (am, revision, system_prompt) => api.rawRequest(am, 'PATCH', agent + '/preferences', {
     key: randomUUID(), body: {expected_revision: revision, system_prompt}, timeout: 8000,
   });
-  const control = (action, fields = {}) => adapter.provenanceBackfill({action, agentId, sandboxId, operationId, ...fields});
+  const control = progressControl(adapter, {agentId, sandboxId, operationId});
   const original = await read(owner.am, '/provenance');
   const baseline = await read(owner.am, '/preferences');
   check(original?.agent_id === agentId && original.creation_origin === 'manual'
@@ -82,8 +92,7 @@ export async function provenanceUnknownCommit({adapter, api, record, recordFailu
   check(id(agentId) && id(sandboxId) && id(operationId), 'provenance_progress_lineage_required');
   const path = '/api/v1/agents/' + agentId + '/provenance';
   const read = async am => (await api.rawRequest(am, 'GET', path)).body;
-  const control = (action, args = {}) =>
-    adapter.provenanceBackfill({action, agentId, sandboxId, operationId, unknown: true, ...args});
+  const control = progressControl(adapter, {agentId, sandboxId, operationId, unknown: true});
   const original = await read('a');
   check(original?.agent_id === agentId && original.creation_origin === 'manual'
     && equal(await read('b'), original), 'provenance_progress_commit_original_unbound');

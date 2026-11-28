@@ -31,7 +31,7 @@ from runtime_loss import runtime_inventory_authority
 
 
 class OwnershipTests(unittest.TestCase):
-    def test_prepared_lifecycle_read_reopens_only_an_exited_forward_on_the_original_port(self):
+    def test_prepared_lifecycle_read_renews_the_forward_on_the_original_port(self):
         run_id = 'cma-ci-' + 'a' * 12
         origin = 'http://127.0.0.1:12345'
         child = Mock()
@@ -39,13 +39,13 @@ class OwnershipTests(unittest.TestCase):
         fixture.client = Mock(namespace='cma-native-am', forwards={('am-a-0', 8080): (child, origin)})
         fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
                          'server': origin}
-        child.poll.return_value = None
-        self.assertEqual(fixture.repairPreparedForward('a'), {'outcome': 'running'})
-        fixture.client.forward.assert_not_called()
-        child.poll.return_value = 1
         fixture.client.forward.return_value = origin
-        self.assertEqual(fixture.repairPreparedForward('a'), {'outcome': 'reopened'})
-        fixture.client.forward.assert_called_once_with('am-a-0', 8080, renew=True)
+        for exit_status, outcome in ((None, 'renewed_running'), (1, 'reopened')):
+            with self.subTest(exit_status=exit_status):
+                fixture.client.forward.reset_mock()
+                child.poll.return_value = exit_status
+                self.assertEqual(fixture.repairPreparedForward('a'), {'outcome': outcome})
+                fixture.client.forward.assert_called_once_with('am-a-0', 8080, renew=True)
         fixture.client.forward.return_value = 'http://127.0.0.1:12346'
         with self.assertRaisesRegex(RuntimeError, 'prepared_forward_origin_changed'):
             fixture.repairPreparedForward('a')
@@ -869,6 +869,7 @@ class OwnershipTests(unittest.TestCase):
         features = manifests.managers(legacy_manifests.credentials(), {**ready, 'fixture': 'features'})
         features_environment = next(x['stringData'] for x in features if x['kind'] == 'Secret')
         self.assertEqual(features_environment['CHRONO_ADMISSION_CONTROL_WRITES_ENABLED'], 'true')
+        self.assertEqual(features_environment['CHRONO_AGENT_SETTINGS_OWNER_RELAY_ENABLED'], 'true')
         for feature in ('QUOTAS', 'SOURCE_COMMITS', 'DELETION'):
             self.assertEqual(features_environment[f'CHRONO_DOCUMENT_{feature}_ENABLED'], 'true')
         self.assertEqual(features_environment['CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED'], 'true')
@@ -879,6 +880,7 @@ class OwnershipTests(unittest.TestCase):
                                                             {**ready, 'fixture': 'prepared'}))
         prepared_environment = next(x['data'] for x in prepared if x['kind'] == 'ConfigMap')
         self.assertNotIn('CHRONO_ADMISSION_CONTROL_WRITES_ENABLED', prepared_environment)
+        self.assertNotIn('CHRONO_AGENT_SETTINGS_OWNER_RELAY_ENABLED', prepared_environment)
         self.assertNotIn('CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED', prepared_environment)
         self.assertEqual(prepared_environment['CHRONO_AGENT_MANAGER_SANDBOX_CPU'], '500m')
         self.assertEqual(prepared_environment['CHRONO_SANDBOX_CPU'], '500m')

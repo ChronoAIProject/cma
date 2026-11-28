@@ -156,7 +156,12 @@ async fn ensure_effect_keysets(
         if super::indexed::logs::installed(entry.collection, &existing) {
             continue;
         }
-        for field in fields.into_iter().filter(|field| *field != "_id") {
+        let execution_link = super::resource_execution::dependency_field(entry.collection);
+        for field in fields
+            .into_iter()
+            .chain(execution_link)
+            .filter(|field| *field != "_id")
+        {
             let keys = doc! {field:1,"_id":1};
             if existing.iter().any(|index| {
                 index.keys == keys

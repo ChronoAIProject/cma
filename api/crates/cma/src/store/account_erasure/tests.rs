@@ -61,7 +61,7 @@ pub(super) async fn sandbox(db: &Database, owner: &str, id: &str) {
     )
     .await;
 }
-pub(super) async fn drain(
+pub(in crate::store) async fn drain(
     db: &Database,
     owner: &str,
     inventory: &mut ErasureInventory,

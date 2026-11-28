@@ -223,6 +223,108 @@ async fn stale_turn_scan_resumes_at_last_examined_row_and_fences_previous_holder
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
+async fn stale_turn_terminal_scans_each_replica_despite_another_holding_the_shared_lease() {
+    use crate::store::stale_turns::OwnedPosition;
+
+    let (client, name) = database("stale_turn_owner_cursor").await;
+    let (store, _, _, _, _, _) = composed(&client, &name).await;
+    let add = |agent: &str, id: String, status: &str, order: i64| {
+        doc! {"_id": &id, "agent_id": agent, "agent_order": order, "status": status,
+        "scope": "scan_fixture", "key_sha256": &id}
+    };
+    let first = AgentId("agt_first".into());
+    let second = AgentId("agt_second".into());
+    let first_agents = [first];
+    let second_agents = [second];
+    store
+        .agent_commands
+        .insert_many(
+            (1..=129)
+                .map(|order| {
+                    add(
+                        first_agents[0].as_str(),
+                        format!("cmd_a_{order}"),
+                        "in_progress",
+                        order,
+                    )
+                })
+                .chain([
+                    add(second_agents[0].as_str(), "cmd_b".into(), "in_progress", 1),
+                    add(
+                        first_agents[0].as_str(),
+                        "cmd_wait".into(),
+                        "waiting_action",
+                        130,
+                    ),
+                ]),
+        )
+        .await
+        .unwrap();
+
+    let scanner = StaleTurnStore::new(store.clone());
+    let observer = scanner.claim().await.unwrap().unwrap();
+    assert!(scanner.claim().await.unwrap().is_none());
+    let mut first_position = OwnedPosition::default();
+    let mut second_position = OwnedPosition::default();
+    let first_lane = first_position.next_lane();
+    let second_lane = second_position.next_lane();
+    let first_page = scanner
+        .owned_page(&first_agents, &first_position, first_lane)
+        .await
+        .unwrap();
+    let second_page = scanner
+        .owned_page(&second_agents, &second_position, second_lane)
+        .await
+        .unwrap();
+    assert_eq!(first_page.rows.len(), 128);
+    assert!(!first_page.eof);
+    assert_eq!(second_page.rows.len(), 1);
+    assert_eq!(second_page.rows[0].get_str("_id").unwrap(), "cmd_b");
+    assert!(second_page.rows[0].get_datetime("scan_now").unwrap() >= &observer.now);
+
+    first_position
+        .advance(first_lane, &first_page, 127)
+        .unwrap();
+    let waiting_lane = first_position.next_lane();
+    let waiting = scanner
+        .owned_page(&first_agents, &first_position, waiting_lane)
+        .await
+        .unwrap();
+    assert_eq!(waiting.rows.len(), 1);
+    assert_eq!(waiting.rows[0].get_str("_id").unwrap(), "cmd_wait");
+    first_position
+        .advance(waiting_lane, &waiting, waiting.rows.len())
+        .unwrap();
+    let resumed_lane = first_position.next_lane();
+    let remaining = scanner
+        .owned_page(&first_agents, &first_position, resumed_lane)
+        .await
+        .unwrap();
+    assert_eq!(remaining.rows.len(), 2);
+    assert_eq!(remaining.rows[0].get_str("_id").unwrap(), "cmd_a_128");
+    assert_eq!(remaining.rows[1].get_str("_id").unwrap(), "cmd_a_129");
+    first_position
+        .advance(resumed_lane, &remaining, remaining.rows.len())
+        .unwrap();
+    let waiting_lane = first_position.next_lane();
+    let empty = scanner
+        .owned_page(&second_agents, &first_position, waiting_lane)
+        .await
+        .unwrap();
+    assert!(empty.rows.is_empty());
+    first_position.advance(waiting_lane, &empty, 0).unwrap();
+    let takeover_lane = first_position.next_lane();
+    let takeover = scanner
+        .owned_page(&second_agents, &first_position, takeover_lane)
+        .await
+        .unwrap();
+    assert_eq!(takeover.rows.len(), 1);
+    assert_eq!(takeover.rows[0].get_str("_id").unwrap(), "cmd_b");
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
 async fn stale_turn_scan_cursor_allows_replica_ownership_startup() {
     use crate::store::agent_ownership::MongoAgentOwnership;
     use layer2_core::agent_ownership::{

@@ -1,5 +1,8 @@
 //! Explicit account record erasure policies.
 use super::{Entry, Erasure::*, InventorySet::*, KeyRule::*, ReferenceRule, Rule};
+use crate::store::resource_access::execution::erasure::{
+    ACTOR, EFFECTS, GRANTS, MEMBERS, OPERATIONS, OWNER, SANDBOX,
+};
 
 const LEGACY_OWNER_PATHS: &[&str] = &[
     "owner",
@@ -49,7 +52,7 @@ const LEGACY_HISTORY_PATHS: &[&str] = &[
 ];
 
 macro_rules! entry {
-    ($collection:literal, $($erasure:expr => $indexed:expr),+ $(,)?) => {
+    ($collection:expr, $($erasure:expr => $indexed:expr),+ $(,)?) => {
         Entry {
             collection: $collection,
             rules: &[$(Rule { erasure: $erasure, indexed: $indexed }),+],
@@ -206,11 +209,11 @@ pub(crate) const ERASURE: &[Entry] = &[
     // and the resource-derived `origin`, `target_ancestry` and `registration`
     // digests; whether those may be retained as pseudonymous evidence is the
     // owner's decision on #3296.
-    entry!("resource_execution_effects_v1", ProvenAbsentJson(&["record"]) => false),
-    entry!("resource_execution_grants_v1", ProvenAbsentJson(&["record"]) => false, ProvenAbsent(&["share_id"]) => false),
-    entry!("resource_execution_records_v1", ProvenAbsentJson(&["record"]) => false),
+    entry!(EFFECTS, Owner(&[OWNER, ACTOR]) => true, Linked(Sandboxes, &[SANDBOX]) => true, ProvenAbsentJson(&["record"]) => false),
+    entry!(GRANTS, Owner(&[OWNER]) => true, Linked(Sandboxes, &[SANDBOX]) => true, ProvenAbsentJson(&["record"]) => false, ProvenAbsent(&["share_id"]) => false),
+    entry!(MEMBERS, Owner(&[OWNER, ACTOR]) => true, Linked(Sandboxes, &[SANDBOX]) => true, ProvenAbsentJson(&["record"]) => false),
     entry!("resource_policies", Linked(Sandboxes, &["_id"]) => true, Reference(ReferenceRule::Identities) => false),
-    entry!("resource_revocation_operations_v1", ProvenAbsentJson(&["record"]) => false),
+    entry!(OPERATIONS, Owner(&[OWNER, ACTOR]) => true, Linked(Sandboxes, &[SANDBOX]) => true, ProvenAbsentJson(&["record"]) => false),
     entry!("resource_share_commands", Linked(Sandboxes, &["sandbox_id"]) => false, Reference(ReferenceRule::ShareReceipts) => false, Reference(ReferenceRule::Identities) => false),
     entry!("resource_shares", Linked(Sandboxes, &["sandbox_id"]) => true, Reference(ReferenceRule::Shares) => true, Reference(ReferenceRule::Shares) => false, Reference(ReferenceRule::Identities) => false),
     entry!("sandbox_admissions", OwnerKey(Subject) => true),

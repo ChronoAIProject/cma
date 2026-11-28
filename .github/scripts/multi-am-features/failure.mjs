@@ -56,6 +56,19 @@ export function lifecyclePollFailure(error, manager) {
   return {manager, kind: 'unknown'};
 }
 
+export function provenanceRequestFailure(response) {
+  const {status, timing, body} = response ?? {};
+  const {am, method, route} = timing ?? {};
+  const read = method === 'GET' && route === '/api/v1/agents/{id}/provenance';
+  const preferences = ['GET', 'PATCH'].includes(method) && route === '/api/v1/agents/{id}/preferences';
+  if ((!read && !preferences) || !['a', 'b'].includes(am)
+    || !Number.isInteger(status) || status < 400 || status > 599) return undefined;
+  const code = body?.code;
+  return {manager: am, method, route, status,
+    ...(['agent_owner_unavailable', 'resource_access_unavailable', 'instance_service_unavailable'].includes(code)
+      ? {problem_code: code} : {})};
+}
+
 export function journeyFailureSummary(journey) {
   const step = journey?.steps.find(value => value.verdict === 'FAIL');
   const cleanup = journey?.cleanup ?? [];
@@ -65,6 +78,7 @@ export function journeyFailureSummary(journey) {
   return {
     first_failed_step: step ? fixedCode(step.name) : null,
     first_failed_step_code: step ? fixedCode(step.error) : null,
+    ...(step?.provenance_request_failure && {provenance_request_failure: step.provenance_request_failure}),
     lifecycle_failure: journey?.create_failure?.observation ?? null,
     lifecycle_poll_failure: journey?.create_failure?.poll_failure,
     ...(journey?.create_failure?.transient_poll_failure && {

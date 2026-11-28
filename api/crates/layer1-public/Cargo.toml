@@ -6,8 +6,8 @@ publish = false
 
 [features]
 qualification-hooks = ["layer2-core/qualification-hooks"]
-# Enables deterministic public-boundary synchronization used only by CMA's
-# composed WebSocket tests. It is absent from ordinary and release builds.
+# Enables deterministic synchronization in composed CMA tests.
+# It is absent from ordinary and release builds.
 test-support = []
 
 [dependencies]

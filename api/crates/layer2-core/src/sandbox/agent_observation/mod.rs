@@ -151,6 +151,7 @@ pub async fn observation_scope<F: std::future::Future>(
 struct Lane {
     authority: Arc<AgentObservationAuthority>,
     flight: Arc<tokio::sync::Mutex<()>>,
+    output_waiters: Arc<Mutex<output::GenerationWaiters>>,
     hint_task: Option<tokio::task::JoinHandle<()>>,
     subscribers: BTreeMap<u64, Subscriber>,
 }
@@ -273,6 +274,7 @@ impl AgentObservationService {
         let lane = registry.lanes.entry(agent).or_insert_with(|| Lane {
             authority: authority.clone(),
             flight: Arc::new(tokio::sync::Mutex::new(())),
+            output_waiters: Arc::default(),
             hint_task: self.hint_task(&authorization.id),
             subscribers: BTreeMap::new(),
         });

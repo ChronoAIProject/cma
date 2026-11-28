@@ -126,12 +126,16 @@ impl MongoReleasedRuntimes {
     ) -> Result<Option<ReleasedLaneRecord>, SandboxStoreError> {
         let Some(document) = self
             .lanes
+            .clone_with_type::<mongodb::bson::Document>()
             .find_one(doc! {"_id": self.id(lane)})
             .await
             .map_err(unavailable)?
         else {
             return Ok(None);
         };
+        let document = mongodb::bson::deserialize_from_document(document).map_err(|_| {
+            SandboxStoreError::Corrupt(format!("unreadable {} release record", lane_key(lane)))
+        })?;
         let document = self.verify(lane, document)?;
         Ok(Some(document.record))
     }

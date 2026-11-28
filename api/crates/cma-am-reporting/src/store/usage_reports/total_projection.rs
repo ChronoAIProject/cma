@@ -14,7 +14,7 @@ pub struct TotalProjection {
     last_sandbox: Option<String>,
     members: i64,
     totals: [Option<Vec<series::Bucket>>; 3],
-    scratch: Vec<series::Bucket>,
+    completion: series::Completion,
 }
 
 impl TotalProjection {
@@ -27,7 +27,7 @@ impl TotalProjection {
             last_sandbox: None,
             members: 0,
             totals: Default::default(),
-            scratch: Vec::new(),
+            completion: series::Completion::default(),
         }
     }
 
@@ -57,8 +57,7 @@ impl TotalProjection {
         self.last_sandbox = Some(sandbox.into());
         self.members += 1;
         for metric in [Metric::Cpu, Metric::Memory, Metric::Disk] {
-            series::complete_into(
-                &mut self.scratch,
+            let buckets = self.completion.complete(
                 &buckets[metric.index()],
                 &metric_expectations(expectations, metric),
                 metric,
@@ -67,7 +66,7 @@ impl TotalProjection {
             );
             merge_buckets(
                 self.totals[metric.index()].get_or_insert_with(Vec::new),
-                &self.scratch,
+                buckets,
             );
         }
         Ok(())

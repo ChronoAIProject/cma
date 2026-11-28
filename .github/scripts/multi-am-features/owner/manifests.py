@@ -129,6 +129,7 @@ def managers(secret, ready):
         env['stringData']['CHRONO_SANDBOX_CPU'] = '500m'
     elif ready.get('fixture') == 'features':
         env['stringData']['CHRONO_ADMISSION_CONTROL_WRITES_ENABLED'] = 'true'
+        env['stringData']['CHRONO_AGENT_SETTINGS_OWNER_RELAY_ENABLED'] = 'true'
         env['stringData']['CHRONO_DOCUMENT_QUOTAS_ENABLED'] = 'true'
         env['stringData']['CHRONO_DOCUMENT_SOURCE_COMMITS_ENABLED'] = 'true'
         env['stringData']['CHRONO_DOCUMENT_DELETION_ENABLED'] = 'true'

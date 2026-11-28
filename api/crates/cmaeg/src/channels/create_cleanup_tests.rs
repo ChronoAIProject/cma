@@ -13,6 +13,44 @@ use cmaeg_core::{
 use std::sync::atomic::Ordering;
 
 #[tokio::test]
+async fn channel_quarantine_refuses_new_and_pending_creates_and_keeps_reads() {
+    let fixture = Fixture::new(false, false).await;
+    let mut state = fixture.state().await;
+    let creator = owner("alice", false);
+    let pending_request = fixture.body();
+    let record_id = RecordId::new(pending_request["record_id"].as_str().unwrap()).unwrap();
+    *fixture.peer.refuse_bind.lock().unwrap() = Some(StatusCode::BAD_REQUEST);
+    assert!(management::create(
+        &state,
+        &creator,
+        serde_json::from_value(pending_request.clone()).unwrap(),
+    )
+    .await
+    .is_err());
+    let pending = super::creation::load_record(&state, &creator, &record_id)
+        .await
+        .unwrap();
+    state.records =
+        std::sync::Arc::new(state.records.as_ref().clone().quarantine_channel_creates());
+    for request in [pending_request, fixture.body()] {
+        assert!(matches!(
+            management::create(&state, &creator, serde_json::from_value(request).unwrap()).await,
+            Err(ManagementError::Record(
+                crate::records::RecordError::Unavailable(_)
+            ))
+        ));
+    }
+    let retained = super::creation::load_record(&state, &creator, &record_id)
+        .await
+        .unwrap();
+    assert_eq!(retained.record.blob, pending.record.blob);
+    assert_eq!(retained.record.version, pending.record.version);
+    assert_eq!(fixture.peer.rows.lock().unwrap().len(), 1);
+    assert_eq!(fixture.peer.calls.lock().unwrap().as_slice(), ["PUT"]);
+    assert!(!state.records.channel_cancellation_enabled());
+}
+
+#[tokio::test]
 async fn an_unlisted_provider_is_refused_before_any_channel_is_reserved() {
     for custody in [false, true] {
         let fixture = Fixture::new(false, custody).await;
