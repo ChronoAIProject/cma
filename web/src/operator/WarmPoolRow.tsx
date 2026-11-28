@@ -47,6 +47,7 @@ export function WarmPoolRow({
   pool,
   previousRuntime = false,
   currentDefault = false,
+  defaultConfiguration = false,
   matchingSize = false,
   runtimeVersion,
   onChanged,
@@ -55,6 +56,7 @@ export function WarmPoolRow({
   readonly pool: WarmPoolView;
   readonly previousRuntime?: boolean;
   readonly currentDefault?: boolean;
+  readonly defaultConfiguration?: boolean;
   readonly matchingSize?: boolean;
   readonly runtimeVersion?: string | undefined;
   readonly onChanged: (pool: WarmPoolView) => void;
@@ -131,6 +133,9 @@ export function WarmPoolRow({
           {previousRuntime ? <WarmPoolImage image={pool.image} version={runtimeVersion} /> : null}
           {currentDefault ? (
             <span className="warm-pool-tag">Used for new default-size Agents</span>
+          ) : null}
+          {!currentDefault && defaultConfiguration ? (
+            <span className="warm-pool-tag">Default configuration</span>
           ) : null}
           {matchingSize ? <span className="warm-pool-tag">For matching size</span> : null}
           {pool.config_sha256 ? (

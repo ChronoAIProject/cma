@@ -78,6 +78,24 @@ describe('warm pool runtime sections', () => {
     expect(oldDesktop.queryByRole('button', { name: 'Update target' })).toBeNull();
   });
 
+  it('keeps default readiness unknown on an older response with a matching configuration', async () => {
+    const client = operatorClient();
+    client.admin.listWarmPools.mockResolvedValue({
+      items: [{ ...warmPool, observed: true, ready_replicas: 0 }],
+      default_cpu_millis: warmPool.cpu_millis,
+      default_memory_mib: warmPool.memory_mib,
+      default_image: warmPool.image,
+      default_config_sha256: warmPool.config_sha256,
+      available: true,
+    });
+    render(<WarmPools client={client} />);
+    const standard = within(await screen.findByRole('region', { name: 'Standard runtime' }));
+    expect(standard.getByText('Default configuration')).toBeVisible();
+    expect(standard.getByText('Ready capacity unknown for new default-size Agents.')).toBeVisible();
+    expect(standard.queryByText('Used for new default-size Agents')).toBeNull();
+    expect(standard.queryByText('No ready spare')).toBeNull();
+  });
+
   it.each([
     [true, 0, true, 'Spare capacity disabled'],
     [true, 3, false, 'Ready capacity unknown'],

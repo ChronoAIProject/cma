@@ -39,14 +39,8 @@ export function WarmPoolRuntime({
     pool.current_runtime ?? (pool.image === image && !pool.retirement_status);
   const current = pools.filter(isCurrent);
   const previous = pools.filter((pool) => !isCurrent(pool));
-  const configured = current.filter((pool) => configSha && pool.config_sha256 === configSha);
-  const claimPool = available
-    ? claimPoolId === undefined
-      ? configured.length === 1
-        ? configured[0]
-        : undefined
-      : current.find((pool) => pool.id === claimPoolId)
-    : undefined;
+  const claimPool =
+    available && claimPoolId ? current.find((pool) => pool.id === claimPoolId) : undefined;
   const spareDisabled = claimPool?.target_replicas === 0;
   const ready = claimPool?.observed ? claimPool.ready_replicas : null;
   const previousNeedsAttention = previous.some(
@@ -91,6 +85,7 @@ export function WarmPoolRuntime({
               client={client}
               pool={pool}
               currentDefault={pool === claimPool}
+              defaultConfiguration={Boolean(configSha && pool.config_sha256 === configSha)}
               matchingSize={
                 showMatchingSize &&
                 pool.current_runtime === true &&

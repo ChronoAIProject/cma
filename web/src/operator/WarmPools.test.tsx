@@ -71,7 +71,7 @@ describe('native warm pool operations', () => {
       available: true,
     });
     render(<WarmPools client={client} />);
-    await screen.findByText('Used for new default-size Agents');
+    await screen.findByText('Default configuration');
     const summary = screen.getByText('Previous runtime pools (1)');
     expect(summary.closest('details')).not.toHaveAttribute('open');
     const cards = screen.getAllByRole('row', { name: /Warm pool/ });
