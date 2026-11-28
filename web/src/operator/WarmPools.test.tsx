@@ -43,7 +43,8 @@ describe('native warm pool operations', () => {
     expect(cell(observed!, 'Desired')).toHaveTextContent('3');
     expect(cell(observed!, 'Ready')).toHaveTextContent('2');
     expect(cell(observed!, 'Pending')).toHaveTextContent('1');
-    expect(within(waiting!).getAllByText('Unknown')).toHaveLength(2);
+    expect(cell(waiting!, 'Ready')).toHaveTextContent('Unknown');
+    expect(cell(waiting!, 'Pending')).toHaveTextContent('Unknown');
   });
 
   it('shows current-image pools by default and collapses disabled previous runtime records', async () => {
@@ -70,7 +71,7 @@ describe('native warm pool operations', () => {
       available: true,
     });
     render(<WarmPools client={client} />);
-    await screen.findByText('Current default configuration');
+    await screen.findByText('Default configuration');
     const summary = screen.getByText('Previous runtime pools (1)');
     expect(summary.closest('details')).not.toHaveAttribute('open');
     const cards = screen.getAllByRole('row', { name: /Warm pool/ });
@@ -162,7 +163,7 @@ describe('native warm pool operations', () => {
     expect(
       screen.getByText(/No warm pools configured for the current runtime/),
     ).toBeInTheDocument();
-    expect(screen.queryByText('Current default configuration')).not.toBeInTheDocument();
+    expect(screen.queryByText('Used for new default-size Agents')).not.toBeInTheDocument();
   });
 
   it('lists the seeded shared desktop pool on its own with a target to resize', async () => {
@@ -190,13 +191,25 @@ describe('native warm pool operations', () => {
     client.admin.resizeWarmPool.mockResolvedValue({ ...desktop, revision: 2, target_replicas: 5 });
     render(<WarmPools client={client} />);
     const table = await screen.findByRole('table', { name: 'Shared desktop pool' });
-    const reference = screen.getByText('Shared desktop pool').closest('.warm-pool-image')!;
-    expect(within(reference as HTMLElement).getByText(desktopImage)).toBeVisible();
+    const desktopSection = screen.getByRole('region', { name: 'Shared desktop runtime' });
+    const reference = within(desktopSection).getByText(/desktop-runtime · sha256:/);
+    expect(within(desktopSection).getByText(desktopImage)).not.toBeVisible();
+    await user.click(reference);
+    expect(within(desktopSection).getByText(desktopImage)).toBeVisible();
     expect(
       within(table)
         .getAllByRole('columnheader')
         .map((column) => column.textContent),
-    ).toEqual(['Size', 'Status', 'Desired', 'Ready', 'Pending', 'Target', 'Actions']);
+    ).toEqual([
+      'Size',
+      'Status',
+      'Desired',
+      'Ready',
+      'Provider target',
+      'Pending',
+      'Target',
+      'Actions',
+    ]);
     const row = within(table).getByRole('row', { name: 'Warm pool 2000 millicores / 8192 MiB' });
     expect(
       within(screen.getByRole('table', { name: 'Current runtime pools' })).getAllByRole('row', {

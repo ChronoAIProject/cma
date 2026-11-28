@@ -26,6 +26,7 @@ fn view() -> WarmPoolView {
         resource_name: None,
         error: None,
         machine: false,
+        current_runtime: None,
     }
 }
 
@@ -60,13 +61,35 @@ impl WarmPoolAdministration for Pools {
             ..desktop_view()
         };
         self.result(WarmPoolList {
-            items: vec![view(), desktop_view(), retiring_desktop],
+            items: vec![
+                WarmPoolView {
+                    current_runtime: Some(true),
+                    ..view()
+                },
+                WarmPoolView {
+                    current_runtime: Some(true),
+                    ..desktop_view()
+                },
+                WarmPoolView {
+                    current_runtime: Some(false),
+                    ..retiring_desktop
+                },
+            ],
             default_image: view().image,
             default_cpu_millis: 1000,
             default_memory_mib: 1024,
             default_config_sha256: Some("d".repeat(64)),
             available: true,
             machine_image: Some(desktop_view().image),
+            machine_config_sha256: Some("e".repeat(64)),
+            default_claim_pool_id: None,
+            machine_claim_pool_id: Some(desktop_view().id),
+            default_capacity_pool_id: None,
+            machine_capacity_pool_id: Some(desktop_view().id),
+            runtime_versions: vec![WarmPoolRuntimeVersion {
+                image: desktop_view().image,
+                version: "1.2.3".into(),
+            }],
         })
     }
 

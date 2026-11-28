@@ -87,3 +87,13 @@
 .warm-pool-note p {
   margin: 0;
 }
+
+.warm-pool-runtime {
+  padding: 20px;
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 10px;
+}
+
+.warm-pool-runtime h3 {
+  margin: 0;
+}
