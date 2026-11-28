@@ -25,7 +25,14 @@ export function controlBaselineReady(
 }
 
 export type ResponseControlAvailability =
-  'available' | 'checking' | 'checking-access' | 'unbound' | 'denied';
+  | 'available'
+  | 'checking'
+  | 'checking-access'
+  | 'check-failed'
+  | 'inactive'
+  | 'unsupported'
+  | 'unbound'
+  | 'denied';
 
 export function controlsUnavailable(
   state: AgentResourceState,

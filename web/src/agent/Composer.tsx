@@ -32,6 +32,7 @@ import { SteeringModePicker, type SteeringMode } from './SteeringMode';
 import './Composer.css';
 import type { ResponseControlAvailability } from './controlReadiness';
 import { ResponseStop, useResponseStop } from './ResponseStop';
+import type { StopRequestState } from './transport/controlStatus';
 import {
   ComposerSuggestionEditor,
   type ComposerSuggestionEditorHandle,
@@ -54,6 +55,8 @@ interface ComposerProps {
   readonly starting?: boolean;
   readonly controlsUnavailable?: boolean;
   readonly responseControls?: ResponseControlAvailability;
+  readonly responseTurn?: string;
+  readonly stopRequest?: StopRequestState;
   readonly requestPending?: boolean;
   readonly inputCoolingDown?: boolean;
   readonly acceptedMessage?: string;
@@ -91,6 +94,8 @@ export function Composer({
   starting = false,
   controlsUnavailable = false,
   responseControls,
+  responseTurn,
+  stopRequest,
   requestPending = false,
   inputCoolingDown = false,
   acceptedMessage,
@@ -128,6 +133,8 @@ export function Composer({
     availability: responseControls ?? (controlsUnavailable ? 'unbound' : 'available'),
     busy,
     stopping,
+    responseTurn,
+    stopRequest,
     onStop,
   });
   const noticeId = useId();

@@ -32,6 +32,7 @@ import { useAgentActions } from './actions';
 import { lifecycleCommands } from './lifecycleCommands';
 import { useAgentActionError, useAgentIdentityChange } from './actionError';
 import { useControlStatus } from './transport/controlStatus';
+import { useFirstReplyStop } from './transport/firstReplyStop';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
 import { usePresentedAgent, usePresentedRetainedInputs } from './presentation';
 import { useAgentSummary } from './useAgentSummary';
@@ -77,6 +78,7 @@ export function useAgentController(
     state.status === 'ready' &&
     state.detail.id === agentId &&
     state.conversation.activeRunId !== undefined;
+  const responseTarget = activeTurn ? state.conversation.responseBinding : undefined;
   const [pending, setPending] = useState<AgentCommand>();
   const [actionError, setActionError, recoverInputError] = useAgentActionError();
   const [streamError, setStreamError] = useState<string>();
@@ -389,6 +391,7 @@ export function useAgentController(
     historyIncomplete: historyIncomplete || suspended,
     commandsBlocked: !controlReady,
     activeTurn,
+    responseTarget,
     inputAvailability,
     actionAbortRef,
     actionKindRef,
@@ -419,7 +422,11 @@ export function useAgentController(
     onIdentityChange,
     recoverInputError,
   );
-  const controlNotice = useControlStatus(v2, onIdentityChange);
+  const controlStatus = useControlStatus(v2, responseTarget, onIdentityChange);
+  const responseControls = useFirstReplyStop(
+    state,
+    controlReadiness.responseControlAvailability(state, agentId, suspended),
+  );
   const queuedInputs = useQueuedInputs(
     v2,
     controlReady,
@@ -435,9 +442,10 @@ export function useAgentController(
     retained,
     ...retainedInputs,
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
-    controlNotice,
+    controlNotice: controlStatus.notice,
+    stopRequest: controlStatus.stopRequest,
     controlBaselineReady: controlReady,
-    responseControls: controlReadiness.responseControlAvailability(state, agentId, suspended),
+    responseControls,
     controlsUnavailable: controlReadiness.controlsUnavailable(state, v2 !== undefined, suspended),
     recoverPending: v2 === undefined && legacy === undefined ? undefined : recoverPending,
     state: presented,

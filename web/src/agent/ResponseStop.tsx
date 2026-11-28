@@ -3,11 +3,15 @@ import { Button } from '../ui/Button';
 import { IconStopFill16 } from '../ui/icons';
 import type { ResponseControlAvailability } from './controlReadiness';
 import { RESPONSE_STOP_COMMAND_NOTICE } from './stopAgentCopy';
+import type { StopRequestState } from './transport/controlStatus';
 
 const notices: Record<Exclude<ResponseControlAvailability, 'available'>, string> = {
   checking: 'Checking response controls…',
   'checking-access': 'Checking Agent access…',
-  unbound: 'Stop is unavailable for this response.',
+  'check-failed': 'Could not verify Stop for this response.',
+  inactive: 'This response is no longer active.',
+  unsupported: 'This Agent’s runtime does not support stopping this response.',
+  unbound: 'Stop is unavailable because this turn has no bound response.',
   denied: 'Only the owner can stop this response.',
 };
 
@@ -16,33 +20,43 @@ export function useResponseStop({
   availability,
   busy,
   stopping,
+  responseTurn,
+  stopRequest,
   onStop,
 }: {
   running: boolean;
   availability: ResponseControlAvailability;
   busy: boolean;
   stopping: boolean;
+  responseTurn?: string;
+  stopRequest?: StopRequestState;
   onStop: () => void | Promise<void>;
 }) {
   const pending = useRef(false);
-  const [submitting, setSubmitting] = useState(false);
-  const inProgress = stopping || submitting;
-  const enabled = running && availability === 'available' && !busy && !inProgress;
-  const notice =
-    availability !== 'available'
-      ? notices[availability]
-      : inProgress
-        ? 'Stopping…'
+  const [submitting, setSubmitting] = useState<{ turn?: string }>();
+  const request =
+    stopping || (submitting !== undefined && submitting.turn === responseTurn)
+      ? 'stopping'
+      : stopRequest;
+  const canShowRequest = availability !== 'checking-access' && availability !== 'denied';
+  const inProgress = request === 'stopping' && canShowRequest;
+  const enabled = running && availability === 'available' && !busy && !request;
+  const notice = inProgress
+    ? 'Stopping…'
+    : request === 'checking-request' && canShowRequest
+      ? 'Checking Stop request…'
+      : availability !== 'available'
+        ? notices[availability]
         : busy
           ? 'Another Agent action is pending.'
           : undefined;
   const stop = () => {
     if (!enabled || pending.current) return;
     pending.current = true;
-    setSubmitting(true);
+    setSubmitting({ turn: responseTurn });
     const finish = () => {
       pending.current = false;
-      setSubmitting(false);
+      setSubmitting(undefined);
     };
     try {
       void Promise.resolve(onStop()).then(finish, finish);
@@ -75,7 +89,11 @@ export function ResponseStop({
       ) : null}
       <div className="agent-composer__actions">
         {hint ? (
-          <span id={id} className="agent-composer__stop-hint">
+          <span
+            id={id}
+            className="agent-composer__stop-hint"
+            role={control.notice ? 'status' : undefined}
+          >
             {hint}
           </span>
         ) : null}

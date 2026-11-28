@@ -84,7 +84,7 @@ it('advertises Escape only in the message field and yields to commands and IME',
 it.each([
   ['checking', 'Checking response controls…'],
   ['checking-access', 'Checking Agent access…'],
-  ['unbound', 'Stop is unavailable for this response.'],
+  ['unbound', 'Stop is unavailable because this turn has no bound response.'],
   ['denied', 'Only the owner can stop this response.'],
 ] as const)(
   'updates button, hint and Escape together through %s and completion',
