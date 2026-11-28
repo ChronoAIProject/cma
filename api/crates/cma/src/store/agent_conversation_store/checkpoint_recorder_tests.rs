@@ -214,16 +214,26 @@ async fn incremental_working(
     let agent = ready_agent(&sandbox, &format!("agt_{name}"));
     if segmented {
         use segments::mongo_tests::fixtures as segment_fixture;
-        let opened = AgentLogEntry {
-            agent_id: agent.id.clone(),
-            seq: 1,
-            appended_at: NOW.into(),
-            kind: AgentLogKind::ConversationOpened {
+        let entries = [
+            AgentLogKind::Created {
+                workspace_id: agent.workspace_id.clone(),
+                worktree_id: agent.worktree_id.clone(),
+            },
+            AgentLogKind::ConversationOpened {
                 conversation_id: agent.conversation.conversation_id.clone().unwrap(),
                 runtime_generation: 1,
             },
-        };
-        let (agent, entries) = segment_fixture::install(store, agent, vec![opened], 0, 1).await;
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(index, kind)| AgentLogEntry {
+            agent_id: agent.id.clone(),
+            seq: index as u64 + 1,
+            appended_at: NOW.into(),
+            kind,
+        })
+        .collect();
+        let (agent, entries) = segment_fixture::install(store, agent, entries, 0, 2).await;
         segment_fixture::certify(store, &agent, &entries).await;
         start_turn(store, &sandbox, &agent).await
     } else {
