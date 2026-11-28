@@ -59,12 +59,38 @@ pub struct ResponsesV2State {
     paged_events: bool,
     retained_context_lookup: bool,
     durable_recovery_slots: Arc<Semaphore>,
+    #[cfg(any(test, feature = "test-support"))]
+    replay_refresh_barrier: Option<(u64, tokio::sync::watch::Receiver<bool>)>,
 }
 impl ResponsesV2State {
     pub fn with_paged_events(mut self, enabled: bool) -> Self {
         self.paged_events = enabled;
         self
     }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn with_replay_refresh_barrier(
+        mut self,
+        after: u64,
+        start: tokio::sync::watch::Receiver<bool>,
+    ) -> Self {
+        self.replay_refresh_barrier = Some((after, start));
+        self
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    async fn wait_for_replay_refresh(&mut self, next: u64) {
+        if let Some((_, mut start)) = self
+            .replay_refresh_barrier
+            .take_if(|(after, _)| next > *after)
+        {
+            start
+                .wait_for(|ready| *ready)
+                .await
+                .expect("replay fixture must explicitly release refreshes");
+        }
+    }
+
     pub fn with_event_router(mut self, router: Arc<dyn BindingEventRouter>) -> Self {
         self.event_router = Some(router);
         self
@@ -100,6 +126,8 @@ impl ResponsesV2State {
             retained_context_lookup: false,
             // Independent polling costs more than a shared observation.
             durable_recovery_slots: Arc::new(Semaphore::new(16)),
+            #[cfg(any(test, feature = "test-support"))]
+            replay_refresh_barrier: None,
         }
     }
 }

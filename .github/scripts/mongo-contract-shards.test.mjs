@@ -4,6 +4,7 @@ import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { runnerSetupTimeoutMs } from './mongo-contract-test-fixture.mjs';
 
 export function registerShardTests({fixture, ...isolated}) {
   test('generated predecessor starts ordinary Mongo and propagates launch failure', () => {
@@ -30,7 +31,7 @@ export function registerShardTests({fixture, ...isolated}) {
     for (const shard of ['isolated', ...Array.from({length: 8}, (_, i) => `${i + 1}/8`)]) {
       const f = fixture('shard-success', true);
       try {
-        execFileSync('bash', [...f.args, '--shard', shard], {env: f.env, timeout: 30000, stdio: 'pipe'});
+        execFileSync('bash', [...f.args, '--shard', shard], {env: f.env, timeout: runnerSetupTimeoutMs, stdio: 'pipe'});
         const runs = f.calls().filter(row => row.command === 'cargo' && row.args[1] === 'run');
         assert.equal(f.calls().filter(row => row.command === 'cargo' && row.args[1] === 'list').length, 1);
         for (const row of runs) {

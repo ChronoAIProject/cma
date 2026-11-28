@@ -109,6 +109,8 @@ pub(super) async fn open(
                     return None;
                 }
                 if !open.first && !open.more {
+                    #[cfg(any(test, feature = "test-support"))]
+                    open.state.wait_for_replay_refresh(open.next).await;
                     let interval = if open.durable_recovery.is_some() {
                         OBSERVATION_INTERVAL
                     } else {

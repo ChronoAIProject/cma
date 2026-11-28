@@ -138,14 +138,18 @@ async fn start_servers(
                 .install_observation(store.clone(), reads.clone(), Some(commands.clone()))
                 .unwrap();
         }
-        let mut responses = layer1_public::responses::v2::router(
-            layer1_public::responses::v2::ResponsesV2State::new(
-                layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
-                commands.clone(),
-                reads.clone(),
-            )
-            .with_paged_events(bounded_responses),
-        );
+        let mut response_state = layer1_public::responses::v2::ResponsesV2State::new(
+            layer1_public::agent_page::AgentPageOrigin::new("https://cma.example").unwrap(),
+            commands.clone(),
+            reads.clone(),
+        )
+        .with_paged_events(bounded_responses);
+        if let Some(PollBarrier::ResponseReplay(start)) = idle_start.clone() {
+            // Retained replay ends with response.output_item.done at ID 7.
+            // Hold the next refresh inside the stream, below Axum's keepalive.
+            response_state = response_state.with_replay_refresh_barrier(7, start);
+        }
+        let responses = layer1_public::responses::v2::router(response_state);
         let v2 = layer1_public::agent_v2::router(
             layer1_public::agent_v2::AgentV2State::new(reads.clone(), commands)
                 .with_updates(updates.clone())
@@ -160,14 +164,6 @@ async fn start_servers(
                 move |request: axum::extract::Request, next: axum::middleware::Next| {
                     let start = start.clone();
                     async move { defer_idle_polls(next.run(request).await, start) }
-                },
-            ));
-        }
-        if let Some(PollBarrier::ResponseReplay(start)) = idle_start.clone() {
-            responses = responses.layer(axum::middleware::from_fn(
-                move |request: axum::extract::Request, next: axum::middleware::Next| {
-                    let start = start.clone();
-                    async move { defer_polls_after_replay(next.run(request).await, start) }
                 },
             ));
         }
@@ -233,66 +229,6 @@ fn defer_idle_polls(
         },
     );
     axum::response::Response::from_parts(parts, axum::body::Body::from_stream(body))
-}
-
-fn defer_polls_after_replay(
-    response: axum::response::Response,
-    start: watch::Receiver<bool>,
-) -> axum::response::Response {
-    if !response.status().is_success()
-        || response
-            .headers()
-            .get(axum::http::header::CONTENT_TYPE)
-            .is_none_or(|value| value != "text/event-stream")
-    {
-        return response;
-    }
-    let (parts, body) = response.into_parts();
-    let body = futures_util::stream::unfold(
-        (body.into_data_stream(), start, false),
-        |(mut body, mut start, mut replayed)| async move {
-            if replayed {
-                start.wait_for(|ready| *ready).await.ok()?;
-            }
-            let frame = body.next().await?;
-            // Axum supplies each SSE event as one body frame here, before
-            // the relay or HTTP can combine frames. Let the full cold replay
-            // reach the client, then hold subsequent polls until all opens finish.
-            replayed |= frame.as_ref().is_ok_and(|bytes| {
-                bytes
-                    .split(|byte| *byte == b'\n')
-                    .any(|line| line == b"id: 7")
-            });
-            Some((frame, (body, start, replayed)))
-        },
-    );
-    axum::response::Response::from_parts(parts, axum::body::Body::from_stream(body))
-}
-
-#[tokio::test]
-async fn response_replay_reaches_the_client_before_idle_polling_is_released() {
-    use axum::body::{Body, Bytes};
-    use axum::http::{header::CONTENT_TYPE, HeaderValue};
-    use std::convert::Infallible;
-
-    let frames = ["id: 6\n\n", "id: 7\n\n", "id: 8\n\n"];
-    let mut response = axum::response::Response::new(Body::from_stream(
-        futures_util::stream::iter(frames.map(|frame| Ok::<_, Infallible>(Bytes::from(frame)))),
-    ));
-    response
-        .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("text/event-stream"));
-    let (start, wait) = watch::channel(false);
-    let mut body = defer_polls_after_replay(response, wait)
-        .into_body()
-        .into_data_stream();
-
-    for frame in &frames[..2] {
-        assert_eq!(body.next().await.unwrap().unwrap(), *frame);
-    }
-    assert!(futures_util::poll!(body.next()).is_pending());
-    start.send_replace(true);
-    assert_eq!(body.next().await.unwrap().unwrap(), frames[2]);
 }
 
 pub(super) async fn budget_servers(f: &Fixture) -> Vec<Server> {
