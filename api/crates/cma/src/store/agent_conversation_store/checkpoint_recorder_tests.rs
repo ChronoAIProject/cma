@@ -425,7 +425,7 @@ async fn close_without_runtime_terminal(store: &MongoSandboxStore, current: &Age
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn incremental_terminal_commits_one_reply_for_standard_and_omarchy_in_both_log_formats() {
-    let (client, name, store) = database().await;
+    let (client, name, _) = database().await;
     segments::schema::migrate(&client.database(&name))
         .await
         .unwrap();
