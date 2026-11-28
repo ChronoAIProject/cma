@@ -228,7 +228,13 @@ export function nearestCommittedReport(
       Number(entry.report.expires_at) * 1000 <= Date.now()
     )
       continue;
-    return { report: entry.report, generatedAt: entry.generatedAt, range };
+    return {
+      report: entry.report,
+      generatedAt: entry.generatedAt,
+      initial: entry.initial,
+      initialProjection: entry.initialProjection,
+      range,
+    };
   }
   return undefined;
 }

@@ -6,7 +6,15 @@ import { cell } from './warmPoolTestHelpers';
 
 describe('warm pool tables', () => {
   it('names each column, draws the status badge and edits the target in its own cell', async () => {
-    render(<WarmPools client={operatorClient()} />);
+    const client = operatorClient();
+    client.admin.listWarmPools.mockResolvedValue({
+      items: [{ ...warmPool, provider_target_replicas: 2 }],
+      default_cpu_millis: warmPool.cpu_millis,
+      default_memory_mib: warmPool.memory_mib,
+      default_image: warmPool.image,
+      available: true,
+    });
+    render(<WarmPools client={client} />);
     const row = await screen.findByRole('row', { name: 'Warm pool 1000 millicores / 4096 MiB' });
     const table = screen.getByRole('table', { name: 'Current runtime pools' });
     expect(
@@ -27,6 +35,7 @@ describe('warm pool tables', () => {
       'data-tone',
       'active',
     );
+    expect(cell(row, 'Provider target')).toHaveTextContent('2');
     expect(within(cell(row, 'Target')).getByLabelText('Ready Sandbox target')).toHaveValue(3);
     expect(within(row).getByRole('button', { name: 'Disable pool' })).toBeEnabled();
     // A settled, observed pool has nothing to say beneath its row.
@@ -67,6 +76,8 @@ describe('warm pool tables', () => {
     expect(
       await screen.findByRole('cell', { name: /No warm pools configured for the current runtime/ }),
     ).toBeVisible();
-    expect(screen.getAllByRole('columnheader')).toHaveLength(8);
+    const table = screen.getByRole('table', { name: 'Current runtime pools' });
+    expect(within(table).getByRole('columnheader', { name: 'Provider target' })).toBeVisible();
+    expect(within(table).getAllByRole('columnheader')).toHaveLength(8);
   });
 });

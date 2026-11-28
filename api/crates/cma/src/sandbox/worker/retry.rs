@@ -3,9 +3,42 @@ use super::{support::WorkerFailure, SandboxWorker};
 use crate::sandbox::work_retry::{sandbox_class, RetryTelemetry};
 use layer2_core::sandbox::work_retry::{work_retry_policy, WorkRetryDecision};
 use layer2_core::sandbox::Sandbox;
+use layer3_adapter::{RuntimeHandle, RuntimeProvisionRequest, RuntimeStatus};
 use std::time::{Duration, SystemTime};
 
 impl SandboxWorker {
+    pub(super) async fn initial_provisioned_runtime_status(
+        &self,
+        sandbox: &Sandbox,
+        request: &RuntimeProvisionRequest,
+        handle: &RuntimeHandle,
+    ) -> layer3_adapter::Result<Option<RuntimeStatus>> {
+        let status = super::super::runtime_attachment::provisioned_runtime_status(
+            self.dependencies.adapter.as_ref(),
+            &request.spec,
+            handle,
+            request.generation,
+        );
+        if !self.config.native_create_retry_enabled
+            || request.generation != 1
+            || sandbox.runtime.is_some()
+            || sandbox.lifecycle.operation.is_some()
+        {
+            return status.await;
+        }
+        let Some(home) = request.spec.home_volume.as_deref().filter(|home| {
+            home.request.policy.is_native_vct() && home.receipt.native_authority.is_some()
+        }) else {
+            return status.await;
+        };
+        layer3_adapter::agent_sandbox::with_initial_relay_readiness_retry(
+            home.clone(),
+            relay_work_deadline(sandbox),
+            status,
+        )
+        .await
+    }
+
     pub(super) fn retry_decision(
         &self,
         sandbox: &Sandbox,
@@ -148,6 +181,35 @@ fn rounded_observation(observed: SystemTime) -> SystemTime {
         .unwrap_or_default();
     SystemTime::UNIX_EPOCH
         + Duration::from_secs(elapsed.as_secs() + u64::from(elapsed.subsec_nanos() > 0))
+}
+
+fn relay_work_deadline(
+    sandbox: &Sandbox,
+) -> impl Fn() -> layer3_adapter::Result<Option<tokio::time::Instant>> + 'static {
+    use layer2_core::sandbox::store::WorkAuthority;
+    let legacy = sandbox.work.lease.as_ref().map(|lease| {
+        let expires_at = layer2_core::seconds_from_rfc3339(&lease.expires_at)?;
+        let expires_at = SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(expires_at))?;
+        let remaining = expires_at.duration_since(SystemTime::now()).ok()?;
+        tokio::time::Instant::now().checked_add(remaining)
+    });
+    move || -> layer3_adapter::Result<_> {
+        let expired =
+            || layer3_adapter::AdapterError::Unavailable("Sandbox work authority expired".into());
+        let mut earliest: Option<tokio::time::Instant> = None;
+        for authority in WorkAuthority::current().map_err(|_| expired())? {
+            let deadline = authority.deadline().map_err(|_| expired())?;
+            earliest = Some(earliest.map_or(deadline, |at| at.min(deadline)));
+        }
+        match (earliest, legacy) {
+            (Some(deadline), _) => Ok(Some(deadline)),
+            (None, Some(Some(deadline))) if deadline > tokio::time::Instant::now() => {
+                Ok(Some(deadline))
+            }
+            (None, Some(_)) => Err(expired()),
+            (None, None) => Ok(None),
+        }
+    }
 }
 
 pub(super) fn native_retry_published(class: Option<&'static str>) {

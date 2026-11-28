@@ -111,7 +111,7 @@ async fn unlisted_routes_complete_personal_admin_and_all_three_windows() {
                 .unwrap()
                 .unwrap();
             assert!(!job.contains_key("kind"));
-            assert!(job.get_datetime("expires_at").is_ok());
+            assert_eq!(job.get("expires_at"), Some(&mongodb::bson::Bson::Null));
             assert!(matches!(
                 store.report(&scope("foreign", admin), id, now()).await,
                 Err(MetricsError::NotFound)

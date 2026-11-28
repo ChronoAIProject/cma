@@ -26,6 +26,15 @@ impl ReportingStore {
         self.index(JOBS, doc! {"query_hash":1}, true, false).await?;
         self.index(
             JOBS,
+            doc! {"reserved":1,"cleanup_at":1,"_id":1},
+            false,
+            false,
+        )
+        .await?;
+        self.index(JOBS, doc! {"reserved":1,"expires_at":1}, false, false)
+            .await?;
+        self.index(
+            JOBS,
             doc! {"principal":1,"state":1,"lease_until":1},
             false,
             false,
@@ -100,6 +109,7 @@ impl ReportingStore {
             "rollups",
             "replay",
             "diagnostics",
+            super::retirement::SLOT,
             "report:0",
             "report:1",
             "vm:0",

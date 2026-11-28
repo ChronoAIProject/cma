@@ -14,7 +14,7 @@ it('groups the same Sandbox without adding distinct reporter attempts or exposin
   const client = operatorClient();
   client.admin.bindingHolds.mockResolvedValue(heldBindings());
   render(<BindingHolds client={client} />);
-  expect(await screen.findByText('1 observed Sandboxes')).toBeVisible();
+  expect(await screen.findByText('1 Sandbox with deferred bindings')).toBeVisible();
   expect(screen.getAllByRole('heading', { name: 'Sandbox sbx_observed' })).toHaveLength(1);
   expect(screen.getByText('Alex Chen')).toBeVisible();
   expect(screen.getByText('Name unavailable')).toBeVisible();
@@ -23,7 +23,9 @@ it('groups the same Sandbox without adding distinct reporter attempts or exposin
   expect(screen.getByText('Retrying at observation time')).toBeVisible();
   expect(screen.getByText('Not recorded')).toBeVisible();
   expect(screen.getByText(/1 sampled reporters were unavailable/)).toBeVisible();
-  expect(screen.getByText(/does not establish deployment-wide health/)).toBeVisible();
+  expect(
+    screen.getByText(/counts only Sandboxes whose runtime binding has been deferred/),
+  ).toBeVisible();
   expect(client.admin.retireSandbox).not.toHaveBeenCalled();
   expect(client.admin.bindingHolds).toHaveBeenCalledTimes(1);
 });
@@ -37,7 +39,7 @@ it('reports an empty partial observation without declaring a recovered or health
     unavailable_reporters: 3,
   });
   render(<BindingHolds client={client} />);
-  expect(await screen.findByText('0 observed Sandboxes')).toBeVisible();
+  expect(await screen.findByText('0 Sandboxes with deferred bindings')).toBeVisible();
   expect(screen.getByText('No held bindings were observed in the returned samples.')).toBeVisible();
   expect(screen.getByText(/Incomplete observation/)).toBeVisible();
   expect(screen.queryByText(/all.*healthy|recovered successfully/i)).not.toBeInTheDocument();
@@ -87,7 +89,7 @@ it('drops previous rows during refresh and clears them after a rejected read wit
   const client = operatorClient();
   client.admin.bindingHolds.mockResolvedValueOnce(heldBindings());
   render(<BindingHolds client={client} />);
-  await screen.findByText('1 observed Sandboxes');
+  await screen.findByText('1 Sandbox with deferred bindings');
   let reject!: (cause: unknown) => void;
   client.admin.bindingHolds.mockImplementationOnce(
     () =>
@@ -103,7 +105,7 @@ it('drops previous rows during refresh and clears them after a rejected read wit
     'Runtime binding observations are unavailable.',
   );
   expect(screen.queryByText('private raw service failure')).not.toBeInTheDocument();
-  expect(screen.queryByText('0 observed Sandboxes')).not.toBeInTheDocument();
+  expect(screen.queryByText('0 Sandboxes with deferred bindings')).not.toBeInTheDocument();
 });
 
 it('preserves Retry-After without polling or allowing an early explicit refresh', async () => {
@@ -182,11 +184,11 @@ it.each([
       />,
     );
     expect(signal.aborted).toBe(true);
-    await screen.findByText('0 observed Sandboxes');
+    await screen.findByText('0 Sandboxes with deferred bindings');
     await act(async () => resolve(heldBindings()));
     const panel = screen.getByRole('region', { name: 'Deferred runtime bindings' });
     expect(within(panel).queryByText('Alex Chen')).not.toBeInTheDocument();
-    expect(within(panel).queryByText('1 observed Sandboxes')).not.toBeInTheDocument();
+    expect(within(panel).queryByText('1 Sandbox with deferred bindings')).not.toBeInTheDocument();
   },
 );
 
@@ -211,10 +213,10 @@ it('clears protected rows when the client changes and rejects the previous clien
   const signal = previous.admin.bindingHolds.mock.calls[0]![0]!.signal!;
   rerender(<BindingHolds client={next} />);
   expect(signal.aborted).toBe(true);
-  await screen.findByText('0 observed Sandboxes');
+  await screen.findByText('0 Sandboxes with deferred bindings');
   await act(async () => resolve(heldBindings()));
   expect(screen.queryByText('Alex Chen')).not.toBeInTheDocument();
-  expect(screen.queryByText('1 observed Sandboxes')).not.toBeInTheDocument();
+  expect(screen.queryByText('1 Sandbox with deferred bindings')).not.toBeInTheDocument();
 });
 
 it.each(['capability', 'advertisement', 'route'])(

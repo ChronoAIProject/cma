@@ -242,14 +242,20 @@ async fn projection_parent_survives_delayed_pruning_for_ready_and_failed_reports
             .unwrap()
             .unwrap();
         let mut batch = cma_am_reporting::ProjectionBatch::new(32_768);
-        for (kind, series) in [("chart_total", ""), ("contributor", "fixture-owner")] {
-            batch
-                .push(
-                    doc! {"report_id":&lease.report.report_id,"generation":lease.generation,
-                    "document_schema_version":1_i64,"kind":kind,"metric":0_i64,"series":series,
-                    "chunk":0_i64},
-                )
-                .unwrap();
+        for (kind, series, pages) in [
+            ("chart_total", "", 64_i64),
+            ("chart_sandbox", "fixture-sandbox", 1),
+            ("contributor", "fixture-owner", 1),
+        ] {
+            for chunk in 0..pages {
+                batch
+                    .push(
+                        doc! {"report_id":&lease.report.report_id,"generation":lease.generation,
+                        "document_schema_version":1_i64,"kind":kind,"metric":0_i64,
+                        "series":series,"chunk":chunk},
+                    )
+                    .unwrap();
+            }
         }
         let documents = batch.into_documents();
         let bytes = documents
@@ -294,6 +300,23 @@ async fn projection_parent_survives_delayed_pruning_for_ready_and_failed_reports
             )
             .await
             .unwrap();
+        store.prune_cache(now()).await.unwrap();
+        let held = store
+            .collection(JOBS)
+            .find_one(filter.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(held.get_bool("reserved").unwrap());
+        assert_eq!(held.get("expires_at"), Some(&mongodb::bson::Bson::Null));
+        assert_eq!(
+            store
+                .collection(COLLECTION)
+                .count_documents(doc! {"report_id":&lease.report.report_id,"kind":"contributor"})
+                .await
+                .unwrap(),
+            1
+        );
         store.prune_cache(now()).await.unwrap();
         let released = store
             .collection(JOBS)
@@ -446,6 +469,6 @@ async fn account_erasure_invalidates_aggregate_before_first_commit() {
         .unwrap()
         .unwrap();
     assert_eq!(job.get_i64("bytes").unwrap(), original_bytes);
-    assert!(job.get_datetime("expires_at").is_ok());
+    assert_eq!(job.get("expires_at"), Some(&mongodb::bson::Bson::Null));
     store.db.drop().await.unwrap();
 }
