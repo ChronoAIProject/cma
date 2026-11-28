@@ -184,7 +184,12 @@ async fn relay_readiness_retry_leaves_a_sustained_listener_gap_to_the_durable_re
     );
     assert_eq!(fixture.counts(), (4, 1));
     let state = fixture.bound.fixture.state.lock().unwrap();
-    assert_eq!(state.assignments.len(), assignments);
+    // Ordinary provisioning replays the same bootstrap after the durable wait.
+    assert_eq!(state.assignments.len(), assignments + 1);
+    assert_eq!(
+        state.assignments[assignments],
+        state.assignments[assignments - 1]
+    );
     let marker = state.relay_first_marker.unwrap();
     assert!(marker >= ordinary_retry_at);
     eprintln!(
