@@ -342,19 +342,18 @@ async fn record_incremental_terminal(store: &MongoSandboxStore, current: &Agent)
 
     let replacement = incremental_recorder(store);
     let mut assembly = AgentMessageAssembly::default();
-    assert_eq!(
-        replacement
-            .record_update(
-                &current.id,
-                1,
-                &mut assembly,
-                terminal("a".repeat(64)),
-                NOW.into()
-            )
-            .await
-            .unwrap(),
-        update,
-    );
+    let replay = replacement
+        .record_update(
+            &current.id,
+            1,
+            &mut assembly,
+            terminal("a".repeat(64)),
+            NOW.into(),
+        )
+        .await
+        .unwrap();
+    assert!(replay.appended.is_empty());
+    assert!(!replay.turn_closed);
     assert!(matches!(
         replacement
             .record_update(
