@@ -6,6 +6,7 @@ from hashlib import sha256
 import http.client
 import json
 from pathlib import Path
+import time
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -63,6 +64,8 @@ def read(origin, path, *, evidence=None, timeout=10, response_limit=MAX_RESPONSE
     if evidence is not None:
         evidence.append(observed)
     try:
+        connection.connect()
+        observed["request_started_ns"] = time.time_ns()
         connection.request("GET", f"{path}?cma_web_preflight={marker}",
                            headers={"Cache-Control": "no-cache", "Accept-Encoding": "identity"})
         reply = connection.getresponse()

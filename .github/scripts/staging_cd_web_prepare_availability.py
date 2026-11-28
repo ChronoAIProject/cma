@@ -66,9 +66,10 @@ def watch_prepare(origin, incumbent, prepare, *, incumbent_sha256, prepare_sha25
                   incumbent_image, prepare_image, deadline, rollout, record, fetch=read):
     """Bracket a caller's submit-and-wait operation in one monotonic budget.
 
-    The caller owns the generation and settled/Ready fences. The same edge origin
-    is used throughout. Until stock leaves eligibility, only the incumbent
-    catalog is guaranteed on every replica.
+    The caller owns the generation and settled/Ready fences. The rollout
+    callback submits and waits for prepare. If it also performs work outside
+    that window, it returns its actual submit and settle timestamps as Unix
+    nanoseconds. Only the incumbent catalog is guaranteed until stock withdraws.
     """
     require(math.isfinite(deadline), "Web prepare availability needs a finite deadline")
     require(immutable_image(incumbent_image) and immutable_image(prepare_image) and incumbent_image != prepare_image,
@@ -80,6 +81,9 @@ def watch_prepare(origin, incumbent, prepare, *, incumbent_sha256, prepare_sha25
     record({"type": "start", "incumbent_sha256": incumbent_sha256, "prepare_sha256": prepare_sha256,
             "incumbent_image": incumbent_image, "prepare_image": prepare_image})
     counts = {phase: Counter() for phase in ("stock", "overlap", "prepare")}
+    overlap_starts = []
+    submit_ns = settle_ns = None
+    in_window_starts = 0
     started, settled = Event(), Event()
 
     with ThreadPoolExecutor(max_workers=8) as requests:
@@ -95,6 +99,8 @@ def watch_prepare(origin, incumbent, prepare, *, incumbent_sha256, prepare_sha25
                 tally["failures"] += row["result"] != "ok"
                 tally["http_404"] += row.get("status") == 404
                 tally["http_503"] += row.get("status") == 503
+                if phase == "overlap" and "request_started_ns" in row:
+                    overlap_starts.append(row["request_started_ns"])
                 record(row | {"type": "asset", "phase": phase, "sweep": number})
             remaining(deadline)
 
@@ -117,18 +123,25 @@ def watch_prepare(origin, incumbent, prepare, *, incumbent_sha256, prepare_sha25
                     if not started.wait(remaining(deadline)):
                         overlap.result()
                         raise Refusal("Web overlap sampling did not start")
-                    rollout()
+                    entered_ns = time.time_ns()
+                    window = rollout()
+                    returned_ns = time.time_ns()
+                    submit_ns, settle_ns = window if window is not None else (entered_ns, returned_ns)
+                    require(entered_ns <= submit_ns <= settle_ns <= returned_ns, "Web prepare rollout timing is invalid")
                 finally:
                     settled.set()
                 overlap.result()
+            in_window_starts = sum(submit_ns <= started_ns < settle_ns for started_ns in overlap_starts)
             sweep("prepare", prepare, 1)
             require(not any(tally["failures"] for tally in counts.values()),
                     "Web prepare asset availability failed")
+            require(in_window_starts > 0, "Web prepare overlap had no requests started during the rollout")
             passed = True
         finally:
             phases = {phase: {key: tally[key] for key in ("attempts", "failures", "http_404", "http_503")}
                       for phase, tally in counts.items()}
-            record({"type": "result", "passed": passed, "phases": phases})
+            record({"type": "result", "passed": passed, "phases": phases, "submit_ns": submit_ns,
+                    "settle_ns": settle_ns, "in_window_starts": in_window_starts})
 
 
 def read_catalog(path):
@@ -147,6 +160,8 @@ def main():
         parser.add_argument(f"--{phase}-image", required=True, help="Digest-pinned Web image")
     parser.add_argument("--ready-file", type=Path, required=True,
                         help="Created by this check when overlap sampling starts. Submit prepare after it appears.")
+    parser.add_argument("--submit-file", type=Path, required=True,
+                        help="Create immediately before submitting the prepare mutation.")
     parser.add_argument("--settled-file", type=Path, required=True,
                         help="Atomically write 'prepared' after verifying prepare is serving and stock has withdrawn. "
                              "Write 'rollback' when the rollout is recovered instead.")
@@ -161,10 +176,12 @@ def main():
             time.sleep(min(0.1, remaining(deadline)))
         with args.settled_file.open("r", encoding="utf-8") as status:
             require(status.read(16).strip() == "prepared", "Web prepare rollout did not settle")
+        return args.submit_file.stat().st_mtime_ns, args.settled_file.stat().st_mtime_ns
 
     try:
-        require(len({path.resolve() for path in (args.ready_file, args.settled_file, args.evidence)}) == 3
-                and not args.ready_file.exists() and not args.settled_file.exists(),
+        handoffs = (args.ready_file, args.submit_file, args.settled_file)
+        require(len({path.resolve() for path in (*handoffs, args.evidence)}) == 4
+                and not any(path.exists() for path in handoffs),
                 "Web prepare requires fresh, distinct evidence and handoff files")
         with args.evidence.open("x", encoding="utf-8", buffering=1) as journal:
             def record(row):

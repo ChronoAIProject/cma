@@ -14,6 +14,7 @@ from staging_cd_receipts import sha256
 from staging_cd_web_continuity import REPOSITORY
 from staging_cd_web_overlay import catalog_bytes
 from staging_cd_web_prepare_availability import watch_prepare
+from staging_cd_web_rollout_preflight import read
 
 
 STOCK_IMAGE = REPOSITORY + "@sha256:" + "a" * 64
@@ -62,12 +63,12 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
     def serve_prepare(name):
         return 200, PREPARE[name]
 
-    def watch(self, rollout, *, record=None, prepare_sha256=None):
+    def watch(self, rollout, *, record=None, prepare_sha256=None, fetch=read):
         watch_prepare(
             self.origin, self.stock, self.prepare, incumbent_sha256=sha256(self.stock),
             prepare_sha256=prepare_sha256 or sha256(self.prepare),
             incumbent_image=STOCK_IMAGE, prepare_image=PREPARE_IMAGE,
-            deadline=time.monotonic() + 10, rollout=rollout, record=record or self.rows.append,
+            deadline=time.monotonic() + 10, rollout=rollout, record=record or self.rows.append, fetch=fetch,
         )
 
     def test_full_catalog_uses_same_edge_and_defers_candidate_only_paths_until_settled(self):
@@ -77,13 +78,16 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
         self.prepare = json.loads(catalog_bytes(prepare))
         self.serve = lambda name: (200, stock[name]) if name in stock else (404, b"missing asset")
         sampled = Event()
+        submit_ns = None
 
         def record(row):
             self.rows.append(row)
-            if row.get("phase") == "overlap":
+            if row.get("phase") == "overlap" and submit_ns is not None and row["request_started_ns"] >= submit_ns:
                 sampled.set()
 
         def rollout():
+            nonlocal submit_ns
+            submit_ns = time.time_ns()
             self.assertTrue(sampled.wait(2))
             self.serve = lambda name: (200, prepare[name])
 
@@ -97,6 +101,62 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
         self.assertTrue(all(query.get("cma_web_preflight") for _, query, _ in self.requests))
         self.assertTrue(all(row["body_sha256"] == row["expected_sha256"] for row in assets))
         self.assertTrue(self.rows[-1]["passed"])
+        self.assertGreater(self.rows[-1]["in_window_starts"], 0)
+
+    def test_requests_delayed_past_settle_cannot_qualify_overlap(self):
+        settled = Event()
+        stock_reads = 0
+
+        def fetch(origin, path, **kwargs):
+            nonlocal stock_reads
+            stock_reads += 1
+            if stock_reads > len(STOCK):
+                self.assertTrue(settled.wait(2))
+            return read(origin, path, **kwargs)
+
+        def rollout():
+            submit_ns = time.time_ns()
+            self.serve = self.serve_prepare
+            settle_ns = time.time_ns()
+            settled.set()
+            return submit_ns, settle_ns
+
+        with self.assertRaisesRegex(Refusal, "had no requests started during the rollout"):
+            self.watch(rollout, fetch=fetch)
+        result = self.rows[-1]
+        self.assertFalse(result["passed"])
+        self.assertEqual(result["in_window_starts"], 0)
+        self.assertEqual(result["phases"]["prepare"]["failures"], 0)
+        self.assertGreater(result["phases"]["overlap"]["attempts"], 0)
+
+    def test_in_window_request_can_finish_after_settle(self):
+        submitted, in_flight, settled = Event(), Event(), Event()
+        stock_reads = 0
+
+        def fetch(origin, path, **kwargs):
+            nonlocal stock_reads
+            stock_reads += 1
+            if stock_reads > len(STOCK):
+                self.assertTrue(submitted.wait(2))
+            return read(origin, path, **kwargs)
+
+        def serve_during_rollout(name):
+            in_flight.set()
+            self.assertTrue(settled.wait(2))
+            return self.serve_prepare(name)
+
+        def rollout():
+            self.serve = serve_during_rollout
+            submit_ns = time.time_ns()
+            submitted.set()
+            self.assertTrue(in_flight.wait(2))
+            settle_ns = time.time_ns()
+            settled.set()
+            return submit_ns, settle_ns
+
+        self.watch(rollout, fetch=fetch)
+        self.assertTrue(self.rows[-1]["passed"])
+        self.assertGreater(self.rows[-1]["in_window_starts"], 0)
 
     def test_overlap_404_and_503_remain_failures_after_the_same_paths_recover(self):
         observed_failures, observed_recovery = Event(), Event()
@@ -157,8 +217,8 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
     def test_cli_uses_fresh_handoff_files_and_journals_the_result(self):
         with TemporaryDirectory() as directory:
             root = Path(directory)
-            stock, prepare, ready, settled, journal = (
-                root / name for name in ("stock.json", "prepare.json", "ready", "settled", "evidence.jsonl")
+            stock, prepare, ready, submitted, settled, journal = (
+                root / name for name in ("stock.json", "prepare.json", "ready", "submitted", "settled", "evidence.jsonl")
             )
             stock.write_bytes(catalog_bytes(STOCK))
             prepare.write_bytes(catalog_bytes(PREPARE))
@@ -167,7 +227,8 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
                 "--origin", self.origin, "--incumbent-catalog", str(stock), "--prepare-catalog", str(prepare),
                 "--incumbent-sha256", sha256(self.stock), "--prepare-sha256", sha256(self.prepare),
                 "--incumbent-image", STOCK_IMAGE, "--prepare-image", PREPARE_IMAGE,
-                "--ready-file", str(ready), "--settled-file", str(settled), "--evidence", str(journal),
+                "--ready-file", str(ready), "--submit-file", str(submitted), "--settled-file", str(settled),
+                "--evidence", str(journal),
                 "--seconds", "4",
             ]
             with subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) as process:
@@ -176,6 +237,15 @@ class WebPrepareAvailabilityTests(unittest.TestCase):
                     while not ready.is_file() and process.poll() is None and time.monotonic() < deadline:
                         time.sleep(0.01)
                     self.assertTrue(ready.is_file())
+                    submitted.touch()
+                    submit_ns = submitted.stat().st_mtime_ns
+                    while time.monotonic() < deadline:
+                        if any(row.get("request_started_ns", 0) >= submit_ns
+                               for row in map(json.loads, journal.read_text().splitlines()[:-1])):
+                            break
+                        time.sleep(0.01)
+                    else:
+                        self.fail("No overlap request started after the submit marker")
                     self.serve = self.serve_prepare
                     status = root / "status"
                     status.write_text("prepared\n")
