@@ -131,3 +131,32 @@ it('does not grant a parked revival deletion without the server retire action', 
   expect(sandboxDeletionReason(allowed, { stale: true })).toContain('Checking');
   expect(sandboxDeletionReason(allowed, { busy: true })).toContain('Wait');
 });
+
+it('allows Delete for a stalled rotation with current server retirement authority', () => {
+  const base = parkedRuntimeResultFixture();
+  const stalled = {
+    ...base,
+    lifecycle: {
+      ...base.lifecycle!,
+      result: {
+        ...base.lifecycle!.result!,
+        state: 'recoverable_pending' as const,
+        continuing: true,
+        code: 'runtime_update_stalled',
+        actions: ['observe', 'retire'] as const,
+      },
+    },
+  };
+  expect(sandboxDeletionReason(stalled, { lifecycleBusy: true })).toBeUndefined();
+  expect(sandboxDeletionReason(stalled, { busy: true })).toContain('Wait');
+  expect(sandboxDeletionReason(stalled, { stale: true })).toContain('Checking');
+  for (const result of [
+    { ...stalled.lifecycle.result, actions: ['observe'] as const },
+    { ...stalled.lifecycle.result, startedAt: '2000-01-01T00:00:00Z' },
+    { ...stalled.lifecycle.result, code: 'lifecycle_wait_exceeded' },
+  ]) {
+    expect(
+      sandboxDeletionReason({ ...stalled, lifecycle: { ...stalled.lifecycle, result } }),
+    ).toContain('Wait');
+  }
+});

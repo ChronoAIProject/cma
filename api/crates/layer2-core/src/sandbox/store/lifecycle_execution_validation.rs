@@ -1,6 +1,6 @@
 use crate::sandbox::{
     Sandbox, SandboxCheckpointRef, SandboxImageRotationPhase, SandboxLifecycleOperation,
-    SandboxPausePhase, SandboxRevivePhase, SandboxStatus,
+    SandboxPausePhase, SandboxRevivePhase, SandboxStatus, SandboxWorkStep,
 };
 
 pub(super) fn checkpoint_sandbox_advanced(
@@ -91,6 +91,12 @@ pub(super) fn lifecycle_sandbox_advanced(
                 .as_ref()
                 .is_some_and(|recovery| recovery.quiescence.as_ref() != Some(receipt))
         });
+    let parked_failure = (next.work.step == SandboxWorkStep::None)
+        .then(|| {
+            next.runtime_update_request()
+                .and_then(|request| request.failure.clone())
+        })
+        .flatten();
     let result = if let Some(receipt) = recorded_quiescence {
         expected.complete_unpublished_runtime_quiescence(
             receipt,
@@ -109,12 +115,21 @@ pub(super) fn lifecycle_sandbox_advanced(
             appended_at.into(),
         )
     } else if renewed_writer {
-        expected.retry_lifecycle_after_writer_resume(
-            next.work.ready_at.clone(),
-            &lease.holder,
-            lease.fence,
-            appended_at.into(),
-        )
+        if let Some(failure) = parked_failure {
+            expected.park_runtime_update_after_writer_resume(
+                failure,
+                &lease.holder,
+                lease.fence,
+                appended_at.into(),
+            )
+        } else {
+            expected.retry_lifecycle_after_writer_resume(
+                next.work.ready_at.clone(),
+                &lease.holder,
+                lease.fence,
+                appended_at.into(),
+            )
+        }
     } else if reserves_runtime {
         expected
             .reserve_lifecycle_runtime_generation(
@@ -124,14 +139,8 @@ pub(super) fn lifecycle_sandbox_advanced(
                 appended_at.into(),
             )
             .map(|_| ())
-    } else if let Some(failure) = next
-        .runtime_update_request()
-        .and_then(|request| request.failure.clone())
-        .filter(|_| {
-            current
-                .runtime_update_request()
-                .is_some_and(|request| request.failure.is_none())
-        })
+    } else if let Some(failure) =
+        parked_failure.filter(|_| current.lifecycle.operation == next.lifecycle.operation)
     {
         expected.park_failed_runtime_update(failure, &lease.holder, lease.fence, appended_at.into())
     } else if retries_same_phase {

@@ -224,6 +224,11 @@ impl SandboxStore for InMemorySandboxStore {
     }
 
     #[cfg(test)]
+    fn desktop_runtime_target_is_qualified(&self, target: &str) -> bool {
+        self.desktop_runtime_version.as_deref() == Some(target)
+    }
+
+    #[cfg(test)]
     fn managed_runtime_target_is_held(&self, target: &str) -> bool {
         self.lock().held_runtime_target.as_deref() == Some(target)
     }
