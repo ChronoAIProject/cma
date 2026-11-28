@@ -39,17 +39,14 @@ impl RuntimeVersions {
                     version,
                 }),
                 Some(None) => {}
-                None => missing.push(image),
+                None => missing.push(image.to_owned()),
             }
         }
         let requests = stream::iter(missing)
             .map(|image| async move {
-                let version = self.registry.version(image).await;
-                self.versions.insert(image.into(), version.clone());
-                version.map(|version| WarmPoolRuntimeVersion {
-                    image: image.into(),
-                    version,
-                })
+                let version = self.registry.version(&image).await;
+                self.versions.insert(image.clone(), version.clone());
+                version.map(|version| WarmPoolRuntimeVersion { image, version })
             })
             .buffer_unordered(4);
         tokio::pin!(requests);
