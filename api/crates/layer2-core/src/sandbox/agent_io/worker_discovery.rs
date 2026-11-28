@@ -6,6 +6,7 @@ use std::time::Duration;
 #[derive(Clone, Debug)]
 pub struct ScheduledAgentCommand {
     pub id: crate::ids::AgentCommandId,
+    pub turn_wait_agent: Option<crate::AgentId>,
     pub dispatched: bool,
     pub reconcile_current: bool,
 }
@@ -60,6 +61,9 @@ impl AgentCommandWorker {
                 .items
                 .into_iter()
                 .map(|command| ScheduledAgentCommand {
+                    turn_wait_agent: (command.work.dispatch.is_none()
+                        && command.receipt.envelope.is_ordinary_append())
+                    .then(|| command.receipt.envelope.agent_id.clone()),
                     reconcile_current: heads
                         .iter()
                         .any(|head| command.reconciliation_current(head)),

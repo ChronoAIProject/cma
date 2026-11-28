@@ -247,8 +247,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             adapter.clone(),
         )?;
-        let cancel_wake = (config.features.command_cancel_wake && ownership.is_some())
-            .then(|| Arc::new(tokio::sync::Notify::new()));
+        let cancel_wake = media::cancel_wake(config, ownership.is_some());
         let command_scheduler = media::commands(
             crate::commands::ProductionCommandDependencies {
                 source_guard: media::guard(&media),
@@ -263,7 +262,8 @@ impl ControlPlaneComposition {
             config.features.command_reconcile_pacing,
             adapters.model_funding.clone(),
         )?
-        .with_cancel_wake(cancel_wake.clone());
+        .with_cancel_wake(cancel_wake.clone())
+        .with_turn_terminal_wake(stores.sandbox_model.agent_turn_terminal.clone());
         let (sandbox_control_scheduler, sandbox_control_service) = access::sandbox_control(
             &stores,
             resource_access.clone(),

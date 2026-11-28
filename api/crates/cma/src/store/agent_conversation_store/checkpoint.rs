@@ -201,9 +201,7 @@ async fn commit_inner(
     };
     let mut last_transient = None;
     for attempt in 0..TRANSACTION_ATTEMPTS {
-        if attempt > 0 {
-            tokio::task::yield_now().await;
-        }
+        contention::backoff(attempt).await;
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
             Err(error) if is_transient(&error) => {
@@ -274,7 +272,7 @@ async fn commit_inner(
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
                 if published {
-                    crate::telemetry::work::published(&outcome.appended, "committed");
+                    publish_work(store, &outcome.appended, "committed");
                 }
                 return Ok(outcome);
             }
@@ -309,7 +307,7 @@ async fn commit_inner(
                         ))
                     })?;
                     if published {
-                        crate::telemetry::work::published(&confirmed.appended, "reconciled");
+                        publish_work(&store, &confirmed.appended, "reconciled");
                     }
                     Ok(confirmed)
                 })

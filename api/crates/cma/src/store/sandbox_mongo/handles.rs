@@ -134,6 +134,7 @@ impl MongoSandboxStore {
             access_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
+            agent_turn_terminal: tokio::sync::broadcast::channel(128).0,
         }
     }
 

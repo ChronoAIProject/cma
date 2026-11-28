@@ -44,6 +44,20 @@ mod reopen_tests;
 
 pub(super) use checkpoint::carry_fields as carry_checkpoint_fields;
 
+fn publish_work(store: &MongoSandboxStore, logs: &[AgentLogEntry], confirmation: &'static str) {
+    crate::telemetry::work::published(logs, confirmation);
+    if let Some(terminal) = logs.iter().find(|entry| {
+        matches!(
+            entry.kind,
+            layer2_core::sandbox::AgentLogKind::TurnCompleted { .. }
+                | layer2_core::sandbox::AgentLogKind::TurnFailed { .. }
+                | layer2_core::sandbox::AgentLogKind::TurnInterrupted { .. }
+        )
+    }) {
+        let _ = store.agent_turn_terminal.send(terminal.agent_id.clone());
+    }
+}
+
 #[cfg_attr(test, derive(Clone))]
 pub(super) struct ConversationReceipt {
     pub(super) segmented: Option<super::agent_log_segments::writer_commit::Recorded>,
@@ -132,7 +146,7 @@ async fn commit_conversation_inner(
         admission::require_current(&mutation, &mut session).await?;
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
-                crate::telemetry::work::published(&receipt.logs, "committed");
+                publish_work(store, &receipt.logs, "committed");
                 return Ok(receipt.logs);
             }
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
@@ -153,7 +167,7 @@ async fn commit_conversation_inner(
                     ))
                     .await?
                     {
-                        crate::telemetry::work::published(&receipt.logs, "reconciled");
+                        publish_work(&store, &receipt.logs, "reconciled");
                         Ok(receipt.logs)
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(

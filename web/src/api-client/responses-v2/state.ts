@@ -12,7 +12,6 @@ export class V2EventState {
   private started = false;
   private progress = false;
   ended = false;
-  connectionError = false;
   constructor(
     private readonly responseId: string,
     private conversation: string | undefined,
@@ -21,11 +20,7 @@ export class V2EventState {
 
   accept(event: V2ResponseEvent) {
     if (this.ended) throw new ProtocolError('Responses frame follows the terminal event');
-    if (event.type === 'error') {
-      this.ended = true;
-      this.connectionError = true;
-      return;
-    }
+    if (event.type === 'error') throw new ProtocolError('Connection errors are not durable events');
     if (!this.started && !this.replay && event.type !== 'response.created')
       throw new ProtocolError('Responses must begin with response.created');
     this.started = true;

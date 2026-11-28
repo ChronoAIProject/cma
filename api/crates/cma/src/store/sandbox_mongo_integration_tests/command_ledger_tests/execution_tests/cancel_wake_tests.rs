@@ -4,9 +4,10 @@ use layer2_core::agent_ownership::{
 };
 use tokio::sync::{mpsc, oneshot, watch, Notify};
 
-async fn replica(
+pub(super) async fn replica(
     store: &MongoSandboxStore,
     instance: &str,
+    capacity: u32,
 ) -> (Arc<MongoSandboxStore>, Arc<OwnershipCoordinator>) {
     let store = Arc::new(
         store
@@ -24,7 +25,7 @@ async fn replica(
             expires_at_ms: 0,
             draining: false,
             owned_agents: 0,
-            max_owned_agents: 1,
+            max_owned_agents: capacity,
         },
     )
     .await
@@ -78,9 +79,9 @@ async fn periodic_tick_recovers_a_committed_cancel_without_a_wake_after_handoff(
         .await
         .unwrap();
 
-    let (old_store, first) = replica(&store, "first-cancel-manager").await;
+    let (old_store, first) = replica(&store, "first-cancel-manager", 1).await;
     let first_authority = first.acquire(&agent.id).await.unwrap().unwrap();
-    let (store, second) = replica(&store, "successor-cancel-manager").await;
+    let (store, second) = replica(&store, "successor-cancel-manager", 1).await;
     let execution = Arc::new(ScopedControl::default());
     let old_worker = AgentCommandWorker::new(
         old_store.clone(),

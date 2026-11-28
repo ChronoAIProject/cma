@@ -9,9 +9,27 @@ const MAX_PENDING_BYTES = 4 * 1024 * 1024;
 export interface V2StreamIdentity {
   readonly conversation?: string;
   readonly responseId?: string;
+  readonly commandId?: string;
   readonly startingAfter?: number;
   readonly onReceipt?: (receipt: V2ResponseReceipt) => void | Promise<void>;
+  readonly eventState?: V2EventState;
+  readonly allowEmptyReplay?: boolean;
 }
+
+export class V2ObservationError extends TransportError {
+  constructor(readonly code: string) {
+    super(
+      'Response observation ended; retrieve or replay the admitted response with current authorization',
+    );
+  }
+}
+
+export class V2PrematureEof extends TransportError {
+  constructor() {
+    super('Responses stream closed before its outcome was known');
+  }
+}
+
 export async function* v2ResponseFrames(
   response: Response,
   signal: AbortSignal,
@@ -23,7 +41,8 @@ export async function* v2ResponseFrames(
   if (
     !responseId ||
     !commandId ||
-    (expected.responseId !== undefined && responseId !== expected.responseId)
+    (expected.responseId !== undefined && responseId !== expected.responseId) ||
+    (expected.commandId !== undefined && commandId !== expected.commandId)
   )
     throw new ProtocolError('Responses stream has no matching durable receipt');
   try {
@@ -31,15 +50,14 @@ export async function* v2ResponseFrames(
   } catch (cause) {
     throw new ProtocolError('Responses consumer did not acknowledge its receipt', { cause });
   }
-  const state = new V2EventState(
-    responseId,
-    expected.conversation,
-    expected.startingAfter !== undefined,
-  );
+  const state =
+    expected.eventState ??
+    new V2EventState(responseId, expected.conversation, expected.startingAfter !== undefined);
   const pending: V2ResponseEvent[] = [];
   let pendingBytes = 0;
   let sequence = expected.startingAfter === undefined ? 0 : expected.startingAfter + 1;
   let failure: ProtocolError | undefined;
+  let observationError: string | undefined;
   const decode = (message: EventSourceMessage) => {
     const size = new TextEncoder().encode(message.data).byteLength;
     if (size > MAX_FRAME_BYTES || pendingBytes + size > MAX_PENDING_BYTES)
@@ -56,7 +74,10 @@ export async function* v2ResponseFrames(
       throw new ProtocolError(
         'Responses event sequence is not contiguous with the requested cursor',
       );
-    state.accept(event);
+    if (observationError !== undefined || state.ended)
+      throw new ProtocolError('Responses frame follows the terminal event');
+    if (event.type === 'error') observationError = event.code;
+    else state.accept(event);
     pendingBytes += size;
     pending.push(event);
   };
@@ -88,17 +109,17 @@ export async function* v2ResponseFrames(
       if (failure !== undefined) throw failure;
       while (pending.length) yield pending.shift()!;
       pendingBytes = 0;
-      if (state.connectionError)
-        throw new TransportError(
-          'Response observation ended; retrieve or replay the admitted response with current authorization',
-        );
+      if (observationError !== undefined) throw new V2ObservationError(observationError);
       if (done) {
         // A replay immediately after the terminal cursor legitimately has no frames.
         if (
           !state.ended &&
-          !(expected.startingAfter !== undefined && sequence === expected.startingAfter + 1)
+          !(
+            (expected.startingAfter !== undefined || expected.allowEmptyReplay) &&
+            sequence === (expected.startingAfter === undefined ? 0 : expected.startingAfter + 1)
+          )
         )
-          throw new TransportError('Responses stream closed before its outcome was known');
+          throw new V2PrematureEof();
         return;
       }
     }

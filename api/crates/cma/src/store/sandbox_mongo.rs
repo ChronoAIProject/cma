@@ -188,6 +188,7 @@ pub struct MongoSandboxStore {
     pub(crate) agent_admitted: std::sync::Arc<tokio::sync::Notify>,
     // Broadcast to already leased parent waiters without consuming scheduler hints.
     pub(crate) agent_parent_ready: std::sync::Arc<tokio::sync::Notify>,
+    pub(crate) agent_turn_terminal: tokio::sync::broadcast::Sender<layer2_core::AgentId>,
 }
 
 impl MongoSandboxStore {

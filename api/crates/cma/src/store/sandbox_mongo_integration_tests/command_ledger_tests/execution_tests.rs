@@ -46,6 +46,7 @@ mod fleet_activation_tests;
 mod legacy_session_ceilings_tests;
 mod operator_stop_execution_tests;
 mod ownership_tests;
+mod queued_turn_contention_tests;
 mod session_ceilings_tests;
 mod stale_turn_tests;
 mod supervision_tests;

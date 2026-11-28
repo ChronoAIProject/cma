@@ -139,27 +139,41 @@ describe('Responses v2 durable streams', () => {
     );
     expect(await t.client.responsesV2.create(request, { onEvent: t.onEvent })).toEqual(completed);
   });
-  it('keeps an admitted receipt on premature EOF and resumes explicitly without another POST', async () => {
+  it('recovers premature EOF from the acknowledged cursor with one POST', async () => {
     const t = harness();
     const receipt = vi.fn();
+    const recovery = vi.fn();
     t.fetch
-      .mockResolvedValueOnce(sse(wire(events().slice(0, 5))))
+      .mockResolvedValueOnce(sse(wire(events().slice(0, 5)), { 'x-request-id': 'post-read' }))
       .mockResolvedValueOnce(sse(wire(events().slice(5))));
     await expect(
       t.client.responsesV2.create(request, {
         idempotencyKey: 'retained-key',
         onReceipt: receipt,
+        onRecovery: recovery,
         onEvent: t.onEvent,
       }),
-    ).rejects.toBeInstanceOf(TransportError);
-    expect(receipt).toHaveBeenCalledWith({ responseId, commandId: 'cmd_opaque' });
-    await t.client.responsesV2.replay(responseId, { startingAfter: 4, onEvent: t.onEvent });
+    ).resolves.toEqual(completed);
+    expect(receipt).toHaveBeenCalledExactlyOnceWith({ responseId, commandId: 'cmd_opaque' });
+    expect(recovery).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        initiatingRequestId: 'post-read',
+        interruptedRequestId: 'post-read',
+        startingAfter: 4,
+        attempt: 1,
+        reason: 'premature_eof',
+      }),
+    );
     expect(t.fetch.mock.calls.map(([, init]) => init!.method)).toEqual(['POST', 'GET']);
+    expect(String(t.fetch.mock.calls[1]![0])).toContain(
+      `/responses/${responseId}/events?starting_after=4`,
+    );
+    expect(new Headers(t.fetch.mock.calls[1]![1]!.headers).has('idempotency-key')).toBe(false);
     expect(t.onEvent.mock.calls.map(([event]) => event.sequence_number)).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7, 8,
     ]);
   });
-  it('reports a connection error without converting it into durable failure', async () => {
+  it('resumes after an in-band observation error without acknowledging it as durable', async () => {
     const t = harness();
     const error = {
       type: 'error',
@@ -168,14 +182,39 @@ describe('Responses v2 durable streams', () => {
       message: 'Reconnect',
       param: null,
     };
-    t.fetch.mockResolvedValueOnce(sse(wire([events()[0]!, error])));
+    const recovery = vi.fn();
+    t.fetch
+      .mockResolvedValueOnce(
+        sse(wire([events()[0]!, error]), { 'x-request-id': 'observation-read' }),
+      )
+      .mockResolvedValueOnce(sse(wire(events().slice(1))));
     await expect(
-      t.client.responsesV2.create(request, { onEvent: t.onEvent }),
+      t.client.responsesV2.create(request, { onEvent: t.onEvent, onRecovery: recovery }),
+    ).resolves.toEqual(completed);
+    expect(t.onEvent.mock.calls.map(([event]) => event)).toEqual(events());
+    expect(recovery).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        reason: 'observation_error',
+        startingAfter: 0,
+        initiatingRequestId: 'observation-read',
+      }),
+    );
+    expect(t.fetch.mock.calls.map(([, init]) => init!.method)).toEqual(['POST', 'GET']);
+  });
+  it('preserves explicit replay connection errors', async () => {
+    const t = harness();
+    const error = {
+      type: 'error',
+      sequence_number: 1,
+      code: 'response_observation_unavailable',
+      message: 'Reconnect',
+      param: null,
+    };
+    t.fetch.mockResolvedValueOnce(sse(wire([error])));
+    await expect(
+      t.client.responsesV2.replay(responseId, { startingAfter: 0, onEvent: t.onEvent }),
     ).rejects.toBeInstanceOf(TransportError);
-    expect(t.onEvent.mock.calls.map(([event]) => event.type)).toEqual([
-      'response.created',
-      'error',
-    ]);
+    expect(t.onEvent.mock.calls.map(([event]) => event.type)).toEqual(['error']);
     expect(t.fetch).toHaveBeenCalledOnce();
   });
   it.each([
