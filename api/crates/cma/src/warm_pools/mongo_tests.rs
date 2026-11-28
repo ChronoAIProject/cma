@@ -331,7 +331,17 @@ async fn quarantine_defers_startup_retirement_without_masking_unresolved_effects
     let sandbox_id = doc! {"_id": marked.get("_id").unwrap()};
     sandboxes.insert_one(&marked).await.unwrap();
 
-    let boot = || async {
+    let peer_client =
+        mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    let peer_store = MongoNativeWarmPools::open(&peer_client.database(db.name()), "test")
+        .await
+        .unwrap();
+    let peer = resize::deployment(Arc::new(peer_store), planner.clone(), &image, None)
+        .with_empty_pool_startup(true);
+
+    let boot = async |pools: &NativeWarmPools| {
         pools
             .await_default_ready_by(
                 Some(&Admission::new()),
@@ -341,7 +351,7 @@ async fn quarantine_defers_startup_retirement_without_masking_unresolved_effects
             .await
     };
     assert!(matches!(
-        boot().await.unwrap(),
+        boot(&pools).await.unwrap(),
         WarmPoolStartup::CapacityDeferred(proof) if proof.desired() == current.target_replicas
     ));
     let held = store.find(&old.id).await.unwrap().unwrap();
@@ -351,6 +361,19 @@ async fn quarantine_defers_startup_retirement_without_masking_unresolved_effects
     assert_eq!(held.target_replicas, old.target_replicas);
     assert_eq!(held.binding, old.binding);
     assert!(planner.retirement_calls.lock().unwrap().is_empty());
+
+    // Keep the peer from claiming the target throughout its warmup.
+    targets
+        .update_one(
+            doc! {"_id": &old.id},
+            doc! {"$set": {"reconcile_after": DateTime::from_millis(i64::MAX)}},
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        boot(&peer).await.unwrap(),
+        WarmPoolStartup::CapacityDeferred(_)
+    ));
 
     targets
         .update_one(
@@ -362,13 +385,39 @@ async fn quarantine_defers_startup_retirement_without_masking_unresolved_effects
         )
         .await
         .unwrap();
-    assert!(matches!(boot().await, Err(WarmPoolError::Unavailable)));
+    assert!(matches!(
+        boot(&pools).await,
+        Err(WarmPoolError::Unavailable)
+    ));
     let unresolved = store.find(&old.id).await.unwrap().unwrap();
     assert_eq!(
         unresolved.error.as_deref(),
         Some("previous provider effect not confirmed")
     );
     assert!(unresolved.reconcile_after > DateTime::from_millis(0));
+
+    targets
+        .update_one(
+            doc! {"_id": &old.id},
+            doc! {"$set": {"reconcile_after": DateTime::from_millis(i64::MAX)}},
+        )
+        .await
+        .unwrap();
+    assert!(matches!(boot(&peer).await, Err(WarmPoolError::Unavailable)));
+
+    targets
+        .update_one(
+            doc! {"_id": &old.id},
+            doc! {"$set": {
+                "error": mongodb::bson::Bson::Null,
+                "reconcile_after": DateTime::from_millis(0),
+            }},
+        )
+        .await
+        .unwrap();
+    let leased = store.claim_retirement(&old.id).await.unwrap().unwrap();
+    assert!(matches!(boot(&peer).await, Err(WarmPoolError::Unavailable)));
+    store.defer_quarantined_retirement(&leased).await.unwrap();
     assert!(planner.retirement_calls.lock().unwrap().is_empty());
     let retained = sandboxes
         .find_one(sandbox_id.clone())
@@ -389,7 +438,7 @@ async fn quarantine_defers_startup_retirement_without_masking_unresolved_effects
         .await
         .unwrap();
     assert!(matches!(
-        boot().await.unwrap(),
+        boot(&pools).await.unwrap(),
         WarmPoolStartup::CapacityDeferred(_)
     ));
     let retiring = store.find(&old.id).await.unwrap().unwrap();
