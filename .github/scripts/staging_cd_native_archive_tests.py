@@ -1,5 +1,6 @@
 """Verify same-attempt staging admission of a separately tested native archive."""
 import json
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -34,7 +35,7 @@ class NativeArchiveTests(unittest.TestCase):
                                           "head_repository_id": 1, "head_branch": "develop",
                                           "head_sha": self.release["source"]}}
 
-    def fetch(self, root, mutate=None):
+    def fetch(self, root, mutate=None, *, repo=None):
         api = Mock()
         api.request.side_effect = [self.run, {"total_count": 1, "jobs": [self.job]}, self.artifact]
 
@@ -55,8 +56,15 @@ class NativeArchiveTests(unittest.TestCase):
                                   json.dumps({"version": self.release["version"],
                                               "source_sha": self.release["source"]}).encode(),
                                   b"", b""])
+        checkout = (Mock(return_value=f"{self.run['head_sha']}\n{self.release['tree']}\n".encode())
+                    if repo is None else native.command)
         with patch.object(native, "image_identity", return_value=self.image):
-            result = native.fetch(self.release, "12", root, root, api, "fixture", downloader=download)
+            result = native.fetch(self.release, "12", root, root, api, "fixture", root=repo or root,
+                                  downloader=download, runner=checkout)
+        if repo is None:
+            args, kwargs = checkout.call_args
+            self.assertIn(self.release["source"] + "^{tree}", args[0])
+            self.assertEqual(kwargs["cwd"], root)
         self.assertIn(self.image[1], runner.call_args_list[2].args[0])
         return result
 
@@ -65,6 +73,44 @@ class NativeArchiveTests(unittest.TestCase):
             result = self.fetch(Path(temp))
             self.assertEqual(result.path.read_bytes(), b"the tested OCI archive")
             self.assertIsNone(result.cache_day)
+
+    def test_catch_up_uses_the_reserved_first_parent_tree(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            repo = root / "repo"
+            repo.mkdir()
+
+            def git(*args):
+                command = ["git", "-c", "commit.gpgsign=false", "-c", "user.name=Fixture",
+                           "-c", "user.email=fixture@example.invalid", *args]
+                return subprocess.check_output(command, cwd=repo, stderr=subprocess.PIPE, text=True).strip()
+
+            git("init", "--quiet", "--initial-branch=develop")
+            git("commit", "--quiet", "--allow-empty", "-m", "reserved source")
+            reserved = git("rev-parse", "HEAD")
+            git("branch", "side")
+            (repo / "develop.txt").write_text("develop")
+            git("add", ".")
+            git("commit", "--quiet", "-m", "first parent")
+            git("checkout", "--quiet", "side")
+            (repo / "side.txt").write_text("side")
+            git("add", ".")
+            git("commit", "--quiet", "-m", "side parent")
+            side = git("rev-parse", "HEAD")
+            git("checkout", "--quiet", "develop")
+            git("merge", "--quiet", "--no-ff", "--no-edit", "side")
+            head = git("rev-parse", "HEAD")
+            self.run["head_sha"] = self.job["head_sha"] = self.artifact["workflow_run"]["head_sha"] = head
+            self.release.update(source=reserved, tree=git("rev-parse", reserved + "^{tree}"))
+            self.artifact["name"] = native.artifact_name(self.release)
+            result = self.fetch(root, repo=repo)
+            self.assertEqual(result.path.read_bytes(), b"the tested OCI archive")
+            with self.assertRaisesRegex(Refusal, "checkout or reserved tree differs"):
+                native.verify_source(repo, head, dict(self.release, tree=git("rev-parse", "HEAD^{tree}")))
+            with self.assertRaisesRegex(Refusal, "outside the push's first-parent history"):
+                native.verify_source(repo, head, dict(self.release, source=side, tree=git("rev-parse", side + "^{tree}")))
+            with self.assertRaisesRegex(Refusal, "checkout or reserved tree differs"):
+                native.verify_source(repo, reserved, self.release)
 
     def test_refuses_artifact_from_other_attempt_or_unsuccessful_producer(self):
         for mutation in ({"run_attempt": 999}, {"conclusion": "failure"}, {"name": "Release am / Publish"}):
@@ -96,7 +142,7 @@ class NativeArchiveTests(unittest.TestCase):
             (root / "native.zip").touch()
             on_miss = Mock()
             with patch.object(native, "fetch", side_effect=Refusal("fixture")):
-                result = native.try_fetch(self.release, "12", root, work, Mock(), "fixture", on_miss)
+                result = native.try_fetch(self.release, "12", root, work, Mock(), "fixture", on_miss, root=root)
             self.assertIsNone(result)
             self.assertEqual(list(root.iterdir()), [work])
             on_miss.assert_called_once_with("reserved-native-unavailable")
