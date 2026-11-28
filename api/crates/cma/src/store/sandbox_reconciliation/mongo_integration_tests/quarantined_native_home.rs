@@ -180,10 +180,13 @@ async fn retained_sandbox_quarantine_preserves_native_claim_and_home_through_sta
         sandbox_id: sandbox.id.to_string(),
         generation: 1,
         handle: RuntimeHandle("agent-sandbox:member:sandbox-uid".into()),
-        image_sha256: "fixture-image".into(),
-        spec_fingerprint: "fixture-spec".into(),
+        image_sha256: "a".repeat(43),
+        spec_fingerprint: "b".repeat(43),
         runtime_contract: "3".into(),
-        lifecycle: Default::default(),
+        lifecycle: layer3_adapter::RuntimeLifecycle {
+            state: "stopped".into(),
+            reason: None,
+        },
     };
     let orphan_runtime = RuntimeObservation {
         sandbox_id: "sbx_orphan_runtime".into(),
