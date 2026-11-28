@@ -19,6 +19,7 @@ from run_ci import run as run_ci
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT / 'owner'))
 from common import CommandFailure
+from document_quota import initialize_document_quota
 from file_fixture import OVERSIZE_BYTES, SPARSE_FILE
 from fixture_no_secrets import NoSecretClient, synthetic_configmaps
 import manifests
@@ -30,6 +31,53 @@ from runtime_loss import runtime_inventory_authority
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_prepared_lifecycle_read_reopens_only_an_exited_forward_on_the_original_port(self):
+        run_id = 'cma-ci-' + 'a' * 12
+        origin = 'http://127.0.0.1:12345'
+        child = Mock()
+        fixture = Fixture.__new__(Fixture)
+        fixture.client = Mock(namespace='cma-native-am', forwards={('am-a-0', 8080): (child, origin)})
+        fixture.ready = {'fixture': 'prepared', 'run_id': run_id, 'context': 'kind-' + run_id,
+                         'server': origin}
+        child.poll.return_value = None
+        self.assertEqual(fixture.repairPreparedForward('a'), {'outcome': 'running'})
+        fixture.client.forward.assert_not_called()
+        child.poll.return_value = 1
+        fixture.client.forward.return_value = origin
+        self.assertEqual(fixture.repairPreparedForward('a'), {'outcome': 'reopened'})
+        fixture.client.forward.assert_called_once_with('am-a-0', 8080, renew=True)
+        fixture.client.forward.return_value = 'http://127.0.0.1:12346'
+        with self.assertRaisesRegex(RuntimeError, 'prepared_forward_origin_changed'):
+            fixture.repairPreparedForward('a')
+
+    def test_document_deletion_installs_an_empty_baseline_from_the_manager_image(self):
+        run_id = 'cma-ci-' + 'a' * 12
+        image = 'localhost/am@sha256:' + 'b' * 64
+        client = Mock(namespace='cma-native-am')
+        client.kjson.return_value = {'status': {'phase': 'Succeeded'}}
+        client.wait.side_effect = lambda predicate, *_: self.assertTrue(predicate())
+        client.k.side_effect = [json.dumps({'phase': phase, 'dry_run': False, 'installed_rows': 0,
+                                           'baseline_rows': 0}) for phase in ('preparing', 'ready')]
+        fixture = SimpleNamespace(client=client, mongo=Mock(return_value=True),
+                                  ready={'fixture': 'features', 'run_id': run_id, 'context': 'kind-' + run_id,
+                                         'server': 'https://127.0.0.1:12345', 'expected_api_image': image})
+        initialize_document_quota(fixture)
+        manifest, prepare, install = [call.args[0][0] for call in client.apply.call_args_list]
+        inventory = json.loads(manifest['data']['inventory.json'])
+        self.assertEqual(inventory, {'schema_version': 1, 'activation_id': inventory['activation_id'],
+                                     'complete_storage_inventory': True, 'writers_drained': True, 'objects': []})
+        self.assertEqual(prepare['spec']['containers'][0]['args'],
+                         ['--document-quota-prepare', inventory['activation_id']])
+        self.assertEqual(install['spec']['containers'][0]['args'],
+                         ['--document-quota-install', '/inventory/inventory.json', '--apply'])
+        for job in (prepare, install):
+            self.assertEqual(job['spec']['containers'][0]['image'], image)
+            self.assertFalse(job['spec']['automountServiceAccountToken'])
+        fixture.ready['fixture'] = 'prepared'
+        with self.assertRaisesRegex(ValueError, 'disposable_feature_fixture_required'):
+            initialize_document_quota(fixture)
+        fixture.mongo.assert_called_once()
+
     def test_feature_inventory_access_is_independent_for_the_two_managers(self):
         namespace = 'cma-native-am'
         resources = application_objects(namespace, split_inventory=True)
@@ -821,6 +869,8 @@ class OwnershipTests(unittest.TestCase):
         features = manifests.managers(legacy_manifests.credentials(), {**ready, 'fixture': 'features'})
         features_environment = next(x['stringData'] for x in features if x['kind'] == 'Secret')
         self.assertEqual(features_environment['CHRONO_ADMISSION_CONTROL_WRITES_ENABLED'], 'true')
+        for feature in ('QUOTAS', 'SOURCE_COMMITS', 'DELETION'):
+            self.assertEqual(features_environment[f'CHRONO_DOCUMENT_{feature}_ENABLED'], 'true')
         self.assertEqual(features_environment['CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED'], 'true')
         self.assertTrue(features_environment['CHRONO_MONGODB_URI'].endswith('&appName=' + FEATURES_MONGO_APP))
         self.assertEqual(features_environment['CHRONO_AGENT_MANAGER_SANDBOX_CPU'], '1')

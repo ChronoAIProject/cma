@@ -11,7 +11,7 @@ export function pollLifecycleOperation(read, accept, {manager, onTransient, ...o
       if (missed || !(failure.kind === 'request_timeout'
           || (failure.kind === 'transport_error' && failure.cause === 'UND_ERR_SOCKET'))) throw error;
       missed = true;
-      onTransient(failure);
+      await onTransient(failure);
       return null;
     }
   }, value => value !== null && accept(value), options);

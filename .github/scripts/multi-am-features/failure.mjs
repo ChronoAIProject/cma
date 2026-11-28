@@ -67,6 +67,9 @@ export function journeyFailureSummary(journey) {
     first_failed_step_code: step ? fixedCode(step.error) : null,
     lifecycle_failure: journey?.create_failure?.observation ?? null,
     lifecycle_poll_failure: journey?.create_failure?.poll_failure,
+    ...(journey?.create_failure?.transient_poll_failure && {
+      lifecycle_transient_poll_failure: journey.create_failure.transient_poll_failure,
+    }),
     ...(journey?.open_failure && {open_failure: {
       stage: journey.open_failure.stage,
       ...journey.open_failure.request_failure,

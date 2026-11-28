@@ -22,7 +22,8 @@ export function createAdapter(config) {
     'configurationLog','configurationDispatch','publicationEvidence','retirementPurge','retirementTitleDeferral','removeRuntimePod',
     'artifactPublicationAbort','artifactPublicationRace','preparedSchemaBarrier','preparedSchemaRace','preparedSchemaRefusals',
     'writerPublicationAbort','writerPublicationEvidence','runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
-    'shareRedemptionPublicationAbort','accessProposalAbort','provenanceBackfill','seedOversizeFile','attachmentIdentity']
+    'shareRedemptionPublicationAbort','accessProposalAbort','provenanceBackfill','seedOversizeFile','attachmentIdentity',
+    'repairPreparedForward']
     .map(name=>[name,(body)=>call(name,body)]));
 }
 export default createAdapter;

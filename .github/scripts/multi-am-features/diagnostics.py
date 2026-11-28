@@ -8,6 +8,7 @@ INITIALIZATION_WAITS = {
     'two_members_not_ready', 'client_deadline', 'infrastructure_deadline',
     'am_pod_not_ready_a', 'am_pod_not_ready_b', 'am_not_ready_a', 'am_not_ready_b',
     'provenance_progress_command_timeout',
+    'document_quota_command_timeout',
     'forward_not_ready_am-a-0', 'forward_not_ready_am-b-0',
     'forward_not_ready_provider', 'forward_not_ready_identity',
 }
@@ -75,6 +76,8 @@ def command_outcome(stage, program, returncode, elapsed, output, timed_out=False
         'warm_pool_configuration_failed': (b'native warm pool default is not usable:',),
         'durable_store_startup_failed': (b'durable stores are not usable:',),
         'document_storage_startup_failed': (b'document storage binding:',),
+        'document_deletion_prerequisites_missing': (
+            b'document deletion requires the source accounting writer and quota baseline',),
     }
     lower = output.lower()
     return {'stage': stage,

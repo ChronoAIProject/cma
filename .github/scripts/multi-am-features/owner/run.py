@@ -22,6 +22,7 @@ import urllib.request
 
 from common import Client, require_feature_fixture, utc, write
 from configuration_log import configuration_dispatch, configuration_log
+from document_quota import initialize_document_quota
 from file_fixture import seed_oversize_file
 import manifests
 import legacy_manifests as old
@@ -159,6 +160,8 @@ class Fixture:
         if self.ready.get('fixture') == 'features':
             self.mark_initialization_step('provenance_progress_initialize')
             initialize_progress(self)
+            self.mark_initialization_step('document_quota_initialize')
+            initialize_document_quota(self)
         for am in ['a','b']:
             # Initialize the fresh database once before the second AM joins;
             # the complete journey begins only with both independent AMs Ready.
@@ -209,6 +212,18 @@ class Fixture:
 
     def topology(self, **_):
         raise NotImplementedError('fixture topology must verify ConfigMap bindings')
+
+    def repairPreparedForward(self, am):
+        require_feature_fixture(self, kind='prepared')
+        if am not in ('a', 'b'):
+            raise ValueError('prepared_forward_manager_required')
+        name = 'am-' + am + '-0'
+        child, origin = self.client.forwards[(name, 8080)]
+        if child.poll() is None:
+            return {'outcome': 'running'}
+        if self.client.forward(name, 8080, renew=True) != origin:
+            raise RuntimeError('prepared_forward_origin_changed')
+        return {'outcome': 'reopened'}
 
     def ownerOf(self, agentId=None, agent_id=None, **_):
         identity=agentId or agent_id
@@ -461,7 +476,7 @@ class Fixture:
                              'preparedSchemaRace','preparedSchemaRefusals','writerPublicationAbort','writerPublicationEvidence',
                              'runtimeLossPublicationAbort','runtimeLossEvidence','runtimeInventoryAuthority',
                              'shareRedemptionPublicationAbort','accessProposalAbort','provenanceBackfill','seedOversizeFile',
-                             'attachmentIdentity']
+                             'attachmentIdentity','repairPreparedForward']
                     if name not in allowed:raise ValueError('control_route')
                     value=getattr(fixture,name)(**body); status=200
                 except Exception as exc:

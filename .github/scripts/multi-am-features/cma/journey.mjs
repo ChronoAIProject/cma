@@ -93,7 +93,18 @@ export async function runJourney(raw, {adoptionHook, featureHook, heldTurnHook, 
         return body;
       }, value => value.status === 'succeeded' && id(record.agentId),
       {timeout: 420000, interval: onAgentId ? 250 : 1000, code: 'create_lifecycle_timeout',
-        manager: peer, onTransient: failure => { transientPollFailure = failure; }});
+        manager: peer, onTransient: async failure => {
+          transientPollFailure = failure;
+          if (raw.fixture !== 'prepared' || typeof adapter.repairPreparedForward !== 'function') return;
+          try {
+            const forward = await adapter.repairPreparedForward({am: peer});
+            if (['running', 'reopened'].includes(forward?.outcome)) {
+              transientPollFailure.forward = forward.outcome;
+            }
+          } catch {
+            transientPollFailure.forward = 'repair_failed';
+          }
+        }});
     } catch (error) {
       failedCreation = record.operationId;
       const operationHash = hash(record.operationId);

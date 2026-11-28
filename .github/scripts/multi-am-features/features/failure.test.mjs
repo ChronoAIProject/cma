@@ -58,12 +58,18 @@ test('lifecycle polling recovers one socket failure and requires the settled ope
   const events = [new TypeError('fetch failed', {cause: {code: 'UND_ERR_SOCKET'}}), {status: 'running'},
     {status: 'succeeded'}];
   const transient = [];
+  let forwardReopened = false;
   const result = await pollLifecycleOperation(() => {
     const event = events.shift();
     if (event instanceof Error) throw event;
+    assert.equal(forwardReopened, true);
     return event;
   }, body => body.status === 'succeeded', {manager: 'a', interval: 0, timeout: 1000,
-    onTransient: failure => transient.push(failure)});
+    onTransient: async failure => {
+      transient.push(failure);
+      await new Promise(resolve => setTimeout(resolve, 10));
+      forwardReopened = true;
+    }});
   assert.deepEqual(result, {status: 'succeeded'});
   assert.deepEqual(transient, [{manager: 'a', kind: 'transport_error', cause: 'UND_ERR_SOCKET'}]);
 });
