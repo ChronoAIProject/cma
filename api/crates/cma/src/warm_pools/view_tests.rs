@@ -147,3 +147,64 @@ fn desktop_retirement_reports_provider_target_until_drain_is_confirmed() {
     assert_eq!(replaced.provider_target_replicas, None);
     assert_eq!(replaced.retirement_status.as_deref(), Some("pending"));
 }
+
+#[test]
+fn default_pool_authority_requires_exact_live_binding_and_excludes_duplicates() {
+    let mut original = target();
+    original.plan.spec.image = super::deployment_image(original.plan.spec.image.uri);
+    let (service, _) = super::resize::service(original.clone(), original.plan.clone());
+    let provider = Provider {
+        calls: Arc::default(),
+        original: original.plan.clone(),
+        refuse_replaced_uid: AtomicBool::new(false),
+        retired: AtomicBool::new(false),
+    };
+    let live = NativePoolStatus {
+        binding: provider.binding(),
+        desired_replicas: original.target_replicas,
+        ready_replicas: 0,
+        observed: true,
+    };
+    original.binding = Some(live.binding.clone());
+    let released = service.released_images();
+    let render = |targets: &[super::PoolTarget], live: &[NativePoolStatus], available| {
+        service.inventory_view(
+            &released,
+            targets,
+            live,
+            available,
+            [Some(original.plan.config_sha256.as_str()), None],
+        )
+    };
+    let mut old = original.clone();
+    old.id = "old".into();
+    old.plan.pod_policy.service_account = "prior-policy".into();
+    old.binding.as_mut().unwrap().uid = "prior-pool".into();
+    let inventory = render(&[old, original.clone()], std::slice::from_ref(&live), true);
+    assert_eq!(inventory.claims, [Some(original.id.clone()), None]);
+    assert_eq!(inventory.items[0].current_runtime, Some(true));
+    assert_eq!(inventory.items[0].ready_replicas, Some(0));
+    assert_eq!(inventory.items[1].current_runtime, Some(false));
+
+    let mut duplicate = original.clone();
+    duplicate.id = "duplicate".into();
+    let duplicated = render(
+        &[original.clone(), duplicate],
+        std::slice::from_ref(&live),
+        true,
+    );
+    assert_eq!(duplicated.items.len(), 1);
+    assert_eq!(duplicated.claims, [None, None]);
+    assert_eq!(
+        render(std::slice::from_ref(&original), &[], false).claims,
+        [None, None]
+    );
+
+    service
+        .default_holds
+        .hold(false, released.agent.uri.clone());
+    assert_eq!(
+        render(std::slice::from_ref(&original), &[live], true).claims,
+        [None, None]
+    );
+}
