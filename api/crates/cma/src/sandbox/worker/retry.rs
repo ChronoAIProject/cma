@@ -1,9 +1,8 @@
 //! The ordinary and lifecycle publishers use the same durable retry policy.
 use super::{support::WorkerFailure, SandboxWorker};
 use crate::sandbox::work_retry::{sandbox_class, RetryTelemetry};
-use layer2_core::sandbox::store::SandboxStore;
 use layer2_core::sandbox::work_retry::{work_retry_policy, WorkRetryDecision};
-use layer2_core::sandbox::Sandbox;
+use layer2_core::sandbox::{Sandbox, SandboxLifecycleOperation, SandboxStatus};
 use layer3_adapter::{RuntimeHandle, RuntimeProvisionRequest, RuntimeStatus};
 use std::time::{Duration, SystemTime};
 
@@ -42,10 +41,10 @@ impl SandboxWorker {
 
     pub(super) fn rotation_recovery_enabled(&self, sandbox: &Sandbox) -> bool {
         self.dependencies.store.runtime_rotation_recovery_enabled()
-            && sandbox.status == layer2_core::sandbox::SandboxStatus::Rotating
+            && sandbox.status == SandboxStatus::Rotating
             && matches!(
                 sandbox.lifecycle.operation,
-                Some(layer2_core::sandbox::SandboxLifecycleOperation::ImageRotation { .. })
+                Some(SandboxLifecycleOperation::ImageRotation { .. })
             )
     }
 
