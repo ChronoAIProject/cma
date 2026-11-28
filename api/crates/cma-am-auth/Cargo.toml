@@ -17,7 +17,6 @@ layer1-public = { workspace = true }
 ring = { workspace = true }
 tracing-subscriber = { workspace = true }
 async-trait = { workspace = true }
-cmaeg-core = { path = "../cmaeg-core" }
 axum = { workspace = true }
 httpdate = { workspace = true }
 layer2-core = { workspace = true }

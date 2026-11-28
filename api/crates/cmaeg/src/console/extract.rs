@@ -53,7 +53,7 @@ impl FromRequestParts<Console> for Authorized {
             &subject,
             (authorized.scope() == super::authority::OwnerScope::Organization)
                 .then_some(authorized.owner()),
-            cmaeg_core::request_audit::Credential::WebSession,
+            cma_service_auth::request_audit::Credential::WebSession,
         )
         .await
         .map_err(|_| pages::unavailable())?;

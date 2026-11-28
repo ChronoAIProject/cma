@@ -17,7 +17,7 @@ use std::time::Duration;
 pub fn matches_path(path: &str) -> bool {
     matches!(
         path,
-        WORKER_CLASSIFIER_PATH | cmaeg_core::request_audit::PATH
+        WORKER_CLASSIFIER_PATH | cma_service_auth::request_audit::PATH
     )
 }
 
@@ -49,7 +49,7 @@ pub(super) async fn attach(auth: &AuthState, mut request: Request, next: Next) -
     let Some(subject) = service_subject(&token) else {
         return observation.rejected(rejected());
     };
-    let audit = request.uri().path() == cmaeg_core::request_audit::PATH;
+    let audit = request.uri().path() == cma_service_auth::request_audit::PATH;
     match tokio::time::timeout(
         Duration::from_secs(2),
         verify(auth, &token, &subject, audit),
@@ -136,7 +136,7 @@ async fn verify(
     if audit
         && !names
             .iter()
-            .any(|name| name == cmaeg_core::request_audit::WRITE_PERMISSION)
+            .any(|name| name == cma_service_auth::request_audit::WRITE_PERMISSION)
     {
         return Ok(None);
     }

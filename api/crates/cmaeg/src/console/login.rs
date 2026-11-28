@@ -217,7 +217,7 @@ pub(crate) async fn callback(
     if crate::request_audit::bind(
         &creator.subject,
         None,
-        cmaeg_core::request_audit::Credential::WebSession,
+        cma_service_auth::request_audit::Credential::WebSession,
     )
     .await
     .is_err()

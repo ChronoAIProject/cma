@@ -8,7 +8,7 @@ use axum::{
     Extension, Json, Router,
 };
 use cma_am_auth::auth::VerifiedAuditWriter;
-use cmaeg_core::request_audit::{Client, Credential, Event, Identity, Scope, PATH};
+use cma_service_auth::request_audit::{Client, Credential, Event, Identity, Scope, PATH};
 use layer2_core::{
     ActivityId, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget, DetailKey,
     SubjectId, ACTIVITY_OUTCOME_UNCONFIRMED,

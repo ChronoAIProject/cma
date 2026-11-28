@@ -5,7 +5,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
-use cmaeg_core::request_audit::{Client, Credential, Event, Identity, Scope, PATH};
+use cma_service_auth::request_audit::{Client, Credential, Event, Identity, Scope, PATH};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Semaphore};
 

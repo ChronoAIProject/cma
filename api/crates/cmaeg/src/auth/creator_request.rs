@@ -7,7 +7,7 @@ use axum::{
     extract::FromRequestParts,
     http::{request::Parts, HeaderMap},
 };
-use cmaeg_core::request_audit::Credential;
+use cma_service_auth::request_audit::Credential;
 
 impl<S> FromRequestParts<S> for Creator
 where

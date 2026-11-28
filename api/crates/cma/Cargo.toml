@@ -12,7 +12,6 @@ real-model-suggestion-samples = []
 cma-qualification = { path = "../cma-qualification", optional = true }
 cma-allocator-qualification = { path = "../cma-allocator-qualification" }
 cma-am-auth = { path = "../cma-am-auth" }
-cmaeg-core = { path = "../cmaeg-core" }
 cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
 cma-am-reporting = { path = "../cma-am-reporting" }
 async-trait = { workspace = true }
@@ -67,6 +66,7 @@ jsonschema = { version = "0.33.0", default-features = false }
 tracing-subscriber = { workspace = true, features = ["json"] }
 http-body-util = { workspace = true }
 kube = { workspace = true }
+cmaeg-core = { path = "../cmaeg-core" }
 cmaeg = { path = "../cmaeg" }
 layer2-core = { workspace = true, features = ["test-support"] }
 # Holds PTY receipt, output, and disconnect boundaries so socket races are

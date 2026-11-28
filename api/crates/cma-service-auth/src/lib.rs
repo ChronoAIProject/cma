@@ -3,6 +3,7 @@
 pub mod browser;
 pub mod mongodb_authority;
 mod nyx;
+pub mod request_audit;
 mod service_key;
 pub mod session;
 pub mod signing_keys;

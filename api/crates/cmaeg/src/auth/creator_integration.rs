@@ -64,7 +64,7 @@ impl CreatorAuthenticator {
         crate::request_audit::bind(
             subject,
             organization,
-            cmaeg_core::request_audit::Credential::Bearer,
+            cma_service_auth::request_audit::Credential::Bearer,
         )
         .await?;
         result
