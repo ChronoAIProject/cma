@@ -29,6 +29,7 @@ impl MongoSandboxStore {
             runtime_migration_verifier: None,
             runtime_migration_enabled: false,
             renewable_work: false,
+            workspace_authority_retry: false,
             segment_adoption_enabled: false,
             bounded_approval_reads: false,
             runtime_loss_bounded_proof_enabled: false,
