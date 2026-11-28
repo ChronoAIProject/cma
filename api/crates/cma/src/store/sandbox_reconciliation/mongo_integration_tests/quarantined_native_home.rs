@@ -21,6 +21,7 @@ use layer3_adapter::{
 
 struct Provider {
     claims: Mutex<Vec<NativePoolClaim>>,
+    runtimes: Mutex<Vec<RuntimeObservation>>,
 }
 
 #[async_trait::async_trait]
@@ -35,7 +36,14 @@ impl HostedBackend for Provider {
         Ok(home.policy.is_native_vct().then_some(self))
     }
     async fn inventory(&self) -> Result<Vec<RuntimeObservation>> {
-        Ok(Vec::new())
+        Ok(self.runtimes.lock().await.clone())
+    }
+    async fn reclaim(&self, observed: &RuntimeObservation) -> Result<()> {
+        self.runtimes
+            .lock()
+            .await
+            .retain(|runtime| runtime != observed);
+        Ok(())
     }
     async fn provision(&self, _: ProviderSandboxRequest) -> Result<RuntimeHandle> {
         panic!("startup does not provision runtimes")
@@ -168,8 +176,23 @@ async fn retained_sandbox_quarantine_preserves_native_claim_and_home_through_sta
         .claim
         .unwrap();
     orphan_claim.uid = "unrelated-claim-uid".into();
+    let retained_runtime = RuntimeObservation {
+        sandbox_id: sandbox.id.to_string(),
+        generation: 1,
+        handle: RuntimeHandle("agent-sandbox:member:sandbox-uid".into()),
+        image_sha256: "fixture-image".into(),
+        spec_fingerprint: "fixture-spec".into(),
+        runtime_contract: "3".into(),
+        lifecycle: Default::default(),
+    };
+    let orphan_runtime = RuntimeObservation {
+        sandbox_id: "sbx_orphan_runtime".into(),
+        handle: RuntimeHandle("agent-sandbox:orphan:orphan-uid".into()),
+        ..retained_runtime.clone()
+    };
     let provider = Arc::new(Provider {
         claims: Mutex::new(vec![claim.clone(), orphan_claim]),
+        runtimes: Mutex::new(vec![retained_runtime.clone(), orphan_runtime]),
     });
     let adapter = CodexAdapter::new(provider.clone(), CodexSandboxSpec::default())
         .with_home_volumes(homes.clone());
@@ -197,6 +220,10 @@ async fn retained_sandbox_quarantine_preserves_native_claim_and_home_through_sta
     assert!(stored.remove(FIELD).is_some());
     assert_eq!(stored.to_vec().unwrap(), raw.to_vec().unwrap());
     assert_eq!(provider.inventory_claims().await.unwrap(), [claim]);
+    assert_eq!(
+        HostedBackend::inventory(provider.as_ref()).await.unwrap(),
+        [retained_runtime]
+    );
     assert_eq!(homes.inventory().await.unwrap(), [attachment]);
     assert_eq!(*homes.removed.lock().await, [orphan.attachment().unwrap()]);
     db.drop().await.unwrap();
