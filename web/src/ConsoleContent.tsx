@@ -104,8 +104,7 @@ export function ConsoleContent({
     fileDownload,
   } = useConsoleAgentAccess(client, selectedAgent, user.id, authEpoch);
   const accessUncertain = useIdentityUncertain() || agentAccessUncertain;
-  const selectedRetired =
-    personalAgentId === selectedAgent && !accessUncertain ? observedRetired : undefined;
+  const selectedRetired = personalAgentId && !accessUncertain ? observedRetired : undefined;
   const onAgentIntent = useNavigationOpeningPreparation(client, user.id, navigationScope === '');
   const operator = useOperatorClient();
   const publisher = usePublisherClient();
@@ -155,7 +154,7 @@ export function ConsoleContent({
     !accessUncertain,
     permissions,
     settlements,
-    { view: routePath(route), environment: route.kind === 'sandbox' },
+    { view: routePath(route), environment: route.kind === 'sandbox', agentId: personalAgentId },
   );
   const environments = useEnvironmentNavigation(
     navigation,
