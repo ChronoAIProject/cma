@@ -45,7 +45,7 @@ fn admin_filter(query: &SandboxAdminQuery) -> Document {
 
 fn admin_pipeline(query: &SandboxAdminQuery) -> Vec<Document> {
     vec![
-        doc! { "$match": admin_filter(query) },
+        doc! { "$match": super::sandbox_quarantine::exclude(admin_filter(query)) },
         doc! { "$sort": { "_id": 1 } },
         doc! { "$limit": i64::from(query.page.limit) + 1 },
         doc! {
@@ -242,6 +242,7 @@ mod tests {
                 "runtime_version": "runtime-7",
                 "record.profile.always_on": true,
                 "_id": { "$gt": "sbx_after" },
+                (super::super::sandbox_quarantine::FIELD): { "$exists": false },
             } }
         );
         assert_eq!(pipeline[1], doc! { "$sort": { "_id": 1 } });

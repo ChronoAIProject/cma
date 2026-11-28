@@ -58,7 +58,7 @@ async fn read_scope(
 ) -> Result<Vec<ResourceAccessSnapshot>, ReadError> {
     PageRequest::new(query.page.limit, query.page.cursor.clone())
         .map_err(|_| ResourceAccessStoreError::Invalid)?;
-    let mut filter = Document::new();
+    let mut filter = super::super::sandbox_quarantine::exclude(Document::new());
     if let Some(status) = query.status {
         filter.insert("status", status.name());
     }

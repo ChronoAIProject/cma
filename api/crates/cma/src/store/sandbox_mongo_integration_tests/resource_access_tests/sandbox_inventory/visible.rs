@@ -2,6 +2,44 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn retained_sandbox_quarantine_keeps_org_and_shared_inventory_available() {
+    let (client, name) = database("quarantined_shared_inventory").await;
+    let (store, _) = fixture(&client, &name).await;
+    for id in ["a_quarantined", "b_healthy", "c_healthy"] {
+        let mut root = sandbox(id);
+        root.name = id.into();
+        store.create_sandbox(root.clone()).await.unwrap();
+        grant(
+            &store,
+            &ResourceTarget::Sandbox {
+                sandbox_id: root.id,
+            },
+            id,
+        )
+        .await;
+    }
+    store
+        .sandboxes
+        .update_one(
+            doc! {"_id": "a_quarantined"},
+            doc! {"$set": { (crate::store::sandbox_quarantine::FIELD): {} }},
+        )
+        .await
+        .unwrap();
+    let org = SubjectId::new("org");
+    let page = query(1, None);
+    let owned = store.organization_sandboxes(&org, &page).await.unwrap();
+    let shared = store
+        .shared_sandboxes(&SubjectId::new("recipient"), &[org], &page)
+        .await
+        .unwrap();
+    assert_eq!(ids(&owned), ["b_healthy", "c_healthy"]);
+    assert_eq!(ids(&shared), ["b_healthy", "c_healthy"]);
+    client.database(&name).drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn visible_inventory_filters_org_and_shared_candidates_before_hidden_lookahead() {
     let (client, name) = database("visible_shared_inventory").await;
     let (store, _) = fixture(&client, &name).await;

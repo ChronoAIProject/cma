@@ -60,7 +60,9 @@ impl ReportingStore {
         let mut sandboxes = BTreeMap::new();
         let mut cursor = self
             .collection("sandboxes")
-            .find(doc! {"_id":{"$in":&ids}})
+            .find(super::super::sandbox_quarantine::exclude(
+                doc! {"_id":{"$in":&ids}},
+            ))
             .max_time(DB_DEADLINE)
             .session(&mut *session)
             .await
@@ -118,7 +120,7 @@ impl ReportingStore {
         }
         let mut cursor = self
             .collection("sandboxes")
-            .find(filter)
+            .find(super::super::sandbox_quarantine::exclude(filter))
             .sort(doc! {"_id":1})
             .limit(200)
             .max_time(DB_DEADLINE)

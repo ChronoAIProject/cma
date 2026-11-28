@@ -84,7 +84,11 @@ pub(super) fn replacement(fields: Document) -> Vec<Document> {
             "document_schema_version",
             doc! {"$cond":[
             {"$and":[{"$eq":["$document_schema_version",3_i64]},
-                {"$not":[{"$in":[{"$literal":fields.get("document_schema_version").cloned().unwrap_or(Bson::Null)},[5_i64,6_i64]]}]}]},3_i64,
+                {"$not":[{"$in":[{"$literal":fields.get("document_schema_version").cloned().unwrap_or(Bson::Null)},[
+                    super::work_schema::RUNTIME_MIGRATION_VERSION,
+                    super::work_schema::RUNTIME_IMAGE_ORIGIN_VERSION,
+                    super::work_schema::MANAGED_MACHINE_ORIGIN_VERSION,
+                ]]}]}]},3_i64,
             {"$literal":fields.get("document_schema_version").cloned().unwrap_or(Bson::Null)}]},
         );
     }

@@ -67,7 +67,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
             .empty(
                 super::empty_discovery::Kind::Sandboxes,
                 &self.sandboxes,
-                doc! {"work_pending":true},
+                super::sandbox_quarantine::exclude(doc! {"work_pending":true}),
             )
             .await
         {
@@ -76,7 +76,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
         let mut cursor = self
             .sandboxes
             .find(crate::store::work_schema::query(
-                without_ledger_maintenance(doc! {
+                super::sandbox_quarantine::exclude(without_ledger_maintenance(doc! {
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "work_pending": true,
                     "$nor": [{"record.lifecycle.retirement_archive.verified": {"$type":"null"}}],
@@ -85,7 +85,7 @@ impl SandboxWorkerStore for MongoSandboxStore {
                         { "work_lease_expires_at": Bson::Null },
                         { "work_lease_expires_at": { "$lte": now } },
                     ],
-                }),
+                })),
             ))
             .projection(doc! { "_id": 1 })
             .sort(doc! { "work_ready_at": 1, "_id": 1 })
@@ -288,7 +288,9 @@ impl MongoSandboxStore {
         id: &SandboxId,
     ) -> Result<Option<layer2_core::sandbox::Sandbox>, SandboxStoreError> {
         self.sandboxes
-            .find_one(without_ledger_maintenance(doc! { "_id": id.as_str() }))
+            .find_one(super::sandbox_quarantine::exclude(
+                without_ledger_maintenance(doc! { "_id": id.as_str() }),
+            ))
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
             .as_ref()
