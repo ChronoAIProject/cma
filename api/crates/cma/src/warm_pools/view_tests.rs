@@ -121,6 +121,27 @@ fn desktop_retirement_reports_provider_target_until_drain_is_confirmed() {
     assert_eq!(drained.provider_target_replicas, Some(0));
     assert_eq!(drained.retirement_status.as_deref(), Some("drained"));
 
+    desktop.error = Some("retirement reconciliation will retry".into());
+    let held = desktop.view(Some(&live), true);
+    assert_eq!(held.retirement_status.as_deref(), Some("drained"));
+    assert_eq!(held.status, "unavailable");
+    assert_eq!(held.error, desktop.error);
+    assert!(held.observed);
+    assert_eq!(held.ready_replicas, Some(0));
+    assert_eq!(
+        desktop
+            .view(Some(&live), false)
+            .retirement_status
+            .as_deref(),
+        Some("pending")
+    );
+
+    live.ready_replicas = 1;
+    assert_eq!(
+        desktop.view(Some(&live), true).retirement_status.as_deref(),
+        Some("pending")
+    );
+    live.ready_replicas = 0;
     live.binding.uid = "replacement".into();
     let replaced = desktop.view(Some(&live), true);
     assert_eq!(replaced.provider_target_replicas, None);
