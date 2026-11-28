@@ -50,14 +50,14 @@ def validate_service(service, image, nginx_sha256):
         require(command == [HOOK_PATH], "Web preStop executable is missing from the effective service")
 
 
-def read(origin, path, *, evidence=None):
+def read(origin, path, *, evidence=None, timeout=10, response_limit=MAX_RESPONSE_BYTES):
     target = urlsplit(origin)
     loopback_http = target.scheme == "http" and target.hostname in ("127.0.0.1", "::1", "localhost")
     require(target.hostname and target.path in ("", "/") and target.username is None and target.password is None
             and not target.query and not target.fragment and (target.scheme == "https" or loopback_http),
             "Web preflight needs an HTTPS origin or a loopback probe")
     transport = http.client.HTTPSConnection if target.scheme == "https" else http.client.HTTPConnection
-    connection = transport(target.hostname, target.port, timeout=10)
+    connection = transport(target.hostname, target.port, timeout=timeout)
     marker = uuid4().hex
     observed = {"path": path, "marker": marker, "started_at": datetime.now(timezone.utc).isoformat()}
     if evidence is not None:
@@ -73,11 +73,13 @@ def read(origin, path, *, evidence=None):
         media_type = reply.headers.get("Content-Type", "").split(";", 1)[0].strip().lower()
         cache = {value.strip().lower() for header in reply.headers.get_all("Cache-Control", [])
                  for value in header.split(",")}
-        body = reply.read(MAX_RESPONSE_BYTES + 1)
-        require(len(body) <= MAX_RESPONSE_BYTES, "Web response exceeds its read budget")
+        limit = response_limit if reply.status == 200 else min(MAX_RESPONSE_BYTES, max(response_limit, 4096))
+        body = reply.read(limit + 1)
+        require(len(body) <= limit, "Web response exceeds its read budget")
         observed["body_sha256"] = sha256(body).hexdigest()
         return reply.status, media_type, cache, body
     finally:
+        observed["finished_at"] = datetime.now(timezone.utc).isoformat()
         connection.close()
 
 
