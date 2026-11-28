@@ -62,6 +62,8 @@ pub(in crate::store) async fn apply(
         layer2_core::sandbox::turn_timeout::validate_ordinary_publication(&current, mutation)
             .map_err(ApplyError::Domain)?;
     }
+    // Only stale-turn and timeout publication install their checkpoint in
+    // this transaction step. Every supplied checkpoint owns its log batch.
     let exact_checkpoint = if matches!(
         source,
         PublicationSource::StaleTurn | PublicationSource::TurnPolicy
@@ -84,6 +86,7 @@ pub(in crate::store) async fn apply(
             scope.session(),
             capacity,
             exact_checkpoint,
+            checkpoint.is_none(),
         ))
         .await;
     }
@@ -138,7 +141,7 @@ async fn apply_segmented(
     let mut logs = domain::conversation_logs(mutation).map_err(ApplyError::Domain)?;
     let mut next = mutation.agent.clone();
     let count = logs.len();
-    if exact_checkpoint.is_none() {
+    if checkpoint.is_none() {
         domain::checkpoint::finish_published_text(&row, &current, &mut next, &mut logs)
             .map_err(ApplyError::Domain)?;
     }

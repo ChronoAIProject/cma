@@ -9,7 +9,7 @@ pub(super) async fn apply_mutation(
     mutation: &AgentConversationMutation,
     session: &mut mongodb::ClientSession,
 ) -> Result<ConversationReceipt, ApplyError> {
-    apply_mutation_with_capacity(caller, store, mutation, session, None, None).await
+    apply_mutation_with_capacity(caller, store, mutation, session, None, None, true).await
 }
 
 pub(in crate::store) async fn apply_mutation_with_capacity(
@@ -19,6 +19,7 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
     session: &mut mongodb::ClientSession,
     capacity: Option<&layer2_core::sandbox::store::AgentConversationCapacitySettlement>,
     exact_checkpoint: Option<&layer2_core::sandbox::store::AgentMessageCheckpoint>,
+    synthesize_published_text: bool,
 ) -> Result<ConversationReceipt, ApplyError> {
     let current_row = crate::store::stale_turns::find_with_proof_budget(
         &store.agents,
@@ -131,7 +132,7 @@ pub(in crate::store) async fn apply_mutation_with_capacity(
     cleanup_admission::require(&current_row, &current, mutation).map_err(ApplyError::Domain)?;
     let mut logs = conversation_logs(mutation).map_err(ApplyError::Domain)?;
     let mut derived = None;
-    if exact_checkpoint.is_none()
+    if synthesize_published_text
         && current.conversation.active_turn != mutation.agent.conversation.active_turn
     {
         let mut output = mutation.clone();

@@ -25,7 +25,15 @@ const NOW: &str = "2026-09-17T00:00:00Z";
 
 async fn working(store: &MongoSandboxStore, id: &str) -> Agent {
     let (parent, current) = fixture(store, id).await;
-    let mut mutation = update(&current, "owner input");
+    start_turn(store, &parent, &current).await
+}
+
+async fn start_turn(
+    store: &MongoSandboxStore,
+    parent: &layer2_core::sandbox::Sandbox,
+    current: &Agent,
+) -> Agent {
+    let mut mutation = update(current, "owner input");
     mutation
         .agent
         .transition(AgentStatus::Working, NOW.into(), None)
@@ -44,7 +52,7 @@ async fn working(store: &MongoSandboxStore, id: &str) -> Agent {
             content: "owner input".into(),
         },
     ];
-    mutation.admission_guard = Some(SandboxMutationGuard::capture(&parent));
+    mutation.admission_guard = Some(SandboxMutationGuard::capture(parent));
     store
         .commit_agent_conversation(mutation.clone())
         .await
