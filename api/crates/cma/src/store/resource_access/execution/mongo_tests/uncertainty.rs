@@ -479,8 +479,13 @@ async fn owning_organization_uses_current_membership_without_becoming_personal_o
     assert!(!keys.contains_key("owner_subject"));
     let db = fixture.client.database(&fixture.name);
     let mut inventory = layer2_core::account_deletion::ErasureInventory::default();
-    let result =
-        crate::store::account_erasure::test_try_drain(&db, "org-admin", &mut inventory).await;
+    let result = crate::store::account_erasure::test_try_drain_execution(
+        &db,
+        "org-admin",
+        &mut inventory,
+        true,
+    )
+    .await;
     super::direct_erasure::assert_retained(result.unwrap_err());
     assert_eq!(
         fixture

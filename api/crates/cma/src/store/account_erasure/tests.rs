@@ -66,19 +66,40 @@ pub(in crate::store) async fn drain(
     owner: &str,
     inventory: &mut ErasureInventory,
 ) -> BTreeMap<String, u64> {
-    try_drain(db, owner, inventory).await.unwrap()
+    try_drain(
+        db,
+        owner,
+        inventory,
+        TransactionDrainQualification::fixture(),
+    )
+    .await
+    .unwrap()
 }
 
-pub(in crate::store) async fn try_drain(
+pub(in crate::store) async fn try_drain_execution(
     db: &Database,
     owner: &str,
     inventory: &mut ErasureInventory,
+    qualified: bool,
+) -> Result<BTreeMap<String, u64>, Error> {
+    let mut qualification = TransactionDrainQualification::fixture();
+    if qualified {
+        qualification = qualification.with_execution_erasure([2; 32]).unwrap();
+    }
+    try_drain(db, owner, inventory, qualification).await
+}
+
+async fn try_drain(
+    db: &Database,
+    owner: &str,
+    inventory: &mut ErasureInventory,
+    qualification: TransactionDrainQualification,
 ) -> Result<BTreeMap<String, u64>, Error> {
     let mut counts = BTreeMap::new();
     let mut cursor = Cursor::default();
     for _ in 0..2000 {
         let subject = SubjectId::new(owner);
-        let batch = super::erase_records(
+        let batch = super::erase_records_for_test(
             db,
             &[Target {
                 subject: &subject,
@@ -86,6 +107,7 @@ pub(in crate::store) async fn try_drain(
             }],
             &mut cursor,
             NOW,
+            qualification,
         )
         .await?;
         super::progress::acknowledge(inventory, &batch, owner);

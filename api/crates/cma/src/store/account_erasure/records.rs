@@ -261,6 +261,14 @@ async fn run(
             });
             if destructive {
                 if super::resource_execution::managed(entry.collection) {
+                    if !options
+                        .drain_qualification
+                        .is_some_and(TransactionDrainQualification::allows_execution_erasure)
+                    {
+                        return Err(Error::cohort(
+                            CohortBlock::ExecutionErasureQualificationRequired,
+                        ));
+                    }
                     super::resource_execution::erase(db, entry.collection, row, contexts, batch)
                         .await?;
                     continue;

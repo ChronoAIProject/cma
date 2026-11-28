@@ -1,5 +1,5 @@
 use super::{fixture::*, *};
-use crate::store::account_erasure::{test_drain, test_try_drain, Error};
+use crate::store::account_erasure::{test_try_drain_execution, CohortBlock, Error};
 use layer2_core::{
     account_deletion::{ErasureBlock, ErasureInventory},
     resource_access::{
@@ -143,7 +143,29 @@ async fn indexed_execution_erasure_preserves_foreign_grants_and_is_idempotent() 
     );
 
     let mut actor_inventory = ErasureInventory::default();
-    let removed = test_drain(&db, "delegated-subject", &mut actor_inventory).await;
+    let error = test_try_drain_execution(&db, "delegated-subject", &mut actor_inventory, false)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        erasure_cause(&error),
+        Error::CohortBlocked(CohortBlock::ExecutionErasureQualificationRequired)
+    ));
+    let current = fixture
+        .store
+        .revocation(&operation.key.operation_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(current.erased_ordinals.is_empty());
+    assert!(fixture
+        .store
+        .record(&ticket.registration)
+        .await
+        .unwrap()
+        .is_some());
+    let removed = test_try_drain_execution(&db, "delegated-subject", &mut actor_inventory, true)
+        .await
+        .unwrap();
     assert_eq!(removed.get(erasure::EFFECTS), Some(&1));
     assert_eq!(removed.get(erasure::MEMBERS), Some(&1));
     assert_eq!(removed.get(erasure::GRANTS), None);
@@ -167,7 +189,9 @@ async fn indexed_execution_erasure_preserves_foreign_grants_and_is_idempotent() 
         .unwrap();
     assert_eq!(remaining.len(), 1);
     assert_eq!(remaining[0].registration, sibling.registration);
-    let repeat = test_drain(&db, "delegated-subject", &mut actor_inventory).await;
+    let repeat = test_try_drain_execution(&db, "delegated-subject", &mut actor_inventory, true)
+        .await
+        .unwrap();
     assert!(erasure::COLLECTIONS
         .iter()
         .all(|collection| !repeat.contains_key(*collection)));
@@ -196,7 +220,7 @@ async fn indexed_execution_erasure_preserves_foreign_grants_and_is_idempotent() 
     retire(&fixture, sandbox_id.as_str()).await;
     let mut owner_inventory = ErasureInventory::default();
     assert_retained(
-        test_try_drain(&db, "owner", &mut owner_inventory)
+        test_try_drain_execution(&db, "owner", &mut owner_inventory, true)
             .await
             .unwrap_err(),
     );
@@ -223,7 +247,9 @@ async fn indexed_execution_erasure_preserves_foreign_grants_and_is_idempotent() 
         },
     )
     .await;
-    let removed = test_drain(&db, "owner", &mut owner_inventory).await;
+    let removed = test_try_drain_execution(&db, "owner", &mut owner_inventory, true)
+        .await
+        .unwrap();
     assert_eq!(removed.get(erasure::MEMBERS), Some(&1));
     assert_eq!(removed.get(erasure::GRANTS), Some(&2));
     assert_eq!(removed.get(erasure::OPERATIONS), Some(&1));
@@ -231,7 +257,9 @@ async fn indexed_execution_erasure_preserves_foreign_grants_and_is_idempotent() 
     let grants = &fixture.store.collections.grants;
     assert_eq!(grants.count_documents(doc! {}).await.unwrap(), 2);
     assert_eq!(members.count_documents(doc! {}).await.unwrap(), 0);
-    let repeat = test_drain(&db, "owner", &mut owner_inventory).await;
+    let repeat = test_try_drain_execution(&db, "owner", &mut owner_inventory, true)
+        .await
+        .unwrap();
     assert!(erasure::COLLECTIONS
         .iter()
         .all(|collection| !repeat.contains_key(*collection)));
@@ -258,7 +286,7 @@ async fn independent_execution_erasure_waits_for_provider_settlement() {
     retire(&fixture, sandbox_id.as_str()).await;
     let mut inventory = ErasureInventory::default();
     assert_retained(
-        test_try_drain(&db, "owner", &mut inventory)
+        test_try_drain_execution(&db, "owner", &mut inventory, true)
             .await
             .unwrap_err(),
     );
@@ -269,7 +297,9 @@ async fn independent_execution_erasure_waits_for_provider_settlement() {
         .unwrap();
     assert!(pending[0].observations.is_empty());
     observe(&fixture, &terminal).await;
-    let removed = test_drain(&db, "owner", &mut inventory).await;
+    let removed = test_try_drain_execution(&db, "owner", &mut inventory, true)
+        .await
+        .unwrap();
     assert_eq!(removed.get(erasure::MEMBERS), Some(&1));
     assert_eq!(removed.get(erasure::EFFECTS), Some(&1));
     assert!(fixture
@@ -287,11 +317,15 @@ async fn independent_execution_erasure_waits_for_provider_settlement() {
     fixture.cleanup().await;
 }
 
-pub(super) fn assert_retained(error: Error) {
-    let cause = match &error {
+fn erasure_cause(error: &Error) -> &Error {
+    match error {
         Error::Interrupted { error, .. } => error.as_ref(),
-        _ => &error,
-    };
+        other => other,
+    }
+}
+
+pub(super) fn assert_retained(error: Error) {
+    let cause = erasure_cause(&error);
     assert!(
         matches!(cause, Error::Blocked(block)
         if matches!(&block.reason, ErasureBlock::UnsupportedResidue { .. })),

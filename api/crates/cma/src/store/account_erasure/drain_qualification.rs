@@ -15,6 +15,7 @@ pub(crate) struct TransactionDrainQualification {
     evidence_digest: [u8; 32],
     maximum_lifetime_seconds: u64,
     finality_bound_seconds: u64,
+    execution_erasure_evidence: Option<[u8; 32]>,
 }
 
 impl TransactionDrainQualification {
@@ -43,7 +44,24 @@ impl TransactionDrainQualification {
             evidence_digest,
             maximum_lifetime_seconds,
             finality_bound_seconds,
+            execution_erasure_evidence: None,
         })
+    }
+
+    /// Bind an independent receipt confirming compatible serving and rollback
+    /// readers, drained incompatible writers, and a reconciled legacy cohort.
+    pub fn with_execution_erasure(mut self, evidence_digest: [u8; 32]) -> Result<Self, Error> {
+        if evidence_digest == [0; 32] {
+            return Err(Error::cohort(
+                CohortBlock::ExecutionErasureQualificationRequired,
+            ));
+        }
+        self.execution_erasure_evidence = Some(evidence_digest);
+        Ok(self)
+    }
+
+    pub(super) fn allows_execution_erasure(self) -> bool {
+        self.execution_erasure_evidence.is_some()
     }
 
     pub(super) fn seconds(
@@ -92,6 +110,17 @@ mod tests {
         assert!(TransactionDrainQualification::from_verified_limits([1; 32], 60, 59).is_err());
         assert!(TransactionDrainQualification::from_verified_limits([1; 32], 3601, 86400).is_err());
         assert!(TransactionDrainQualification::from_verified_limits([1; 32], 60, 86401).is_err());
+    }
+
+    #[test]
+    fn execution_erasure_requires_separate_evidence() {
+        let authority = TransactionDrainQualification::fixture();
+        assert!(!authority.allows_execution_erasure());
+        assert!(authority.with_execution_erasure([0; 32]).is_err());
+        assert!(authority
+            .with_execution_erasure([2; 32])
+            .unwrap()
+            .allows_execution_erasure());
     }
 
     #[test]
