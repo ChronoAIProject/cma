@@ -15,6 +15,7 @@ cma-am-agent-log = { path = "../cma-am-agent-log" }
 cma-am-auth = { path = "../cma-am-auth" }
 cma-am-mongo-primitives = { path = "../cma-am-mongo-primitives" }
 cma-am-reporting = { path = "../cma-am-reporting" }
+cma-am-sandbox-state = { path = "../cma-am-sandbox-state" }
 async-trait = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }

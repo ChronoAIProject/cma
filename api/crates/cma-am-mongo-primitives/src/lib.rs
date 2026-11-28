@@ -41,3 +41,15 @@ pub fn signed(value: u64, field: &str) -> Result<i64, String> {
 pub fn unsigned(value: i64, field: &str) -> Result<u64, String> {
     u64::try_from(value).map_err(|_| format!("{field} must not be negative"))
 }
+
+pub fn nullable(value: Option<&String>) -> Bson {
+    value.cloned().map(Bson::String).unwrap_or(Bson::Null)
+}
+
+pub fn string_field_matches(document: &Document, field: &str, expected: &str) -> bool {
+    matches!(document.get_str(field), Ok(actual) if actual == expected)
+}
+
+pub fn i64_field_matches(document: &Document, field: &str, expected: i64) -> bool {
+    matches!(document.get_i64(field), Ok(actual) if actual == expected)
+}

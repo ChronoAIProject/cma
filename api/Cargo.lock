@@ -430,6 +430,7 @@ dependencies = [
  "cma-am-auth",
  "cma-am-mongo-primitives",
  "cma-am-reporting",
+ "cma-am-sandbox-state",
  "cma-qualification",
  "cma-service-auth",
  "cmaeg",
@@ -550,6 +551,16 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
+]
+
+[[package]]
+name = "cma-am-sandbox-state"
+version = "0.1.0"
+dependencies = [
+ "cma-am-mongo-primitives",
+ "layer2-core",
+ "mongodb",
+ "serde",
 ]
 
 [[package]]
